@@ -22,6 +22,7 @@ const (
 	TaskConversationSync       TaskType = "conversation.sync"
 	TaskVacancyInspect         TaskType = "vacancy.inspect"
 	TaskResumePublish          TaskType = "resume.publish"
+	TaskResumeTouch            TaskType = "resume.touch"
 	TaskResumeUpdate           TaskType = "resume.update"
 	TaskProfileBootstrap       TaskType = "profile.bootstrap"
 	TaskSkillVerificationStart TaskType = "skill_verification.start"

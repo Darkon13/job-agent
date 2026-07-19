@@ -43,8 +43,8 @@ func TestSchedulerPersistsNextRunAppliesJitterAndCollapsesMisfires(t *testing.T)
 	}
 	payload, _ := json.Marshal(map[string]string{"profile_id": "primary", "resume_id": "resume-1"})
 	definition := scheduler.Definition{
-		JobTag: "publish-primary", TriggerIndex: 0, Expression: "0 * * * *", Timezone: "UTC",
-		ActionType: core.TaskResumePublish, Platform: "hh", ProfileID: "primary", Payload: payload,
+		JobTag: "touch-primary", TriggerIndex: 0, Expression: "0 * * * *", Timezone: "UTC",
+		ActionType: core.TaskResumeTouch, Platform: "hh", ProfileID: "primary", Payload: payload,
 		JitterMin: 5 * time.Minute, JitterMax: 10 * time.Minute,
 	}
 	if err := service.Sync(ctx, []scheduler.Definition{definition}); err != nil {
@@ -55,11 +55,11 @@ func TestSchedulerPersistsNextRunAppliesJitterAndCollapsesMisfires(t *testing.T)
 	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
 		t.Fatalf("first reconcile: count=%d err=%v", count, err)
 	}
-	if lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "resume-worker", TaskType: core.TaskResumePublish, Now: clock.now.Add(4 * time.Minute), LeaseDuration: time.Minute}); err != nil || found {
+	if lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "resume-worker", TaskType: core.TaskResumeTouch, Now: clock.now.Add(4 * time.Minute), LeaseDuration: time.Minute}); err != nil || found {
 		t.Fatalf("task became available before jitter minimum: lease=%#v found=%t err=%v", lease, found, err)
 	}
-	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "resume-worker", TaskType: core.TaskResumePublish, Now: clock.now.Add(11 * time.Minute), LeaseDuration: time.Minute})
-	if err != nil || !found || lease.Task.Type != core.TaskResumePublish {
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "resume-worker", TaskType: core.TaskResumeTouch, Now: clock.now.Add(11 * time.Minute), LeaseDuration: time.Minute})
+	if err != nil || !found || lease.Task.Type != core.TaskResumeTouch {
 		t.Fatalf("task unavailable after jitter maximum: lease=%#v found=%t err=%v", lease, found, err)
 	}
 	if err := store.Complete(ctx, lease, clock.now.Add(11*time.Minute+time.Second)); err != nil {

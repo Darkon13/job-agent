@@ -21,8 +21,8 @@ type Config struct {
 }
 
 const (
-	JobActionResumePublish = "resume.publish"
-	JobConcurrencyForbid   = "forbid"
+	JobActionResumeTouch = "resume.touch"
+	JobConcurrencyForbid = "forbid"
 )
 
 type Job struct {
@@ -251,7 +251,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("job %q trigger %d: %w", job.Tag, index, err)
 			}
 		}
-		if job.Action.Type != JobActionResumePublish {
+		if job.Action.Type != JobActionResumeTouch {
 			return fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
 		}
 		if _, exists := profiles[job.Action.Profile]; !exists {
@@ -267,7 +267,7 @@ func (c Config) Validate() error {
 			}
 		}
 		if resume == "" {
-			return fmt.Errorf("job %q resume.publish requires resume", job.Tag)
+			return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
 		}
 	}
 	return nil

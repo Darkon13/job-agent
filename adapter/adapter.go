@@ -68,6 +68,20 @@ type ResumePublisher interface {
 	PublishResume(ctx context.Context, command ResumePublishCommand) (ResumePublishResult, error)
 }
 
+type ResumeTouchCommand struct {
+	ProfileID      core.ProfileID
+	ResumeID       string
+	IdempotencyKey string
+}
+
+type ResumeTouchResult struct {
+	NextTouchAt *time.Time
+}
+
+type ResumeToucher interface {
+	TouchResume(ctx context.Context, command ResumeTouchCommand) (ResumeTouchResult, error)
+}
+
 // Adapter is a facade over all transports used by one platform. Workflows
 // depend on the smaller capability interfaces instead of this full facade.
 type Adapter interface {

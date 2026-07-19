@@ -21,6 +21,7 @@ const (
 	CapabilityResumeCreate           Capability = "resumes.create"
 	CapabilityResumeUpdate           Capability = "resumes.update"
 	CapabilityResumePublish          Capability = "resumes.publish"
+	CapabilityResumeTouch            Capability = "resumes.touch"
 	CapabilitySkillVerificationRead  Capability = "skill_verifications.read"
 	CapabilitySkillVerificationStart Capability = "skill_verifications.start"
 )

@@ -10,29 +10,26 @@ import (
 	"github.com/Darkon13/job-agent/core"
 )
 
-type fakeResumePublisher struct {
-	command adapter.ResumePublishCommand
-	err     error
+type fakeResumeToucher struct{ command adapter.ResumeTouchCommand }
+
+func (toucher *fakeResumeToucher) TouchResume(_ context.Context, command adapter.ResumeTouchCommand) (adapter.ResumeTouchResult, error) {
+	toucher.command = command
+	return adapter.ResumeTouchResult{}, nil
 }
 
-func (publisher *fakeResumePublisher) PublishResume(_ context.Context, command adapter.ResumePublishCommand) (adapter.ResumePublishResult, error) {
-	publisher.command = command
-	return adapter.ResumePublishResult{}, publisher.err
-}
-
-func TestResumePublishHandlerRoutesProfileAndIdempotency(t *testing.T) {
-	publisher := &fakeResumePublisher{}
-	registry := NewResumePublisherRegistry()
-	if err := registry.Register("primary", publisher); err != nil {
-		t.Fatalf("register publisher: %v", err)
+func TestResumeTouchHandlerRoutesProfileAndIdempotency(t *testing.T) {
+	toucher := &fakeResumeToucher{}
+	registry := NewResumeToucherRegistry()
+	if err := registry.Register("primary", toucher); err != nil {
+		t.Fatalf("register toucher: %v", err)
 	}
-	handler, err := NewResumePublishHandler(registry)
+	handler, err := NewResumeTouchHandler(registry)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
-	payload, _ := json.Marshal(core.ResumePublishPayload{ProfileID: "primary", ResumeID: "resume-1"})
+	payload, _ := json.Marshal(core.ResumeTouchPayload{ProfileID: "primary", ResumeID: "resume-1"})
 	task, err := core.NewTask(core.NewTaskParams{
-		ID: "task-1", Type: core.TaskResumePublish, IdempotencyKey: "publish-1", Source: "test",
+		ID: "task-1", Type: core.TaskResumeTouch, IdempotencyKey: "touch-1", Source: "test",
 		Platform: "hh", ProfileID: "primary", CorrelationID: "correlation-1", Payload: payload,
 	}, time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -41,7 +38,7 @@ func TestResumePublishHandlerRoutesProfileAndIdempotency(t *testing.T) {
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	if publisher.command.ProfileID != "primary" || publisher.command.ResumeID != "resume-1" || publisher.command.IdempotencyKey != "publish-1" {
-		t.Fatalf("unexpected command: %#v", publisher.command)
+	if toucher.command.ProfileID != "primary" || toucher.command.ResumeID != "resume-1" || toucher.command.IdempotencyKey != "touch-1" {
+		t.Fatalf("unexpected command: %#v", toucher.command)
 	}
 }

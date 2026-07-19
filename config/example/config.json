@@ -34,7 +34,7 @@
   ],
   "jobs": [
     {
-      "tag": "publish-primary-resume",
+      "tag": "touch-primary-resume",
       "enabled": true,
       "triggers": [
         {
@@ -47,7 +47,7 @@
       ],
       "concurrency": "forbid",
       "action": {
-        "type": "resume.publish",
+        "type": "resume.touch",
         "profile": "primary"
       }
     }

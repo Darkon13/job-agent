@@ -74,7 +74,7 @@ func main() {
 	}
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
-	resumePublishers := taskworker.NewResumePublisherRegistry()
+	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
 		instance := instances[profile.Adapter]
@@ -88,9 +88,19 @@ func main() {
 				log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
 			}
 		}
-		if publisher, ok := instance.(adapter.ResumePublisher); ok {
-			if err := resumePublishers.Register(core.ProfileID(profile.Tag), publisher); err != nil {
-				log.Fatalf("register resume publisher for profile %q: %v", profile.Tag, err)
+		if toucher, ok := instance.(adapter.ResumeToucher); ok {
+			if err := resumeTouchers.Register(core.ProfileID(profile.Tag), toucher); err != nil {
+				log.Fatalf("register resume toucher for profile %q: %v", profile.Tag, err)
+			}
+		} else if instance.Name() == hh.Name && profile.StateFile != "" {
+			if _, err := os.Stat(profile.StateFile); err == nil {
+				toucher, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
+				if err != nil {
+					log.Fatalf("create HH resume toucher for profile %q: %v", profile.Tag, err)
+				}
+				if err := resumeTouchers.Register(core.ProfileID(profile.Tag), toucher); err != nil {
+					log.Fatalf("register HH resume toucher for profile %q: %v", profile.Tag, err)
+				}
 			}
 		}
 		if profile.Resume != "" {
@@ -120,18 +130,18 @@ func main() {
 		}
 		workers = append(workers, applicationWorker)
 	}
-	if resumePublishers.Count() > 0 {
-		resumeHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
+	if resumeTouchers.Count() > 0 {
+		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers)
 		if err != nil {
-			log.Fatalf("create resume publish handler: %v", err)
+			log.Fatalf("create resume touch handler: %v", err)
 		}
-		resumeWorker, err := newTaskWorker(store, core.TaskResumePublish, resumeHandler.Handle)
+		resumeWorker, err := newTaskWorker(store, core.TaskResumeTouch, resumeHandler.Handle)
 		if err != nil {
-			log.Fatalf("create resume publish worker: %v", err)
+			log.Fatalf("create resume touch worker: %v", err)
 		}
 		workers = append(workers, resumeWorker)
 	}
-	definitions, err := resumePublishDefinitions(cfg, instances, resumePublishers)
+	definitions, err := resumeTouchDefinitions(cfg, instances, resumeTouchers)
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
@@ -201,26 +211,26 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 	}
 }
 
-func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, publishers *taskworker.ResumePublisherRegistry) ([]jobscheduler.Definition, error) {
+func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, touchers *taskworker.ResumeToucherRegistry) ([]jobscheduler.Definition, error) {
 	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
 	for _, profile := range cfg.Profiles {
 		profiles[profile.Tag] = profile
 	}
 	definitions := make([]jobscheduler.Definition, 0)
 	for _, job := range cfg.Jobs {
-		if !job.Enabled || job.Action.Type != appconfig.JobActionResumePublish {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionResumeTouch {
 			continue
 		}
 		profile := profiles[job.Action.Profile]
 		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !publishers.Has(profileID) {
+		if !profile.Enabled || !touchers.Has(profileID) {
 			continue
 		}
 		resumeID := job.Action.Resume
 		if resumeID == "" {
 			resumeID = profile.Resume
 		}
-		payload, err := json.Marshal(core.ResumePublishPayload{ProfileID: profileID, ResumeID: resumeID})
+		payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID})
 		if err != nil {
 			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
 		}
@@ -229,7 +239,7 @@ func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter
 			minimum, maximum := trigger.Jitter.Durations()
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

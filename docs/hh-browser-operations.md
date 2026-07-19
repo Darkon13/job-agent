@@ -16,7 +16,8 @@ cookies, XSRF, идентификаторы аккаунта/резюме/чат
 | `applications.inspect_requirements` | browser | Определение письма, test/questionnaire до submit |
 | `applications.submit` | API или browser | Browser нужен для обязательной web-формы |
 | `conversations.mark_read` | browser/chatik | Открытие чата само может отправить `mark_read` |
-| `resumes.publish` | API | Планировать по `next_publish_at` |
+| `resumes.touch` | Browser web endpoint | Планировать по `nextTouchAt` |
+| `resumes.publish` | API/profile workflow | Не смешивать с периодическим поднятием |
 | `resumes.read/create/update` | API profile schema | Browser остаётся fallback и discovery tool |
 | `skills.list_methods` | browser | Просмотр доступных проверок навыков |
 | `skills.start_attempt` | browser | Отдельное подтверждаемое действие |
@@ -186,28 +187,30 @@ workflow искусственного повышения score через пус
 
 ## Публикация/поднятие резюме
 
-Основной контракт — публичный API:
+Живой web-контракт периодического поднятия:
 
 ```text
-GET  /resumes/mine
-POST /resumes/{resume_id}/publish -> 204
+GET  /applicant/profile/me -> ResumeProfileFront-InitialState
+POST https://resume-profile-front.hh.ru/profile/shards/resume/touch
+body: {"hash":"<resume hash>"}
 ```
 
-Первая публикация публикует резюме, последующие обновляют дату. Scheduler
-использует `can_publish_or_update` и `next_publish_at`; период нельзя жёстко
-зашивать как четыре часа. При живом исследовании UI показывал четырёхчасовой
-интервал, а web state также содержал `update_timeout`, но API timestamp остаётся
-источником истины.
+Initial state содержит `canTouch`, `nextTouchAt` и `update_timeout`. При живом
+исследовании 2026-07-19 слишком ранний POST с корректным XSRF вернул `409`.
+Scheduler использует `nextTouchAt`; период нельзя жёстко зашивать как четыре
+часа. `resume.publish` для первой публикации/изменённого резюме остаётся
+отдельной операцией.
 
 Нормализация ошибок:
 
-- `400` — публикация сейчас невозможна/невалидное состояние;
+- `400` — невалидное состояние или payload;
+- `409` — поднятие пока недоступно, перепланировать на `nextTouchAt`;
 - `403` — неправильная роль или авторизация;
 - `404` — резюме недоступно;
-- `429` — слишком рано, перепланировать после server/API timestamp.
+- `429` — ограничение частоты, перепланировать после server timestamp.
 
-Paid auto-raise и ручное API publish — разные capabilities. Нажимать upsell
-`resume-update-button_actions` вместо доступной публикации нельзя.
+Платное автоматическое поднятие и ручной web touch — разные capabilities.
+Нажимать upsell `resume-update-button_actions` нельзя.
 
 ## Skill verification
 

@@ -72,7 +72,7 @@ func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
 	}
 }
 
-func TestResumePublishJobValidation(t *testing.T) {
+func TestResumeTouchJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
 		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
@@ -80,7 +80,7 @@ func TestResumePublishJobValidation(t *testing.T) {
 		Jobs: []Job{{
 			Tag: "publish-primary", Enabled: true, Concurrency: JobConcurrencyForbid,
 			Triggers: []JobTrigger{{Type: "cron", Expression: "15 * * * *", Timezone: "Europe/Moscow", Misfire: "run_once", Jitter: JitterConfig{Min: "1m", Max: "10m"}}},
-			Action:   JobAction{Type: JobActionResumePublish, Profile: "primary"},
+			Action:   JobAction{Type: JobActionResumeTouch, Profile: "primary"},
 		}},
 	}
 	if err := config.Validate(); err != nil {
