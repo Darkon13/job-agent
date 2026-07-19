@@ -1,0 +1,17 @@
+{
+  "tag": "mock-reviewed",
+  "name": "Синтетический qualification block",
+  "kind": "qualification",
+  "platform": "mock",
+  "match": {},
+  "answers": [
+    {
+      "question": "Вопрос 1: выберите один вариант",
+      "selected_options": ["Ответ В"]
+    },
+    {
+      "question": "Вопрос 2: выберите другой вариант",
+      "selected_options": ["Вариант Д"]
+    }
+  ]
+}

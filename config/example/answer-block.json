@@ -1,0 +1,17 @@
+{
+  "tag": "reviewed-example",
+  "name": "Reviewed qualification example",
+  "kind": "qualification",
+  "platform": "mock",
+  "match": {},
+  "answers": [
+    {
+      "question": "Synthetic single-choice question",
+      "selected_options": ["User-reviewed option text"]
+    },
+    {
+      "question": "Synthetic open question",
+      "text": "User-provided answer"
+    }
+  ]
+}

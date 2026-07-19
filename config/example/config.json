@@ -1,0 +1,63 @@
+{
+  "database": {
+    "driver": "sqlite",
+    "path": "./data/job-agent.db"
+  },
+  "adapters": [
+    {
+      "tag": "hh-main",
+      "type": "hh",
+      "settings": {
+        "api_delay_ms": 350
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "tag": "primary",
+      "adapter": "hh-main",
+      "state_file": "./data/profiles/primary.json",
+      "enabled": true
+    },
+    {
+      "tag": "secondary",
+      "adapter": "hh-main",
+      "state_file": "./data/profiles/secondary.json",
+      "enabled": true
+    }
+  ],
+  "searches": [
+    {
+      "tag": "golang-primary",
+      "adapter": "hh-main",
+      "profiles": ["primary", "secondary"],
+      "priority": 100,
+      "target_applications": 20,
+      "fallback": "backend-fallback",
+      "query": {
+        "source": "global",
+        "text": "Golang developer",
+        "area": ["1"],
+        "schedule": ["remote"],
+        "salary": 250000,
+        "order_by": "publication_time",
+        "period": 7
+      }
+    },
+    {
+      "tag": "backend-fallback",
+      "adapter": "hh-main",
+      "profiles": ["primary", "secondary"],
+      "priority": 50,
+      "target_applications": 10,
+      "query": {
+        "source": "global",
+        "text": "Backend developer",
+        "area": ["1"],
+        "schedule": ["remote"],
+        "order_by": "publication_time",
+        "period": 7
+      }
+    }
+  ]
+}
