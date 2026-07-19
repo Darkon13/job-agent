@@ -64,6 +64,49 @@ type ReviewSelection struct {
 	SelectedAt      time.Time        `json:"selected_at"`
 }
 
+func (session ReviewSession) Validate() error {
+	if session.ID == "" || session.TestDefinitionID == "" || session.Platform == "" || session.ProfileID == "" || session.CorrelationID == "" {
+		return errors.New("review session requires id, test definition, platform, profile and correlation id")
+	}
+	if session.Revision == 0 || session.CreatedAt.IsZero() || session.UpdatedAt.Before(session.CreatedAt) {
+		return errors.New("review session has invalid revision or timestamps")
+	}
+	switch session.Status {
+	case ReviewPending, ReviewWaiting, ReviewAnswered, ReviewCompleted, ReviewCancelled, ReviewUnsupported, ReviewExpired:
+		return nil
+	default:
+		return fmt.Errorf("review session has unsupported status %q", session.Status)
+	}
+}
+
+func (prompt ReviewPrompt) Validate() error {
+	if prompt.ID == "" || prompt.SessionID == "" || prompt.Revision == 0 || prompt.CreatedAt.IsZero() {
+		return errors.New("review prompt requires id, session, revision and created_at")
+	}
+	if prompt.Deadline != nil && !prompt.Deadline.After(prompt.CreatedAt) {
+		return errors.New("review prompt deadline must follow created_at")
+	}
+	return validateQuestion(prompt.Question)
+}
+
+func (selection ReviewSelection) Validate() error {
+	if selection.PromptID == "" || selection.SessionID == "" || selection.Revision == 0 || selection.Source == "" || selection.SelectedAt.IsZero() {
+		return errors.New("review selection requires prompt, session, revision, source and selected_at")
+	}
+	if selection.Text == "" && len(selection.SelectedOptions) == 0 {
+		return errors.New("review selection requires an answer")
+	}
+	if selection.Text != "" && len(selection.SelectedOptions) != 0 {
+		return errors.New("review selection mixes text and selected options")
+	}
+	switch selection.Assessment {
+	case AssessmentUnverified, AssessmentAccepted, AssessmentRejected:
+		return nil
+	default:
+		return fmt.Errorf("review selection has unsupported assessment %q", selection.Assessment)
+	}
+}
+
 func NewReviewSession(id ReviewSessionID, definition TestDefinition, profileID ProfileID, correlationID CorrelationID, now time.Time) (ReviewSession, error) {
 	if id == "" || definition.ID == "" || definition.Platform == "" || profileID == "" || correlationID == "" {
 		return ReviewSession{}, errors.New("review session requires id, test definition, platform, profile and correlation id")
@@ -78,6 +121,37 @@ func NewReviewSession(id ReviewSessionID, definition TestDefinition, profileID P
 	}, nil
 }
 
+// WaitForAnswer validates a newly extracted runtime prompt and marks the
+// session as waiting without advancing its optimistic revision.
+func (session *ReviewSession) WaitForAnswer(prompt ReviewPrompt, now time.Time) error {
+	if session == nil {
+		return errors.New("review session is nil")
+	}
+	if session.Status != ReviewPending && session.Status != ReviewAnswered {
+		return fmt.Errorf("review session cannot accept prompt in status %q", session.Status)
+	}
+	if prompt.ID == "" || prompt.SessionID != session.ID || prompt.Revision != session.Revision {
+		return errors.New("review prompt requires id and current session revision")
+	}
+	if prompt.CreatedAt.IsZero() || now.IsZero() || now.Before(session.UpdatedAt) || now.Before(prompt.CreatedAt) {
+		return errors.New("review prompt has invalid time")
+	}
+	if prompt.Deadline != nil && !prompt.Deadline.After(now) {
+		return errors.New("review prompt deadline must be in the future")
+	}
+	if err := validateQuestion(prompt.Question); err != nil {
+		return err
+	}
+	if prompt.Question.Kind == QuestionCode {
+		session.Status = ReviewUnsupported
+		session.UpdatedAt = now
+		return errors.New("code questions are not supported")
+	}
+	session.Status = ReviewWaiting
+	session.UpdatedAt = now
+	return nil
+}
+
 // RecordSelection validates optimistic concurrency and the shape of a client
 // response. Persistence remains append-only and is handled by a repository.
 func (session *ReviewSession) RecordSelection(prompt ReviewPrompt, selectedOptions []string, answerText, source string, expectedRevision uint64, now time.Time) (ReviewSelection, error) {
@@ -86,6 +160,9 @@ func (session *ReviewSession) RecordSelection(prompt ReviewPrompt, selectedOptio
 	}
 	if session.Status == ReviewUnsupported {
 		return ReviewSelection{}, errors.New("review session contains an unsupported question kind")
+	}
+	if session.Status != ReviewWaiting {
+		return ReviewSelection{}, fmt.Errorf("review session is not waiting for an answer: %q", session.Status)
 	}
 	if prompt.SessionID != session.ID {
 		return ReviewSelection{}, errors.New("review prompt belongs to another session")

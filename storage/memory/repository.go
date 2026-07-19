@@ -13,6 +13,8 @@ import (
 var (
 	_ storage.VacancyRepository     = (*Repository)(nil)
 	_ storage.ApplicationRepository = (*Repository)(nil)
+	_ storage.TestCatalogRepository = (*Repository)(nil)
+	_ storage.ReviewRepository      = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -26,6 +28,10 @@ type Repository struct {
 	vacancies    map[core.VacancyKey]core.Vacancy
 	discoveries  map[discoveryKey]core.VacancyDiscovery
 	applications map[core.ApplicationKey]core.Application
+	tests        map[core.TestDefinitionID]core.TestDefinition
+	reviews      map[core.ReviewSessionID]core.ReviewSession
+	prompts      map[core.ReviewPromptID]core.ReviewPrompt
+	selections   map[core.ReviewSessionID][]core.ReviewSelection
 }
 
 func NewRepository() *Repository {
@@ -33,6 +39,10 @@ func NewRepository() *Repository {
 		vacancies:    make(map[core.VacancyKey]core.Vacancy),
 		discoveries:  make(map[discoveryKey]core.VacancyDiscovery),
 		applications: make(map[core.ApplicationKey]core.Application),
+		tests:        make(map[core.TestDefinitionID]core.TestDefinition),
+		reviews:      make(map[core.ReviewSessionID]core.ReviewSession),
+		prompts:      make(map[core.ReviewPromptID]core.ReviewPrompt),
+		selections:   make(map[core.ReviewSessionID][]core.ReviewSelection),
 	}
 }
 

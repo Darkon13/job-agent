@@ -94,8 +94,8 @@ func TestCodeQuestionCanBeCataloguedButCannotBeAutoResolved(t *testing.T) {
 		ID: "prompt-code", SessionID: session.ID, Revision: session.Revision,
 		Question: questionnaire.Questions[0], CreatedAt: now,
 	}
-	if _, err := session.RecordSelection(prompt, nil, "package main", "rest", 1, now.Add(time.Minute)); err == nil {
-		t.Fatal("expected code review selection to be rejected")
+	if err := session.WaitForAnswer(prompt, now.Add(time.Minute)); err == nil {
+		t.Fatal("expected code review prompt to be rejected")
 	}
 	if session.Status != ReviewUnsupported {
 		t.Fatalf("got status %q, want %q after code prompt", session.Status, ReviewUnsupported)
@@ -121,6 +121,9 @@ func TestReviewSelectionKeepsOptionsAndRejectsStaleClient(t *testing.T) {
 		Question: Question{ID: "runtime-q1", Text: "Choose", Kind: QuestionSingle, Options: []QuestionOption{
 			{ID: "runtime-a", Text: "Alpha"}, {ID: "runtime-b", Text: "Beta"},
 		}}, CreatedAt: now,
+	}
+	if err := session.WaitForAnswer(prompt, now); err != nil {
+		t.Fatalf("wait for answer: %v", err)
 	}
 	selection, err := session.RecordSelection(prompt, []string{"Beta"}, "", "telegram", 1, now.Add(time.Minute))
 	if err != nil {

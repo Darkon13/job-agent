@@ -30,10 +30,13 @@ type Store struct {
 }
 
 type Stats struct {
-	Vacancies    int
-	Discoveries  int
-	Applications int
-	Tasks        int
+	Vacancies        int
+	Discoveries      int
+	Applications     int
+	Tasks            int
+	TestDefinitions  int
+	ReviewSessions   int
+	ReviewSelections int
 }
 
 func Open(path string) (*Store, error) {
@@ -282,6 +285,8 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 	}{
 		{"vacancies", &stats.Vacancies}, {"vacancy_discoveries", &stats.Discoveries},
 		{"applications", &stats.Applications}, {"tasks", &stats.Tasks},
+		{"test_definitions", &stats.TestDefinitions}, {"review_sessions", &stats.ReviewSessions},
+		{"review_selections", &stats.ReviewSelections},
 	} {
 		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+item.table).Scan(item.value); err != nil {
 			return Stats{}, fmt.Errorf("count %s: %w", item.table, err)

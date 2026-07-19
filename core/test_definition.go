@@ -53,6 +53,36 @@ type TestDefinition struct {
 	UpdatedAt              time.Time                `json:"updated_at"`
 }
 
+func (definition TestDefinition) Validate() error {
+	if definition.ID == "" || definition.Platform == "" || strings.TrimSpace(definition.ExternalID) == "" {
+		return errors.New("test definition requires id, platform and external id")
+	}
+	if definition.DiscoveredAt.IsZero() || definition.UpdatedAt.Before(definition.DiscoveredAt) {
+		return errors.New("test definition has invalid timestamps")
+	}
+	if definition.Qualification != nil {
+		if err := validateQualificationDescriptor(*definition.Qualification); err != nil {
+			return err
+		}
+	}
+	if definition.LastAttemptFingerprint != "" {
+		if err := validateSHA256Fingerprint(definition.LastAttemptFingerprint); err != nil {
+			return fmt.Errorf("last attempt: %w", err)
+		}
+	}
+	seen := make(map[string]struct{}, len(definition.Questions))
+	for _, stored := range definition.Questions {
+		if err := validateStoredTestQuestion(stored); err != nil {
+			return err
+		}
+		if _, exists := seen[stored.Fingerprint]; exists {
+			return fmt.Errorf("test definition contains duplicate question fingerprint %s", stored.Fingerprint)
+		}
+		seen[stored.Fingerprint] = struct{}{}
+	}
+	return nil
+}
+
 // NewProgressiveTestDefinition creates a catalog entry before an attempt starts
 // and therefore does not require any questions to be known.
 func NewProgressiveTestDefinition(platform Platform, externalID, title string, qualification *QualificationDescriptor, now time.Time) (TestDefinition, error) {
@@ -209,4 +239,22 @@ func cloneQualificationDescriptor(source QualificationDescriptor) QualificationD
 		result.LevelOrder = &order
 	}
 	return result
+}
+
+func validateStoredTestQuestion(stored TestQuestion) error {
+	if stored.FirstSeenAt.IsZero() || stored.LastSeenAt.Before(stored.FirstSeenAt) {
+		return fmt.Errorf("test question %q has invalid timestamps", stored.Text)
+	}
+	question := Question{ID: "stored", Text: stored.Text, Kind: stored.Kind}
+	for index, option := range stored.Options {
+		question.Options = append(question.Options, QuestionOption{ID: fmt.Sprintf("stored-%d", index), Text: option.Text})
+	}
+	fingerprint, err := QuestionFingerprint(question)
+	if err != nil {
+		return fmt.Errorf("test question %q: %w", stored.Text, err)
+	}
+	if fingerprint != stored.Fingerprint {
+		return fmt.Errorf("test question %q fingerprint mismatch", stored.Text)
+	}
+	return nil
 }

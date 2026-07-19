@@ -57,6 +57,13 @@ applications и idempotent tasks в одном файле. In-memory реали�
 для быстрых unit-тестов. Путь задаётся через `database.path`; каталог и файл БД
 создаются при запуске автоматически.
 
+SQLite и memory stores также реализуют progressive test catalog и human review
+history. Каталог создаётся до начала попытки и пополняется вопросами независимо;
+изменённый набор вариантов сохраняется под новым question fingerprint. Review
+prompt включает полный runtime-вопрос, а выбор пользователя append-ится вместе
+с атомарным CAS по session revision, поэтому повторные REST/TG callbacks не
+могут отправить два ответа.
+
 Consumer очереди атомарно получает задачу вместе с ограниченным lease и
 случайным token. Поддерживаются heartbeat/extend, complete, delayed retry и
 terminal fail. После падения worker задача повторно выдаётся по окончании lease,
