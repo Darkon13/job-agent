@@ -117,6 +117,16 @@ application transport. Текущий HH-адаптер пока умеет ва
 объекты, но не отправляет HTTP/browser-отклики, поэтому накопленные задачи не
 потребляются и не помечаются ошибочными до реализации транспорта.
 
+Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
+timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
+`next_run_at` в SQLite и создаёт обычную durable `resume.publish` task. После
+простоя пропущенные интервалы схлопываются в один запуск. Jitter записывается в
+`available_at`, поэтому worker не удерживает lease во время ожидания. Реальный
+resume publisher обязан сверяться с `can_publish_or_update`/`next_publish_at`
+платформы и возвращать `Retry-After`; четырёхчасовой интервал не зашит в core.
+Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
+transport, чтобы не копить заведомо невыполнимые действия.
+
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.mark_read` и
 `conversation.sync`. Handler передаёт transport-у task idempotency key,

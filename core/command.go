@@ -12,6 +12,18 @@ type ApplicationSubmitPayload struct {
 	Key           ApplicationKey `json:"key"`
 }
 
+type ResumePublishPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+	ResumeID  string    `json:"resume_id"`
+}
+
+func (payload ResumePublishPayload) Validate() error {
+	if strings.TrimSpace(string(payload.ProfileID)) == "" || strings.TrimSpace(payload.ResumeID) == "" {
+		return errors.New("resume publish payload requires profile and resume")
+	}
+	return nil
+}
+
 func (payload ApplicationSubmitPayload) Validate() error {
 	if payload.ApplicationID == "" {
 		return errors.New("application submit payload requires application id")

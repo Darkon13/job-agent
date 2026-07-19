@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"github.com/Darkon13/job-agent/broker"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
 	"github.com/Darkon13/job-agent/workflow"
@@ -72,6 +74,7 @@ func main() {
 	}
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
+	resumePublishers := taskworker.NewResumePublisherRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
 		instance := instances[profile.Adapter]
@@ -83,6 +86,11 @@ func main() {
 		if transport, ok := instance.(adapter.ApplicationTransport); ok {
 			if err := applicationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
 				log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+			}
+		}
+		if publisher, ok := instance.(adapter.ResumePublisher); ok {
+			if err := resumePublishers.Register(core.ProfileID(profile.Tag), publisher); err != nil {
+				log.Fatalf("register resume publisher for profile %q: %v", profile.Tag, err)
 			}
 		}
 		if profile.Resume != "" {
@@ -112,19 +120,45 @@ func main() {
 		}
 		workers = append(workers, applicationWorker)
 	}
+	if resumePublishers.Count() > 0 {
+		resumeHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
+		if err != nil {
+			log.Fatalf("create resume publish handler: %v", err)
+		}
+		resumeWorker, err := newTaskWorker(store, core.TaskResumePublish, resumeHandler.Handle)
+		if err != nil {
+			log.Fatalf("create resume publish worker: %v", err)
+		}
+		workers = append(workers, resumeWorker)
+	}
+	definitions, err := resumePublishDefinitions(cfg, instances, resumePublishers)
+	if err != nil {
+		log.Fatalf("build scheduled jobs: %v", err)
+	}
+	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	if err != nil {
+		log.Fatalf("create scheduler: %v", err)
+	}
+	if err := scheduler.Sync(context.Background(), definitions); err != nil {
+		log.Fatalf("sync scheduled jobs: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, workers); err != nil {
+	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow, workers []*taskworker.Worker) error {
+func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow, scheduler *jobscheduler.Scheduler, workers []*taskworker.Worker) error {
 	if _, err := conversationWorkflow.ReconcileDueFollowUps(ctx, time.Now().UTC()); err != nil {
 		return fmt.Errorf("initial follow-up reconcile: %w", err)
 	}
 	go reconcileFollowUps(ctx, cfg.Server.ReconcileInterval(), conversationWorkflow)
+	if _, err := scheduler.ReconcileDue(ctx); err != nil {
+		return fmt.Errorf("initial job reconcile: %w", err)
+	}
+	go reconcileJobs(ctx, cfg.Server.SchedulerInterval(), scheduler)
 
 	server := &http.Server{
 		Addr:              cfg.Server.ListenAddress(),
@@ -156,7 +190,7 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return nil
 		}
-		return fmt.Errorf("conversation worker: %w", err)
+		return fmt.Errorf("task worker: %w", err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -165,6 +199,42 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		}
 		return nil
 	}
+}
+
+func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, publishers *taskworker.ResumePublisherRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionResumePublish {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled || !publishers.Has(profileID) {
+			continue
+		}
+		resumeID := job.Action.Resume
+		if resumeID == "" {
+			resumeID = profile.Resume
+		}
+		payload, err := json.Marshal(core.ResumePublishPayload{ProfileID: profileID, ResumeID: resumeID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
 }
 
 func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.ConversationHandlers) ([]*taskworker.Worker, error) {
@@ -212,6 +282,21 @@ func reconcileFollowUps(ctx context.Context, interval time.Duration, conversatio
 			}
 			if result.TasksCreated > 0 {
 				log.Printf("reconciled %d due follow-ups, created %d tasks", result.Due, result.TasksCreated)
+			}
+		}
+	}
+}
+
+func reconcileJobs(ctx context.Context, interval time.Duration, scheduler *jobscheduler.Scheduler) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := scheduler.ReconcileDue(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("reconcile scheduled jobs: %v", err)
 			}
 		}
 	}

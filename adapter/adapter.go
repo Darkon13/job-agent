@@ -54,6 +54,20 @@ type ApplicationTransport interface {
 	SubmitApplication(ctx context.Context, command ApplicationSubmitCommand) (ApplicationSubmitResult, error)
 }
 
+type ResumePublishCommand struct {
+	ProfileID      core.ProfileID
+	ResumeID       string
+	IdempotencyKey string
+}
+
+type ResumePublishResult struct {
+	NextPublishAt *time.Time
+}
+
+type ResumePublisher interface {
+	PublishResume(ctx context.Context, command ResumePublishCommand) (ResumePublishResult, error)
+}
+
 // Adapter is a facade over all transports used by one platform. Workflows
 // depend on the smaller capability interfaces instead of this full facade.
 type Adapter interface {
