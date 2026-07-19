@@ -234,6 +234,33 @@ func (store *Store) Application(ctx context.Context, key core.ApplicationKey) (c
 	return application, nil
 }
 
+func (store *Store) SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error {
+	if candidate.ID == "" || expectedStatus == "" {
+		return errors.New("application save requires id and expected status")
+	}
+	if err := candidate.Key.Validate(); err != nil {
+		return err
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE applications SET
+		status = ?, attempts = ?, external_negotiation_id = ?, failure_category = ?,
+		failure_message = ?, updated_at = ?, submitted_at = ?
+		WHERE id = ? AND profile_id = ? AND platform = ? AND external_id = ? AND status = ?`,
+		candidate.Status, candidate.Attempts, candidate.ExternalNegotiationID, candidate.FailureCategory,
+		candidate.FailureMessage, candidate.UpdatedAt.UnixNano(), nullableTime(candidate.SubmittedAt),
+		candidate.ID, candidate.Key.ProfileID, candidate.Key.Vacancy.Platform, candidate.Key.Vacancy.ExternalID, expectedStatus)
+	if err != nil {
+		return fmt.Errorf("save application %s: %w", candidate.ID, err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return storage.ErrRevisionConflict
+	}
+	return nil
+}
+
 func (store *Store) Vacancy(ctx context.Context, key core.VacancyKey) (core.Vacancy, error) {
 	if err := key.Validate(); err != nil {
 		return core.Vacancy{}, err

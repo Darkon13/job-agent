@@ -3,12 +3,14 @@ package sqlite_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	"github.com/Darkon13/job-agent/workflow"
 )
@@ -164,5 +166,47 @@ func TestStoreReturnsExistingApplicationAndRejectsTaskKeyConflict(t *testing.T) 
 	conflict.Payload = json.RawMessage(`{"application_id":"different"}`)
 	if _, err := store.Enqueue(ctx, conflict); err == nil {
 		t.Fatal("expected idempotency conflict")
+	}
+}
+
+func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	vacancy := core.Vacancy{Platform: "hh", ExternalID: "42", Title: "Go", State: core.VacancyStateOpen, ObservedAt: now}
+	if _, err := store.UpsertVacancy(ctx, vacancy); err != nil {
+		t.Fatalf("store vacancy: %v", err)
+	}
+	application, err := core.NewApplication("application-1", core.ApplicationKey{ProfileID: "primary", Vacancy: vacancy.Key()}, now)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if _, created, err := store.CreateApplication(ctx, application); err != nil || !created {
+		t.Fatalf("create application: created=%v err=%v", created, err)
+	}
+
+	candidate := application
+	for _, status := range []core.ApplicationStatus{core.ApplicationPreparing, core.ApplicationReady, core.ApplicationSubmitting} {
+		if err := candidate.Transition(status, candidate.UpdatedAt.Add(time.Second)); err != nil {
+			t.Fatalf("transition to %s: %v", status, err)
+		}
+	}
+	if err := store.SaveApplication(ctx, candidate, core.ApplicationNew); err != nil {
+		t.Fatalf("save application: %v", err)
+	}
+	if err := store.SaveApplication(ctx, application, core.ApplicationNew); !errors.Is(err, storage.ErrRevisionConflict) {
+		t.Fatalf("expected status conflict, got %v", err)
+	}
+	stored, err := store.Application(ctx, application.Key)
+	if err != nil {
+		t.Fatalf("load application: %v", err)
+	}
+	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 {
+		t.Fatalf("unexpected stored application: %#v", stored)
 	}
 }

@@ -19,6 +19,8 @@ type ApplicationRepository interface {
 	// CreateApplication returns the already stored application when the unique
 	// profile/vacancy key exists. Callers must use the returned ID.
 	CreateApplication(ctx context.Context, candidate core.Application) (stored core.Application, created bool, err error)
+	Application(ctx context.Context, key core.ApplicationKey) (core.Application, error)
+	SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error
 }
 
 type TestDefinitionFilter struct {

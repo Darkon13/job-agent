@@ -119,6 +119,42 @@ func (repository *Repository) CreateApplication(ctx context.Context, candidate c
 	return candidate, true, nil
 }
 
+func (repository *Repository) Application(ctx context.Context, key core.ApplicationKey) (core.Application, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Application{}, err
+	}
+	if err := key.Validate(); err != nil {
+		return core.Application{}, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	application, exists := repository.applications[key]
+	if !exists {
+		return core.Application{}, errors.New("application not found")
+	}
+	return application, nil
+}
+
+func (repository *Repository) SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if candidate.ID == "" || expectedStatus == "" {
+		return errors.New("application save requires id and expected status")
+	}
+	if err := candidate.Key.Validate(); err != nil {
+		return err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	stored, exists := repository.applications[candidate.Key]
+	if !exists || stored.ID != candidate.ID || stored.Status != expectedStatus {
+		return storage.ErrRevisionConflict
+	}
+	repository.applications[candidate.Key] = candidate
+	return nil
+}
+
 func (repository *Repository) Applications() []core.Application {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
