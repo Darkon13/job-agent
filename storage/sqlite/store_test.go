@@ -27,6 +27,13 @@ func (clock clock) Now() time.Time { return clock.now }
 
 type ids struct{ next int }
 
+func openStore(path string) (*storesqlite.Store, error) {
+	if err := storesqlite.MigrateUp(path); err != nil {
+		return nil, err
+	}
+	return storesqlite.Open(path)
+}
+
 func (generator *ids) NewID(prefix string) (string, error) {
 	generator.next++
 	return fmt.Sprintf("%s-%d", prefix, generator.next), nil
@@ -40,7 +47,7 @@ func TestStorePersistsWorkflowStateAcrossReopen(t *testing.T) {
 		{Platform: "hh", ExternalID: "42", URL: "https://hh.ru/vacancy/42", Title: "Go developer", Employer: "Example", State: core.VacancyStateOpen, ObservedAt: now, Attributes: map[string]any{"area": "1"}},
 	}}}
 
-	store, err := storesqlite.Open(path)
+	store, err := openStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -68,7 +75,7 @@ func TestStorePersistsWorkflowStateAcrossReopen(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 
-	reopened, err := storesqlite.Open(path)
+	reopened, err := openStore(path)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -114,7 +121,7 @@ func TestStorePersistsWorkflowStateAcrossReopen(t *testing.T) {
 func TestStoreReturnsExistingApplicationAndRejectsTaskKeyConflict(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
-	store, err := storesqlite.Open(filepath.Join(t.TempDir(), "job-agent.db"))
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

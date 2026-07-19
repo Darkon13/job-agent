@@ -10,7 +10,6 @@ import (
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
-	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
 func TestStorePersistsProgressiveTestCatalogAcrossReopen(t *testing.T) {
@@ -25,7 +24,7 @@ func TestStorePersistsProgressiveTestCatalogAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new test definition: %v", err)
 	}
-	store, err := storesqlite.Open(path)
+	store, err := openStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -62,7 +61,7 @@ func TestStorePersistsProgressiveTestCatalogAcrossReopen(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 
-	reopened, err := storesqlite.Open(path)
+	reopened, err := openStore(path)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -88,7 +87,7 @@ func TestStorePersistsProgressiveTestCatalogAcrossReopen(t *testing.T) {
 func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	store, err := storesqlite.Open(filepath.Join(t.TempDir(), "job-agent.db"))
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

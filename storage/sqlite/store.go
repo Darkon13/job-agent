@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -24,6 +23,8 @@ var (
 	_ storage.ApplicationRepository = (*Store)(nil)
 	_ broker.TaskQueue              = (*Store)(nil)
 )
+
+var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")
 
 type Store struct {
 	db *sql.DB
@@ -62,7 +63,7 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	if err := store.migrate(context.Background()); err != nil {
+	if err := store.checkSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -76,31 +77,17 @@ func (store *Store) Close() error {
 	return store.db.Close()
 }
 
-func (store *Store) migrate(ctx context.Context) error {
-	var version int
-	if err := store.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("read sqlite schema version: %w", err)
+func (store *Store) checkSchema(ctx context.Context) error {
+	var version uint
+	var dirty bool
+	if err := store.db.QueryRowContext(ctx, `SELECT version, dirty FROM schema_migrations LIMIT 1`).Scan(&version, &dirty); err != nil {
+		return fmt.Errorf("%w: %v", ErrSchemaNotReady, err)
 	}
-	if version > len(migrations) {
-		return fmt.Errorf("sqlite schema version %d is newer than supported version %d", version, len(migrations))
+	if dirty {
+		return fmt.Errorf("%w: migration version %d is dirty", ErrSchemaNotReady, version)
 	}
-	for version < len(migrations) {
-		tx, err := store.db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin sqlite migration %d: %w", version+1, err)
-		}
-		if _, err := tx.ExecContext(ctx, migrations[version]); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("apply sqlite migration %d: %w", version+1, err)
-		}
-		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = "+strconv.Itoa(version+1)); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("record sqlite migration %d: %w", version+1, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit sqlite migration %d: %w", version+1, err)
-		}
-		version++
+	if version != LatestSchemaVersion {
+		return fmt.Errorf("%w: database version %d, required %d", ErrSchemaNotReady, version, LatestSchemaVersion)
 	}
 	return nil
 }

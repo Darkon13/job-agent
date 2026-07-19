@@ -30,7 +30,7 @@ func (store *Store) UpsertTestDefinition(ctx context.Context, definition core.Te
 	familyID, familyName, levelID, levelName, levelOrder := qualificationColumns(definition.Qualification)
 	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO test_definitions
 		(id, platform, external_id, title, family_id, family_name, level_id, level_name,
-		 level_order, last_attempt_fingerprint, observed_attempts, discovered_at, updated_at)
+		level_order, last_attempt_fingerprint, observed_attempts, discovered_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		definition.ID, definition.Platform, definition.ExternalID, definition.Title,
 		familyID, familyName, levelID, levelName, levelOrder, definition.LastAttemptFingerprint,

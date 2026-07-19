@@ -51,11 +51,26 @@ Core уже содержит:
 idempotency key; повторный запуск восстанавливает постановку задачи, если
 предыдущая попытка успела сохранить отклик, но не дошла до очереди.
 
-Для постоянного состояния доступен SQLite store с автоматическими миграциями:
-он реализует те же repository/broker-порты и сохраняет vacancies, discoveries,
-applications и idempotent tasks в одном файле. In-memory реализации остаются
-для быстрых unit-тестов. Путь задаётся через `database.path`; каталог и файл БД
-создаются при запуске автоматически.
+Для постоянного состояния доступен SQLite store: он реализует те же
+repository/broker-порты и сохраняет vacancies, discoveries, applications и
+idempotent tasks в одном файле. In-memory реализации остаются для быстрых
+unit-тестов. Путь задаётся через `database.path`.
+
+Миграции не выполняются при старте основного сервиса. Отдельный entrypoint на
+`golang-migrate` применяет embedded versioned SQL; после этого `job-agent`
+проверяет точную schema version и отказывается работать с отсутствующей,
+устаревшей или dirty-схемой:
+
+```sh
+go run ./cmd/job-agent-migrate -config ./config/example/config.json up
+go run ./cmd/job-agent ./config/example/config.json
+```
+
+Доступны `version`, пошаговый `up -steps N`, bounded rollback
+`down -steps N` и аварийный `force VERSION`. Неограниченный `down` запрещён.
+Базы раннего прототипа с `PRAGMA user_version` 1–3 проверяются по ожидаемым
+таблицам/колонкам и один раз переводятся на `schema_migrations`; неизвестная или
+несовместимая legacy-схема автоматически не принимается.
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;
@@ -78,6 +93,7 @@ HH-адаптер умеет проверять собственную поис�
 
 ```sh
 go test ./...
+go run ./cmd/job-agent-migrate -config ./config/example/config.json up
 go run ./cmd/job-agent ./config/example/config.json
 ```
 

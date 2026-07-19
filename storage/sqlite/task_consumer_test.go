@@ -11,14 +11,13 @@ import (
 
 	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/core"
-	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
 func TestTaskLeaseSurvivesReopenAndCanBeReclaimed(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "queue.db")
-	store, err := storesqlite.Open(path)
+	store, err := openStore(path)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -34,7 +33,7 @@ func TestTaskLeaseSurvivesReopenAndCanBeReclaimed(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	store, err = storesqlite.Open(path)
+	store, err = openStore(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -65,7 +64,7 @@ func TestTaskLeaseSurvivesReopenAndCanBeReclaimed(t *testing.T) {
 func TestTaskClaimIsAtomicAcrossWorkers(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
-	store, err := storesqlite.Open(filepath.Join(t.TempDir(), "queue.db"))
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -111,7 +110,7 @@ func TestTaskClaimIsAtomicAcrossWorkers(t *testing.T) {
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
-	store, err := storesqlite.Open(filepath.Join(t.TempDir(), "queue.db"))
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
