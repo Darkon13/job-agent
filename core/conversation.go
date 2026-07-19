@@ -115,6 +115,21 @@ type Conversation struct {
 	Revision       uint64             `json:"revision"`
 }
 
+func (conversation Conversation) Validate() error {
+	if conversation.ID == "" || conversation.Platform == "" || conversation.ProfileID == "" || strings.TrimSpace(conversation.ExternalID) == "" {
+		return errors.New("conversation requires id, platform, profile and external id")
+	}
+	switch conversation.Status {
+	case ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
+	default:
+		return errors.New("invalid conversation status")
+	}
+	if conversation.CreatedAt.IsZero() || conversation.UpdatedAt.Before(conversation.CreatedAt) || conversation.Revision < 1 {
+		return errors.New("conversation requires valid timestamps and revision")
+	}
+	return nil
+}
+
 func NewConversation(id ConversationID, platform Platform, profileID ProfileID, externalID string, now time.Time) (Conversation, error) {
 	if id == "" || platform == "" || profileID == "" || strings.TrimSpace(externalID) == "" {
 		return Conversation{}, errors.New("conversation requires id, platform, profile and external id")
@@ -265,6 +280,40 @@ type FollowUp struct {
 	Revision        uint64               `json:"revision"`
 }
 
+func (followUp FollowUp) Validate() error {
+	if followUp.ID == "" || followUp.ConversationID == "" || followUp.ProfileID == "" || followUp.Platform == "" || strings.TrimSpace(followUp.IdempotencyKey) == "" {
+		return errors.New("follow-up requires id, conversation, profile, platform and idempotency key")
+	}
+	if followUp.AnchorAt.IsZero() || followUp.CreatedAt.IsZero() || followUp.RunAt.Before(followUp.AnchorAt) ||
+		followUp.RunAt.Before(followUp.CreatedAt) || followUp.UpdatedAt.Before(followUp.CreatedAt) || followUp.Revision < 1 {
+		return errors.New("follow-up requires valid timestamps and revision")
+	}
+	if followUp.Deadline != nil && !followUp.Deadline.After(followUp.RunAt) {
+		return errors.New("follow-up deadline must be after run time")
+	}
+	if err := followUp.Content.Validate(); err != nil {
+		return err
+	}
+	if err := followUp.Policy.Validate(); err != nil {
+		return err
+	}
+	switch followUp.Status {
+	case FollowUpScheduled, FollowUpQueued, FollowUpSent, FollowUpCancelled, FollowUpFailed, FollowUpExpired:
+	default:
+		return errors.New("invalid follow-up status")
+	}
+	if followUp.Status == FollowUpSent && followUp.SentMessageID == "" {
+		return errors.New("sent follow-up requires sent message id")
+	}
+	if followUp.Status == FollowUpCancelled && followUp.CancelReason == "" {
+		return errors.New("cancelled follow-up requires cancellation reason")
+	}
+	if followUp.Status == FollowUpFailed && strings.TrimSpace(followUp.FailureMessage) == "" {
+		return errors.New("failed follow-up requires failure message")
+	}
+	return nil
+}
+
 type NewFollowUpParams struct {
 	ID              FollowUpID
 	ConversationID  ConversationID
@@ -303,13 +352,14 @@ func NewFollowUp(params NewFollowUpParams, now time.Time) (FollowUp, error) {
 		value := *params.Deadline
 		deadline = &value
 	}
-	return FollowUp{
+	followUp := FollowUp{
 		ID: params.ID, ConversationID: params.ConversationID, ProfileID: params.ProfileID,
 		Platform: params.Platform, AnchorMessageID: params.AnchorMessageID, AnchorAt: params.AnchorAt,
 		RunAt: params.RunAt, Deadline: deadline, Content: params.Content, Policy: params.Policy,
 		Status: FollowUpScheduled, IdempotencyKey: params.IdempotencyKey,
 		CreatedAt: now, UpdatedAt: now, Revision: 1,
-	}, nil
+	}
+	return followUp, followUp.Validate()
 }
 
 // CancellationFor performs the guard that must run again immediately before send.

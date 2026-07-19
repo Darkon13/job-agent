@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/Darkon13/job-agent/core"
 )
@@ -39,4 +40,29 @@ type ReviewRepository interface {
 	SaveReviewPrompt(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, expectedRevision uint64) error
 	AppendReviewSelection(ctx context.Context, session core.ReviewSession, selection core.ReviewSelection, expectedRevision uint64) error
 	ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error)
+}
+
+type ConversationFilter struct {
+	Platform  core.Platform
+	ProfileID core.ProfileID
+	Status    core.ConversationStatus
+}
+
+type FollowUpFilter struct {
+	ConversationID core.ConversationID
+	ProfileID      core.ProfileID
+	Status         core.FollowUpStatus
+	DueBefore      *time.Time
+}
+
+type ConversationRepository interface {
+	CreateConversation(ctx context.Context, candidate core.Conversation) (stored core.Conversation, created bool, err error)
+	Conversation(ctx context.Context, id core.ConversationID) (core.Conversation, error)
+	ListConversations(ctx context.Context, filter ConversationFilter) ([]core.Conversation, error)
+	AppendConversationMessage(ctx context.Context, message core.ConversationMessage, observedAt time.Time) (conversation core.Conversation, created bool, err error)
+	ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error)
+	CreateFollowUp(ctx context.Context, candidate core.FollowUp) (stored core.FollowUp, created bool, err error)
+	FollowUp(ctx context.Context, id core.FollowUpID) (core.FollowUp, error)
+	SaveFollowUp(ctx context.Context, candidate core.FollowUp, expectedRevision uint64) error
+	ListFollowUps(ctx context.Context, filter FollowUpFilter) ([]core.FollowUp, error)
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
 func TestRunMigratesConfiguredDatabase(t *testing.T) {
@@ -25,7 +27,7 @@ func TestRunMigratesConfiguredDatabase(t *testing.T) {
 	if err := run([]string{"-config", configPath, "version"}, &output); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if !strings.Contains(output.String(), "version: 3, dirty: false") {
+	if !strings.Contains(output.String(), fmt.Sprintf("version: %d, dirty: false", storesqlite.LatestSchemaVersion)) {
 		t.Fatalf("unexpected version output: %q", output.String())
 	}
 }

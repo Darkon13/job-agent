@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository     = (*Store)(nil)
-	_ storage.ApplicationRepository = (*Store)(nil)
-	_ broker.TaskQueue              = (*Store)(nil)
+	_ storage.VacancyRepository      = (*Store)(nil)
+	_ storage.ApplicationRepository  = (*Store)(nil)
+	_ storage.ConversationRepository = (*Store)(nil)
+	_ broker.TaskQueue               = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")
@@ -38,6 +39,9 @@ type Stats struct {
 	TestDefinitions  int
 	ReviewSessions   int
 	ReviewSelections int
+	Conversations    int
+	Messages         int
+	FollowUps        int
 }
 
 func Open(path string) (*Store, error) {
@@ -274,6 +278,8 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		{"applications", &stats.Applications}, {"tasks", &stats.Tasks},
 		{"test_definitions", &stats.TestDefinitions}, {"review_sessions", &stats.ReviewSessions},
 		{"review_selections", &stats.ReviewSelections},
+		{"conversations", &stats.Conversations}, {"conversation_messages", &stats.Messages},
+		{"conversation_follow_ups", &stats.FollowUps},
 	} {
 		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+item.table).Scan(item.value); err != nil {
 			return Stats{}, fmt.Errorf("count %s: %w", item.table, err)

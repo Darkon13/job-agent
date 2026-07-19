@@ -81,6 +81,12 @@ prompt включает полный runtime-вопрос, а выбор пол�
 с атомарным CAS по session revision, поэтому повторные REST/TG callbacks не
 могут отправить два ответа.
 
+Conversation storage сохраняет нормализованные диалоги, упорядоченный timeline
+сообщений и follow-up таймеры. Внешние chat/message ID и idempotency key
+дедуплицируются, обновление таймера защищено revision CAS, а выборка scheduled
+таймеров по `run_at` позволяет восстановить отложенные broker tasks после
+рестарта.
+
 Consumer очереди атомарно получает задачу вместе с ограниченным lease и
 случайным token. Поддерживаются heartbeat/extend, complete, delayed retry и
 terminal fail. После падения worker задача повторно выдаётся по окончании lease,

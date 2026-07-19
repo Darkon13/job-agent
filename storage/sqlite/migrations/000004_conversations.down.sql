@@ -1,0 +1,8 @@
+DROP INDEX conversation_follow_ups_conversation_idx;
+DROP INDEX conversation_follow_ups_due_idx;
+DROP INDEX conversations_profile_updated_idx;
+DROP TABLE conversation_follow_ups;
+DROP INDEX conversation_messages_timeline_idx;
+DROP INDEX conversation_messages_external_idx;
+DROP TABLE conversation_messages;
+DROP TABLE conversations;
