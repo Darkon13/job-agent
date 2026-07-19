@@ -18,6 +18,7 @@ import (
 var (
 	_ broker.TaskQueue    = (*Queue)(nil)
 	_ broker.TaskConsumer = (*Queue)(nil)
+	_ broker.TaskStore    = (*Queue)(nil)
 )
 
 type leaseState struct {
@@ -64,6 +65,22 @@ func (queue *Queue) Enqueue(ctx context.Context, task core.Task) (bool, error) {
 	queue.tasks[task.IdempotencyKey] = cloneTask(task)
 	queue.taskKeys[task.ID] = task.IdempotencyKey
 	return true, nil
+}
+
+func (queue *Queue) TaskByIdempotencyKey(ctx context.Context, key string) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if key == "" {
+		return core.Task{}, errors.New("task idempotency key is required")
+	}
+	queue.mu.RLock()
+	defer queue.mu.RUnlock()
+	task, exists := queue.tasks[key]
+	if !exists {
+		return core.Task{}, errors.New("task not found")
+	}
+	return cloneTask(task), nil
 }
 
 func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broker.TaskLease, bool, error) {

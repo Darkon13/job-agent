@@ -70,3 +70,22 @@ func ConversationFollowUpIdempotencyKey(followUpID FollowUpID) (string, error) {
 	digest := sha256.Sum256([]byte(followUpID))
 	return "conversation.follow_up:" + hex.EncodeToString(digest[:]), nil
 }
+
+func ConversationFollowUpRequestIdempotencyKey(conversationID ConversationID, requestKey string) (string, error) {
+	if conversationID == "" || strings.TrimSpace(requestKey) == "" {
+		return "", errors.New("follow-up request idempotency requires conversation and request key")
+	}
+	digest := sha256.Sum256([]byte(string(conversationID) + "\x00" + requestKey))
+	return "conversation.follow_up.request:" + hex.EncodeToString(digest[:]), nil
+}
+
+type ConversationIDPayload struct {
+	ConversationID ConversationID `json:"conversation_id"`
+}
+
+func (payload ConversationIDPayload) Validate() error {
+	if payload.ConversationID == "" {
+		return errors.New("conversation command payload requires conversation id")
+	}
+	return nil
+}

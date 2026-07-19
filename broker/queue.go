@@ -15,6 +15,11 @@ type TaskQueue interface {
 	Enqueue(ctx context.Context, task core.Task) (created bool, err error)
 }
 
+type TaskStore interface {
+	TaskQueue
+	TaskByIdempotencyKey(ctx context.Context, key string) (core.Task, error)
+}
+
 type ClaimParams struct {
 	WorkerID      string
 	Now           time.Time

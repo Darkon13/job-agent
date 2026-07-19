@@ -19,6 +19,7 @@ const (
 	TaskConversationSend       TaskType = "conversation.send"
 	TaskConversationFollowUp   TaskType = "conversation.follow_up"
 	TaskConversationMarkRead   TaskType = "conversation.mark_read"
+	TaskConversationSync       TaskType = "conversation.sync"
 	TaskVacancyInspect         TaskType = "vacancy.inspect"
 	TaskResumePublish          TaskType = "resume.publish"
 	TaskResumeUpdate           TaskType = "resume.update"
