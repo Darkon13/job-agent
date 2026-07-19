@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/Darkon13/job-agent/core"
 )
@@ -15,6 +16,26 @@ type Descriptor interface {
 type VacancySearcher interface {
 	ValidateSearch(query json.RawMessage) error
 	Search(ctx context.Context, profileID core.ProfileID, query json.RawMessage, cursor string) (core.SearchPage, error)
+}
+
+type ConversationSendCommand struct {
+	ProfileID              core.ProfileID
+	ConversationID         core.ConversationID
+	ExternalConversationID string
+	ReplyToID              core.MessageID
+	Text                   string
+	IdempotencyKey         string
+}
+
+type ConversationSyncResult struct {
+	Messages   []core.ConversationMessage
+	ObservedAt time.Time
+}
+
+type ConversationTransport interface {
+	SendConversationMessage(ctx context.Context, command ConversationSendCommand) (core.ConversationMessage, error)
+	MarkConversationRead(ctx context.Context, profileID core.ProfileID, externalConversationID string) error
+	SyncConversation(ctx context.Context, profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) (ConversationSyncResult, error)
 }
 
 // Adapter is a facade over all transports used by one platform. Workflows

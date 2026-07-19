@@ -78,6 +78,7 @@ type Adapter struct {
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
+var _ adapter.ConversationTransport = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -158,4 +159,23 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 
 func (a *Adapter) Search(context.Context, core.ProfileID, json.RawMessage, string) (core.SearchPage, error) {
 	return core.SearchPage{}, ErrNotImplemented
+}
+
+func (a *Adapter) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
+	return core.ConversationMessage{}, hhUnsupported("conversations.send")
+}
+
+func (a *Adapter) MarkConversationRead(context.Context, core.ProfileID, string) error {
+	return hhUnsupported("conversations.mark_read")
+}
+
+func (a *Adapter) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
+	return adapter.ConversationSyncResult{}, hhUnsupported("conversations.sync")
+}
+
+func hhUnsupported(operation string) error {
+	return &core.OperationError{
+		Category: core.ErrorUnsupported, Operation: operation, Platform: Name,
+		Message: "HH conversation transport is not implemented",
+	}
 }

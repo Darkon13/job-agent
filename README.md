@@ -103,12 +103,21 @@ Consumer очереди атомарно получает задачу вмес�
 terminal fail. После падения worker задача повторно выдаётся по окончании lease,
 а запоздалый результат старого worker отклоняется.
 
+Worker runtime запускает отдельный type-filtered consumer для
+`conversation.send`, `conversation.follow_up`, `conversation.mark_read` и
+`conversation.sync`. Handler передаёт transport-у task idempotency key,
+сохраняет нормализованный результат и завершает follow-up только после записи
+исходящего сообщения. Временные, rate-limit и auth/confirmation ошибки получают
+bounded retry; unsupported и permanent ошибки завершают задачу terminal fail.
+
 Fallback между transport-реализациями разрешён только для операции, которую
 текущий transport не поддерживает. Ошибки авторизации, валидации, rate limit и
 временные сбои не маскируются переключением на другой transport.
 
-HH-адаптер умеет проверять собственную поисковую конфигурацию. Сетевые и
-браузерные операции ещё не реализованы.
+HH-адаптер умеет проверять собственную поисковую конфигурацию и реализует
+conversation transport contract. Сетевые и браузерные операции ещё не
+реализованы, поэтому HH transport пока возвращает явный `unsupported`; fake
+transport покрывает полный worker lifecycle в тестах.
 
 ```sh
 go test ./...

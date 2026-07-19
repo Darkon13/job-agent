@@ -14,8 +14,11 @@ import (
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
 	"github.com/Darkon13/job-agent/api/httpapi"
+	"github.com/Darkon13/job-agent/broker"
 	appconfig "github.com/Darkon13/job-agent/config"
+	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
+	taskworker "github.com/Darkon13/job-agent/worker"
 	"github.com/Darkon13/job-agent/workflow"
 )
 
@@ -43,6 +46,7 @@ func main() {
 		}
 	}()
 
+	instances := make(map[string]adapter.Adapter, len(cfg.Adapters))
 	for _, item := range cfg.Adapters {
 		instance, err := registry.Open(item.Type, item.Settings)
 		if err != nil {
@@ -55,6 +59,7 @@ func main() {
 				}
 			}
 		}
+		instances[item.Tag] = instance
 	}
 
 	conversationWorkflow, err := workflow.NewConversationWorkflow(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
@@ -65,15 +70,35 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
 	}
+	transports := taskworker.NewConversationTransportRegistry()
+	for _, profile := range cfg.Profiles {
+		transport, ok := instances[profile.Adapter].(adapter.ConversationTransport)
+		if !ok {
+			continue
+		}
+		if err := transports.Register(core.ProfileID(profile.Tag), transport); err != nil {
+			log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
+		}
+	}
+	conversationHandlers, err := taskworker.NewConversationHandlers(
+		store, conversationWorkflow, transports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create conversation handlers: %v", err)
+	}
+	workers, err := conversationWorkers(store, conversationHandlers)
+	if err != nil {
+		log.Fatalf("create conversation workers: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow); err != nil {
+	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, workers); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow) error {
+func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow, workers []*taskworker.Worker) error {
 	if _, err := conversationWorkflow.ReconcileDueFollowUps(ctx, time.Now().UTC()); err != nil {
 		return fmt.Errorf("initial follow-up reconcile: %w", err)
 	}
@@ -88,6 +113,12 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		IdleTimeout:       60 * time.Second,
 	}
 	result := make(chan error, 1)
+	workerErrors := make(chan error, len(workers))
+	for _, instance := range workers {
+		go func(instance *taskworker.Worker) {
+			workerErrors <- instance.Run(ctx)
+		}(instance)
+	}
 	go func() {
 		log.Printf("job-agent API listening on http://%s", server.Addr)
 		result <- server.ListenAndServe()
@@ -99,6 +130,11 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 			return nil
 		}
 		return fmt.Errorf("serve conversation API: %w", err)
+	case err := <-workerErrors:
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return fmt.Errorf("conversation worker: %w", err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -107,6 +143,32 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		}
 		return nil
 	}
+}
+
+func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.ConversationHandlers) ([]*taskworker.Worker, error) {
+	definitions := []struct {
+		taskType core.TaskType
+		handler  taskworker.HandlerFunc
+	}{
+		{core.TaskConversationSend, handlers.Send},
+		{core.TaskConversationFollowUp, handlers.FollowUp},
+		{core.TaskConversationMarkRead, handlers.MarkRead},
+		{core.TaskConversationSync, handlers.Sync},
+	}
+	result := make([]*taskworker.Worker, 0, len(definitions))
+	for _, definition := range definitions {
+		instance, err := taskworker.New(consumer, definition.handler, taskworker.SystemClock{}, taskworker.Config{
+			ID: "conversation-" + string(definition.taskType), TaskType: definition.taskType,
+			LeaseDuration: 2 * time.Minute, HeartbeatInterval: 30 * time.Second,
+			PollInterval: time.Second, RetryBaseDelay: 5 * time.Second,
+			BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 5,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, instance)
+	}
+	return result, nil
 }
 
 func reconcileFollowUps(ctx context.Context, interval time.Duration, conversationWorkflow *workflow.ConversationWorkflow) {
