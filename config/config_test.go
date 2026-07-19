@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestConfigRequiresSQLiteDatabase(t *testing.T) {
@@ -50,5 +51,23 @@ func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 	base.Profiles[0].Bootstrap = &ProfileBootstrap{When: "empty"}
 	if err := base.Validate(); err == nil {
 		t.Fatal("expected missing bootstrap source to be rejected")
+	}
+}
+
+func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
+	config := Config{Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("validate default server: %v", err)
+	}
+	if config.Server.ListenAddress() != "127.0.0.1:8080" || config.Server.ReconcileInterval() != 30*time.Second {
+		t.Fatalf("unexpected server defaults: %#v", config.Server)
+	}
+	config.Server.Listen = "0.0.0.0:8080"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unauthenticated public bind to fail")
+	}
+	config.Server = ServerConfig{Listen: "localhost:8080", FollowUpReconcileInterval: "0s"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected non-positive reconcile interval to fail")
 	}
 }

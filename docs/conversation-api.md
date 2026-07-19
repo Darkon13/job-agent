@@ -1,10 +1,11 @@
-# Conversation API and automation
+# API чатов и автоматизация
 
-Conversation API is the common control plane for platform chats and an optional
-Telegram recruiter-account adapter. UI, MCP and notification clients use this
-API instead of calling an adapter or browser directly.
+Conversation API — единая точка управления чатами на платформах и опциональным
+адаптером пользовательского Telegram-аккаунта для переписки с рекрутерами. UI,
+MCP и клиенты уведомлений используют этот API вместо прямого обращения к
+адаптеру или браузеру.
 
-## Resources
+## Ресурсы
 
 ```text
 GET    /api/v1/profiles/{profile_id}/conversations
@@ -22,13 +23,19 @@ DELETE /api/v1/follow-ups/{follow_up_id}
 POST   /api/v1/follow-ups/{follow_up_id}/run
 ```
 
-List methods use cursor pagination. Conversation and message responses contain
-normalized fields; raw platform payloads and authentication data are not
-exposed. `sync`, `messages`, `mark-read` and `run` are asynchronous commands and
-return `202 Accepted` with a durable task ID. Every write command requires an
-`Idempotency-Key` header.
+Текущие list-handlers возвращают упорядоченный массив `items`. До включения
+неограниченной production-истории необходимо добавить cursor pagination на
+уровне storage. Ответы с диалогами и сообщениями содержат нормализованные поля;
+сырые payload платформы и данные авторизации наружу не выдаются. `sync`, отправка
+сообщения, `mark-read` и `run` являются асинхронными командами и возвращают
+`202 Accepted` с ID durable task. Для команд, создания и удаления требуется
+заголовок `Idempotency-Key`; revision-safe `PATCH` дополнительно использует
+`If-Match`.
 
-An immediate message accepts exactly one content source:
+На первом этапе сервер слушает только loopback-адрес. Публичный bind запрещён до
+реализации аутентификации и авторизации API.
+
+Немедленная отправка сообщения принимает ровно один источник содержимого:
 
 ```json
 {
@@ -39,18 +46,20 @@ An immediate message accepts exactly one content source:
 }
 ```
 
-The alternatives are `content.text` for explicit user text and
-`content.template` for a configured template. An operator may itself contain a
-model/template fallback chain, but an API request cannot provide several
-competing sources.
+Альтернативы: `content.text` для явно заданного пользователем текста и
+`content.template` для настроенного шаблона. Сам оператор может содержать
+fallback-цепочку model/template, но API-запрос не может передавать несколько
+конкурирующих источников.
 
-## One-shot follow-ups
+## Одноразовые follow-up таймеры
 
-A concrete reminder is a persistent one-shot timer, not a repeating cron task:
+Конкретное напоминание — persistent one-shot timer, а не повторяющаяся cron
+задача:
 
 ```json
 {
   "anchor_message_id": "message-42",
+  "anchor_at": "2026-07-19T12:00:00+03:00",
   "run_at": "2026-07-22T12:00:00+03:00",
   "deadline": "2026-07-22T18:00:00+03:00",
   "content": {
@@ -65,29 +74,33 @@ A concrete reminder is a persistent one-shot timer, not a repeating cron task:
 }
 ```
 
-Creation stores the follow-up and its delayed `conversation.follow_up` task in
-one transaction. `run_at` maps to `Task.AvailableAt`; `deadline` bounds late
-execution after downtime. The worker claims the task and then reloads both the
-follow-up and conversation immediately before sending.
+При создании follow-up сохраняется как durable timer и источник истины.
+Scheduler выбирает due-таймеры в статусе `scheduled` и идемпотентно ставит в
+очередь задачу `conversation.follow_up`. `run_at` становится
+`Task.AvailableAt`, а `deadline` ограничивает запоздалое выполнение после
+простоя. Такая схема сохраняет корректность `PATCH` и ручного запуска до
+enqueue. Падение рядом с enqueue исправляется следующим reconcile. После claim
+worker повторно загружает follow-up и диалог непосредственно перед отправкой.
 
-The follow-up is cancelled when:
+Follow-up отменяется, если:
 
-- an incoming message is newer than its anchor;
-- the conversation is closed, rejected or archived;
-- the related application becomes terminal;
-- a newer reminder supersedes it;
-- the user deletes it or an execution policy denies it.
+- после anchor пришло новое входящее сообщение;
+- диалог закрыт, отклонён или архивирован;
+- связанный отклик перешёл в terminal state;
+- таймер заменён более новым напоминанием;
+- пользователь удалил его или execution policy запретила отправку.
 
-`PATCH` only changes a `scheduled` follow-up and requires `If-Match` with its
-revision. `DELETE` is an idempotent cancellation; it does not delete audit
-history. `POST .../run` makes the timer due now but still executes every guard.
-The limits and cooldown are checked against sent-message history, so process
-restarts cannot reset them.
+`PATCH` изменяет только follow-up в статусе `scheduled` и требует `If-Match` с
+его revision. `DELETE` выполняет идемпотентную отмену и не удаляет audit history.
+`POST .../run` делает таймер due немедленно, но не отключает защитные проверки.
+Лимит и cooldown проверяются по сохранённой истории отправок, поэтому рестарт
+процесса их не сбрасывает.
 
-## Cron and event automation
+## Автоматизация через cron и события
 
-Cron is useful for recurring policy evaluation. It must create or reconcile
-bounded one-shot follow-ups rather than send messages directly:
+Cron используется для периодической проверки политик. Он должен создавать или
+сверять ограниченные одноразовые follow-up таймеры, а не отправлять сообщения
+напрямую:
 
 ```json
 {
@@ -110,14 +123,14 @@ bounded one-shot follow-ups rather than send messages directly:
 }
 ```
 
-An event trigger can schedule the same policy after an outgoing message or
-application state change. Incoming messages and terminal application events
-cancel matching pending timers. The scheduler, REST endpoint and event handler
-all converge on the same follow-up entity and idempotency boundary.
+Event trigger может запланировать ту же policy после исходящего сообщения или
+изменения состояния отклика. Входящие сообщения и terminal events отклика
+отменяют подходящие ожидающие таймеры. Scheduler, REST endpoint и event handler
+сходятся к одной сущности follow-up и общей idempotency boundary.
 
-## Events
+## События
 
-The conversation pipeline emits normalized events:
+Conversation pipeline публикует нормализованные события:
 
 - `conversation.message_received`;
 - `conversation.message_queued`;
@@ -127,6 +140,6 @@ The conversation pipeline emits normalized events:
 - `conversation.follow_up_scheduled`;
 - `conversation.follow_up_cancelled`.
 
-Event payloads contain IDs and structured metadata, not full private message
-history. Full text remains in conversation storage with the configured
-retention policy.
+Payload события содержит ID и структурированные метаданные, но не полную
+приватную историю переписки. Полный текст остаётся в conversation storage и
+удаляется согласно настроенной retention policy.

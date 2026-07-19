@@ -68,6 +68,11 @@ go run ./cmd/job-agent-migrate -config ./config/example/config.json up
 go run ./cmd/job-agent ./config/example/config.json
 ```
 
+Вторая команда запускает долгоживущий API на `http://127.0.0.1:8080` и
+периодический reconcile follow-up таймеров. До появления API-аутентификации
+конфигурация намеренно запрещает bind не на loopback-интерфейс. Адрес и период
+задаются через `server.listen` и `server.follow_up_reconcile_interval`.
+
 Доступны `version`, пошаговый `up -steps N`, bounded rollback
 `down -steps N` и аварийный `force VERSION`. Неограниченный `down` запрещён.
 Базы раннего прототипа с `PRAGMA user_version` 1–3 проверяются по ожидаемым
@@ -86,6 +91,12 @@ Conversation storage сохраняет нормализованные диал�
 дедуплицируются, обновление таймера защищено revision CAS, а выборка scheduled
 таймеров по `run_at` позволяет восстановить отложенные broker tasks после
 рестарта.
+
+Conversation workflow планирует таймеры, идемпотентно ставит due-задачи и перед
+отправкой повторно проверяет входящие сообщения, статус диалога, лимит и
+cooldown. Минимальный `net/http` API предоставляет чтение диалогов/messages,
+send, sync, mark-read и CRUD/run для follow-up с `Idempotency-Key` и revision
+CAS через `If-Match`.
 
 Consumer очереди атомарно получает задачу вместе с ограниченным lease и
 случайным token. Поддерживаются heartbeat/extend, complete, delayed retry и

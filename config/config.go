@@ -3,7 +3,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"time"
 )
 
 type Config struct {
@@ -11,6 +13,27 @@ type Config struct {
 	Adapters []AdapterConfig `json:"adapters"`
 	Profiles []Profile       `json:"profiles"`
 	Searches []Search        `json:"searches"`
+	Server   ServerConfig    `json:"server,omitempty"`
+}
+
+type ServerConfig struct {
+	Listen                    string `json:"listen,omitempty"`
+	FollowUpReconcileInterval string `json:"follow_up_reconcile_interval,omitempty"`
+}
+
+func (config ServerConfig) ListenAddress() string {
+	if config.Listen == "" {
+		return "127.0.0.1:8080"
+	}
+	return config.Listen
+}
+
+func (config ServerConfig) ReconcileInterval() time.Duration {
+	if config.FollowUpReconcileInterval == "" {
+		return 30 * time.Second
+	}
+	value, _ := time.ParseDuration(config.FollowUpReconcileInterval)
+	return value
 }
 
 type DatabaseConfig struct {
@@ -72,6 +95,22 @@ func (c Config) Validate() error {
 	}
 	if c.Database.Path == "" {
 		return fmt.Errorf("sqlite database requires path")
+	}
+	host, _, err := net.SplitHostPort(c.Server.ListenAddress())
+	if err != nil {
+		return fmt.Errorf("server listen address: %w", err)
+	}
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("server listen must use a loopback address until API authentication is implemented")
+		}
+	}
+	if c.Server.FollowUpReconcileInterval != "" {
+		interval, err := time.ParseDuration(c.Server.FollowUpReconcileInterval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("server follow_up_reconcile_interval must be a positive duration")
+		}
 	}
 	adapters := make(map[string]struct{}, len(c.Adapters))
 	for _, item := range c.Adapters {

@@ -3,6 +3,10 @@
     "driver": "sqlite",
     "path": "./data/job-agent.db"
   },
+  "server": {
+    "listen": "127.0.0.1:8080",
+    "follow_up_reconcile_interval": "30s"
+  },
   "adapters": [
     {
       "tag": "hh-main",
