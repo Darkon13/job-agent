@@ -59,7 +59,7 @@ func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
 	if err := config.Validate(); err != nil {
 		t.Fatalf("validate default server: %v", err)
 	}
-	if config.Server.ListenAddress() != "127.0.0.1:8080" || config.Server.ReconcileInterval() != 30*time.Second {
+	if config.Server.ListenAddress() != "127.0.0.1:8080" || config.Server.ReconcileInterval() != 30*time.Second || config.Server.SchedulerInterval() != 30*time.Second {
 		t.Fatalf("unexpected server defaults: %#v", config.Server)
 	}
 	config.Server.Listen = "0.0.0.0:8080"
@@ -69,5 +69,25 @@ func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
 	config.Server = ServerConfig{Listen: "localhost:8080", FollowUpReconcileInterval: "0s"}
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected non-positive reconcile interval to fail")
+	}
+}
+
+func TestResumePublishJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true}},
+		Jobs: []Job{{
+			Tag: "publish-primary", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "15 * * * *", Timezone: "Europe/Moscow", Misfire: "run_once", Jitter: JitterConfig{Min: "1m", Max: "10m"}}},
+			Action:   JobAction{Type: JobActionResumePublish, Profile: "primary"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid resume publish job: %v", err)
+	}
+	config.Jobs[0].Triggers[0].Jitter.Max = "30s"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected inverted jitter bounds to fail")
 	}
 }

@@ -5,7 +5,8 @@
   },
   "server": {
     "listen": "127.0.0.1:8080",
-    "follow_up_reconcile_interval": "30s"
+    "follow_up_reconcile_interval": "30s",
+    "scheduler_reconcile_interval": "30s"
   },
   "adapters": [
     {
@@ -20,6 +21,7 @@
     {
       "tag": "primary",
       "adapter": "hh-main",
+      "resume": "replace-with-hh-resume-id",
       "state_file": "./data/profiles/primary.json",
       "enabled": true
     },
@@ -28,6 +30,26 @@
       "adapter": "hh-main",
       "state_file": "./data/profiles/secondary.json",
       "enabled": true
+    }
+  ],
+  "jobs": [
+    {
+      "tag": "publish-primary-resume",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "15 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {"min": "1m", "max": "10m"}
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "resume.publish",
+        "profile": "primary"
+      }
     }
   ],
   "searches": [

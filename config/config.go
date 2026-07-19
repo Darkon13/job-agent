@@ -2,10 +2,13 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 type Config struct {
@@ -13,12 +16,60 @@ type Config struct {
 	Adapters []AdapterConfig `json:"adapters"`
 	Profiles []Profile       `json:"profiles"`
 	Searches []Search        `json:"searches"`
+	Jobs     []Job           `json:"jobs,omitempty"`
 	Server   ServerConfig    `json:"server,omitempty"`
 }
 
+const (
+	JobActionResumePublish = "resume.publish"
+	JobConcurrencyForbid   = "forbid"
+)
+
+type Job struct {
+	Tag         string       `json:"tag"`
+	Enabled     bool         `json:"enabled"`
+	Triggers    []JobTrigger `json:"triggers"`
+	Concurrency string       `json:"concurrency"`
+	Action      JobAction    `json:"action"`
+}
+
+type JobTrigger struct {
+	Type       string       `json:"type"`
+	Expression string       `json:"expression"`
+	Timezone   string       `json:"timezone"`
+	Misfire    string       `json:"misfire"`
+	Jitter     JitterConfig `json:"jitter,omitempty"`
+}
+
+type JitterConfig struct {
+	Min string `json:"min,omitempty"`
+	Max string `json:"max,omitempty"`
+}
+
+func (jitter JitterConfig) Durations() (time.Duration, time.Duration) {
+	minimum, _ := time.ParseDuration(jitter.Min)
+	maximum, _ := time.ParseDuration(jitter.Max)
+	return minimum, maximum
+}
+
+type JobAction struct {
+	Type    string `json:"type"`
+	Profile string `json:"profile"`
+	Resume  string `json:"resume,omitempty"`
+}
+
 type ServerConfig struct {
-	Listen                    string `json:"listen,omitempty"`
-	FollowUpReconcileInterval string `json:"follow_up_reconcile_interval,omitempty"`
+	Listen                     string `json:"listen,omitempty"`
+	FollowUpReconcileInterval  string `json:"follow_up_reconcile_interval,omitempty"`
+	SchedulerReconcileInterval string `json:"scheduler_reconcile_interval,omitempty"`
+}
+
+func (config ServerConfig) SchedulerInterval() time.Duration {
+	if config.SchedulerReconcileInterval == "" {
+		return 30 * time.Second
+	}
+	value, _ := time.ParseDuration(config.SchedulerReconcileInterval)
+	return value
 }
 
 func (config ServerConfig) ListenAddress() string {
@@ -113,6 +164,12 @@ func (c Config) Validate() error {
 			return fmt.Errorf("server follow_up_reconcile_interval must be a positive duration")
 		}
 	}
+	if c.Server.SchedulerReconcileInterval != "" {
+		interval, err := time.ParseDuration(c.Server.SchedulerReconcileInterval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("server scheduler_reconcile_interval must be a positive duration")
+		}
+	}
 	adapters := make(map[string]struct{}, len(c.Adapters))
 	for _, item := range c.Adapters {
 		if item.Tag == "" || item.Type == "" {
@@ -170,6 +227,82 @@ func (c Config) Validate() error {
 				return fmt.Errorf("search %q references unknown fallback %q", search.Tag, search.Fallback)
 			}
 		}
+	}
+	jobs := make(map[string]struct{}, len(c.Jobs))
+	for _, job := range c.Jobs {
+		if job.Tag == "" {
+			return fmt.Errorf("every job requires tag")
+		}
+		if _, exists := jobs[job.Tag]; exists {
+			return fmt.Errorf("duplicate job tag %q", job.Tag)
+		}
+		jobs[job.Tag] = struct{}{}
+		if !job.Enabled {
+			continue
+		}
+		if job.Concurrency != JobConcurrencyForbid {
+			return fmt.Errorf("job %q concurrency must be %q", job.Tag, JobConcurrencyForbid)
+		}
+		if len(job.Triggers) == 0 {
+			return fmt.Errorf("job %q requires at least one trigger", job.Tag)
+		}
+		for index, trigger := range job.Triggers {
+			if err := validateJobTrigger(trigger); err != nil {
+				return fmt.Errorf("job %q trigger %d: %w", job.Tag, index, err)
+			}
+		}
+		if job.Action.Type != JobActionResumePublish {
+			return fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
+		}
+		if _, exists := profiles[job.Action.Profile]; !exists {
+			return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+		}
+		resume := job.Action.Resume
+		if resume == "" {
+			for _, profile := range c.Profiles {
+				if profile.Tag == job.Action.Profile {
+					resume = profile.Resume
+					break
+				}
+			}
+		}
+		if resume == "" {
+			return fmt.Errorf("job %q resume.publish requires resume", job.Tag)
+		}
+	}
+	return nil
+}
+
+func validateJobTrigger(trigger JobTrigger) error {
+	if trigger.Type != "cron" {
+		return fmt.Errorf("unsupported trigger type %q", trigger.Type)
+	}
+	location, err := time.LoadLocation(trigger.Timezone)
+	if err != nil {
+		return fmt.Errorf("invalid timezone %q: %w", trigger.Timezone, err)
+	}
+	if _, err := cron.ParseStandard("CRON_TZ=" + location.String() + " " + trigger.Expression); err != nil {
+		return fmt.Errorf("invalid cron expression: %w", err)
+	}
+	if trigger.Misfire != "run_once" {
+		return fmt.Errorf("misfire must be %q", "run_once")
+	}
+	minimum, maximum := trigger.Jitter.Durations()
+	if (trigger.Jitter.Min != "" && minimum < 0) || (trigger.Jitter.Max != "" && maximum < 0) {
+		return errors.New("jitter durations must not be negative")
+	}
+	if trigger.Jitter.Min != "" {
+		if _, err := time.ParseDuration(trigger.Jitter.Min); err != nil {
+			return fmt.Errorf("invalid jitter min: %w", err)
+		}
+	}
+	if trigger.Jitter.Max != "" {
+		if _, err := time.ParseDuration(trigger.Jitter.Max); err != nil {
+			return fmt.Errorf("invalid jitter max: %w", err)
+		}
+	}
+	if maximum < minimum {
+		return errors.New("jitter max must be greater than or equal to min")
 	}
 	return nil
 }
