@@ -50,6 +50,7 @@ type AdapterConfig struct {
 type Profile struct {
 	Tag       string            `json:"tag"`
 	Adapter   string            `json:"adapter"`
+	Resume    string            `json:"resume,omitempty"`
 	StateFile string            `json:"state_file,omitempty"`
 	Enabled   bool              `json:"enabled"`
 	Bootstrap *ProfileBootstrap `json:"bootstrap,omitempty"`

@@ -38,6 +38,22 @@ type ConversationTransport interface {
 	SyncConversation(ctx context.Context, profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) (ConversationSyncResult, error)
 }
 
+type ApplicationSubmitCommand struct {
+	ProfileID      core.ProfileID
+	Vacancy        core.VacancyKey
+	ResumeID       string
+	Message        string
+	IdempotencyKey string
+}
+
+type ApplicationSubmitResult struct {
+	ExternalNegotiationID string
+}
+
+type ApplicationTransport interface {
+	SubmitApplication(ctx context.Context, command ApplicationSubmitCommand) (ApplicationSubmitResult, error)
+}
+
 // Adapter is a facade over all transports used by one platform. Workflows
 // depend on the smaller capability interfaces instead of this full facade.
 type Adapter interface {

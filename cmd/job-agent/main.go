@@ -70,18 +70,27 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
 	}
-	transports := taskworker.NewConversationTransportRegistry()
+	conversationTransports := taskworker.NewConversationTransportRegistry()
+	applicationTransports := taskworker.NewApplicationTransportRegistry()
+	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
-		transport, ok := instances[profile.Adapter].(adapter.ConversationTransport)
-		if !ok {
-			continue
+		instance := instances[profile.Adapter]
+		if transport, ok := instance.(adapter.ConversationTransport); ok {
+			if err := conversationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
+				log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
+			}
 		}
-		if err := transports.Register(core.ProfileID(profile.Tag), transport); err != nil {
-			log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
+		if transport, ok := instance.(adapter.ApplicationTransport); ok {
+			if err := applicationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
+				log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+			}
+		}
+		if profile.Resume != "" {
+			applicationPlans[core.ProfileID(profile.Tag)] = taskworker.ApplicationPlan{ResumeID: profile.Resume}
 		}
 	}
 	conversationHandlers, err := taskworker.NewConversationHandlers(
-		store, conversationWorkflow, transports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
+		store, conversationWorkflow, conversationTransports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create conversation handlers: %v", err)
@@ -89,6 +98,19 @@ func main() {
 	workers, err := conversationWorkers(store, conversationHandlers)
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
+	}
+	if applicationTransports.Count() > 0 {
+		applicationHandler, err := taskworker.NewApplicationHandler(
+			store, applicationTransports, applicationPlans, taskworker.SystemClock{},
+		)
+		if err != nil {
+			log.Fatalf("create application handler: %v", err)
+		}
+		applicationWorker, err := newTaskWorker(store, core.TaskApplicationSubmit, applicationHandler.Handle)
+		if err != nil {
+			log.Fatalf("create application worker: %v", err)
+		}
+		workers = append(workers, applicationWorker)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -157,18 +179,22 @@ func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.Conv
 	}
 	result := make([]*taskworker.Worker, 0, len(definitions))
 	for _, definition := range definitions {
-		instance, err := taskworker.New(consumer, definition.handler, taskworker.SystemClock{}, taskworker.Config{
-			ID: "conversation-" + string(definition.taskType), TaskType: definition.taskType,
-			LeaseDuration: 2 * time.Minute, HeartbeatInterval: 30 * time.Second,
-			PollInterval: time.Second, RetryBaseDelay: 5 * time.Second,
-			BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 5,
-		})
+		instance, err := newTaskWorker(consumer, definition.taskType, definition.handler)
 		if err != nil {
 			return nil, err
 		}
 		result = append(result, instance)
 	}
 	return result, nil
+}
+
+func newTaskWorker(consumer broker.TaskConsumer, taskType core.TaskType, handler taskworker.HandlerFunc) (*taskworker.Worker, error) {
+	return taskworker.New(consumer, handler, taskworker.SystemClock{}, taskworker.Config{
+		ID: "worker-" + string(taskType), TaskType: taskType,
+		LeaseDuration: 2 * time.Minute, HeartbeatInterval: 30 * time.Second,
+		PollInterval: time.Second, RetryBaseDelay: 5 * time.Second,
+		BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 5,
+	})
 }
 
 func reconcileFollowUps(ctx context.Context, interval time.Duration, conversationWorkflow *workflow.ConversationWorkflow) {
