@@ -42,6 +42,8 @@ Core уже содержит:
 - переносимые блоки ответов, не зависящие от порядка вопросов и runtime ID;
 - канонический каталог тестов, уровни квалификаций и revision-safe human review
   для REST/TG/CLI;
+- нормализованные диалоги и сообщения, а также отменяемые одноразовые follow-up
+  таймеры с idempotency, deadline и проверкой входящего ответа перед отправкой;
 - одноразовый idempotent bootstrap чистого профиля из mounted JSON.
 
 Первый search workflow вызывает платформенный поиск один раз и распределяет
@@ -99,7 +101,8 @@ go run ./cmd/job-agent ./config/example/config.json
 
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и
-resume/profile schema. Главная архитектурная спецификация — `AGENTS.md`.
+resume/profile schema. REST и automation-контракт чатов описан в
+`docs/conversation-api.md`. Главная архитектурная спецификация — `AGENTS.md`.
 
 ## Questionnaire mock
 

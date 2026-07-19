@@ -18,6 +18,9 @@ type TestDefinitionID string
 type ReviewSessionID string
 type ReviewPromptID string
 type QualificationID string
+type ConversationID string
+type MessageID string
+type FollowUpID string
 
 // VacancyKey is the stable cross-search identity of a platform vacancy.
 type VacancyKey struct {

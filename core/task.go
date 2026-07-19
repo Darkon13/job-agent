@@ -16,6 +16,8 @@ const (
 	TaskTestCapture            TaskType = "test.capture"
 	TaskReviewAnswer           TaskType = "review.answer"
 	TaskConversationReply      TaskType = "conversation.reply"
+	TaskConversationSend       TaskType = "conversation.send"
+	TaskConversationFollowUp   TaskType = "conversation.follow_up"
 	TaskConversationMarkRead   TaskType = "conversation.mark_read"
 	TaskVacancyInspect         TaskType = "vacancy.inspect"
 	TaskResumePublish          TaskType = "resume.publish"
