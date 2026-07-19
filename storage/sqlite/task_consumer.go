@@ -48,6 +48,7 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 				(status IN (?, ?) AND available_at <= ?)
 				OR (status = ? AND (lease_until IS NULL OR lease_until <= ?))
 			)
+			AND (? = '' OR type = ?)
 			AND (deadline IS NULL OR deadline > ?)
 			ORDER BY
 				CASE WHEN status = ? THEN COALESCE(lease_until, 0) ELSE available_at END,
@@ -57,7 +58,8 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		RETURNING `+taskColumns+`, lease_owner, lease_token, lease_until`,
 		core.TaskProcessing, params.Now.UnixNano(), params.WorkerID, requestedUntil.UnixNano(), requestedUntil.UnixNano(),
 		core.TaskNew, core.TaskRetryScheduled, params.Now.UnixNano(),
-		core.TaskProcessing, params.Now.UnixNano(), params.Now.UnixNano(), core.TaskProcessing)
+		core.TaskProcessing, params.Now.UnixNano(), params.TaskType, params.TaskType,
+		params.Now.UnixNano(), core.TaskProcessing)
 	lease, err := scanTaskLease(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {

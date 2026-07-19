@@ -101,6 +101,9 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 	}
 	candidates := make([]candidate, 0, len(queue.tasks))
 	for key, task := range queue.tasks {
+		if params.TaskType != "" && task.Type != params.TaskType {
+			continue
+		}
 		available, eligible := queue.eligibleAt(task, params.Now)
 		if eligible {
 			candidates = append(candidates, candidate{key: key, available: available, task: task})

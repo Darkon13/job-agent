@@ -22,6 +22,7 @@ type TaskStore interface {
 
 type ClaimParams struct {
 	WorkerID      string
+	TaskType      core.TaskType
 	Now           time.Time
 	LeaseDuration time.Duration
 }

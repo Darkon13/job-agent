@@ -107,6 +107,32 @@ func TestTaskClaimIsAtomicAcrossWorkers(t *testing.T) {
 	}
 }
 
+func TestTaskClaimFiltersByType(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	application := sqliteTask(t, "application", "application", now, nil)
+	conversation := sqliteTask(t, "conversation", "conversation", now, nil)
+	conversation.Type = core.TaskConversationSend
+	if _, err := store.Enqueue(ctx, application); err != nil {
+		t.Fatalf("enqueue application: %v", err)
+	}
+	if _, err := store.Enqueue(ctx, conversation); err != nil {
+		t.Fatalf("enqueue conversation: %v", err)
+	}
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "conversation-worker", TaskType: core.TaskConversationSend,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || lease.Task.ID != conversation.ID {
+		t.Fatalf("filtered claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
