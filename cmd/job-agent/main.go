@@ -63,6 +63,15 @@ func main() {
 		}
 		instances[item.Tag] = instance
 	}
+	profiles, err := probeProfileAuthorizations(context.Background(), cfg.Profiles, instances)
+	if err != nil {
+		log.Fatalf("probe profile authorization: %v", err)
+	}
+	for profileID, runtime := range profiles {
+		if runtime.Status == core.ProfileAuthRequired {
+			log.Printf("profile %q requires authentication; profile workers are disabled", profileID)
+		}
+	}
 
 	conversationWorkflow, err := workflow.NewConversationWorkflow(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
@@ -77,6 +86,9 @@ func main() {
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
+		if profiles[core.ProfileID(profile.Tag)].Status != core.ProfileEnabled {
+			continue
+		}
 		instance := instances[profile.Adapter]
 		if transport, ok := instance.(adapter.ConversationTransport); ok {
 			if err := conversationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
@@ -158,6 +170,48 @@ func main() {
 	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type profileRuntime struct {
+	Status            core.ProfileStatus
+	ExternalAccountID string
+	Reader            adapter.ProfileReader
+}
+
+func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Profile, instances map[string]adapter.Adapter) (map[core.ProfileID]profileRuntime, error) {
+	profiles := make(map[core.ProfileID]profileRuntime, len(configured))
+	for _, profile := range configured {
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled {
+			profiles[profileID] = profileRuntime{Status: core.ProfileDisabled}
+			continue
+		}
+		profiles[profileID] = profileRuntime{Status: core.ProfileEnabled}
+		if profile.CredentialsRef == "" {
+			continue
+		}
+		instance := instances[profile.Adapter]
+		factory, ok := instance.(adapter.ProfileReaderFactory)
+		if !ok {
+			return nil, fmt.Errorf("adapter %q does not support authenticated profile reads", profile.Adapter)
+		}
+		reader, err := factory.NewProfileReader(profileID, profile.CredentialsRef)
+		if err != nil {
+			return nil, fmt.Errorf("create profile reader %q: %w", profile.Tag, err)
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		identity, err := reader.ReadProfile(probeCtx, profileID)
+		cancel()
+		if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
+			profiles[profileID] = profileRuntime{Status: core.ProfileAuthRequired, Reader: reader}
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read profile %q: %w", profile.Tag, err)
+		}
+		profiles[profileID] = profileRuntime{Status: core.ProfileEnabled, ExternalAccountID: identity.ExternalAccountID, Reader: reader}
+	}
+	return profiles, nil
 }
 
 func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow, scheduler *jobscheduler.Scheduler, workers []*taskworker.Worker) error {

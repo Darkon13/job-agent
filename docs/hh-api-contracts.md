@@ -183,6 +183,15 @@ HH adapter должен иметь матрицу поддерживаемых �
 identity-ссылка; персональные поля остаются platform payload и secret-bearing
 storage.
 
+Реализованный read client передаёт OAuth token как `Authorization: Bearer`,
+обязательный `HH-User-Agent` и сохраняет из ответа только внешний account ID и
+тип авторизации. `401/403` нормализуются как `Unauthorized`, `429` как
+`RateLimited`, `5xx` и transport failure как `TemporaryFailure`, остальные
+неуспешные ответы как `PermanentFailure`. Тело ошибки не включается в доменную
+ошибку, чтобы ответ платформы не мог протащить credential или персональные
+данные в лог. Контракт повторно сверен с официальной документацией HH
+5 сентября 2026 года.
+
 ### Resume
 
 Ключевые поля списка `/resumes/mine`:

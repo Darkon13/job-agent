@@ -99,12 +99,13 @@ type AdapterConfig struct {
 }
 
 type Profile struct {
-	Tag       string            `json:"tag"`
-	Adapter   string            `json:"adapter"`
-	Resume    string            `json:"resume,omitempty"`
-	StateFile string            `json:"state_file,omitempty"`
-	Enabled   bool              `json:"enabled"`
-	Bootstrap *ProfileBootstrap `json:"bootstrap,omitempty"`
+	Tag            string            `json:"tag"`
+	Adapter        string            `json:"adapter"`
+	Resume         string            `json:"resume,omitempty"`
+	CredentialsRef string            `json:"credentials_ref,omitempty"`
+	StateFile      string            `json:"state_file,omitempty"`
+	Enabled        bool              `json:"enabled"`
+	Bootstrap      *ProfileBootstrap `json:"bootstrap,omitempty"`
 }
 
 // ProfileBootstrap schedules one idempotent initial profile fill after auth.

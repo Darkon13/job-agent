@@ -139,11 +139,36 @@ Fallback между transport-реализациями разрешён толь
 текущий transport не поддерживает. Ошибки авторизации, валидации, rate limit и
 временные сбои не маскируются переключением на другой transport.
 
-HH-адаптер умеет проверять собственную поисковую конфигурацию и реализует
-conversation transport contract. Сетевые и браузерные операции ещё не
-реализованы, поэтому conversation transport пока возвращает явный
-`unsupported`; fake application transport покрывает полный lifecycle отклика
-в тестах.
+HH-адаптер умеет проверять собственную поисковую конфигурацию и выполнять
+авторизованный read-probe профиля через официальный `GET /me`. Профиль с OAuth
+токеном ссылается на отдельный credential-файл через `credentials_ref`; токен
+не хранится в основном config и не попадает в диагностические ошибки. Проверки
+одного профиля сериализуются, а `401/403` переводят профиль в
+`auth_required` и не запускают его workers. Conversation transport пока
+возвращает явный `unsupported`; fake application transport покрывает полный
+lifecycle отклика в тестах.
+
+Минимальный credential-файл имеет права `0600` (или строже):
+
+```json
+{"access_token":"..."}
+```
+
+В профиле указывается только ссылка:
+
+```json
+{
+  "tag": "primary",
+  "adapter": "hh-main",
+  "credentials_ref": "file:/run/secrets/hh-primary.json",
+  "enabled": true
+}
+```
+
+Импорт готового токена уже работает; OAuth login и обновление access token по
+refresh token остаются отдельными следующими срезами. Browser `state_file`
+по-прежнему используется независимо для browser-only операций вроде поднятия
+резюме.
 
 ```sh
 go test ./...

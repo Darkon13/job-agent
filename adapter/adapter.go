@@ -18,6 +18,25 @@ type VacancySearcher interface {
 	Search(ctx context.Context, profileID core.ProfileID, query json.RawMessage, cursor string) (core.SearchPage, error)
 }
 
+// ProfileReadResult is the minimal, non-secret identity returned by an
+// authenticated platform probe. Platform payloads and credentials stay inside
+// the adapter.
+type ProfileReadResult struct {
+	ExternalAccountID string
+	AuthType          string
+}
+
+type ProfileReader interface {
+	ReadProfile(ctx context.Context, profileID core.ProfileID) (ProfileReadResult, error)
+}
+
+// ProfileReaderFactory binds a secret reference to one profile. The returned
+// reader is profile-scoped so adapters can serialize refresh and session
+// checks without a global lock shared by unrelated accounts.
+type ProfileReaderFactory interface {
+	NewProfileReader(profileID core.ProfileID, credentialsRef string) (ProfileReader, error)
+}
+
 type ConversationSendCommand struct {
 	ProfileID              core.ProfileID
 	ConversationID         core.ConversationID

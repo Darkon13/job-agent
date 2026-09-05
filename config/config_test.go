@@ -31,6 +31,16 @@ func TestExampleConfigIsValid(t *testing.T) {
 	}
 }
 
+func TestProfileCredentialsReferenceIsLoadedWithoutReadingSecret(t *testing.T) {
+	var profile Profile
+	if err := json.Unmarshal([]byte(`{"tag":"primary","adapter":"hh-main","credentials_ref":"file:/run/secrets/hh-primary.json","enabled":true}`), &profile); err != nil {
+		t.Fatalf("decode profile: %v", err)
+	}
+	if profile.CredentialsRef != "file:/run/secrets/hh-primary.json" {
+		t.Fatalf("credentials ref = %q", profile.CredentialsRef)
+	}
+}
+
 func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

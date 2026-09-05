@@ -15,7 +15,8 @@ const Name = "hh"
 var ErrNotImplemented = errors.New("hh transport is not implemented")
 
 type Config struct {
-	APIDelayMS int `json:"api_delay_ms,omitempty"`
+	APIDelayMS int    `json:"api_delay_ms,omitempty"`
+	UserAgent  string `json:"user_agent,omitempty"`
 }
 
 type SearchSource string
@@ -79,6 +80,7 @@ type Adapter struct {
 
 var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
+var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -91,6 +93,10 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 }
 
 func (a *Adapter) Name() string { return Name }
+
+func (a *Adapter) NewProfileReader(profileID core.ProfileID, credentialsRef string) (adapter.ProfileReader, error) {
+	return NewReadClient(profileID, credentialsRef, a.config.UserAgent, nil)
+}
 
 func (a *Adapter) Capabilities() []core.Capability {
 	return []core.Capability{
