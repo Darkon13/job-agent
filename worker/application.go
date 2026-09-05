@@ -130,12 +130,20 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return errors.New("application task identity mismatch")
 	}
 	if application.Status == core.ApplicationSubmitted {
-		return handler.budgets.CommitApplicationBudget(ctx, application.ID, handler.clock.Now())
+		return handler.commitBudget(ctx, application, handler.clock.Now())
 	}
 	if application.Status == core.ApplicationPendingReconcile {
 		return handler.reconcile(ctx, application)
 	}
-	if application.Status == core.ApplicationSkipped || application.Status == core.ApplicationDryRun || application.Status == core.ApplicationWaitingApproval || application.Status == core.ApplicationFailed {
+	if application.Status == core.ApplicationFailed {
+		return handler.releaseBudget(ctx, application, handler.clock.Now())
+	}
+	if application.Status == core.ApplicationWaitingValidation {
+		if err := handler.releaseBudget(ctx, application, handler.clock.Now()); err != nil {
+			return err
+		}
+	}
+	if application.Status == core.ApplicationSkipped || application.Status == core.ApplicationDryRun || application.Status == core.ApplicationWaitingApproval {
 		return nil
 	}
 	if application.Status == core.ApplicationSubmitting {
@@ -217,7 +225,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 		return err
 	}
-	return handler.budgets.CommitApplicationBudget(ctx, application.ID, handler.clock.Now())
+	return handler.commitBudget(ctx, application, handler.clock.Now())
 }
 
 func (handler *ApplicationHandler) finishFailure(ctx context.Context, application core.Application, cause error) error {
@@ -242,7 +250,7 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 			return err
 		}
-		return handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now)
+		return handler.releaseBudget(ctx, application, now)
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded, core.ErrorUnauthorized:
 		if err := application.Transition(core.ApplicationReady, now); err != nil {
 			return err
@@ -250,7 +258,7 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 			return err
 		}
-		if err := handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now); err != nil {
+		if err := handler.releaseBudget(ctx, application, now); err != nil {
 			return err
 		}
 		return operationError
@@ -261,7 +269,7 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 			return err
 		}
-		if err := handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now); err != nil {
+		if err := handler.releaseBudget(ctx, application, now); err != nil {
 			return err
 		}
 		return operationError
@@ -299,7 +307,7 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
 			return err
 		}
-		return handler.budgets.CommitApplicationBudget(ctx, application.ID, now)
+		return handler.commitBudget(ctx, application, now)
 	}
 	failure := &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: "applications.reconcile", Platform: application.Key.Vacancy.Platform,
@@ -311,7 +319,7 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
 		return err
 	}
-	return handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now)
+	return handler.releaseBudget(ctx, application, now)
 }
 
 func (handler *ApplicationHandler) reserveBudget(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
@@ -327,5 +335,29 @@ func (handler *ApplicationHandler) reserveBudget(ctx context.Context, applicatio
 		ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
 		WindowStart: windowStart, WindowEnd: windowEnd, Limit: plan.DailyLimit, Now: now,
 	})
-	return err
+	return normalizeBudgetError("applications.budget.reserve", application.Key.Vacancy.Platform, err)
+}
+
+func (handler *ApplicationHandler) commitBudget(ctx context.Context, application core.Application, now time.Time) error {
+	err := handler.budgets.CommitApplicationBudget(ctx, application.ID, now)
+	return normalizeBudgetError("applications.budget.commit", application.Key.Vacancy.Platform, err)
+}
+
+func (handler *ApplicationHandler) releaseBudget(ctx context.Context, application core.Application, now time.Time) error {
+	err := handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now)
+	return normalizeBudgetError("applications.budget.release", application.Key.Vacancy.Platform, err)
+}
+
+func normalizeBudgetError(operation string, platform core.Platform, err error) error {
+	if err == nil {
+		return nil
+	}
+	var operationError *core.OperationError
+	if errors.As(err, &operationError) && operationError.Validate() == nil {
+		return operationError
+	}
+	return &core.OperationError{
+		Category: core.ErrorTemporaryFailure, Operation: operation, Platform: platform,
+		Message: "application budget storage is temporarily unavailable", Cause: err,
+	}
 }

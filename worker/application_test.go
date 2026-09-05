@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 )
 
@@ -20,6 +22,28 @@ type fakeApplicationTransport struct {
 	reconcileErr    error
 	reconcileCalls  int
 	reconcileSet    bool
+}
+
+type failOnceApplicationBudget struct {
+	storage.ApplicationBudgetRepository
+	commitFailures  int
+	releaseFailures int
+}
+
+func (budget *failOnceApplicationBudget) CommitApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error {
+	if budget.commitFailures > 0 {
+		budget.commitFailures--
+		return errors.New("commit budget storage failure")
+	}
+	return budget.ApplicationBudgetRepository.CommitApplicationBudget(ctx, applicationID, now)
+}
+
+func (budget *failOnceApplicationBudget) ReleaseApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error {
+	if budget.releaseFailures > 0 {
+		budget.releaseFailures--
+		return errors.New("release budget storage failure")
+	}
+	return budget.ApplicationBudgetRepository.ReleaseApplicationBudget(ctx, applicationID, now)
 }
 
 func (transport *fakeApplicationTransport) ReconcileApplication(_ context.Context, _ adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
@@ -102,6 +126,56 @@ func TestApplicationHandlerSubmitsAndPersistsNegotiation(t *testing.T) {
 	reservation, exists := repository.ApplicationBudget(application.ID)
 	if !exists || reservation.State != core.ApplicationBudgetCommitted {
 		t.Fatalf("application budget was not committed: %#v exists=%v", reservation, exists)
+	}
+}
+
+func TestApplicationHandlerRepairsBudgetAfterSubmittedStateWasSaved(t *testing.T) {
+	transport := &fakeApplicationTransport{}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	handler.budgets = &failOnceApplicationBudget{ApplicationBudgetRepository: repository, commitFailures: 1}
+
+	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("first handle error = %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	reservation, exists := repository.ApplicationBudget(application.ID)
+	if err != nil || application.Status != core.ApplicationSubmitted || !exists || reservation.State != core.ApplicationBudgetReserved {
+		t.Fatalf("application=%#v reservation=%#v exists=%v err=%v", application, reservation, exists, err)
+	}
+
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("repair handle: %v", err)
+	}
+	reservation, _ = repository.ApplicationBudget(application.ID)
+	if reservation.State != core.ApplicationBudgetCommitted || transport.calls != 1 {
+		t.Fatalf("reservation=%#v submit calls=%d", reservation, transport.calls)
+	}
+}
+
+func TestApplicationHandlerRepairsBudgetAfterFailedStateWasSaved(t *testing.T) {
+	transport := &fakeApplicationTransport{err: errors.New("permanent submit failure")}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	handler.budgets = &failOnceApplicationBudget{ApplicationBudgetRepository: repository, releaseFailures: 1}
+
+	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("first handle error = %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	reservation, exists := repository.ApplicationBudget(application.ID)
+	if err != nil || application.Status != core.ApplicationFailed || !exists || reservation.State != core.ApplicationBudgetReserved {
+		t.Fatalf("application=%#v reservation=%#v exists=%v err=%v", application, reservation, exists, err)
+	}
+
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("repair handle: %v", err)
+	}
+	reservation, _ = repository.ApplicationBudget(application.ID)
+	if reservation.State != core.ApplicationBudgetReleased || transport.calls != 1 {
+		t.Fatalf("reservation=%#v submit calls=%d", reservation, transport.calls)
 	}
 }
 
