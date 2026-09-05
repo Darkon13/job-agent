@@ -164,12 +164,12 @@ func (store *Store) CreateApplication(ctx context.Context, candidate core.Applic
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO applications
 		(id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
-		 failure_category, failure_message, decision_code, decision_reason, prepared_message,
-		 created_at, updated_at, prepared_at, submitted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 failure_category, failure_message, decision_code, decision_reason, prepared_resume_id,
+		 prepared_message, created_at, updated_at, prepared_at, submitted_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.ID, candidate.Key.ProfileID, candidate.Key.Vacancy.Platform, candidate.Key.Vacancy.ExternalID,
 		candidate.Status, candidate.Attempts, candidate.ExternalNegotiationID, candidate.FailureCategory,
-		candidate.FailureMessage, candidate.DecisionCode, candidate.DecisionReason, candidate.PreparedMessage,
+		candidate.FailureMessage, candidate.DecisionCode, candidate.DecisionReason, candidate.PreparedResumeID, candidate.PreparedMessage,
 		candidate.CreatedAt.UnixNano(), candidate.UpdatedAt.UnixNano(), nullableTime(candidate.PreparedAt), nullableTime(candidate.SubmittedAt))
 	if err != nil {
 		return core.Application{}, false, fmt.Errorf("insert application: %w", err)
@@ -222,7 +222,7 @@ func (store *Store) Application(ctx context.Context, key core.ApplicationKey) (c
 		return core.Application{}, err
 	}
 	row := store.db.QueryRowContext(ctx, `SELECT id, status, attempts, external_negotiation_id,
-		failure_category, failure_message, decision_code, decision_reason, prepared_message,
+		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
 		created_at, updated_at, prepared_at, submitted_at
 		FROM applications WHERE profile_id = ? AND platform = ? AND external_id = ?`,
 		key.ProfileID, key.Vacancy.Platform, key.Vacancy.ExternalID)
@@ -232,7 +232,7 @@ func (store *Store) Application(ctx context.Context, key core.ApplicationKey) (c
 	application.Key = key
 	if err := row.Scan(&application.ID, &application.Status, &application.Attempts, &application.ExternalNegotiationID,
 		&application.FailureCategory, &application.FailureMessage, &application.DecisionCode,
-		&application.DecisionReason, &application.PreparedMessage, &createdAt, &updatedAt, &preparedAt, &submittedAt); err != nil {
+		&application.DecisionReason, &application.PreparedResumeID, &application.PreparedMessage, &createdAt, &updatedAt, &preparedAt, &submittedAt); err != nil {
 		return core.Application{}, err
 	}
 	application.CreatedAt = time.Unix(0, createdAt).UTC()
@@ -251,11 +251,11 @@ func (store *Store) SaveApplication(ctx context.Context, candidate core.Applicat
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE applications SET
 		status = ?, attempts = ?, external_negotiation_id = ?, failure_category = ?,
-		failure_message = ?, decision_code = ?, decision_reason = ?, prepared_message = ?,
+		failure_message = ?, decision_code = ?, decision_reason = ?, prepared_resume_id = ?, prepared_message = ?,
 		updated_at = ?, prepared_at = ?, submitted_at = ?
 		WHERE id = ? AND profile_id = ? AND platform = ? AND external_id = ? AND status = ?`,
 		candidate.Status, candidate.Attempts, candidate.ExternalNegotiationID, candidate.FailureCategory,
-		candidate.FailureMessage, candidate.DecisionCode, candidate.DecisionReason, candidate.PreparedMessage,
+		candidate.FailureMessage, candidate.DecisionCode, candidate.DecisionReason, candidate.PreparedResumeID, candidate.PreparedMessage,
 		candidate.UpdatedAt.UnixNano(), nullableTime(candidate.PreparedAt), nullableTime(candidate.SubmittedAt),
 		candidate.ID, candidate.Key.ProfileID, candidate.Key.Vacancy.Platform, candidate.Key.Vacancy.ExternalID, expectedStatus)
 	if err != nil {

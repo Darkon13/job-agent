@@ -98,10 +98,10 @@ func TestApplicationPreparationIsRecordedBeforeExternalAction(t *testing.T) {
 		t.Fatalf("prepare transition: %v", err)
 	}
 	preparedAt := now.Add(2 * time.Minute)
-	if err := application.RecordPreparation("qualified", "rules passed", "  Hello  ", preparedAt); err != nil {
+	if err := application.RecordPreparation("qualified", "rules passed", "  resume-1  ", "  Hello  ", preparedAt); err != nil {
 		t.Fatalf("record preparation: %v", err)
 	}
-	if application.DecisionCode != "qualified" || application.DecisionReason != "rules passed" || application.PreparedMessage != "Hello" || application.PreparedAt == nil || !application.PreparedAt.Equal(preparedAt) {
+	if application.DecisionCode != "qualified" || application.DecisionReason != "rules passed" || application.PreparedResumeID != "resume-1" || application.PreparedMessage != "Hello" || application.PreparedAt == nil || !application.PreparedAt.Equal(preparedAt) {
 		t.Fatalf("application = %#v", application)
 	}
 }

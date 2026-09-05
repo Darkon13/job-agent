@@ -25,6 +25,18 @@ type VacancyReader interface {
 	ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error)
 }
 
+// SuitableResume is the platform-neutral identity needed to choose which
+// profile resume can be used for one vacancy. Full resume contents stay in the
+// platform adapter.
+type SuitableResume struct {
+	ID    string
+	Title string
+}
+
+type SuitableResumeReader interface {
+	ListSuitableResumes(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) ([]SuitableResume, error)
+}
+
 // ProfileReadResult is the minimal, non-secret identity returned by an
 // authenticated platform probe. Platform payloads and credentials stay inside
 // the adapter.

@@ -240,7 +240,7 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 	if err := candidate.Transition(core.ApplicationPreparing, candidate.UpdatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("transition to preparing: %v", err)
 	}
-	if err := candidate.RecordPreparation("qualified", "rules passed", "Hello", candidate.UpdatedAt.Add(time.Second)); err != nil {
+	if err := candidate.RecordPreparation("qualified", "rules passed", "resume-1", "Hello", candidate.UpdatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("record preparation: %v", err)
 	}
 	for _, status := range []core.ApplicationStatus{core.ApplicationReady, core.ApplicationSubmitting} {
@@ -258,7 +258,7 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load application: %v", err)
 	}
-	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 || stored.DecisionCode != "qualified" || stored.PreparedMessage != "Hello" || stored.PreparedAt == nil {
+	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 || stored.DecisionCode != "qualified" || stored.PreparedResumeID != "resume-1" || stored.PreparedMessage != "Hello" || stored.PreparedAt == nil {
 		t.Fatalf("unexpected stored application: %#v", stored)
 	}
 }

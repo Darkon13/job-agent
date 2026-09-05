@@ -111,6 +111,21 @@ func (registry *ApplicationTransportRegistry) ResolveVacancyReader(profileID cor
 	return reader, nil
 }
 
+func (registry *ApplicationTransportRegistry) ResolveSuitableResumeReader(profileID core.ProfileID) (adapter.SuitableResumeReader, error) {
+	transport, err := registry.Resolve(profileID)
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := transport.(adapter.SuitableResumeReader)
+	if !ok {
+		return nil, &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "vacancies.suitable_resumes",
+			Message: "application transport cannot list suitable resumes",
+		}
+	}
+	return reader, nil
+}
+
 func (registry *ApplicationTransportRegistry) Count() int {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
@@ -161,6 +176,9 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		if err := handler.releaseBudget(ctx, application, handler.clock.Now()); err != nil {
 			return err
 		}
+		if application.PreparedAt != nil {
+			return nil
+		}
 	}
 	if application.Status == core.ApplicationSkipped || application.Status == core.ApplicationDryRun || application.Status == core.ApplicationWaitingApproval {
 		return nil
@@ -210,7 +228,17 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 			}
 			return err
 		}
+		preparedResumeID := ""
 		preparation, decided := applicationPlatformPreflight(vacancy)
+		if !decided && plan.ResumeID != "" {
+			preparation, decided, err = handler.applicationResumePreflight(ctx, application, plan.ResumeID)
+			if err != nil {
+				return err
+			}
+			if !decided {
+				preparedResumeID = plan.ResumeID
+			}
+		}
 		if !decided {
 			if plan.Preparer != nil {
 				preparation, err = plan.Preparer.PrepareApplication(ctx, application, vacancy)
@@ -236,7 +264,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 				Platform: application.Key.Vacancy.Platform, Message: err.Error(), Cause: err,
 			}
 		}
-		if err := application.RecordPreparation(preparation.Code, preparation.Reason, preparation.Message, now); err != nil {
+		if err := application.RecordPreparation(preparation.Code, preparation.Reason, preparedResumeID, preparation.Message, now); err != nil {
 			return err
 		}
 		switch preparation.Outcome {
@@ -287,7 +315,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	}
 	result, err := transport.SubmitApplication(ctx, adapter.ApplicationSubmitCommand{
 		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy,
-		ResumeID: plan.ResumeID, Message: application.PreparedMessage, IdempotencyKey: task.IdempotencyKey,
+		ResumeID: preparedResumeID(application, plan), Message: application.PreparedMessage, IdempotencyKey: task.IdempotencyKey,
 	})
 	if err != nil {
 		return handler.finishFailure(ctx, application, err)
@@ -303,6 +331,33 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return err
 	}
 	return handler.commitBudget(ctx, application, handler.clock.Now())
+}
+
+func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, bool, error) {
+	reader, err := handler.transports.ResolveSuitableResumeReader(application.Key.ProfileID)
+	if err != nil {
+		return applicationoperator.ApplicationPreparation{}, false, err
+	}
+	resumes, err := reader.ListSuitableResumes(ctx, application.Key.ProfileID, application.Key.Vacancy)
+	if err != nil {
+		return applicationoperator.ApplicationPreparation{}, false, err
+	}
+	for _, resume := range resumes {
+		if resume.ID == resumeID {
+			return applicationoperator.ApplicationPreparation{}, false, nil
+		}
+	}
+	return applicationoperator.ApplicationPreparation{
+		Outcome: applicationoperator.ApplicationReview, Code: "resume_not_suitable",
+		Reason: "configured resume is not suitable for this vacancy",
+	}, true, nil
+}
+
+func preparedResumeID(application core.Application, plan ApplicationPlan) string {
+	if application.PreparedResumeID != "" {
+		return application.PreparedResumeID
+	}
+	return plan.ResumeID
 }
 
 func (handler *ApplicationHandler) loadFullVacancy(ctx context.Context, application core.Application) (core.Vacancy, error) {
@@ -459,7 +514,7 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 		}
 	}
 	result, err := reconciler.ReconcileApplication(ctx, adapter.ApplicationReconcileCommand{
-		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy, ResumeID: plan.ResumeID,
+		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy, ResumeID: preparedResumeID(application, plan),
 	})
 	if err != nil {
 		return err

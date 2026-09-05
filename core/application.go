@@ -33,6 +33,7 @@ type Application struct {
 	FailureMessage        string            `json:"failure_message,omitempty"`
 	DecisionCode          string            `json:"decision_code,omitempty"`
 	DecisionReason        string            `json:"decision_reason,omitempty"`
+	PreparedResumeID      string            `json:"prepared_resume_id,omitempty"`
 	PreparedMessage       string            `json:"prepared_message,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
@@ -93,8 +94,9 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 }
 
 // RecordPreparation stores the exact decision input to the unsafe external
-// action. A retry reuses PreparedMessage instead of invoking an operator again.
-func (application *Application) RecordPreparation(code, reason, message string, now time.Time) error {
+// action. A retry reuses PreparedResumeID and PreparedMessage instead of
+// consulting mutable configuration or invoking an operator again.
+func (application *Application) RecordPreparation(code, reason, resumeID, message string, now time.Time) error {
 	if application == nil {
 		return errors.New("application is nil")
 	}
@@ -112,6 +114,7 @@ func (application *Application) RecordPreparation(code, reason, message string, 
 	preparedAt := now
 	application.DecisionCode = code
 	application.DecisionReason = reason
+	application.PreparedResumeID = strings.TrimSpace(resumeID)
 	application.PreparedMessage = strings.TrimSpace(message)
 	application.PreparedAt = &preparedAt
 	application.UpdatedAt = now

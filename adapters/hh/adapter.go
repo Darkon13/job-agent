@@ -86,6 +86,7 @@ var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
+var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 
@@ -265,6 +266,19 @@ func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key
 		return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read", "HH profile has no bound credentials", nil)
 	}
 	return client.ReadVacancy(ctx, profileID, key)
+}
+
+func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) ([]adapter.SuitableResume, error) {
+	if key.Platform != Name {
+		return nil, errors.New("HH suitable resume reader received another platform")
+	}
+	a.mu.RLock()
+	client := a.clients[profileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return nil, operationError(core.ErrorUnauthorized, "vacancies.suitable_resumes", "HH profile has no bound credentials", nil)
+	}
+	return client.ListSuitableResumes(ctx, profileID, key)
 }
 
 func (a *Adapter) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {

@@ -291,10 +291,17 @@ Network interruption и `5xx` переводят application в `pending_reconci
 отсутствие позволяет завершить его как не созданный и освободить reservation.
 До этой проверки `POST /negotiations` не повторяется.
 
-Перед откликом можно вызвать
-`GET /vacancies/{vacancy_id}/suitable_resumes`. `Application` уникален для пары
-profile/resume/vacancy согласно platform semantics и локальной idempotency
-policy.
+Перед откликом worker читает все страницы
+`GET /vacancies/{vacancy_id}/suitable_resumes` и проверяет, что настроенный
+`resume_id` присутствует в результате. Несовпадение переводит application в
+`waiting_validation` до небезопасного POST. Подтверждённый идентификатор
+сохраняется в `prepared_resume_id`: последующие попытки и reconciliation
+используют его, а не потенциально изменившийся профильный конфиг.
+
+`Application` уникален для пары profile/vacancy согласно локальной
+idempotency policy. Резюме является частью сохранённого подготовленного
+решения, а не ключом записи: автоматическая смена резюме для уже созданной
+application запрещена.
 
 Negotiation содержит:
 

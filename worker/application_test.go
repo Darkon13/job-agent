@@ -15,17 +15,21 @@ import (
 )
 
 type fakeApplicationTransport struct {
-	command         adapter.ApplicationSubmitCommand
-	result          adapter.ApplicationSubmitResult
-	err             error
-	calls           int
-	reconcileResult adapter.ApplicationReconcileResult
-	reconcileErr    error
-	reconcileCalls  int
-	reconcileSet    bool
-	vacancy         core.Vacancy
-	vacancyErr      error
-	vacancyCalls    int
+	command          adapter.ApplicationSubmitCommand
+	result           adapter.ApplicationSubmitResult
+	err              error
+	calls            int
+	reconcileResult  adapter.ApplicationReconcileResult
+	reconcileErr     error
+	reconcileCalls   int
+	reconcileSet     bool
+	reconcileCommand adapter.ApplicationReconcileCommand
+	vacancy          core.Vacancy
+	vacancyErr       error
+	vacancyCalls     int
+	suitableResumes  []adapter.SuitableResume
+	suitableErr      error
+	suitableCalls    int
 }
 
 type failOnceApplicationBudget struct {
@@ -61,8 +65,9 @@ func (budget *failOnceApplicationBudget) ReleaseApplicationBudget(ctx context.Co
 	return budget.ApplicationBudgetRepository.ReleaseApplicationBudget(ctx, applicationID, now)
 }
 
-func (transport *fakeApplicationTransport) ReconcileApplication(_ context.Context, _ adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
+func (transport *fakeApplicationTransport) ReconcileApplication(_ context.Context, command adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
 	transport.reconcileCalls++
+	transport.reconcileCommand = command
 	if transport.reconcileErr != nil {
 		return adapter.ApplicationReconcileResult{}, transport.reconcileErr
 	}
@@ -70,6 +75,17 @@ func (transport *fakeApplicationTransport) ReconcileApplication(_ context.Contex
 		return transport.reconcileResult, nil
 	}
 	return adapter.ApplicationReconcileResult{Applied: true}, nil
+}
+
+func (transport *fakeApplicationTransport) ListSuitableResumes(_ context.Context, _ core.ProfileID, _ core.VacancyKey) ([]adapter.SuitableResume, error) {
+	transport.suitableCalls++
+	if transport.suitableErr != nil {
+		return nil, transport.suitableErr
+	}
+	if transport.suitableResumes != nil {
+		return transport.suitableResumes, nil
+	}
+	return []adapter.SuitableResume{{ID: "resume-1", Title: "Backend developer"}}, nil
 }
 
 func (transport *fakeApplicationTransport) SubmitApplication(_ context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
@@ -147,7 +163,7 @@ func TestApplicationHandlerSubmitsAndPersistsNegotiation(t *testing.T) {
 	application, err := repository.Application(context.Background(), core.ApplicationKey{
 		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
 	})
-	if err != nil || application.Status != core.ApplicationSubmitted || application.ExternalNegotiationID != "negotiation-1" || application.Attempts != 1 {
+	if err != nil || application.Status != core.ApplicationSubmitted || application.ExternalNegotiationID != "negotiation-1" || application.Attempts != 1 || application.PreparedResumeID != "resume-1" {
 		t.Fatalf("stored application: %#v err=%v", application, err)
 	}
 	if transport.command.ResumeID != "resume-1" || transport.command.Message != "Добрый день" || transport.command.IdempotencyKey != task.IdempotencyKey {
@@ -240,17 +256,40 @@ func TestApplicationHandlerReusesPreparedMessageOnSubmitRetry(t *testing.T) {
 	}}
 	plan := liveApplicationPlan("resume-1")
 	plan.Preparer = preparer
-	handler, _, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": plan}, transport)
+	plans := StaticApplicationPlans{"profile-1": plan}
+	handler, _, task, _ := applicationFixture(t, plans, transport)
 	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
 		t.Fatalf("first handle: %v", err)
 	}
 	preparer.result.Message = "Different second letter"
+	plan.ResumeID = "resume-2"
+	plans["profile-1"] = plan
 	transport.err = nil
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("retry handle: %v", err)
 	}
-	if preparer.calls != 1 || transport.vacancyCalls != 1 || transport.calls != 2 || transport.command.Message != "First stable letter" {
+	if preparer.calls != 1 || transport.vacancyCalls != 1 || transport.suitableCalls != 1 || transport.calls != 2 || transport.command.Message != "First stable letter" || transport.command.ResumeID != "resume-1" {
 		t.Fatalf("preparer=%d vacancy=%d submit=%d command=%#v", preparer.calls, transport.vacancyCalls, transport.calls, transport.command)
+	}
+}
+
+func TestApplicationHandlerWaitsWhenConfiguredResumeIsNotSuitable(t *testing.T) {
+	transport := &fakeApplicationTransport{suitableResumes: []adapter.SuitableResume{{ID: "another-resume"}}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "resume_not_suitable" || application.PreparedResumeID != "" || transport.calls != 0 || transport.suitableCalls != 1 {
+		t.Fatalf("application=%#v submit=%d suitable=%d err=%v", application, transport.calls, transport.suitableCalls, err)
+	}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("repeat handle: %v", err)
+	}
+	if transport.calls != 0 || transport.suitableCalls != 1 {
+		t.Fatalf("waiting validation was bypassed: submit=%d suitable=%d", transport.calls, transport.suitableCalls)
 	}
 }
 
@@ -373,7 +412,8 @@ func TestApplicationHandlerKeepsAmbiguousOutcomeForReconciliation(t *testing.T) 
 	transport := &fakeApplicationTransport{err: &core.OperationError{
 		Category: core.ErrorAmbiguousResult, Operation: "applications.submit", Message: "connection lost after POST",
 	}}
-	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	plans := StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}
+	handler, repository, task, _ := applicationFixture(t, plans, transport)
 	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorAmbiguousResult) {
 		t.Fatalf("handle ambiguous application: %v", err)
 	}
@@ -387,10 +427,11 @@ func TestApplicationHandlerKeepsAmbiguousOutcomeForReconciliation(t *testing.T) 
 	if !exists || reservation.State != core.ApplicationBudgetReserved {
 		t.Fatalf("ambiguous application did not retain budget: %#v exists=%v", reservation, exists)
 	}
+	plans["profile-1"] = liveApplicationPlan("resume-2")
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("repeated ambiguous task: %v", err)
 	}
-	if application, _ = repository.Application(context.Background(), application.Key); application.Attempts != 1 || application.Status != core.ApplicationSubmitted || transport.calls != 1 || transport.reconcileCalls != 1 {
+	if application, _ = repository.Application(context.Background(), application.Key); application.Attempts != 1 || application.Status != core.ApplicationSubmitted || transport.calls != 1 || transport.reconcileCalls != 1 || transport.reconcileCommand.ResumeID != "resume-1" {
 		t.Fatalf("ambiguous task reconciliation failed: application=%#v submit=%d reconcile=%d", application, transport.calls, transport.reconcileCalls)
 	}
 	reservation, _ = repository.ApplicationBudget(application.ID)
