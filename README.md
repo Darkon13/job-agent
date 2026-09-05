@@ -126,12 +126,27 @@ terminal fail. После падения worker задача повторно в
 Политика выполнения задаётся в `profile.applications`. Без явной настройки
 используется безопасный `dry_run`; `approval` останавливает отклик в
 `waiting_approval`; `submit` требует положительный `daily_limit`. Граница суток
-считается в заданной `timezone`. Пример безопасной настройки:
+считается в заданной `timezone`.
+
+Детерминированный application operator проверяет `include_any`/`exclude_any`
+по названию, работодателю, описанию и ключевым навыкам полной вакансии. Границы
+слов учитываются, поэтому термин `Go` не совпадает с `Django`. Статическое
+письмо задаётся через `message`, а шаблон — через `message_template`; одновременно
+их включать нельзя. Шаблону доступны `ProfileID`, `Title`, `Employer`, `URL`,
+`Description` и `KeySkills`. Результат решения (`decision_code`, причина и
+готовый текст) сохраняется в `Application` до внешнего действия и повторно
+используется после retry.
+
+Пример безопасной настройки:
 
 ```json
 "applications": {
   "mode": "dry_run",
-  "message": "Здравствуйте! Меня заинтересовала ваша вакансия.",
+  "message_template": "Здравствуйте, {{.Employer}}! Меня заинтересовала вакансия {{.Title}}.",
+  "qualification": {
+    "include_any": ["Go", "Golang", "Backend"],
+    "exclude_any": ["директор", "руководитель направления"]
+  },
   "daily_limit": 20,
   "timezone": "Europe/Moscow"
 }

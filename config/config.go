@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -113,10 +114,17 @@ type Profile struct {
 }
 
 type ApplicationPolicy struct {
-	Mode       string `json:"mode,omitempty"`
-	Message    string `json:"message,omitempty"`
-	DailyLimit int    `json:"daily_limit,omitempty"`
-	Timezone   string `json:"timezone,omitempty"`
+	Mode            string                   `json:"mode,omitempty"`
+	Message         string                   `json:"message,omitempty"`
+	MessageTemplate string                   `json:"message_template,omitempty"`
+	Qualification   ApplicationQualification `json:"qualification,omitempty"`
+	DailyLimit      int                      `json:"daily_limit,omitempty"`
+	Timezone        string                   `json:"timezone,omitempty"`
+}
+
+type ApplicationQualification struct {
+	IncludeAny []string `json:"include_any,omitempty"`
+	ExcludeAny []string `json:"exclude_any,omitempty"`
 }
 
 func (policy ApplicationPolicy) ExecutionMode() string {
@@ -238,6 +246,25 @@ func (c Config) Validate() error {
 		if profile.Applications.Timezone != "" {
 			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
+			}
+		}
+		if strings.TrimSpace(profile.Applications.Message) != "" && strings.TrimSpace(profile.Applications.MessageTemplate) != "" {
+			return fmt.Errorf("profile %q applications must choose message or message_template", profile.Tag)
+		}
+		for field, terms := range map[string][]string{
+			"include_any": profile.Applications.Qualification.IncludeAny,
+			"exclude_any": profile.Applications.Qualification.ExcludeAny,
+		} {
+			seen := make(map[string]struct{}, len(terms))
+			for _, value := range terms {
+				term := strings.ToLower(strings.TrimSpace(value))
+				if term == "" {
+					return fmt.Errorf("profile %q applications %s contains an empty term", profile.Tag, field)
+				}
+				if _, exists := seen[term]; exists {
+					return fmt.Errorf("profile %q applications %s contains duplicate term %q", profile.Tag, field, value)
+				}
+				seen[term] = struct{}{}
 			}
 		}
 		profiles[profile.Tag] = struct{}{}

@@ -83,3 +83,12 @@ func TestProbeProfileAuthorizationsReturnsTransportFailure(t *testing.T) {
 		t.Fatalf("error = %v, want temporary failure", err)
 	}
 }
+
+func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
+	_, err := applicationPreparer(appconfig.Profile{Applications: appconfig.ApplicationPolicy{
+		MessageTemplate: "{{.Missing}}",
+	}})
+	if err == nil {
+		t.Fatal("expected invalid application message template")
+	}
+}

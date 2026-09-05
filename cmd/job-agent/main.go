@@ -18,6 +18,7 @@ import (
 	"github.com/Darkon13/job-agent/broker"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	applicationoperator "github.com/Darkon13/job-agent/operator"
 	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
@@ -86,6 +87,10 @@ func main() {
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
+		preparer, err := applicationPreparer(profile)
+		if err != nil {
+			log.Fatalf("build application operator for profile %q: %v", profile.Tag, err)
+		}
 		if profiles[core.ProfileID(profile.Tag)].Status != core.ProfileEnabled {
 			continue
 		}
@@ -117,7 +122,7 @@ func main() {
 		}
 		applicationPlans[core.ProfileID(profile.Tag)] = taskworker.ApplicationPlan{
 			ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-			Message: profile.Applications.Message, DailyLimit: profile.Applications.DailyLimit,
+			Message: profile.Applications.Message, Preparer: preparer, DailyLimit: profile.Applications.DailyLimit,
 			Timezone: profile.Applications.LocationName(),
 		}
 	}
@@ -183,6 +188,19 @@ func main() {
 	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func applicationPreparer(profile appconfig.Profile) (applicationoperator.ApplicationPreparer, error) {
+	preparer, err := applicationoperator.NewRuleTemplatePreparer(applicationoperator.RuleTemplateConfig{
+		IncludeAny:      profile.Applications.Qualification.IncludeAny,
+		ExcludeAny:      profile.Applications.Qualification.ExcludeAny,
+		StaticMessage:   profile.Applications.Message,
+		MessageTemplate: profile.Applications.MessageTemplate,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return preparer, nil
 }
 
 func configureSearchRuns(

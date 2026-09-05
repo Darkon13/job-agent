@@ -65,6 +65,24 @@ func TestApplicationPolicyDefaultsToDryRunAndGuardsLiveMode(t *testing.T) {
 	}
 }
 
+func TestApplicationPolicyRejectsAmbiguousMessageAndDuplicateTerms(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Applications: ApplicationPolicy{
+			Message: "static", MessageTemplate: "{{.Title}}",
+		}}},
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected static and template message conflict")
+	}
+	config.Profiles[0].Applications.MessageTemplate = ""
+	config.Profiles[0].Applications.Qualification.IncludeAny = []string{"Go", " go "}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected case-insensitive duplicate term")
+	}
+}
+
 func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

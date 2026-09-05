@@ -11,12 +11,14 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/storage"
 )
 
 type ApplicationPlan struct {
 	ResumeID   string
 	Message    string
+	Preparer   applicationoperator.ApplicationPreparer
 	Mode       core.ApplicationExecutionMode
 	DailyLimit int
 	Timezone   string
@@ -192,26 +194,63 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		return err
 	}
-	vacancy, err := handler.loadFullVacancy(ctx, application)
-	if err != nil {
-		if core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
-			var operationError *core.OperationError
-			if errors.As(err, &operationError) && operationError.Validate() == nil {
-				if failErr := application.Fail(operationError, now); failErr != nil {
-					return failErr
+	if application.PreparedAt == nil {
+		vacancy, err := handler.loadFullVacancy(ctx, application)
+		if err != nil {
+			if core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
+				var operationError *core.OperationError
+				if errors.As(err, &operationError) && operationError.Validate() == nil {
+					if failErr := application.Fail(operationError, now); failErr != nil {
+						return failErr
+					}
+					if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+						return saveErr
+					}
 				}
-				if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
-					return saveErr
+			}
+			return err
+		}
+		preparation, decided := applicationPlatformPreflight(vacancy)
+		if !decided {
+			if plan.Preparer != nil {
+				preparation, err = plan.Preparer.PrepareApplication(ctx, application, vacancy)
+				if err != nil {
+					return err
+				}
+			} else {
+				preparation = applicationoperator.ApplicationPreparation{
+					Outcome: applicationoperator.ApplicationApply, Code: "qualified",
+					Reason: "vacancy passed platform preflight", Message: plan.Message,
+				}
+			}
+			if preparation.Outcome == applicationoperator.ApplicationApply && vacancyAttributeBool(vacancy, "response_letter_required") && strings.TrimSpace(preparation.Message) == "" {
+				preparation = applicationoperator.ApplicationPreparation{
+					Outcome: applicationoperator.ApplicationReview, Code: "cover_letter_required",
+					Reason: "vacancy requires a non-empty cover letter",
 				}
 			}
 		}
-		return err
-	}
-	if target := applicationPreflightStatus(vacancy, plan); target != "" {
-		if err := application.Transition(target, now); err != nil {
+		if err := preparation.Validate(); err != nil {
+			return &core.OperationError{
+				Category: core.ErrorValidationRequired, Operation: "applications.prepare",
+				Platform: application.Key.Vacancy.Platform, Message: err.Error(), Cause: err,
+			}
+		}
+		if err := application.RecordPreparation(preparation.Code, preparation.Reason, preparation.Message, now); err != nil {
 			return err
 		}
-		return handler.repository.SaveApplication(ctx, application, expectedStatus)
+		switch preparation.Outcome {
+		case applicationoperator.ApplicationSkip:
+			if err := application.Transition(core.ApplicationSkipped, now); err != nil {
+				return err
+			}
+			return handler.repository.SaveApplication(ctx, application, expectedStatus)
+		case applicationoperator.ApplicationReview:
+			if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
+				return err
+			}
+			return handler.repository.SaveApplication(ctx, application, expectedStatus)
+		}
 	}
 	switch plan.Mode {
 	case core.ApplicationExecutionDryRun:
@@ -248,7 +287,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	}
 	result, err := transport.SubmitApplication(ctx, adapter.ApplicationSubmitCommand{
 		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy,
-		ResumeID: plan.ResumeID, Message: plan.Message, IdempotencyKey: task.IdempotencyKey,
+		ResumeID: plan.ResumeID, Message: application.PreparedMessage, IdempotencyKey: task.IdempotencyKey,
 	})
 	if err != nil {
 		return handler.finishFailure(ctx, application, err)
@@ -293,20 +332,26 @@ func (handler *ApplicationHandler) loadFullVacancy(ctx context.Context, applicat
 	return vacancy, nil
 }
 
-func applicationPreflightStatus(vacancy core.Vacancy, plan ApplicationPlan) core.ApplicationStatus {
+func applicationPlatformPreflight(vacancy core.Vacancy) (applicationoperator.ApplicationPreparation, bool) {
 	if vacancy.State != core.VacancyStateOpen || vacancyAttributeBool(vacancy, "closed_for_applicants") {
-		return core.ApplicationSkipped
+		return applicationoperator.ApplicationPreparation{
+			Outcome: applicationoperator.ApplicationSkip, Code: "vacancy_closed",
+			Reason: "vacancy is archived or closed for applicants",
+		}, true
 	}
 	if vacancyHasString(vacancy, "relations", "got_response") {
-		return core.ApplicationSkipped
+		return applicationoperator.ApplicationPreparation{
+			Outcome: applicationoperator.ApplicationSkip, Code: "already_applied",
+			Reason: "applicant relation got_response already exists",
+		}, true
 	}
 	if vacancyAttributeBool(vacancy, "has_test") || vacancyHasNonEmptyAttribute(vacancy, "test") {
-		return core.ApplicationWaitingValidation
+		return applicationoperator.ApplicationPreparation{
+			Outcome: applicationoperator.ApplicationReview, Code: "vacancy_test_required",
+			Reason: "vacancy requires a test or questionnaire",
+		}, true
 	}
-	if vacancyAttributeBool(vacancy, "response_letter_required") && strings.TrimSpace(plan.Message) == "" {
-		return core.ApplicationWaitingValidation
-	}
-	return ""
+	return applicationoperator.ApplicationPreparation{}, false
 }
 
 func vacancyAttributeBool(vacancy core.Vacancy, key string) bool {

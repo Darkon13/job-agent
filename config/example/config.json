@@ -26,7 +26,11 @@
       "state_file": "./data/profiles/primary.json",
       "applications": {
         "mode": "dry_run",
-        "message": "Здравствуйте! Меня заинтересовала ваша вакансия.",
+        "message_template": "Здравствуйте, {{.Employer}}! Меня заинтересовала вакансия {{.Title}}.",
+        "qualification": {
+          "include_any": ["Go", "Golang", "Backend"],
+          "exclude_any": ["директор", "руководитель направления"]
+        },
         "daily_limit": 20,
         "timezone": "Europe/Moscow"
       },

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 )
@@ -31,6 +32,17 @@ type failOnceApplicationBudget struct {
 	storage.ApplicationBudgetRepository
 	commitFailures  int
 	releaseFailures int
+}
+
+type fakeApplicationPreparer struct {
+	result applicationoperator.ApplicationPreparation
+	err    error
+	calls  int
+}
+
+func (preparer *fakeApplicationPreparer) PrepareApplication(_ context.Context, _ core.Application, _ core.Vacancy) (applicationoperator.ApplicationPreparation, error) {
+	preparer.calls++
+	return preparer.result, preparer.err
 }
 
 func (budget *failOnceApplicationBudget) CommitApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error {
@@ -190,10 +202,55 @@ func TestApplicationHandlerStopsBeforeSubmitForVacancyPreflight(t *testing.T) {
 			application, err := repository.Application(context.Background(), core.ApplicationKey{
 				ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
 			})
-			if err != nil || application.Status != test.want || transport.calls != 0 {
+			if err != nil || application.Status != test.want || application.DecisionCode == "" || application.DecisionReason == "" || application.PreparedAt == nil || transport.calls != 0 {
 				t.Fatalf("application=%#v submit calls=%d err=%v", application, transport.calls, err)
 			}
 		})
+	}
+}
+
+func TestApplicationHandlerPersistsOperatorDecisionAndMessage(t *testing.T) {
+	transport := &fakeApplicationTransport{}
+	preparer := &fakeApplicationPreparer{result: applicationoperator.ApplicationPreparation{
+		Outcome: applicationoperator.ApplicationApply, Code: "qualified", Reason: "required skill matched", Message: "Generated letter",
+	}}
+	plan := liveApplicationPlan("resume-1")
+	plan.Preparer = preparer
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": plan}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.DecisionCode != "qualified" || application.DecisionReason != "required skill matched" || application.PreparedMessage != "Generated letter" || application.PreparedAt == nil {
+		t.Fatalf("application=%#v err=%v", application, err)
+	}
+	if transport.command.Message != "Generated letter" || preparer.calls != 1 {
+		t.Fatalf("command=%#v preparer calls=%d", transport.command, preparer.calls)
+	}
+}
+
+func TestApplicationHandlerReusesPreparedMessageOnSubmitRetry(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorTemporaryFailure, Operation: "applications.submit", Message: "timeout before response",
+	}}
+	preparer := &fakeApplicationPreparer{result: applicationoperator.ApplicationPreparation{
+		Outcome: applicationoperator.ApplicationApply, Code: "qualified", Reason: "rules passed", Message: "First stable letter",
+	}}
+	plan := liveApplicationPlan("resume-1")
+	plan.Preparer = preparer
+	handler, _, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": plan}, transport)
+	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("first handle: %v", err)
+	}
+	preparer.result.Message = "Different second letter"
+	transport.err = nil
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("retry handle: %v", err)
+	}
+	if preparer.calls != 1 || transport.vacancyCalls != 1 || transport.calls != 2 || transport.command.Message != "First stable letter" {
+		t.Fatalf("preparer=%d vacancy=%d submit=%d command=%#v", preparer.calls, transport.vacancyCalls, transport.calls, transport.command)
 	}
 }
 

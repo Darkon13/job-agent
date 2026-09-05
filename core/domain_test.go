@@ -86,6 +86,26 @@ func TestApplicationLifecycleAndRetry(t *testing.T) {
 	}
 }
 
+func TestApplicationPreparationIsRecordedBeforeExternalAction(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	application, err := NewApplication("application-1", ApplicationKey{
+		ProfileID: "profile-1", Vacancy: VacancyKey{Platform: "hh", ExternalID: "42"},
+	}, now)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if err := application.Transition(ApplicationPreparing, now.Add(time.Minute)); err != nil {
+		t.Fatalf("prepare transition: %v", err)
+	}
+	preparedAt := now.Add(2 * time.Minute)
+	if err := application.RecordPreparation("qualified", "rules passed", "  Hello  ", preparedAt); err != nil {
+		t.Fatalf("record preparation: %v", err)
+	}
+	if application.DecisionCode != "qualified" || application.DecisionReason != "rules passed" || application.PreparedMessage != "Hello" || application.PreparedAt == nil || !application.PreparedAt.Equal(preparedAt) {
+		t.Fatalf("application = %#v", application)
+	}
+}
+
 func TestProfileIsAccountNotProcess(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	profile, err := NewProfile("profile-1", "hh-main", "hh", now)

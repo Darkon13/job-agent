@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -30,8 +31,12 @@ type Application struct {
 	ExternalNegotiationID string            `json:"external_negotiation_id,omitempty"`
 	FailureCategory       ErrorCategory     `json:"failure_category,omitempty"`
 	FailureMessage        string            `json:"failure_message,omitempty"`
+	DecisionCode          string            `json:"decision_code,omitempty"`
+	DecisionReason        string            `json:"decision_reason,omitempty"`
+	PreparedMessage       string            `json:"prepared_message,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
+	PreparedAt            *time.Time        `json:"prepared_at,omitempty"`
 	SubmittedAt           *time.Time        `json:"submitted_at,omitempty"`
 }
 
@@ -87,6 +92,32 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 	return nil
 }
 
+// RecordPreparation stores the exact decision input to the unsafe external
+// action. A retry reuses PreparedMessage instead of invoking an operator again.
+func (application *Application) RecordPreparation(code, reason, message string, now time.Time) error {
+	if application == nil {
+		return errors.New("application is nil")
+	}
+	if application.Status != ApplicationPreparing && application.Status != ApplicationReady {
+		return fmt.Errorf("application preparation is not allowed in status %s", application.Status)
+	}
+	code = strings.TrimSpace(code)
+	reason = strings.TrimSpace(reason)
+	if code == "" || reason == "" {
+		return errors.New("application preparation requires decision code and reason")
+	}
+	if now.IsZero() || now.Before(application.UpdatedAt) {
+		return errors.New("application preparation time must not move backwards")
+	}
+	preparedAt := now
+	application.DecisionCode = code
+	application.DecisionReason = reason
+	application.PreparedMessage = strings.TrimSpace(message)
+	application.PreparedAt = &preparedAt
+	application.UpdatedAt = now
+	return nil
+}
+
 func applicationTransitionAllowed(from, to ApplicationStatus) bool {
 	allowed := map[ApplicationStatus]map[ApplicationStatus]struct{}{
 		ApplicationNew: {
@@ -102,7 +133,8 @@ func applicationTransitionAllowed(from, to ApplicationStatus) bool {
 			ApplicationPreparing: {}, ApplicationReady: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationReady: {
-			ApplicationSubmitting: {}, ApplicationSkipped: {}, ApplicationFailed: {},
+			ApplicationSubmitting: {}, ApplicationWaitingValidation: {}, ApplicationWaitingApproval: {},
+			ApplicationDryRun: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationSubmitting: {
 			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {}, ApplicationPendingReconcile: {}, ApplicationFailed: {},
