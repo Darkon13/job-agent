@@ -13,12 +13,13 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository      = (*Repository)(nil)
-	_ storage.SearchRunRepository    = (*Repository)(nil)
-	_ storage.ApplicationRepository  = (*Repository)(nil)
-	_ storage.TestCatalogRepository  = (*Repository)(nil)
-	_ storage.ReviewRepository       = (*Repository)(nil)
-	_ storage.ConversationRepository = (*Repository)(nil)
+	_ storage.VacancyRepository           = (*Repository)(nil)
+	_ storage.SearchRunRepository         = (*Repository)(nil)
+	_ storage.ApplicationRepository       = (*Repository)(nil)
+	_ storage.ApplicationBudgetRepository = (*Repository)(nil)
+	_ storage.TestCatalogRepository       = (*Repository)(nil)
+	_ storage.ReviewRepository            = (*Repository)(nil)
+	_ storage.ConversationRepository      = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -39,6 +40,7 @@ type Repository struct {
 	searchRuns           map[core.SearchID]core.SearchRun
 	discoveries          map[discoveryKey]core.VacancyDiscovery
 	applications         map[core.ApplicationKey]core.Application
+	applicationBudgets   map[core.ApplicationID]core.ApplicationBudgetReservation
 	tests                map[core.TestDefinitionID]core.TestDefinition
 	reviews              map[core.ReviewSessionID]core.ReviewSession
 	prompts              map[core.ReviewPromptID]core.ReviewPrompt
@@ -56,6 +58,7 @@ func NewRepository() *Repository {
 		searchRuns:           make(map[core.SearchID]core.SearchRun),
 		discoveries:          make(map[discoveryKey]core.VacancyDiscovery),
 		applications:         make(map[core.ApplicationKey]core.Application),
+		applicationBudgets:   make(map[core.ApplicationID]core.ApplicationBudgetReservation),
 		tests:                make(map[core.TestDefinitionID]core.TestDefinition),
 		reviews:              make(map[core.ReviewSessionID]core.ReviewSession),
 		prompts:              make(map[core.ReviewPromptID]core.ReviewPrompt),

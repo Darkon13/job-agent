@@ -21,8 +21,11 @@ type Config struct {
 }
 
 const (
-	JobActionResumeTouch = "resume.touch"
-	JobConcurrencyForbid = "forbid"
+	JobActionResumeTouch    = "resume.touch"
+	JobConcurrencyForbid    = "forbid"
+	ApplicationModeDryRun   = "dry_run"
+	ApplicationModeApproval = "approval"
+	ApplicationModeSubmit   = "submit"
 )
 
 type Job struct {
@@ -106,6 +109,27 @@ type Profile struct {
 	StateFile      string            `json:"state_file,omitempty"`
 	Enabled        bool              `json:"enabled"`
 	Bootstrap      *ProfileBootstrap `json:"bootstrap,omitempty"`
+	Applications   ApplicationPolicy `json:"applications,omitempty"`
+}
+
+type ApplicationPolicy struct {
+	Mode       string `json:"mode,omitempty"`
+	DailyLimit int    `json:"daily_limit,omitempty"`
+	Timezone   string `json:"timezone,omitempty"`
+}
+
+func (policy ApplicationPolicy) ExecutionMode() string {
+	if policy.Mode == "" {
+		return ApplicationModeDryRun
+	}
+	return policy.Mode
+}
+
+func (policy ApplicationPolicy) LocationName() string {
+	if policy.Timezone == "" {
+		return "UTC"
+	}
+	return policy.Timezone
 }
 
 // ProfileBootstrap schedules one idempotent initial profile fill after auth.
@@ -199,6 +223,20 @@ func (c Config) Validate() error {
 			}
 			if profile.Bootstrap.When != "empty" && profile.Bootstrap.When != "missing_resume" {
 				return fmt.Errorf("profile %q bootstrap when must be empty or missing_resume", profile.Tag)
+			}
+		}
+		switch profile.Applications.ExecutionMode() {
+		case ApplicationModeDryRun, ApplicationModeApproval:
+		case ApplicationModeSubmit:
+			if profile.Applications.DailyLimit < 1 {
+				return fmt.Errorf("profile %q live applications require a positive daily_limit", profile.Tag)
+			}
+		default:
+			return fmt.Errorf("profile %q has unknown application mode %q", profile.Tag, profile.Applications.Mode)
+		}
+		if profile.Applications.Timezone != "" {
+			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {
+				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
 			}
 		}
 		profiles[profile.Tag] = struct{}{}

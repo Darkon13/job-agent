@@ -183,7 +183,7 @@ func normalizeError(err error, taskType core.TaskType) *core.OperationError {
 func retryable(category core.ErrorCategory) bool {
 	switch category {
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded,
-		core.ErrorUnauthorized, core.ErrorValidationRequired, core.ErrorConfirmationRequired:
+		core.ErrorUnauthorized, core.ErrorValidationRequired, core.ErrorConfirmationRequired, core.ErrorAmbiguousResult:
 		return true
 	default:
 		return false

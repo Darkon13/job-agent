@@ -150,7 +150,7 @@ func (task *Task) ScheduleRetry(retryAt time.Time, operationError *OperationErro
 	}
 	switch operationError.Category {
 	case ErrorTemporaryFailure, ErrorRateLimited, ErrorQuotaExceeded,
-		ErrorUnauthorized, ErrorValidationRequired, ErrorConfirmationRequired:
+		ErrorUnauthorized, ErrorValidationRequired, ErrorConfirmationRequired, ErrorAmbiguousResult:
 	default:
 		return fmt.Errorf("error category %q is not retryable", operationError.Category)
 	}

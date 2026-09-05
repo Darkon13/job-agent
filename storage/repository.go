@@ -29,6 +29,12 @@ type ApplicationRepository interface {
 	SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error
 }
 
+type ApplicationBudgetRepository interface {
+	ReserveApplicationBudget(ctx context.Context, params core.ReserveApplicationBudgetParams) (core.ApplicationBudgetReservation, error)
+	CommitApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
+	ReleaseApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
+}
+
 type TestDefinitionFilter struct {
 	Platform core.Platform
 	FamilyID string

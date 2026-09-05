@@ -85,6 +85,8 @@ type Adapter struct {
 var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
+var _ adapter.ApplicationTransport = (*Adapter)(nil)
+var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -249,6 +251,26 @@ func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json
 		return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound credentials", nil)
 	}
 	return client.SearchGlobal(ctx, query, cursor)
+}
+
+func (a *Adapter) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
+	a.mu.RLock()
+	client := a.clients[command.ProfileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorUnauthorized, "applications.submit", "HH profile has no bound credentials", nil)
+	}
+	return client.SubmitApplication(ctx, command)
+}
+
+func (a *Adapter) ReconcileApplication(ctx context.Context, command adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
+	a.mu.RLock()
+	client := a.clients[command.ProfileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return adapter.ApplicationReconcileResult{}, operationError(core.ErrorUnauthorized, "applications.reconcile", "HH profile is not bound to OAuth credentials", nil)
+	}
+	return client.ReconcileApplication(ctx, command)
 }
 
 func (a *Adapter) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {

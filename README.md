@@ -114,15 +114,32 @@ terminal fail. После падения worker задача повторно в
 Основной `application.submit` worker ведёт отклик через состояния
 `new → preparing → ready → submitting → submitted`. Выбор резюме задаётся для
 профиля полем `resume`; отсутствие обязательных данных или вопросник переводят
-отклик в `waiting_validation`, временная ошибка возвращает его в `ready` для
-повторной попытки, а успешный transport сохраняет внешний negotiation ID.
+отклик в `waiting_validation`. Перед `POST /negotiations` SQLite атомарно
+резервирует слот дневного бюджета профиля и платформы. Успех фиксирует слот,
+гарантированный отказ освобождает его, а потерянный ответ оставляет отклик в
+`pending_reconciliation`, не повторяя небезопасный POST.
+
+Политика выполнения задаётся в `profile.applications`. Без явной настройки
+используется безопасный `dry_run`; `approval` останавливает отклик в
+`waiting_approval`; `submit` требует положительный `daily_limit`. Граница суток
+считается в заданной `timezone`. Пример безопасной настройки:
+
+```json
+"applications": {
+  "mode": "dry_run",
+  "daily_limit": 20,
+  "timezone": "Europe/Moscow"
+}
+```
+
+HH-адаптер отправляет multipart-отклик через официальный API. Локальный
+idempotency key не передаётся HH, потому что endpoint не предоставляет такого
+параметра: он дедуплицирует durable task и пару profile/vacancy. Ответ
+`already_applied` считается идемпотентным успехом. После неоднозначного исхода
+worker читает `relations` полной вакансии: `got_response` подтверждает отклик,
+его отсутствие завершает application как неотправленный и освобождает бюджет.
 Запись каждого перехода защищена сравнением ожидаемого статуса, поэтому два
 worker не могут одновременно завершить один отклик.
-
-Worker откликов запускается только при наличии реально зарегистрированного
-application transport. Текущий HH-адаптер пока умеет валидировать поисковые
-объекты, но не отправляет HTTP/browser-отклики, поэтому накопленные задачи не
-потребляются и не помечаются ошибочными до реализации транспорта.
 
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
@@ -152,8 +169,8 @@ HH-адаптер умеет проверять собственную поис�
 не хранится в основном config и не попадает в диагностические ошибки. Проверки
 одного профиля сериализуются, а `401/403` переводят профиль в
 `auth_required` и не запускают его workers. Conversation transport пока
-возвращает явный `unsupported`; fake application transport покрывает полный
-lifecycle отклика в тестах.
+возвращает явный `unsupported`; application transport и его reconciliation
+работают через официальный HH API.
 
 Минимальный credential-файл имеет права `0600` (или строже):
 
@@ -168,6 +185,8 @@ lifecycle отклика в тестах.
   "tag": "primary",
   "adapter": "hh-main",
   "credentials_ref": "file:/run/secrets/hh-primary.json",
+  "resume": "replace-with-hh-resume-id",
+  "applications": {"mode": "dry_run", "timezone": "Europe/Moscow"},
   "enabled": true
 }
 ```

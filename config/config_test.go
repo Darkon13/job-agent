@@ -41,6 +41,30 @@ func TestProfileCredentialsReferenceIsLoadedWithoutReadingSecret(t *testing.T) {
 	}
 }
 
+func TestApplicationPolicyDefaultsToDryRunAndGuardsLiveMode(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+	}
+	if err := config.Validate(); err != nil || config.Profiles[0].Applications.ExecutionMode() != ApplicationModeDryRun {
+		t.Fatalf("safe default: mode=%q err=%v", config.Profiles[0].Applications.ExecutionMode(), err)
+	}
+	config.Profiles[0].Applications.Mode = ApplicationModeSubmit
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected live mode without daily limit to fail")
+	}
+	config.Profiles[0].Applications.DailyLimit = 7
+	config.Profiles[0].Applications.Timezone = "Europe/Moscow"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid live application policy: %v", err)
+	}
+	config.Profiles[0].Applications.Timezone = "Mars/Olympus"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected invalid application timezone to fail")
+	}
+}
+
 func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

@@ -67,10 +67,26 @@ type ApplicationSubmitCommand struct {
 
 type ApplicationSubmitResult struct {
 	ExternalNegotiationID string
+	AlreadyApplied        bool
 }
 
 type ApplicationTransport interface {
 	SubmitApplication(ctx context.Context, command ApplicationSubmitCommand) (ApplicationSubmitResult, error)
+}
+
+type ApplicationReconcileCommand struct {
+	ProfileID core.ProfileID
+	Vacancy   core.VacancyKey
+	ResumeID  string
+}
+
+type ApplicationReconcileResult struct {
+	Applied               bool
+	ExternalNegotiationID string
+}
+
+type ApplicationReconciler interface {
+	ReconcileApplication(ctx context.Context, command ApplicationReconcileCommand) (ApplicationReconcileResult, error)
 }
 
 type ResumePublishCommand struct {

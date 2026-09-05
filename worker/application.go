@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
@@ -13,8 +14,28 @@ import (
 )
 
 type ApplicationPlan struct {
-	ResumeID string
-	Message  string
+	ResumeID   string
+	Message    string
+	Mode       core.ApplicationExecutionMode
+	DailyLimit int
+	Timezone   string
+}
+
+func (plan ApplicationPlan) Validate() error {
+	if err := plan.Mode.Validate(); err != nil {
+		return err
+	}
+	if plan.Mode != core.ApplicationExecutionDryRun && plan.ResumeID == "" {
+		return errors.New("application plan requires a resume outside dry-run mode")
+	}
+	if plan.Mode == core.ApplicationExecutionSubmit && plan.DailyLimit < 1 {
+		return errors.New("live application plan requires a positive daily limit")
+	}
+	if plan.Timezone == "" {
+		return errors.New("application plan requires a timezone")
+	}
+	_, err := time.LoadLocation(plan.Timezone)
+	return err
 }
 
 type ApplicationPlanResolver interface {
@@ -25,10 +46,16 @@ type StaticApplicationPlans map[core.ProfileID]ApplicationPlan
 
 func (plans StaticApplicationPlans) ResolveApplicationPlan(_ context.Context, application core.Application) (ApplicationPlan, error) {
 	plan, exists := plans[application.Key.ProfileID]
-	if !exists || plan.ResumeID == "" {
+	if !exists {
 		return ApplicationPlan{}, &core.OperationError{
 			Category: core.ErrorValidationRequired, Operation: "applications.prepare",
-			Platform: application.Key.Vacancy.Platform, Message: "profile requires a resume id",
+			Platform: application.Key.Vacancy.Platform, Message: "profile requires an application plan",
+		}
+	}
+	if err := plan.Validate(); err != nil {
+		return ApplicationPlan{}, &core.OperationError{
+			Category: core.ErrorValidationRequired, Operation: "applications.prepare",
+			Platform: application.Key.Vacancy.Platform, Message: err.Error(),
 		}
 	}
 	return plan, nil
@@ -74,16 +101,17 @@ func (registry *ApplicationTransportRegistry) Count() int {
 
 type ApplicationHandler struct {
 	repository storage.ApplicationRepository
+	budgets    storage.ApplicationBudgetRepository
 	transports *ApplicationTransportRegistry
 	plans      ApplicationPlanResolver
 	clock      Clock
 }
 
-func NewApplicationHandler(repository storage.ApplicationRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
-	if repository == nil || transports == nil || plans == nil || clock == nil {
+func NewApplicationHandler(repository storage.ApplicationRepository, budgets storage.ApplicationBudgetRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
+	if repository == nil || budgets == nil || transports == nil || plans == nil || clock == nil {
 		return nil, errors.New("application handler requires all dependencies")
 	}
-	return &ApplicationHandler{repository: repository, transports: transports, plans: plans, clock: clock}, nil
+	return &ApplicationHandler{repository: repository, budgets: budgets, transports: transports, plans: plans, clock: clock}, nil
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -101,12 +129,30 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if application.ID != payload.ApplicationID {
 		return errors.New("application task identity mismatch")
 	}
-	if application.Status == core.ApplicationSubmitted || application.Status == core.ApplicationSkipped || application.Status == core.ApplicationFailed {
+	if application.Status == core.ApplicationSubmitted {
+		return handler.budgets.CommitApplicationBudget(ctx, application.ID, handler.clock.Now())
+	}
+	if application.Status == core.ApplicationPendingReconcile {
+		return handler.reconcile(ctx, application)
+	}
+	if application.Status == core.ApplicationSkipped || application.Status == core.ApplicationDryRun || application.Status == core.ApplicationWaitingApproval || application.Status == core.ApplicationFailed {
 		return nil
+	}
+	if application.Status == core.ApplicationSubmitting {
+		if err := application.Transition(core.ApplicationPendingReconcile, handler.clock.Now()); err != nil {
+			return err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		return &core.OperationError{
+			Category: core.ErrorAmbiguousResult, Operation: "applications.submit", Platform: application.Key.Vacancy.Platform,
+			Message: "application worker restarted while submission outcome was unknown",
+		}
 	}
 	expectedStatus := application.Status
 	now := handler.clock.Now()
-	if application.Status == core.ApplicationNew || application.Status == core.ApplicationWaitingValidation {
+	if application.Status == core.ApplicationNew || application.Status == core.ApplicationWaitingValidation || application.Status == core.ApplicationWaitingApproval {
 		if err := application.Transition(core.ApplicationPreparing, now); err != nil {
 			return err
 		}
@@ -121,10 +167,28 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		return err
 	}
+	switch plan.Mode {
+	case core.ApplicationExecutionDryRun:
+		if err := application.Transition(core.ApplicationDryRun, now); err != nil {
+			return err
+		}
+		return handler.repository.SaveApplication(ctx, application, expectedStatus)
+	case core.ApplicationExecutionApproval:
+		if err := application.Transition(core.ApplicationWaitingApproval, now); err != nil {
+			return err
+		}
+		return handler.repository.SaveApplication(ctx, application, expectedStatus)
+	}
 	if application.Status == core.ApplicationPreparing {
 		if err := application.Transition(core.ApplicationReady, now); err != nil {
 			return err
 		}
+	}
+	if err := handler.reserveBudget(ctx, application, plan, now); err != nil {
+		if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+			return saveErr
+		}
+		return err
 	}
 	if err := application.Transition(core.ApplicationSubmitting, now); err != nil {
 		return err
@@ -143,14 +207,17 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err != nil {
 		return handler.finishFailure(ctx, application, err)
 	}
-	if result.ExternalNegotiationID == "" {
+	if result.ExternalNegotiationID == "" && !result.AlreadyApplied {
 		return handler.finishFailure(ctx, application, errors.New("application transport returned empty negotiation id"))
 	}
 	application.ExternalNegotiationID = result.ExternalNegotiationID
 	if err := application.Transition(core.ApplicationSubmitted, handler.clock.Now()); err != nil {
 		return err
 	}
-	return handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting)
+	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+		return err
+	}
+	return handler.budgets.CommitApplicationBudget(ctx, application.ID, handler.clock.Now())
 }
 
 func (handler *ApplicationHandler) finishFailure(ctx context.Context, application core.Application, cause error) error {
@@ -160,16 +227,30 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		operationError = &core.OperationError{Category: core.ErrorPermanentFailure, Operation: "applications.submit", Message: cause.Error()}
 	}
 	switch operationError.Category {
+	case core.ErrorAmbiguousResult:
+		if err := application.Transition(core.ApplicationPendingReconcile, now); err != nil {
+			return err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		return operationError
 	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
 		if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
 			return err
 		}
-		return handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting)
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		return handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now)
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded, core.ErrorUnauthorized:
 		if err := application.Transition(core.ApplicationReady, now); err != nil {
 			return err
 		}
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		if err := handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now); err != nil {
 			return err
 		}
 		return operationError
@@ -180,6 +261,71 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 			return err
 		}
+		if err := handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now); err != nil {
+			return err
+		}
 		return operationError
 	}
+}
+
+func (handler *ApplicationHandler) reconcile(ctx context.Context, application core.Application) error {
+	plan, err := handler.plans.ResolveApplicationPlan(ctx, application)
+	if err != nil {
+		return err
+	}
+	transport, err := handler.transports.Resolve(application.Key.ProfileID)
+	if err != nil {
+		return err
+	}
+	reconciler, ok := transport.(adapter.ApplicationReconciler)
+	if !ok {
+		return &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "applications.reconcile", Platform: application.Key.Vacancy.Platform,
+			Message: "application transport cannot reconcile an ambiguous submission",
+		}
+	}
+	result, err := reconciler.ReconcileApplication(ctx, adapter.ApplicationReconcileCommand{
+		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy, ResumeID: plan.ResumeID,
+	})
+	if err != nil {
+		return err
+	}
+	now := handler.clock.Now()
+	if result.Applied {
+		application.ExternalNegotiationID = result.ExternalNegotiationID
+		if err := application.Transition(core.ApplicationSubmitted, now); err != nil {
+			return err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
+			return err
+		}
+		return handler.budgets.CommitApplicationBudget(ctx, application.ID, now)
+	}
+	failure := &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "applications.reconcile", Platform: application.Key.Vacancy.Platform,
+		Message: "HH confirmed that the application was not created",
+	}
+	if err := application.Fail(failure, now); err != nil {
+		return err
+	}
+	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
+		return err
+	}
+	return handler.budgets.ReleaseApplicationBudget(ctx, application.ID, now)
+}
+
+func (handler *ApplicationHandler) reserveBudget(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
+	location, err := time.LoadLocation(plan.Timezone)
+	if err != nil {
+		return err
+	}
+	localNow := now.In(location)
+	localStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	windowStart := localStart.UTC()
+	windowEnd := localStart.AddDate(0, 0, 1).UTC()
+	_, err = handler.budgets.ReserveApplicationBudget(ctx, core.ReserveApplicationBudgetParams{
+		ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
+		WindowStart: windowStart, WindowEnd: windowEnd, Limit: plan.DailyLimit, Now: now,
+	})
+	return err
 }

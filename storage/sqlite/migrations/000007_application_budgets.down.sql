@@ -1,0 +1,3 @@
+DROP INDEX application_budget_state_idx;
+DROP TABLE application_budget_reservations;
+DROP TABLE application_budget_buckets;

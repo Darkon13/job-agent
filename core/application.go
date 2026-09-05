@@ -12,9 +12,12 @@ const (
 	ApplicationNew               ApplicationStatus = "new"
 	ApplicationPreparing         ApplicationStatus = "preparing"
 	ApplicationWaitingValidation ApplicationStatus = "waiting_validation"
+	ApplicationWaitingApproval   ApplicationStatus = "waiting_approval"
 	ApplicationReady             ApplicationStatus = "ready"
 	ApplicationSubmitting        ApplicationStatus = "submitting"
+	ApplicationPendingReconcile  ApplicationStatus = "pending_reconciliation"
 	ApplicationSubmitted         ApplicationStatus = "submitted"
+	ApplicationDryRun            ApplicationStatus = "dry_run"
 	ApplicationSkipped           ApplicationStatus = "skipped"
 	ApplicationFailed            ApplicationStatus = "failed"
 )
@@ -90,17 +93,21 @@ func applicationTransitionAllowed(from, to ApplicationStatus) bool {
 			ApplicationPreparing: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationPreparing: {
-			ApplicationWaitingValidation: {}, ApplicationReady: {}, ApplicationSkipped: {}, ApplicationFailed: {},
+			ApplicationWaitingValidation: {}, ApplicationWaitingApproval: {}, ApplicationReady: {}, ApplicationDryRun: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationWaitingValidation: {
+			ApplicationPreparing: {}, ApplicationReady: {}, ApplicationSkipped: {}, ApplicationFailed: {},
+		},
+		ApplicationWaitingApproval: {
 			ApplicationPreparing: {}, ApplicationReady: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationReady: {
 			ApplicationSubmitting: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationSubmitting: {
-			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {}, ApplicationFailed: {},
+			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {}, ApplicationPendingReconcile: {}, ApplicationFailed: {},
 		},
+		ApplicationPendingReconcile: {ApplicationSubmitted: {}, ApplicationFailed: {}},
 	}
 	_, exists := allowed[from][to]
 	return exists

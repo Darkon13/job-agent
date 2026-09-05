@@ -278,6 +278,19 @@ resume_id, vacancy_id, optional message (max 10000)
 - `400` — validation;
 - `403` — forbidden/limit/auth/application restriction.
 
+Текущая реализация различает конкретные HH error values: `already_applied`
+считается идемпотентным успехом, `limit_exceeded` — платформенной квотой,
+`test_required` и конфликты резюме — необходимостью валидации, архивная или
+запрещённая вакансия — окончательным отказом. `429` остаётся кратковременным
+rate limit и не смешивается с дневным локальным budget.
+
+После отправки нельзя считать любой transport error гарантированным отказом.
+Network interruption и `5xx` переводят application в `pending_reconciliation`,
+сохраняя reservation. Повторная задача выполняет `GET /vacancies/{id}` и
+проверяет applicant relation `got_response`: наличие подтверждает отклик,
+отсутствие позволяет завершить его как не созданный и освободить reservation.
+До этой проверки `POST /negotiations` не повторяется.
+
 Перед откликом можно вызвать
 `GET /vacancies/{vacancy_id}/suitable_resumes`. `Application` уникален для пары
 profile/resume/vacancy согласно platform semantics и локальной idempotency
@@ -374,8 +387,10 @@ HTTP и HH error payload маппятся в core:
 | expired/invalid token, auth error | `Unauthorized` |
 | captcha response | `ConfirmationRequired` |
 | application redirect `303` | `Unsupported` для API transport, затем browser workflow |
-| limit/quota/rate limit, `429` | `RateLimited` |
-| transient `5xx`/network | `TemporaryFailure` |
+| `429` или иной кратковременный throttle | `RateLimited` |
+| `negotiations/limit_exceeded` | `QuotaExceeded` |
+| `5xx`/network после application POST | `AmbiguousResult` и reconciliation |
+| сбой безопасного GET | `TemporaryFailure` |
 | not found/archived/no access | `PermanentFailure` после проверки причины |
 
 Adapter сохраняет исходный status, HH error type/value и request ID в

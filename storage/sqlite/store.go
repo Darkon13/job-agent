@@ -19,12 +19,13 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository      = (*Store)(nil)
-	_ storage.SearchRunRepository    = (*Store)(nil)
-	_ storage.ApplicationRepository  = (*Store)(nil)
-	_ storage.ConversationRepository = (*Store)(nil)
-	_ broker.TaskQueue               = (*Store)(nil)
-	_ broker.TaskStore               = (*Store)(nil)
+	_ storage.VacancyRepository           = (*Store)(nil)
+	_ storage.SearchRunRepository         = (*Store)(nil)
+	_ storage.ApplicationRepository       = (*Store)(nil)
+	_ storage.ApplicationBudgetRepository = (*Store)(nil)
+	_ storage.ConversationRepository      = (*Store)(nil)
+	_ broker.TaskQueue                    = (*Store)(nil)
+	_ broker.TaskStore                    = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")

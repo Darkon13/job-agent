@@ -24,12 +24,21 @@
       "adapter": "hh-main",
       "resume": "replace-with-hh-resume-id",
       "state_file": "./data/profiles/primary.json",
+      "applications": {
+        "mode": "dry_run",
+        "daily_limit": 20,
+        "timezone": "Europe/Moscow"
+      },
       "enabled": true
     },
     {
       "tag": "secondary",
       "adapter": "hh-main",
       "state_file": "./data/profiles/secondary.json",
+      "applications": {
+        "mode": "dry_run",
+        "timezone": "Europe/Moscow"
+      },
       "enabled": true
     }
   ],
