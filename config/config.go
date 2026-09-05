@@ -114,6 +114,7 @@ type Profile struct {
 
 type ApplicationPolicy struct {
 	Mode       string `json:"mode,omitempty"`
+	Message    string `json:"message,omitempty"`
 	DailyLimit int    `json:"daily_limit,omitempty"`
 	Timezone   string `json:"timezone,omitempty"`
 }

@@ -85,6 +85,7 @@ type Adapter struct {
 var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
+var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 
@@ -251,6 +252,19 @@ func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json
 		return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound credentials", nil)
 	}
 	return client.SearchGlobal(ctx, query, cursor)
+}
+
+func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error) {
+	if key.Platform != Name {
+		return core.Vacancy{}, errors.New("HH vacancy reader received another platform")
+	}
+	a.mu.RLock()
+	client := a.clients[profileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read", "HH profile has no bound credentials", nil)
+	}
+	return client.ReadVacancy(ctx, profileID, key)
 }
 
 func (a *Adapter) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {

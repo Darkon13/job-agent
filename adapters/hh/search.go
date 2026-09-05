@@ -30,28 +30,43 @@ type vacancySearchResponse struct {
 }
 
 type vacancySearchItem struct {
-	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
-	AlternateURL       string          `json:"alternate_url"`
-	PublishedAt        string          `json:"published_at"`
-	Archived           bool            `json:"archived"`
-	HasTest            bool            `json:"has_test"`
-	ResponseLetter     bool            `json:"response_letter_required"`
-	ResponseURL        string          `json:"response_url"`
-	ApplyAlternateURL  string          `json:"apply_alternate_url"`
-	Employer           *searchEmployer `json:"employer"`
-	SalaryRange        json.RawMessage `json:"salary_range"`
-	Salary             json.RawMessage `json:"salary"`
-	ProfessionalRoles  json.RawMessage `json:"professional_roles"`
-	EmploymentForm     json.RawMessage `json:"employment_form"`
-	WorkFormat         json.RawMessage `json:"work_format"`
-	WorkScheduleByDays json.RawMessage `json:"work_schedule_by_days"`
-	WorkingHours       json.RawMessage `json:"working_hours"`
-	Experience         json.RawMessage `json:"experience"`
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	AlternateURL        string          `json:"alternate_url"`
+	PublishedAt         string          `json:"published_at"`
+	Archived            bool            `json:"archived"`
+	HasTest             bool            `json:"has_test"`
+	ResponseLetter      bool            `json:"response_letter_required"`
+	ResponseURL         string          `json:"response_url"`
+	ApplyAlternateURL   string          `json:"apply_alternate_url"`
+	Employer            *searchEmployer `json:"employer"`
+	SalaryRange         json.RawMessage `json:"salary_range"`
+	Salary              json.RawMessage `json:"salary"`
+	ProfessionalRoles   json.RawMessage `json:"professional_roles"`
+	EmploymentForm      json.RawMessage `json:"employment_form"`
+	WorkFormat          json.RawMessage `json:"work_format"`
+	WorkScheduleByDays  json.RawMessage `json:"work_schedule_by_days"`
+	WorkingHours        json.RawMessage `json:"working_hours"`
+	Experience          json.RawMessage `json:"experience"`
+	Description         string          `json:"description"`
+	KeySkills           []namedItem     `json:"key_skills"`
+	Relations           []string        `json:"relations"`
+	AllowMessages       bool            `json:"allow_messages"`
+	ClosedForApplicants bool            `json:"closed_for_applicants"`
+	NegotiationsURL     string          `json:"negotiations_url"`
+	SuitableResumesURL  string          `json:"suitable_resumes_url"`
+	Languages           json.RawMessage `json:"languages"`
+	DriverLicenseTypes  json.RawMessage `json:"driver_license_types"`
+	VacancyProperties   json.RawMessage `json:"vacancy_properties"`
+	Test                json.RawMessage `json:"test"`
 }
 
 type searchEmployer struct {
 	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type namedItem struct {
 	Name string `json:"name"`
 }
 
@@ -189,6 +204,35 @@ func normalizeSearchItem(item vacancySearchItem, observedAt time.Time) (core.Vac
 	putRawJSON(attributes, "work_schedule_by_days", item.WorkScheduleByDays)
 	putRawJSON(attributes, "working_hours", item.WorkingHours)
 	putRawJSON(attributes, "experience", item.Experience)
+	putRawJSON(attributes, "languages", item.Languages)
+	putRawJSON(attributes, "driver_license_types", item.DriverLicenseTypes)
+	putRawJSON(attributes, "vacancy_properties", item.VacancyProperties)
+	putRawJSON(attributes, "test", item.Test)
+	if item.Description != "" {
+		attributes["description"] = item.Description
+	}
+	if len(item.KeySkills) != 0 {
+		skills := make([]string, 0, len(item.KeySkills))
+		for _, skill := range item.KeySkills {
+			if value := strings.TrimSpace(skill.Name); value != "" {
+				skills = append(skills, value)
+			}
+		}
+		if len(skills) != 0 {
+			attributes["key_skills"] = skills
+		}
+	}
+	if len(item.Relations) != 0 {
+		attributes["relations"] = append([]string(nil), item.Relations...)
+	}
+	attributes["allow_messages"] = item.AllowMessages
+	attributes["closed_for_applicants"] = item.ClosedForApplicants
+	if item.NegotiationsURL != "" {
+		attributes["negotiations_url"] = item.NegotiationsURL
+	}
+	if item.SuitableResumesURL != "" {
+		attributes["suitable_resumes_url"] = item.SuitableResumesURL
+	}
 	if item.ResponseURL != "" {
 		attributes["response_url"] = item.ResponseURL
 	}

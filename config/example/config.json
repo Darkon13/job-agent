@@ -26,6 +26,7 @@
       "state_file": "./data/profiles/primary.json",
       "applications": {
         "mode": "dry_run",
+        "message": "Здравствуйте! Меня заинтересовала ваша вакансия.",
         "daily_limit": 20,
         "timezone": "Europe/Moscow"
       },

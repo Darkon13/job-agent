@@ -22,6 +22,9 @@ type fakeApplicationTransport struct {
 	reconcileErr    error
 	reconcileCalls  int
 	reconcileSet    bool
+	vacancy         core.Vacancy
+	vacancyErr      error
+	vacancyCalls    int
 }
 
 type failOnceApplicationBudget struct {
@@ -69,6 +72,21 @@ func (transport *fakeApplicationTransport) SubmitApplication(_ context.Context, 
 	return adapter.ApplicationSubmitResult{ExternalNegotiationID: "negotiation-1"}, nil
 }
 
+func (transport *fakeApplicationTransport) ReadVacancy(_ context.Context, _ core.ProfileID, key core.VacancyKey) (core.Vacancy, error) {
+	transport.vacancyCalls++
+	if transport.vacancyErr != nil {
+		return core.Vacancy{}, transport.vacancyErr
+	}
+	if transport.vacancy.ExternalID != "" {
+		return transport.vacancy, nil
+	}
+	return core.Vacancy{
+		Platform: key.Platform, ExternalID: key.ExternalID, Title: "Go developer",
+		State: core.VacancyStateOpen, ObservedAt: time.Date(2026, 7, 19, 14, 1, 0, 0, time.UTC),
+		Attributes: map[string]any{},
+	}, nil
+}
+
 func applicationFixture(t *testing.T, plans StaticApplicationPlans, transport *fakeApplicationTransport) (*ApplicationHandler, *storagememory.Repository, core.Task, *conversationClock) {
 	t.Helper()
 	ctx := context.Background()
@@ -95,7 +113,7 @@ func applicationFixture(t *testing.T, plans StaticApplicationPlans, transport *f
 		t.Fatalf("register transport: %v", err)
 	}
 	clock := &conversationClock{now: now}
-	handler, err := NewApplicationHandler(repository, repository, transports, plans, clock)
+	handler, err := NewApplicationHandler(repository, repository, repository, transports, plans, clock)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -126,6 +144,73 @@ func TestApplicationHandlerSubmitsAndPersistsNegotiation(t *testing.T) {
 	reservation, exists := repository.ApplicationBudget(application.ID)
 	if !exists || reservation.State != core.ApplicationBudgetCommitted {
 		t.Fatalf("application budget was not committed: %#v exists=%v", reservation, exists)
+	}
+}
+
+func TestApplicationHandlerPersistsFullVacancyBeforeSubmission(t *testing.T) {
+	transport := &fakeApplicationTransport{vacancy: core.Vacancy{
+		Platform: "hh", ExternalID: "42", Title: "Senior Go developer", Employer: "Example",
+		State: core.VacancyStateOpen, ObservedAt: time.Date(2026, 7, 19, 14, 1, 0, 0, time.UTC),
+		Attributes: map[string]any{"description": "Build reliable services", "key_skills": []string{"Go"}},
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle application: %v", err)
+	}
+	vacancy, err := repository.Vacancy(context.Background(), core.VacancyKey{Platform: "hh", ExternalID: "42"})
+	if err != nil || vacancy.Title != "Senior Go developer" || vacancy.Attributes["description"] != "Build reliable services" {
+		t.Fatalf("stored vacancy=%#v err=%v", vacancy, err)
+	}
+}
+
+func TestApplicationHandlerStopsBeforeSubmitForVacancyPreflight(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		attributes map[string]any
+		state      core.VacancyState
+		message    string
+		want       core.ApplicationStatus
+	}{
+		{name: "archived", state: core.VacancyStateArchived, want: core.ApplicationSkipped},
+		{name: "already applied", state: core.VacancyStateOpen, attributes: map[string]any{"relations": []string{"got_response"}}, want: core.ApplicationSkipped},
+		{name: "test", state: core.VacancyStateOpen, attributes: map[string]any{"has_test": true}, want: core.ApplicationWaitingValidation},
+		{name: "required letter", state: core.VacancyStateOpen, attributes: map[string]any{"response_letter_required": true}, want: core.ApplicationWaitingValidation},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &fakeApplicationTransport{vacancy: core.Vacancy{
+				Platform: "hh", ExternalID: "42", Title: "Go developer", State: test.state,
+				ObservedAt: time.Date(2026, 7, 19, 14, 1, 0, 0, time.UTC), Attributes: test.attributes,
+			}}
+			plan := liveApplicationPlan("resume-1")
+			plan.Message = test.message
+			handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": plan}, transport)
+			if err := handler.Handle(context.Background(), task); err != nil {
+				t.Fatalf("handle application: %v", err)
+			}
+			application, err := repository.Application(context.Background(), core.ApplicationKey{
+				ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+			})
+			if err != nil || application.Status != test.want || transport.calls != 0 {
+				t.Fatalf("application=%#v submit calls=%d err=%v", application, transport.calls, err)
+			}
+		})
+	}
+}
+
+func TestApplicationHandlerPersistsPermanentVacancyReadFailure(t *testing.T) {
+	transport := &fakeApplicationTransport{vacancyErr: &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "vacancies.read", Platform: "hh", Message: "vacancy is unavailable",
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	err := handler.Handle(context.Background(), task)
+	if !core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
+		t.Fatalf("handle error = %v", err)
+	}
+	application, loadErr := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if loadErr != nil || application.Status != core.ApplicationFailed || application.FailureMessage != "vacancy is unavailable" || transport.calls != 0 {
+		t.Fatalf("application=%#v submit calls=%d err=%v", application, transport.calls, loadErr)
 	}
 }
 

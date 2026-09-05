@@ -18,6 +18,13 @@ type VacancySearcher interface {
 	Search(ctx context.Context, profileID core.ProfileID, query json.RawMessage, cursor string) (core.SearchPage, error)
 }
 
+// VacancyReader loads the current, full platform representation before an
+// application decision is made. Search results are deliberately insufficient
+// for this step because platforms omit requirements and applicant relations.
+type VacancyReader interface {
+	ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error)
+}
+
 // ProfileReadResult is the minimal, non-secret identity returned by an
 // authenticated platform probe. Platform payloads and credentials stay inside
 // the adapter.

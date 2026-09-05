@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,21 @@ func (registry *ApplicationTransportRegistry) Resolve(profileID core.ProfileID) 
 	return transport, nil
 }
 
+func (registry *ApplicationTransportRegistry) ResolveVacancyReader(profileID core.ProfileID) (adapter.VacancyReader, error) {
+	transport, err := registry.Resolve(profileID)
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := transport.(adapter.VacancyReader)
+	if !ok {
+		return nil, &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "vacancies.read",
+			Message: "application transport cannot load a full vacancy",
+		}
+	}
+	return reader, nil
+}
+
 func (registry *ApplicationTransportRegistry) Count() int {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
@@ -101,17 +117,18 @@ func (registry *ApplicationTransportRegistry) Count() int {
 
 type ApplicationHandler struct {
 	repository storage.ApplicationRepository
+	vacancies  storage.VacancyRepository
 	budgets    storage.ApplicationBudgetRepository
 	transports *ApplicationTransportRegistry
 	plans      ApplicationPlanResolver
 	clock      Clock
 }
 
-func NewApplicationHandler(repository storage.ApplicationRepository, budgets storage.ApplicationBudgetRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
-	if repository == nil || budgets == nil || transports == nil || plans == nil || clock == nil {
+func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
+	if repository == nil || vacancies == nil || budgets == nil || transports == nil || plans == nil || clock == nil {
 		return nil, errors.New("application handler requires all dependencies")
 	}
-	return &ApplicationHandler{repository: repository, budgets: budgets, transports: transports, plans: plans, clock: clock}, nil
+	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, transports: transports, plans: plans, clock: clock}, nil
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -175,6 +192,27 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		return err
 	}
+	vacancy, err := handler.loadFullVacancy(ctx, application)
+	if err != nil {
+		if core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
+			var operationError *core.OperationError
+			if errors.As(err, &operationError) && operationError.Validate() == nil {
+				if failErr := application.Fail(operationError, now); failErr != nil {
+					return failErr
+				}
+				if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+					return saveErr
+				}
+			}
+		}
+		return err
+	}
+	if target := applicationPreflightStatus(vacancy, plan); target != "" {
+		if err := application.Transition(target, now); err != nil {
+			return err
+		}
+		return handler.repository.SaveApplication(ctx, application, expectedStatus)
+	}
 	switch plan.Mode {
 	case core.ApplicationExecutionDryRun:
 		if err := application.Transition(core.ApplicationDryRun, now); err != nil {
@@ -226,6 +264,89 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return err
 	}
 	return handler.commitBudget(ctx, application, handler.clock.Now())
+}
+
+func (handler *ApplicationHandler) loadFullVacancy(ctx context.Context, application core.Application) (core.Vacancy, error) {
+	reader, err := handler.transports.ResolveVacancyReader(application.Key.ProfileID)
+	if err != nil {
+		return core.Vacancy{}, err
+	}
+	vacancy, err := reader.ReadVacancy(ctx, application.Key.ProfileID, application.Key.Vacancy)
+	if err != nil {
+		return core.Vacancy{}, err
+	}
+	if vacancy.Key() != application.Key.Vacancy {
+		return core.Vacancy{}, &core.OperationError{
+			Category: core.ErrorPermanentFailure, Operation: "vacancies.read", Platform: application.Key.Vacancy.Platform,
+			Message: "vacancy reader returned another vacancy",
+		}
+	}
+	if err := vacancy.Validate(); err != nil {
+		return core.Vacancy{}, &core.OperationError{
+			Category: core.ErrorPermanentFailure, Operation: "vacancies.read", Platform: application.Key.Vacancy.Platform,
+			Message: "vacancy reader returned an invalid vacancy", Cause: err,
+		}
+	}
+	if _, err := handler.vacancies.UpsertVacancy(ctx, vacancy); err != nil {
+		return core.Vacancy{}, fmt.Errorf("store full vacancy %s: %w", vacancy.Key(), err)
+	}
+	return vacancy, nil
+}
+
+func applicationPreflightStatus(vacancy core.Vacancy, plan ApplicationPlan) core.ApplicationStatus {
+	if vacancy.State != core.VacancyStateOpen || vacancyAttributeBool(vacancy, "closed_for_applicants") {
+		return core.ApplicationSkipped
+	}
+	if vacancyHasString(vacancy, "relations", "got_response") {
+		return core.ApplicationSkipped
+	}
+	if vacancyAttributeBool(vacancy, "has_test") || vacancyHasNonEmptyAttribute(vacancy, "test") {
+		return core.ApplicationWaitingValidation
+	}
+	if vacancyAttributeBool(vacancy, "response_letter_required") && strings.TrimSpace(plan.Message) == "" {
+		return core.ApplicationWaitingValidation
+	}
+	return ""
+}
+
+func vacancyAttributeBool(vacancy core.Vacancy, key string) bool {
+	value, _ := vacancy.Attributes[key].(bool)
+	return value
+}
+
+func vacancyHasNonEmptyAttribute(vacancy core.Vacancy, key string) bool {
+	value, exists := vacancy.Attributes[key]
+	if !exists || value == nil {
+		return false
+	}
+	switch item := value.(type) {
+	case string:
+		return strings.TrimSpace(item) != ""
+	case map[string]any:
+		return len(item) != 0
+	case []any:
+		return len(item) != 0
+	default:
+		return true
+	}
+}
+
+func vacancyHasString(vacancy core.Vacancy, key, expected string) bool {
+	switch values := vacancy.Attributes[key].(type) {
+	case []string:
+		for _, value := range values {
+			if value == expected {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range values {
+			if text, ok := value.(string); ok && text == expected {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (handler *ApplicationHandler) finishFailure(ctx context.Context, application core.Application, cause error) error {

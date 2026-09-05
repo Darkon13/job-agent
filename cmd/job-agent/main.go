@@ -117,7 +117,8 @@ func main() {
 		}
 		applicationPlans[core.ProfileID(profile.Tag)] = taskworker.ApplicationPlan{
 			ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-			DailyLimit: profile.Applications.DailyLimit, Timezone: profile.Applications.LocationName(),
+			Message: profile.Applications.Message, DailyLimit: profile.Applications.DailyLimit,
+			Timezone: profile.Applications.LocationName(),
 		}
 	}
 	conversationHandlers, err := taskworker.NewConversationHandlers(
@@ -132,7 +133,7 @@ func main() {
 	}
 	if applicationTransports.Count() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
-			store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
+			store, store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
 		)
 		if err != nil {
 			log.Fatalf("create application handler: %v", err)

@@ -144,6 +144,22 @@ func (repository *Repository) UpsertVacancy(ctx context.Context, vacancy core.Va
 	return !exists, nil
 }
 
+func (repository *Repository) Vacancy(ctx context.Context, key core.VacancyKey) (core.Vacancy, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Vacancy{}, err
+	}
+	if err := key.Validate(); err != nil {
+		return core.Vacancy{}, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	vacancy, exists := repository.vacancies[key]
+	if !exists {
+		return core.Vacancy{}, errors.New("vacancy not found")
+	}
+	return cloneVacancy(vacancy), nil
+}
+
 func (repository *Repository) RecordDiscovery(ctx context.Context, discovery core.VacancyDiscovery) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err

@@ -113,8 +113,12 @@ terminal fail. После падения worker задача повторно в
 
 Основной `application.submit` worker ведёт отклик через состояния
 `new → preparing → ready → submitting → submitted`. Выбор резюме задаётся для
-профиля полем `resume`; отсутствие обязательных данных или вопросник переводят
-отклик в `waiting_validation`. Перед `POST /negotiations` SQLite атомарно
+профиля полем `resume`. До решения worker авторизованно читает полную вакансию
+через `GET /vacancies/{id}` и обновляет её в repository: краткой поисковой
+карточки недостаточно для требований и applicant relations. Закрытая вакансия
+или уже существующий `got_response` пропускаются без `POST`; обязательный тест
+либо отсутствующее обязательное сопроводительное переводят отклик в
+`waiting_validation`. Перед `POST /negotiations` SQLite атомарно
 резервирует слот дневного бюджета профиля и платформы. Успех фиксирует слот,
 гарантированный отказ освобождает его, а потерянный ответ оставляет отклик в
 `pending_reconciliation`, не повторяя небезопасный POST.
@@ -127,6 +131,7 @@ terminal fail. После падения worker задача повторно в
 ```json
 "applications": {
   "mode": "dry_run",
+  "message": "Здравствуйте! Меня заинтересовала ваша вакансия.",
   "daily_limit": 20,
   "timezone": "Europe/Moscow"
 }

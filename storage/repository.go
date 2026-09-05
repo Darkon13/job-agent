@@ -18,6 +18,7 @@ type SearchRunRepository interface {
 
 type VacancyRepository interface {
 	UpsertVacancy(ctx context.Context, vacancy core.Vacancy) (created bool, err error)
+	Vacancy(ctx context.Context, key core.VacancyKey) (core.Vacancy, error)
 	RecordDiscovery(ctx context.Context, discovery core.VacancyDiscovery) (created bool, err error)
 }
 
