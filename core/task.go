@@ -10,6 +10,7 @@ import (
 type TaskType string
 
 const (
+	TaskVacancySearchPage      TaskType = "vacancy.search_page"
 	TaskApplicationSubmit      TaskType = "application.submit"
 	TaskQuestionnaireAnswer    TaskType = "questionnaire.answer"
 	TaskTestComplete           TaskType = "test.complete"
@@ -147,7 +148,10 @@ func (task *Task) ScheduleRetry(retryAt time.Time, operationError *OperationErro
 	if err := operationError.Validate(); err != nil {
 		return err
 	}
-	if operationError.Category != ErrorTemporaryFailure && operationError.Category != ErrorRateLimited {
+	switch operationError.Category {
+	case ErrorTemporaryFailure, ErrorRateLimited, ErrorQuotaExceeded,
+		ErrorUnauthorized, ErrorValidationRequired, ErrorConfirmationRequired:
+	default:
 		return fmt.Errorf("error category %q is not retryable", operationError.Category)
 	}
 	if !retryAt.After(now) {

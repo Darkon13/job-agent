@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/broker"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 )
@@ -77,6 +78,53 @@ func TestWorkerRetriesTypedTemporaryError(t *testing.T) {
 	task := queue.Tasks()[0]
 	if task.Status != core.TaskRetryScheduled || !task.AvailableAt.Equal(now.Add(5*time.Second)) || task.Failure == nil || task.Failure.Category != core.ErrorTemporaryFailure {
 		t.Fatalf("unexpected retry task: %#v", task)
+	}
+}
+
+func TestWorkerSchedulesRateLimitAtRetryAfterAndReleasesLease(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	retryAt := now.Add(2 * time.Minute)
+	queue := brokermemory.NewQueue()
+	enqueueWorkerTask(t, queue, "search", core.TaskVacancySearchPage, now)
+	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{
+			Category: core.ErrorRateLimited, Operation: "vacancies.search.global",
+			Platform: "hh", RetryAfter: &retryAt,
+		}
+	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	task := queue.Tasks()[0]
+	if task.Status != core.TaskRetryScheduled || !task.AvailableAt.Equal(retryAt) {
+		t.Fatalf("unexpected rate-limited task: %#v", task)
+	}
+	if lease, found, err := queue.Claim(context.Background(), broker.ClaimParams{
+		WorkerID: "other", TaskType: core.TaskVacancySearchPage, Now: now.Add(time.Second), LeaseDuration: time.Minute,
+	}); err != nil || found || lease.Token != "" {
+		t.Fatalf("rate-limited task retained an active lease: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
+func TestWorkerSchedulesBlockedCategoryWithoutKeepingLease(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	queue := brokermemory.NewQueue()
+	enqueueWorkerTask(t, queue, "auth", core.TaskVacancySearchPage, now)
+	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{Category: core.ErrorUnauthorized, Operation: "vacancies.search.global"}
+	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	task := queue.Tasks()[0]
+	if task.Status != core.TaskRetryScheduled || !task.AvailableAt.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("unexpected blocked retry: %#v", task)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 var (
 	_ storage.VacancyRepository      = (*Store)(nil)
+	_ storage.SearchRunRepository    = (*Store)(nil)
 	_ storage.ApplicationRepository  = (*Store)(nil)
 	_ storage.ConversationRepository = (*Store)(nil)
 	_ broker.TaskQueue               = (*Store)(nil)
@@ -33,6 +34,7 @@ type Store struct {
 }
 
 type Stats struct {
+	SearchRuns       int
 	Vacancies        int
 	Discoveries      int
 	Applications     int
@@ -303,6 +305,7 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		value *int
 	}{
 		{"vacancies", &stats.Vacancies}, {"vacancy_discoveries", &stats.Discoveries},
+		{"search_runs", &stats.SearchRuns},
 		{"applications", &stats.Applications}, {"tasks", &stats.Tasks},
 		{"test_definitions", &stats.TestDefinitions}, {"review_sessions", &stats.ReviewSessions},
 		{"review_selections", &stats.ReviewSelections},

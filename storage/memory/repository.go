@@ -1,8 +1,10 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 
@@ -12,6 +14,7 @@ import (
 
 var (
 	_ storage.VacancyRepository      = (*Repository)(nil)
+	_ storage.SearchRunRepository    = (*Repository)(nil)
 	_ storage.ApplicationRepository  = (*Repository)(nil)
 	_ storage.TestCatalogRepository  = (*Repository)(nil)
 	_ storage.ReviewRepository       = (*Repository)(nil)
@@ -33,6 +36,7 @@ type conversationExternalKey struct {
 type Repository struct {
 	mu                   sync.RWMutex
 	vacancies            map[core.VacancyKey]core.Vacancy
+	searchRuns           map[core.SearchID]core.SearchRun
 	discoveries          map[discoveryKey]core.VacancyDiscovery
 	applications         map[core.ApplicationKey]core.Application
 	tests                map[core.TestDefinitionID]core.TestDefinition
@@ -49,6 +53,7 @@ type Repository struct {
 func NewRepository() *Repository {
 	return &Repository{
 		vacancies:            make(map[core.VacancyKey]core.Vacancy),
+		searchRuns:           make(map[core.SearchID]core.SearchRun),
 		discoveries:          make(map[discoveryKey]core.VacancyDiscovery),
 		applications:         make(map[core.ApplicationKey]core.Application),
 		tests:                make(map[core.TestDefinitionID]core.TestDefinition),
@@ -61,6 +66,62 @@ func NewRepository() *Repository {
 		followUps:            make(map[core.FollowUpID]core.FollowUp),
 		followUpKeys:         make(map[string]core.FollowUpID),
 	}
+}
+
+func (repository *Repository) CreateSearchRun(ctx context.Context, candidate core.SearchRun) (core.SearchRun, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return core.SearchRun{}, false, err
+	}
+	if err := candidate.Validate(); err != nil {
+		return core.SearchRun{}, false, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if stored, exists := repository.searchRuns[candidate.SearchID]; exists {
+		if stored.Adapter != candidate.Adapter || stored.Platform != candidate.Platform || stored.SearchProfileID != candidate.SearchProfileID ||
+			!slices.Equal(stored.TargetProfiles, candidate.TargetProfiles) || !bytes.Equal(stored.Query, candidate.Query) {
+			return core.SearchRun{}, false, errors.New("search run conflicts with changed configuration")
+		}
+		return cloneSearchRun(stored), false, nil
+	}
+	repository.searchRuns[candidate.SearchID] = cloneSearchRun(candidate)
+	return cloneSearchRun(candidate), true, nil
+}
+
+func (repository *Repository) SearchRun(ctx context.Context, searchID core.SearchID) (core.SearchRun, error) {
+	if err := ctx.Err(); err != nil {
+		return core.SearchRun{}, err
+	}
+	if searchID == "" {
+		return core.SearchRun{}, errors.New("search run requires search id")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	run, exists := repository.searchRuns[searchID]
+	if !exists {
+		return core.SearchRun{}, errors.New("search run not found")
+	}
+	return cloneSearchRun(run), nil
+}
+
+func (repository *Repository) SaveSearchRun(ctx context.Context, candidate core.SearchRun, expectedRevision uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	if candidate.Revision != expectedRevision+1 {
+		return errors.New("search run revision must advance by one")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	stored, exists := repository.searchRuns[candidate.SearchID]
+	if !exists || stored.Revision != expectedRevision {
+		return storage.ErrRevisionConflict
+	}
+	repository.searchRuns[candidate.SearchID] = cloneSearchRun(candidate)
+	return nil
 }
 
 func (repository *Repository) UpsertVacancy(ctx context.Context, vacancy core.Vacancy) (bool, error) {
@@ -193,4 +254,10 @@ func cloneVacancy(vacancy core.Vacancy) core.Vacancy {
 	}
 	vacancy.Attributes = attributes
 	return vacancy
+}
+
+func cloneSearchRun(run core.SearchRun) core.SearchRun {
+	run.TargetProfiles = append([]core.ProfileID(nil), run.TargetProfiles...)
+	run.Query = append([]byte(nil), run.Query...)
+	return run
 }

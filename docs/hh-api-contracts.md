@@ -7,14 +7,15 @@ browser transport.
 
 - официальный репозиторий `hhru/api`, локальная копия `~/hh/api`, последний
   локальный commit от 2025-12-19;
-- публичный OpenAPI snapshot из
-  `~/hh-applicant-tool/docs/hhapi/openapi.yml`;
+- live OpenAPI `api.hh.ru/openapi/redoc`, повторно сверенный 5 сентября 2026;
+- публичный OpenAPI snapshot из `~/hh-applicant-tool/docs/hhapi/openapi.yml`;
 - reference implementation `~/hh-applicant-tool`.
 
 Репозиторий `hhru/api` теперь в основном содержит ссылки на live OpenAPI, а не
-саму спецификацию. Network sandbox не позволил скачать live snapshot, поэтому
-перед реализацией каждого endpoint нужно повторно сверить его с текущей
-официальной документацией и проверить реальным applicant token.
+саму спецификацию. Перед реализацией каждого следующего endpoint контракт нужно
+повторно сверять с текущей официальной документацией и реальным applicant
+token: сохранённый snapshot полезен для навигации, но не является источником
+актуальности.
 
 ## Транспортная граница
 
@@ -81,8 +82,22 @@ global search — как тот же route без `resume`. Живой browser c
 - дополнительно могут возвращаться `clusters`, `arguments`, `fixes`, `suggests`
   и `alternate_url`.
 
-Scheduler должен прекращать пагинацию по `pages`, пустому `items`, лимиту
-глубины или execution policy — что наступит раньше.
+Реализованный global search запрашивает `per_page=100` и прекращает пагинацию
+по `pages`, пустому `items` или глубине 2000 — что наступит раньше. Номер
+страницы кодируется непрозрачным для workflow cursor; пользовательский query не
+может подменить `page` или `per_page`.
+
+Каждый configured search имеет строку `search_runs` в SQLite schema v6:
+definition, search profile, target profiles, query, correlation ID, cursor,
+`done` и revision. Одна `vacancy.search_page` task обрабатывает ровно одну
+страницу. Cursor продвигается только после всех idempotent writes страницы;
+повтор после частичного сбоя безопасен благодаря ключам vacancy/discovery/
+application/task. Если процесс остановился между сохранением cursor и enqueue
+следующей страницы, повтор старой page task видит расхождение cursor и
+восстанавливает актуальную задачу.
+
+`429` сохраняет `Retry-After` в `OperationError`: worker переводит задачу в
+`retry_scheduled`, снимает lease и не держит goroutine во время ожидания.
 
 ## Поля HH search object
 
@@ -96,7 +111,7 @@ Scheduler должен прекращать пагинацию по `pages`, п�
 | `professional_role` | string[] | да | `/professional_roles` |
 | `industry` | string[] | да | `/industries` |
 | `employer_id` | string[] | да | employer ID |
-| `excluded_employer_id` | string[] | да | доступно в related/similar snapshot; перепроверить для global |
+| `excluded_employer_id` | string[] | да | подтверждено live OpenAPI для global search |
 | `excluded_text` | string | нет | список исключаемых слов через запятую |
 | `education` | string[] | да | `not_required_or_not_specified`, `special_secondary`, `higher` |
 
@@ -174,6 +189,11 @@ OpenAPI snapshot обновлён неравномерно:
 
 HH adapter должен иметь матрицу поддерживаемых полей по source. Неизвестное или
 неподдерживаемое поле вызывает config validation error, а не молча игнорируется.
+Текущая реализация строго декодирует JSON (`DisallowUnknownFields`), проверяет
+непустые и неповторяющиеся значения повторяемых фильтров, даты, диапазоны
+координат, `period=1..30` и зависимые группы полей. Исполнение пока включено
+только для `global`; остальные source возвращают `Unsupported` и не маскируются
+под пустую выдачу.
 
 ## Основные сущности
 

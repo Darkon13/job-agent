@@ -1,18 +1,20 @@
 package hh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
 )
 
 const Name = "hh"
-
-var ErrNotImplemented = errors.New("hh transport is not implemented")
 
 type Config struct {
 	APIDelayMS int    `json:"api_delay_ms,omitempty"`
@@ -75,7 +77,9 @@ type SearchQuery struct {
 }
 
 type Adapter struct {
-	config Config
+	config  Config
+	mu      sync.RWMutex
+	clients map[core.ProfileID]*ReadClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
@@ -89,13 +93,26 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 			return nil, fmt.Errorf("decode hh config: %w", err)
 		}
 	}
-	return &Adapter{config: cfg}, nil
+	return &Adapter{config: cfg, clients: make(map[core.ProfileID]*ReadClient)}, nil
 }
 
 func (a *Adapter) Name() string { return Name }
 
 func (a *Adapter) NewProfileReader(profileID core.ProfileID, credentialsRef string) (adapter.ProfileReader, error) {
-	return NewReadClient(profileID, credentialsRef, a.config.UserAgent, nil)
+	client, err := NewReadClient(profileID, credentialsRef, a.config.UserAgent, nil)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if existing, exists := a.clients[profileID]; exists {
+		if existing.credentialsRef != client.credentialsRef {
+			return nil, fmt.Errorf("HH profile %s is already bound to another credentials_ref", profileID)
+		}
+		return existing, nil
+	}
+	a.clients[profileID] = client
+	return client, nil
 }
 
 func (a *Adapter) Capabilities() []core.Capability {
@@ -111,7 +128,9 @@ func (a *Adapter) Capabilities() []core.Capability {
 
 func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 	var query SearchQuery
-	if err := json.Unmarshal(raw, &query); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&query); err != nil {
 		return fmt.Errorf("decode hh search query: %w", err)
 	}
 	switch query.Source {
@@ -136,8 +155,8 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 	default:
 		return fmt.Errorf("unsupported hh search source %q", query.Source)
 	}
-	if query.Period != nil && *query.Period <= 0 {
-		return errors.New("hh period must be positive")
+	if query.Period != nil && (*query.Period <= 0 || *query.Period > 30) {
+		return errors.New("hh period must be between 1 and 30 days")
 	}
 	if query.Salary != nil && *query.Salary < 0 {
 		return errors.New("hh salary must not be negative")
@@ -160,11 +179,76 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 	if query.Period != nil && (query.DateFrom != "" || query.DateTo != "") {
 		return errors.New("hh period cannot be combined with date_from or date_to")
 	}
+	for field, values := range map[string][]string{
+		"search_field": query.SearchField, "experience": query.Experience,
+		"employment": query.Employment, "schedule": query.Schedule, "area": query.Area,
+		"metro": query.Metro, "professional_role": query.ProfessionalRole, "industry": query.Industry,
+		"employer_id": query.EmployerID, "excluded_employer_id": query.ExcludedEmployerID,
+		"label": query.Label, "part_time": query.PartTime, "employment_form": query.EmploymentForm,
+		"work_schedule_by_days": query.WorkScheduleByDays, "working_hours": query.WorkingHours,
+		"work_format": query.WorkFormat, "education": query.Education,
+	} {
+		seen := make(map[string]struct{}, len(values))
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("hh %s contains an empty value", field)
+			}
+			if _, exists := seen[value]; exists {
+				return fmt.Errorf("hh %s contains duplicate value %q", field, value)
+			}
+			seen[value] = struct{}{}
+		}
+	}
+	if err := validateHHSearchTime("date_from", query.DateFrom); err != nil {
+		return err
+	}
+	if err := validateHHSearchTime("date_to", query.DateTo); err != nil {
+		return err
+	}
+	if query.TopLat != nil {
+		if *query.TopLat < -90 || *query.TopLat > 90 || *query.BottomLat < -90 || *query.BottomLat > 90 || *query.TopLat < *query.BottomLat {
+			return errors.New("hh latitude bounds are invalid")
+		}
+		if *query.LeftLng < -180 || *query.LeftLng > 180 || *query.RightLng < -180 || *query.RightLng > 180 || *query.LeftLng > *query.RightLng {
+			return errors.New("hh longitude bounds are invalid")
+		}
+	}
+	if query.SortPointLat != nil && (*query.SortPointLat < -90 || *query.SortPointLat > 90 || *query.SortPointLng < -180 || *query.SortPointLng > 180) {
+		return errors.New("hh sort point is invalid")
+	}
 	return nil
 }
 
-func (a *Adapter) Search(context.Context, core.ProfileID, json.RawMessage, string) (core.SearchPage, error) {
-	return core.SearchPage{}, ErrNotImplemented
+func validateHHSearchTime(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05-0700", time.DateOnly} {
+		if _, err := time.Parse(layout, value); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("hh %s must be an ISO-8601 date or timestamp", field)
+}
+
+func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json.RawMessage, cursor string) (core.SearchPage, error) {
+	if err := a.ValidateSearch(raw); err != nil {
+		return core.SearchPage{}, err
+	}
+	var query SearchQuery
+	if err := json.Unmarshal(raw, &query); err != nil {
+		return core.SearchPage{}, fmt.Errorf("decode hh search query: %w", err)
+	}
+	if query.Source != SearchSourceGlobal {
+		return core.SearchPage{}, hhUnsupported("vacancies.search." + string(query.Source))
+	}
+	a.mu.RLock()
+	client := a.clients[profileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound credentials", nil)
+	}
+	return client.SearchGlobal(ctx, query, cursor)
 }
 
 func (a *Adapter) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
@@ -182,6 +266,6 @@ func (a *Adapter) SyncConversation(context.Context, core.ProfileID, core.Convers
 func hhUnsupported(operation string) error {
 	return &core.OperationError{
 		Category: core.ErrorUnsupported, Operation: operation, Platform: Name,
-		Message: "HH conversation transport is not implemented",
+		Message: "HH transport operation is not implemented",
 	}
 }

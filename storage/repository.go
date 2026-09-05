@@ -10,6 +10,12 @@ import (
 
 var ErrRevisionConflict = errors.New("repository revision conflict")
 
+type SearchRunRepository interface {
+	CreateSearchRun(ctx context.Context, candidate core.SearchRun) (stored core.SearchRun, created bool, err error)
+	SearchRun(ctx context.Context, searchID core.SearchID) (core.SearchRun, error)
+	SaveSearchRun(ctx context.Context, candidate core.SearchRun, expectedRevision uint64) error
+}
+
 type VacancyRepository interface {
 	UpsertVacancy(ctx context.Context, vacancy core.Vacancy) (created bool, err error)
 	RecordDiscovery(ctx context.Context, discovery core.VacancyDiscovery) (created bool, err error)

@@ -47,12 +47,19 @@ Core уже содержит:
   таймеры с idempotency, deadline и проверкой входящего ответа перед отправкой;
 - одноразовый idempotent bootstrap чистого профиля из mounted JSON.
 
-Первый search workflow вызывает платформенный поиск один раз и распределяет
-нормализованные вакансии между целевыми профилями. In-memory repository хранит
-одну вакансию на `(platform, external_id)` и один отклик на
-`(profile, vacancy)`. In-memory broker дедуплицирует задачи по стабильному
-idempotency key; повторный запуск восстанавливает постановку задачи, если
-предыдущая попытка успела сохранить отклик, но не дошла до очереди.
+Global HH search выполняется отдельными задачами по одной странице. Durable
+`search_runs` владеет текущим cursor и revision: успешная страница атомарно
+продвигает cursor, частичный сбой повторяет ту же страницу, а restart
+восстанавливает незавершённую задачу. Поиск останавливается по `pages`, пустой
+странице или пределу HH в 2000 результатов. SQLite и in-memory repository
+хранят одну вакансию на `(platform, external_id)` и один отклик на
+`(profile, vacancy)`; задачи дедуплицируются по стабильным idempotency keys.
+
+HH adapter отправляет OAuth Bearer token и `HH-User-Agent`, использует
+`per_page=100`, нормализует краткую вакансию и строго отклоняет неизвестные либо
+структурно некорректные search-поля. `429 Retry-After` переводит page task в
+отложенный retry и освобождает worker lease; ожидание не выполняется внутри
+handler. Пока этим транспортом реализован только `source=global`.
 
 Для постоянного состояния доступен SQLite store: он реализует те же
 repository/broker-порты и сохраняет vacancies, discoveries, applications и

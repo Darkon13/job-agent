@@ -120,6 +120,52 @@ func TestStorePersistsWorkflowStateAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStorePersistsAndRevisionChecksSearchCursor(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	store, err := openStore(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	run, err := core.NewSearchRun(
+		"golang", "hh-main", "hh", "primary", []core.ProfileID{"primary", "secondary"},
+		json.RawMessage(`{"source":"global","text":"Go"}`), "correlation-search", now,
+	)
+	if err != nil {
+		t.Fatalf("new search run: %v", err)
+	}
+	stored, created, err := store.CreateSearchRun(ctx, run)
+	if err != nil || !created || stored.Revision != 1 {
+		t.Fatalf("create search run: stored=%#v created=%v err=%v", stored, created, err)
+	}
+	if err := stored.Advance("1", false, now.Add(time.Minute)); err != nil {
+		t.Fatalf("advance search run: %v", err)
+	}
+	if err := store.SaveSearchRun(ctx, stored, 1); err != nil {
+		t.Fatalf("save search run: %v", err)
+	}
+	if err := store.SaveSearchRun(ctx, stored, 1); !errors.Is(err, storage.ErrRevisionConflict) {
+		t.Fatalf("stale save error = %v, want revision conflict", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	persisted, err := reopened.SearchRun(ctx, "golang")
+	if err != nil {
+		t.Fatalf("load persisted search run: %v", err)
+	}
+	if persisted.Cursor != "1" || persisted.Done || persisted.Revision != 2 || persisted.CorrelationID != "correlation-search" {
+		t.Fatalf("unexpected persisted search run: %#v", persisted)
+	}
+}
+
 func TestStoreReturnsExistingApplicationAndRejectsTaskKeyConflict(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)

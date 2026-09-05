@@ -26,6 +26,11 @@ func TestValidateSearchSource(t *testing.T) {
 		{name: "global with resume", query: `{"source":"global","resume":"backend"}`, wantErr: true},
 		{name: "partial geo", query: `{"source":"global","top_lat":1}`, wantErr: true},
 		{name: "period with date", query: `{"source":"global","period":7,"date_from":"2026-01-01"}`, wantErr: true},
+		{name: "period over api maximum", query: `{"source":"global","period":31}`, wantErr: true},
+		{name: "empty repeated filter", query: `{"source":"global","area":["1",""]}`, wantErr: true},
+		{name: "duplicate repeated filter", query: `{"source":"global","area":["1","1"]}`, wantErr: true},
+		{name: "invalid date", query: `{"source":"global","date_from":"tomorrow"}`, wantErr: true},
+		{name: "unknown field", query: `{"source":"global","typo_filter":"ignored-by-hh"}`, wantErr: true},
 	}
 
 	for _, tt := range tests {

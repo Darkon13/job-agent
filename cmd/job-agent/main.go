@@ -153,6 +153,17 @@ func main() {
 		}
 		workers = append(workers, resumeWorker)
 	}
+	searchHandler, searchRuns, err := configureSearchRuns(context.Background(), cfg, instances, profiles, store)
+	if err != nil {
+		log.Fatalf("configure vacancy searches: %v", err)
+	}
+	if searchRuns > 0 {
+		searchWorker, err := newTaskWorker(store, core.TaskVacancySearchPage, searchHandler.Handle)
+		if err != nil {
+			log.Fatalf("create vacancy search worker: %v", err)
+		}
+		workers = append(workers, searchWorker)
+	}
 	definitions, err := resumeTouchDefinitions(cfg, instances, resumeTouchers)
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
@@ -170,6 +181,66 @@ func main() {
 	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func configureSearchRuns(
+	ctx context.Context,
+	cfg appconfig.Config,
+	instances map[string]adapter.Adapter,
+	profiles map[core.ProfileID]profileRuntime,
+	store *storesqlite.Store,
+) (*workflow.SearchPageHandler, int, error) {
+	clock := workflow.SystemClock{}
+	ids := workflow.RandomIDGenerator{}
+	handler, err := workflow.NewSearchPageHandler(store, store, clock, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	configured := 0
+	for _, search := range cfg.Searches {
+		instance := instances[search.Adapter]
+		targetProfiles := make([]core.ProfileID, 0, len(search.Profiles))
+		var searchProfileID core.ProfileID
+		for _, value := range search.Profiles {
+			profileID := core.ProfileID(value)
+			runtime := profiles[profileID]
+			if runtime.Status != core.ProfileEnabled {
+				continue
+			}
+			targetProfiles = append(targetProfiles, profileID)
+			if searchProfileID == "" && runtime.Reader != nil {
+				searchProfileID = profileID
+			}
+		}
+		if searchProfileID == "" || len(targetProfiles) == 0 {
+			log.Printf("search %q is disabled until one of its profiles is authorized", search.Tag)
+			continue
+		}
+		searchWorkflow, err := workflow.NewSearchWorkflow(instance, store, store, store, clock, ids)
+		if err != nil {
+			return nil, 0, fmt.Errorf("create search workflow %q: %w", search.Tag, err)
+		}
+		searchID := core.SearchID(search.Tag)
+		if err := handler.Register(searchID, searchWorkflow); err != nil {
+			return nil, 0, err
+		}
+		correlation, err := ids.NewID("correlation")
+		if err != nil {
+			return nil, 0, err
+		}
+		run, err := core.NewSearchRun(
+			searchID, search.Adapter, core.Platform(instance.Name()), searchProfileID,
+			targetProfiles, search.Query, core.CorrelationID(correlation), clock.Now(),
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("build search run %q: %w", search.Tag, err)
+		}
+		if _, err := handler.EnsureRun(ctx, run); err != nil {
+			return nil, 0, fmt.Errorf("ensure search run %q: %w", search.Tag, err)
+		}
+		configured++
+	}
+	return handler, configured, nil
 }
 
 type profileRuntime struct {

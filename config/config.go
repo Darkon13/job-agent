@@ -215,6 +215,9 @@ func (c Config) Validate() error {
 		if _, exists := searches[search.Tag]; exists {
 			return fmt.Errorf("duplicate search tag %q", search.Tag)
 		}
+		if len(search.Profiles) == 0 {
+			return fmt.Errorf("search %q requires at least one profile", search.Tag)
+		}
 		for _, profile := range search.Profiles {
 			if _, exists := profiles[profile]; !exists {
 				return fmt.Errorf("search %q references unknown profile %q", search.Tag, profile)
