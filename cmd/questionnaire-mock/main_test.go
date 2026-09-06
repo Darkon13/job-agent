@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/questionbank"
 )
 
 func TestQuestionnaireEndpointExposesStablePerQuestionFingerprints(t *testing.T) {
@@ -40,10 +45,81 @@ func TestIndexContainsAssessmentControls(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status: %d", recorder.Code)
 	}
-	for _, expected := range []string{`name = 'answer'`, `data-qa="footer-next-button"`, `data-qa="progress"`, `answer-block-file`} {
+	for _, expected := range []string{`name = 'answer'`, `data-qa="footer-next-button"`, `data-qa="progress"`, `answer-block-file`, `load-study-suggestions`} {
 		if !contains(recorder.Body.String(), expected) {
 			t.Fatalf("response does not contain %q", expected)
 		}
+	}
+}
+
+func TestStudyBankSuggestionsResolveAgainstShuffledRuntimeIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "docker-basic.json")
+	bank := questionbank.Bank{
+		SchemaVersion: questionbank.SchemaVersion,
+		Tag:           "hh-community-docker-basic", Name: "Docker — базовый уровень",
+		Platform: "study", TargetPlatform: "hh",
+		Qualification: core.QualificationDescriptor{
+			FamilyID: "community:docker", FamilyName: "Docker",
+			LevelID: "community:basic", LevelName: "базовый уровень",
+		},
+		Verification: questionbank.VerificationExternalUnknown,
+		Source: questionbank.Source{
+			Repository: "https://example.test/quizzes", Revision: "deadbeef",
+			Path: "docker/basic.md", License: "AGPL-3.0-only",
+		},
+		Questions: []questionbank.Question{{
+			SourceID: "q1", Text: "Какую команду запустить?", Kind: core.QuestionSingle,
+			Options: []string{"docker build", "docker run"}, SuggestedOptions: []string{"docker run"},
+			OptionsComplete: true,
+		}},
+	}
+	payload, err := json.Marshal(bank)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	handler, err := newStudyMockHandler(17, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	questionnaire := requestQuestionnaire(t, handler)
+	if len(questionnaire.Questionnaire.Questions) != 1 {
+		t.Fatalf("unexpected questionnaire: %#v", questionnaire.Questionnaire)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/study-suggestions", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("suggestions status: %d, body: %s", recorder.Code, recorder.Body.String())
+	}
+	var block core.AnswerBlock
+	if err := json.NewDecoder(recorder.Body).Decode(&block); err != nil {
+		t.Fatal(err)
+	}
+	if block.Platform != "study" {
+		t.Fatalf("external suggestions escaped study scope: %#v", block)
+	}
+
+	body, err := json.Marshal(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/resolve", bytes.NewReader(body))
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("resolve status: %d, body: %s", recorder.Code, recorder.Body.String())
+	}
+	var plan core.AnswerPlan
+	if err := json.NewDecoder(recorder.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Answers) != 1 || len(plan.Answers[0].SelectedOptionIDs) != 1 {
+		t.Fatalf("unresolved study plan: %#v", plan)
 	}
 }
 

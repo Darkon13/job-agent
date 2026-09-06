@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/questionbank"
 )
 
 type mockServer struct {
-	seed int64
+	seed              int64
+	baseQuestionnaire core.Questionnaire
+	suggestions       *core.AnswerBlock
 }
 
 type questionnaireResponse struct {
@@ -25,11 +28,20 @@ type questionnaireResponse struct {
 
 func main() {
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
+	studyBankPath := flag.String("study-bank", "", "optional imported study-bank JSON")
 	flag.Parse()
 
+	handler := newMockHandler(time.Now().UnixNano())
+	if *studyBankPath != "" {
+		var err error
+		handler, err = newStudyMockHandler(time.Now().UnixNano(), *studyBankPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	server := &http.Server{
 		Addr:              *address,
-		Handler:           newMockHandler(time.Now().UnixNano()),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("questionnaire mock is ready at http://%s", *address)
@@ -39,11 +51,32 @@ func main() {
 }
 
 func newMockHandler(seed int64) http.Handler {
-	server := mockServer{seed: seed}
+	server := mockServer{seed: seed, baseQuestionnaire: syntheticQuestionnaire()}
+	return server.handler()
+}
+
+func newStudyMockHandler(seed int64, path string) (http.Handler, error) {
+	bank, err := questionbank.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fixture, err := questionbank.BuildPracticeFixture(bank)
+	if err != nil {
+		return nil, err
+	}
+	server := mockServer{
+		seed: seed, baseQuestionnaire: fixture.Questionnaire, suggestions: &fixture.AnswerBlock,
+	}
+	log.Printf("loaded study bank %q: %d runnable questions, %d skipped", bank.Name, len(fixture.Questionnaire.Questions), fixture.Skipped)
+	return server.handler(), nil
+}
+
+func (s mockServer) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", server.index)
-	mux.HandleFunc("GET /api/questionnaire", server.questionnaire)
-	mux.HandleFunc("POST /api/resolve", server.resolve)
+	mux.HandleFunc("GET /", s.index)
+	mux.HandleFunc("GET /api/questionnaire", s.questionnaire)
+	mux.HandleFunc("GET /api/study-suggestions", s.studySuggestions)
+	mux.HandleFunc("POST /api/resolve", s.resolve)
 	return mux
 }
 
@@ -53,7 +86,7 @@ func (s mockServer) index(writer http.ResponseWriter, _ *http.Request) {
 }
 
 func (s mockServer) questionnaire(writer http.ResponseWriter, _ *http.Request) {
-	questionnaire := shuffledMockQuestionnaire(s.seed)
+	questionnaire := s.shuffledQuestionnaire()
 	attemptFingerprint, err := core.ObservedAttemptFingerprint(questionnaire)
 	if err != nil {
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
@@ -77,6 +110,17 @@ func (s mockServer) questionnaire(writer http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+func (s mockServer) studySuggestions(writer http.ResponseWriter, _ *http.Request) {
+	if s.suggestions == nil {
+		http.NotFound(writer, nil)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(writer).Encode(s.suggestions); err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (s mockServer) resolve(writer http.ResponseWriter, request *http.Request) {
 	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -91,7 +135,7 @@ func (s mockServer) resolve(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	plan, err := core.ResolveAnswerBlock(shuffledMockQuestionnaire(s.seed), block)
+	plan, err := core.ResolveAnswerBlock(s.shuffledQuestionnaire(), block)
 	if err != nil {
 		http.Error(writer, fmt.Sprintf("resolve answer block: %v", err), http.StatusUnprocessableEntity)
 		return
@@ -103,8 +147,11 @@ func (s mockServer) resolve(writer http.ResponseWriter, request *http.Request) {
 }
 
 func shuffledMockQuestionnaire(seed int64) core.Questionnaire {
-	random := rand.New(rand.NewSource(seed)) //nolint:gosec // non-security mock shuffle
-	questions := []core.Question{
+	return shuffledQuestionnaire(syntheticQuestionnaire(), seed)
+}
+
+func syntheticQuestionnaire() core.Questionnaire {
+	return core.Questionnaire{Title: "Синтетический тест", Questions: []core.Question{
 		{
 			Text: "Вопрос 1: выберите один вариант",
 			Kind: core.QuestionSingle,
@@ -126,6 +173,19 @@ func shuffledMockQuestionnaire(seed int64) core.Questionnaire {
 				{Text: "Вариант Д"},
 			},
 		},
+	}}
+}
+
+func (s mockServer) shuffledQuestionnaire() core.Questionnaire {
+	return shuffledQuestionnaire(s.baseQuestionnaire, s.seed)
+}
+
+func shuffledQuestionnaire(source core.Questionnaire, seed int64) core.Questionnaire {
+	random := rand.New(rand.NewSource(seed)) //nolint:gosec // non-security mock shuffle
+	questions := make([]core.Question, len(source.Questions))
+	for index, question := range source.Questions {
+		questions[index] = question
+		questions[index].Options = append([]core.QuestionOption(nil), question.Options...)
 	}
 
 	for questionIndex := range questions {
@@ -140,7 +200,7 @@ func shuffledMockQuestionnaire(seed int64) core.Questionnaire {
 	random.Shuffle(len(questions), func(i, j int) {
 		questions[i], questions[j] = questions[j], questions[i]
 	})
-	return core.Questionnaire{Title: "Синтетический тест", Questions: questions}
+	return core.Questionnaire{Title: source.Title, Questions: questions}
 }
 
 const mockHTML = `<!doctype html>
@@ -165,7 +225,9 @@ const mockHTML = `<!doctype html>
   <h1>Questionnaire mock</h1>
   <div class="toolbar">
     <label>Загрузить AnswerBlock: <input id="answer-block-file" type="file" accept="application/json"></label>
+    <button id="load-study-suggestions" hidden>Подставить внешние подсказки</button>
   </div>
+  <p class="muted" id="study-warning" hidden>Подсказки импортированы из внешнего учебного набора и не подтверждены результатом платформы.</p>
   <main id="question-screen" hidden>
     <p class="muted" id="counter"></p>
     <h2 id="question"></h2>
@@ -193,9 +255,16 @@ async function loadQuestionnaire() {
   questionnaire = payload.questionnaire;
   questionFingerprints = payload.question_fingerprints;
   current = 0;
+	await detectStudySuggestions();
   document.querySelector('#result').hidden = true;
   document.querySelector('#question-screen').hidden = false;
   render();
+}
+
+async function detectStudySuggestions() {
+  const response = await fetch('/api/study-suggestions');
+  const button = document.querySelector('#load-study-suggestions');
+  button.hidden = response.status === 404;
 }
 
 function render() {
@@ -204,35 +273,43 @@ function render() {
   document.querySelector('#question').textContent = item.text;
   const options = document.querySelector('#options');
   options.replaceChildren();
-  const saved = reviewed.get(normalize(item.text));
+	const saved = reviewed.get(normalize(item.text)) || [];
   for (const option of item.options) {
     const label = document.createElement('label');
     label.className = 'option';
     const input = document.createElement('input');
-    input.type = 'radio';
+		input.type = item.kind === 'multiple' ? 'checkbox' : 'radio';
     input.name = 'answer';
     input.value = option.text;
     input.dataset.runtimeId = option.id;
-    input.checked = saved === normalize(option.text);
+		input.checked = saved.includes(normalize(option.text));
     input.addEventListener('change', () => {
-      reviewed.set(normalize(item.text), normalize(option.text));
-      document.querySelector('#next').disabled = false;
+			const questionKey = normalize(item.text);
+			if (item.kind === 'multiple') {
+				const selected = new Set(reviewed.get(questionKey) || []);
+				if (input.checked) selected.add(normalize(option.text));
+				else selected.delete(normalize(option.text));
+				reviewed.set(questionKey, Array.from(selected));
+			} else {
+				reviewed.set(questionKey, [normalize(option.text)]);
+			}
+			document.querySelector('#next').disabled = reviewed.get(questionKey).length === 0;
     });
     label.append(input, ' ' + option.text);
     options.append(label);
   }
-  document.querySelector('#next').disabled = !saved;
+	document.querySelector('#next').disabled = saved.length === 0;
   document.querySelector('#progress').value = ((current + 1) / questionnaire.questions.length) * 100;
 }
 
 function finish() {
   const answers = questionnaire.questions.map(question => {
-    const selected = reviewed.get(normalize(question.text));
-    const option = question.options.find(item => normalize(item.text) === selected);
+		const selected = reviewed.get(normalize(question.text)) || [];
+		const options = question.options.filter(item => selected.includes(normalize(item.text)));
     return {
       question: question.text,
       question_fingerprint: questionFingerprints[question.id],
-      selected_options: [option.text]
+			selected_options: options.map(option => option.text)
     };
   });
   const answerBlock = {
@@ -256,7 +333,11 @@ document.querySelector('#next').addEventListener('click', () => {
 document.querySelector('#answer-block-file').addEventListener('change', async event => {
   const file = event.target.files[0];
   if (!file) return;
-  const answerBlock = JSON.parse(await file.text());
+	const answerBlock = JSON.parse(await file.text());
+	await loadAnswerBlock(answerBlock);
+});
+
+async function loadAnswerBlock(answerBlock) {
   const response = await fetch('/api/resolve', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -270,10 +351,22 @@ document.querySelector('#answer-block-file').addEventListener('change', async ev
   reviewed = new Map();
   for (const resolved of plan.answers) {
     const question = questionnaire.questions.find(item => item.id === resolved.question_id);
-    const option = question.options.find(item => resolved.selected_option_ids.includes(item.id));
-    reviewed.set(normalize(question.text), normalize(option.text));
+		const options = question.options
+			.filter(item => resolved.selected_option_ids.includes(item.id))
+			.map(item => normalize(item.text));
+		reviewed.set(normalize(question.text), options);
   }
   render();
+}
+
+document.querySelector('#load-study-suggestions').addEventListener('click', async () => {
+	const response = await fetch('/api/study-suggestions');
+	if (!response.ok) {
+		alert(await response.text());
+		return;
+	}
+	await loadAnswerBlock(await response.json());
+	document.querySelector('#study-warning').hidden = false;
 });
 
 document.querySelector('#restart').addEventListener('click', loadQuestionnaire);

@@ -335,9 +335,9 @@ resume/profile schema. REST и automation-контракт чатов описа
 
 ## Questionnaire mock
 
-Локальный mock показывает single-choice вопросы, перемешивает порядок и runtime
-ID и экспортирует выбранные ответы как переносимый qualification `AnswerBlock`
-с fingerprint каждого отдельного вопроса:
+Локальный mock показывает single- и multiple-choice вопросы, перемешивает
+порядок и runtime ID и экспортирует выбранные ответы как переносимый
+qualification `AnswerBlock` с fingerprint каждого отдельного вопроса:
 
 ```sh
 go run ./cmd/questionnaire-mock
@@ -355,3 +355,37 @@ file input; ответы восстанавливаются по `question_finge
 CLI и продолжать попытку после выбора пользователя. Все варианты остаются в
 `TestDefinition`, а выборы записываются отдельными ревизиями. Задания с кодом
 пока только каталогизируются и не отправляются автоматически.
+
+### Импорт внешнего учебного банка
+
+`job-agent-question-bank-import` преобразует Markdown-файлы с checkbox-вариантами
+в отдельные локальные study-bank JSON. Для воспроизводимости импорт требует
+точный Git revision и сохраняет repository/path/license в каждом файле:
+
+```sh
+git clone https://github.com/Londeren/hh-skill-verifications-quizzes /tmp/hh-quizzes
+git -C /tmp/hh-quizzes rev-parse HEAD
+
+go run ./cmd/job-agent-question-bank-import \
+  -source /tmp/hh-quizzes \
+  -out ./data/question-banks \
+  -revision <полный-commit-hash>
+```
+
+Каталог `data/` исключён из Git. Импортированный материал сохраняется с
+`platform: study` и `verification: external_unverified`: отметка `[x]` во
+внешнем репозитории является подсказкой для самостоятельной проверки, а не
+доказанным результатом платформы. Вопросы, где опубликован только один ответ
+без остальных вариантов, импортируются, но не получают fingerprint и не
+участвуют в точном runtime-сопоставлении.
+
+Набор с полными вариантами можно открыть в локальном mock:
+
+```sh
+go run ./cmd/questionnaire-mock \
+  -study-bank ./data/question-banks/docker/basic.json
+```
+
+На `http://127.0.0.1:8090` кнопка «Подставить внешние подсказки» проверяет,
+что текст ответа однозначно сопоставляется с перемешанными вариантами и
+текущими runtime ID. Никакой запрос к HH и submit теста этот режим не делает.
