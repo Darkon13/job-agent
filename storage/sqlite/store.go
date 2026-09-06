@@ -35,33 +35,9 @@ type Store struct {
 	db *sql.DB
 }
 
-type Stats struct {
-	SearchRuns           int
-	Vacancies            int
-	Discoveries          int
-	Applications         int
-	ApplicationCampaigns int
-	CampaignApplications int
-	Tasks                int
-	TestDefinitions      int
-	ReviewSessions       int
-	ReviewSelections     int
-	Conversations        int
-	Messages             int
-	FollowUps            int
-}
-
-type TaskCount struct {
-	Type   core.TaskType
-	Status core.TaskStatus
-	Count  int
-}
-
-type ApplicationCount struct {
-	Status       core.ApplicationStatus
-	DecisionCode string
-	Count        int
-}
+type Stats = storage.RuntimeStats
+type TaskCount = storage.TaskCount
+type ApplicationCount = storage.ApplicationCount
 
 func Open(path string) (*Store, error) {
 	if path == "" {

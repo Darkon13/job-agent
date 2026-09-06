@@ -160,6 +160,14 @@ func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected unauthenticated public bind to fail")
 	}
+	config.Server.Exposure = ServerExposurePrivate
+	if err := config.Validate(); err != nil {
+		t.Fatalf("private container bind: %v", err)
+	}
+	config.Server.Exposure = "public"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unsupported public exposure to fail")
+	}
 	config.Server = ServerConfig{Listen: "localhost:8080", FollowUpReconcileInterval: "0s"}
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected non-positive reconcile interval to fail")

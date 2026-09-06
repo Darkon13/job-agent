@@ -1,0 +1,8 @@
+.git
+.cache
+data
+config.local.json
+docs/project-status.md
+*.db
+*.db-shm
+*.db-wal

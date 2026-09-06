@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Job Agent</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><p class="eyebrow">CONTROL PLANE</p><h1>Job Agent</h1></div>
+    <div class="connection">
+      <span id="connection-dot" class="dot pending"></span>
+      <span id="connection-state">Подключение…</span>
+      <button id="refresh" type="button">Обновить</button>
+    </div>
+  </header>
+  <main>
+    <section aria-labelledby="overview-title">
+      <div class="section-title">
+        <div><p class="eyebrow">СОСТОЯНИЕ</p><h2 id="overview-title">Обзор runtime</h2></div>
+        <time id="updated-at"></time>
+      </div>
+      <div id="stats" class="stat-grid"></div>
+    </section>
+    <section class="split" aria-label="Состояния откликов и очереди">
+      <article class="panel">
+        <div class="panel-heading"><h2>Отклики</h2><span class="tag">lifecycle</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Статус</th><th>Решение</th><th>Количество</th></tr></thead><tbody id="applications"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><h2>Очередь</h2><span class="tag">durable</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Тип</th><th>Статус</th><th>Количество</th></tr></thead><tbody id="tasks"></tbody></table></div>
+      </article>
+    </section>
+    <section aria-labelledby="conversations-title">
+      <div class="section-title"><div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div></div>
+      <div class="chat-layout">
+        <nav id="conversations" class="conversation-list" aria-label="Список диалогов"></nav>
+        <article class="panel chat-panel">
+          <div class="panel-heading">
+            <div><h2 id="chat-title">Выберите диалог</h2><p id="chat-meta" class="muted">Сообщения загружаются по запросу.</p></div>
+            <button id="mark-read" class="secondary" type="button" disabled>Пометить прочитанным</button>
+          </div>
+          <div id="messages" class="messages" aria-live="polite"><p class="empty">Здесь появится история переписки.</p></div>
+          <form id="reply-form" class="reply-form">
+            <label for="reply">Ответ</label>
+            <textarea id="reply" rows="3" placeholder="Напишите сообщение…" disabled></textarea>
+            <div class="reply-actions"><span id="action-state" class="muted"></span><button id="send" type="submit" disabled>Поставить в очередь</button></div>
+          </form>
+        </article>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

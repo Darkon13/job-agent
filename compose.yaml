@@ -1,0 +1,44 @@
+name: job-agent
+
+x-runtime-volumes: &runtime-volumes
+  - ${JOB_AGENT_CONFIG_FILE:-./deploy/config.example.json}:/config/config.json:ro
+  - ${JOB_AGENT_DATA_DIR:-./data}:/data
+
+services:
+  migrate:
+    build:
+      context: .
+      target: job-agent-migrate
+    command: ["-config", "/config/config.json", "up"]
+    user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
+    volumes: *runtime-volumes
+    restart: "no"
+
+  job-agent:
+    build:
+      context: .
+      target: job-agent
+    command: ["/config/config.json"]
+    user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes: *runtime-volumes
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  dashboard:
+    profiles: ["dashboard"]
+    build:
+      context: .
+      target: job-agent-dashboard
+    environment:
+      JOB_AGENT_DASHBOARD_LISTEN: 0.0.0.0:8081
+      JOB_AGENT_API_URL: http://job-agent:8080
+    depends_on:
+      job-agent:
+        condition: service_started
+    ports:
+      - "${JOB_AGENT_DASHBOARD_BIND_IP:-127.0.0.1}:${JOB_AGENT_DASHBOARD_PORT:-8081}:8081"
+    restart: unless-stopped

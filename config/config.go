@@ -72,8 +72,21 @@ type JobAction struct {
 
 type ServerConfig struct {
 	Listen                     string `json:"listen,omitempty"`
+	Exposure                   string `json:"exposure,omitempty"`
 	FollowUpReconcileInterval  string `json:"follow_up_reconcile_interval,omitempty"`
 	SchedulerReconcileInterval string `json:"scheduler_reconcile_interval,omitempty"`
+}
+
+const (
+	ServerExposureLoopback = "loopback"
+	ServerExposurePrivate  = "private"
+)
+
+func (config ServerConfig) ExposureMode() string {
+	if config.Exposure == "" {
+		return ServerExposureLoopback
+	}
+	return config.Exposure
 }
 
 func (config ServerConfig) SchedulerInterval() time.Duration {
@@ -240,11 +253,20 @@ func (c Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("server listen address: %w", err)
 	}
-	if host != "localhost" {
+	switch c.Server.ExposureMode() {
+	case ServerExposureLoopback:
+		if host == "localhost" {
+			break
+		}
 		ip := net.ParseIP(host)
 		if ip == nil || !ip.IsLoopback() {
-			return fmt.Errorf("server listen must use a loopback address until API authentication is implemented")
+			return fmt.Errorf("server listen must use a loopback address when exposure is %q", ServerExposureLoopback)
 		}
+	case ServerExposurePrivate:
+		// Private exposure is intended only for an un-published container network.
+		// The separately deployed dashboard is the single ingress endpoint.
+	default:
+		return fmt.Errorf("server exposure must be %q or %q", ServerExposureLoopback, ServerExposurePrivate)
 	}
 	if c.Server.FollowUpReconcileInterval != "" {
 		interval, err := time.ParseDuration(c.Server.FollowUpReconcileInterval)

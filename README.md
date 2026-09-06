@@ -13,6 +13,41 @@ Xray и sing-box. Идея проекта появилась как самост
 Реализация пишется заново. Код сторонних проектов может использоваться только
 с соблюдением их лицензий.
 
+## Docker Compose и dashboard
+
+Основной сервис, миграции и опциональный dashboard собираются отдельными
+минимальными target-образами из одного multi-stage `Dockerfile`:
+
+```sh
+mkdir -p data
+chmod 0770 data
+
+# backend без UI
+docker compose up -d --build
+
+# backend и dashboard на loopback
+docker compose --profile dashboard up -d --build
+```
+
+Для реального профиля скопируйте `deploy/config.example.json` вне Git,
+настройте profiles/searches/jobs и передайте путь через
+`JOB_AGENT_CONFIG_FILE`. Backend и migrator по умолчанию запускаются как
+`1000:100`; при другом владельце каталога данных задайте `JOB_AGENT_UID` и
+`JOB_AGENT_GID`. Root для нормального запуска не требуется.
+
+Dashboard по умолчанию доступен только на `127.0.0.1:8081`. Для доступа через
+WireGuard/WireGuard укажите точный адрес tunnel-интерфейса хоста, например:
+
+```sh
+JOB_AGENT_DASHBOARD_BIND_IP=10.66.66.1 \
+  docker compose --profile dashboard up -d --build
+```
+
+Не используйте `0.0.0.0`: пользовательская аутентификация API ещё не
+реализована. Backend не публикуется на host и доступен dashboard только через
+Compose network. Устройство dashboard, очередей и будущего общего browser
+service описано в [`docs/dashboard-runtime.md`](docs/dashboard-runtime.md).
+
 ## Архитектура
 
 ```text

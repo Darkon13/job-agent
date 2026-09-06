@@ -82,6 +82,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
 	}
+	runtimeAPI, err := httpapi.NewRuntimeAPI(store)
+	if err != nil {
+		log.Fatalf("create runtime API: %v", err)
+	}
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
@@ -242,7 +246,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, conversationAPI.Handler(), conversationWorkflow, scheduler, workers); err != nil {
+	if err := serve(ctx, cfg, runtimeAPI.Handler(conversationAPI.Handler()), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
 }

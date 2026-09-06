@@ -10,6 +10,37 @@ import (
 
 var ErrRevisionConflict = errors.New("repository revision conflict")
 
+// RuntimeStats is an aggregate view intended for health checks and operator
+// dashboards. It deliberately contains counts only and never task payloads,
+// message bodies, profile credentials or external identifiers.
+type RuntimeStats struct {
+	SearchRuns           int `json:"search_runs"`
+	Vacancies            int `json:"vacancies"`
+	Discoveries          int `json:"discoveries"`
+	Applications         int `json:"applications"`
+	ApplicationCampaigns int `json:"application_campaigns"`
+	CampaignApplications int `json:"campaign_applications"`
+	Tasks                int `json:"tasks"`
+	TestDefinitions      int `json:"test_definitions"`
+	ReviewSessions       int `json:"review_sessions"`
+	ReviewSelections     int `json:"review_selections"`
+	Conversations        int `json:"conversations"`
+	Messages             int `json:"messages"`
+	FollowUps            int `json:"follow_ups"`
+}
+
+type TaskCount struct {
+	Type   core.TaskType   `json:"type"`
+	Status core.TaskStatus `json:"status"`
+	Count  int             `json:"count"`
+}
+
+type ApplicationCount struct {
+	Status       core.ApplicationStatus `json:"status"`
+	DecisionCode string                 `json:"decision_code,omitempty"`
+	Count        int                    `json:"count"`
+}
+
 type SearchRunRepository interface {
 	CreateSearchRun(ctx context.Context, candidate core.SearchRun) (stored core.SearchRun, created bool, err error)
 	SearchRun(ctx context.Context, searchID core.SearchID) (core.SearchRun, error)
