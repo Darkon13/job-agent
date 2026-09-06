@@ -201,24 +201,6 @@ func (session *ReviewSession) RecordSelection(prompt ReviewPrompt, selectedOptio
 	return selection, nil
 }
 
-// Complete closes a review only after at least one answer was durably
-// recorded. The revision identifies the last answered prompt and is not
-// advanced by this terminal state transition.
-func (session *ReviewSession) Complete(now time.Time) error {
-	if session == nil {
-		return errors.New("review session is nil")
-	}
-	if session.Status != ReviewAnswered {
-		return fmt.Errorf("review session cannot complete in status %q", session.Status)
-	}
-	if now.IsZero() || now.Before(session.UpdatedAt) {
-		return errors.New("review completion time must not move backwards")
-	}
-	session.Status = ReviewCompleted
-	session.UpdatedAt = now
-	return nil
-}
-
 func validateSelection(question Question, selectedOptions []string, answerText string) error {
 	switch question.Kind {
 	case QuestionSingle:

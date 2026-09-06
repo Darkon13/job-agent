@@ -307,29 +307,6 @@ func (store *Store) AppendReviewSelection(ctx context.Context, session core.Revi
 	return nil
 }
 
-func (store *Store) FinishReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error {
-	if err := session.Validate(); err != nil {
-		return err
-	}
-	if session.Status != core.ReviewCompleted || session.Revision != expectedRevision {
-		return errors.New("completed review session does not match expected revision")
-	}
-	result, err := store.db.ExecContext(ctx, `UPDATE review_sessions SET status = ?, updated_at = ?
-		WHERE id = ? AND revision = ? AND status = ?`, session.Status, session.UpdatedAt.UnixNano(),
-		session.ID, expectedRevision, core.ReviewAnswered)
-	if err != nil {
-		return fmt.Errorf("finish review session: %w", err)
-	}
-	updated, err := oneRowAffected(result)
-	if err != nil {
-		return err
-	}
-	if !updated {
-		return storage.ErrRevisionConflict
-	}
-	return nil
-}
-
 func (store *Store) ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error) {
 	if sessionID == "" {
 		return nil, errors.New("review session id is required")
@@ -362,55 +339,6 @@ func (store *Store) ReviewSelections(ctx context.Context, sessionID core.ReviewS
 		return nil, fmt.Errorf("iterate review selections: %w", err)
 	}
 	return selections, nil
-}
-
-// ReviewChoices returns the latest user-confirmed choice for each exact
-// question fingerprint. Runtime IDs are reconstructed only by the browser.
-func (store *Store) ReviewChoices(ctx context.Context, testDefinitionID core.TestDefinitionID) ([]core.StoredAnswer, error) {
-	if testDefinitionID == "" {
-		return nil, errors.New("test definition id is required")
-	}
-	rows, err := store.db.QueryContext(ctx, `SELECT p.question, s.selected_options, s.text
-		FROM review_selections s
-		JOIN review_prompts p ON p.id = s.prompt_id AND p.session_id = s.session_id AND p.revision = s.revision
-		JOIN review_sessions r ON r.id = s.session_id
-		WHERE r.test_definition_id = ?
-		ORDER BY s.selected_at DESC, s.session_id DESC, s.revision DESC`, testDefinitionID)
-	if err != nil {
-		return nil, fmt.Errorf("list review choices: %w", err)
-	}
-	defer rows.Close()
-	seen := make(map[string]struct{})
-	var answers []core.StoredAnswer
-	for rows.Next() {
-		var questionJSON, selectedOptions []byte
-		var question core.Question
-		var answer core.StoredAnswer
-		if err := rows.Scan(&questionJSON, &selectedOptions, &answer.Text); err != nil {
-			return nil, fmt.Errorf("scan review choice: %w", err)
-		}
-		if err := json.Unmarshal(questionJSON, &question); err != nil {
-			return nil, fmt.Errorf("decode review choice question: %w", err)
-		}
-		if err := json.Unmarshal(selectedOptions, &answer.SelectedOptions); err != nil {
-			return nil, fmt.Errorf("decode review choice options: %w", err)
-		}
-		fingerprint, err := core.QuestionFingerprint(question)
-		if err != nil {
-			return nil, err
-		}
-		if _, exists := seen[fingerprint]; exists {
-			continue
-		}
-		seen[fingerprint] = struct{}{}
-		answer.Question = question.Text
-		answer.QuestionFingerprint = fingerprint
-		answers = append(answers, answer)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate review choices: %w", err)
-	}
-	return answers, nil
 }
 
 type definitionQuerier interface {

@@ -139,25 +139,3 @@ func TestReviewSelectionKeepsOptionsAndRejectsStaleClient(t *testing.T) {
 		t.Fatal("expected stale selection to be rejected")
 	}
 }
-
-func TestReviewSessionCompletesOnlyAfterRecordedAnswer(t *testing.T) {
-	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	definition, err := NewProgressiveTestDefinition("hh", "docker-basic", "Docker", nil, now)
-	if err != nil {
-		t.Fatalf("definition: %v", err)
-	}
-	session, err := NewReviewSession("review-1", definition, "profile-1", "correlation-1", now)
-	if err != nil {
-		t.Fatalf("session: %v", err)
-	}
-	if err := session.Complete(now.Add(time.Second)); err == nil {
-		t.Fatal("pending session completed without an answer")
-	}
-	session.Status = ReviewAnswered
-	if err := session.Complete(now.Add(time.Second)); err != nil {
-		t.Fatalf("complete answered session: %v", err)
-	}
-	if session.Status != ReviewCompleted {
-		t.Fatalf("unexpected status %s", session.Status)
-	}
-}

@@ -6,4 +6,3 @@
 /.vscode/
 *.log
 *.local.json
-/browser-worker/node_modules/
