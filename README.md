@@ -262,6 +262,7 @@ refresh token остаются отдельными следующими сре�
 go test ./...
 go run ./cmd/job-agent-migrate -config ./config/example/config.json up
 go run ./cmd/job-agent-check ./config/example/config.json
+go run ./cmd/job-agent-trigger -idempotency-key manual-touch-001 ./config/example/config.json touch-primary-resume
 go run ./cmd/job-agent ./config/example/config.json
 ```
 
@@ -281,6 +282,13 @@ API-операции и browser-сессия профиля считаются �
 `credentials_ref` не мешает browser-only поднятию резюме, но такой профиль не
 получает search/application workers. Для campaign OAuth должен быть готов у
 каждого профиля, которому она распределяет отклики.
+
+`job-agent-trigger` ставит одну включённую job в ту же durable-очередь, не
+выполняя внешнее действие внутри CLI. Обязательный `-idempotency-key` делает
+повтор команды безопасным: тот же ключ возвращает уже созданную задачу, а
+другой payload под тем же ключом отклоняется. После успешного preflight можно
+поставить job вручную и запустить обычный `job-agent`; cron при этом остаётся
+единственным владельцем периодического расписания.
 
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и
