@@ -133,7 +133,7 @@ func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, 
 }
 
 func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign core.ApplicationCampaign) error {
-	states, progress, err := handler.progress(ctx, campaign.ID)
+	states, progress, nextCheckAt, err := handler.progress(ctx, campaign.ID)
 	if err != nil {
 		return err
 	}
@@ -147,8 +147,11 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	}
 	progress.Planned -= scheduled
 	progress.InFlight += scheduled
+	if scheduled > 0 {
+		nextCheckAt = earlierTime(nextCheckAt, handler.clock.Now().Add(handler.tickDelay))
+	}
 	if progress.Planned > 0 || progress.InFlight >= campaign.MaxInFlight || (campaign.RouteDone && progress.InFlight > 0) {
-		return handler.wait(ctx, campaign)
+		return handler.wait(ctx, campaign, nextCheckAt)
 	}
 	if campaign.RouteDone {
 		if campaign.RouteIndex+1 >= len(campaign.Routes) {
@@ -177,7 +180,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 		return campaignError("save campaign cursor", err)
 	}
 
-	states, progress, err = handler.progress(ctx, campaign.ID)
+	states, progress, nextCheckAt, err = handler.progress(ctx, campaign.ID)
 	if err != nil {
 		return err
 	}
@@ -190,9 +193,12 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	}
 	progress.Planned -= scheduled
 	progress.InFlight += scheduled
+	if scheduled > 0 {
+		nextCheckAt = earlierTime(nextCheckAt, handler.clock.Now().Add(handler.tickDelay))
+	}
 	delay := time.Duration(0)
 	if progress.Planned > 0 || progress.InFlight > 0 {
-		delay = handler.tickDelay
+		delay = handler.delayUntil(nextCheckAt)
 	}
 	return handler.ensureTick(ctx, campaign, delay)
 }
@@ -264,12 +270,13 @@ func (handler *ApplicationCampaignHandler) planApplication(ctx context.Context, 
 	return nil
 }
 
-func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaignID core.ApplicationCampaignID) ([]core.CampaignApplicationState, core.ApplicationCampaignProgress, error) {
+func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaignID core.ApplicationCampaignID) ([]core.CampaignApplicationState, core.ApplicationCampaignProgress, time.Time, error) {
 	states, err := handler.campaigns.ListCampaignApplicationStates(ctx, campaignID)
 	if err != nil {
-		return nil, core.ApplicationCampaignProgress{}, campaignError("load campaign applications", err)
+		return nil, core.ApplicationCampaignProgress{}, time.Time{}, campaignError("load campaign applications", err)
 	}
 	var progress core.ApplicationCampaignProgress
+	var nextCheckAt time.Time
 	for _, state := range states {
 		switch state.Application.Status {
 		case core.ApplicationSubmitted:
@@ -287,7 +294,7 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 		case core.ApplicationNew, core.ApplicationPreparing, core.ApplicationReady,
 			core.ApplicationSubmitting, core.ApplicationPendingReconcile:
 		default:
-			return nil, core.ApplicationCampaignProgress{}, fmt.Errorf("unknown application status %q", state.Application.Status)
+			return nil, core.ApplicationCampaignProgress{}, time.Time{}, fmt.Errorf("unknown application status %q", state.Application.Status)
 		}
 		task, err := handler.applicationTask(ctx, state.Application)
 		if errors.Is(err, broker.ErrTaskNotFound) {
@@ -295,18 +302,25 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 			continue
 		}
 		if err != nil {
-			return nil, core.ApplicationCampaignProgress{}, campaignError("load application task", err)
+			return nil, core.ApplicationCampaignProgress{}, time.Time{}, campaignError("load application task", err)
 		}
 		switch task.Status {
-		case core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled:
+		case core.TaskNew, core.TaskProcessing, core.TaskRetryScheduled:
 			progress.InFlight++
+			checkAt := handler.clock.Now().Add(handler.tickDelay)
+			if (task.Status == core.TaskNew || task.Status == core.TaskRetryScheduled) && task.AvailableAt.After(handler.clock.Now()) {
+				checkAt = task.AvailableAt
+			}
+			nextCheckAt = earlierTime(nextCheckAt, checkAt)
+		case core.TaskWaitingConfirmation:
+			progress.Blocked++
 		case core.TaskCompleted, core.TaskFailed:
 			progress.Failed++
 		default:
-			return nil, core.ApplicationCampaignProgress{}, fmt.Errorf("unknown application task status %q", task.Status)
+			return nil, core.ApplicationCampaignProgress{}, time.Time{}, fmt.Errorf("unknown application task status %q", task.Status)
 		}
 	}
-	return states, progress, nil
+	return states, progress, nextCheckAt, nil
 }
 
 func (handler *ApplicationCampaignHandler) scheduleApplications(ctx context.Context, campaign core.ApplicationCampaign, states []core.CampaignApplicationState, slots int) (int, error) {
@@ -374,12 +388,27 @@ func (handler *ApplicationCampaignHandler) enqueueApplication(ctx context.Contex
 	return nil
 }
 
-func (handler *ApplicationCampaignHandler) wait(ctx context.Context, campaign core.ApplicationCampaign) error {
+func (handler *ApplicationCampaignHandler) wait(ctx context.Context, campaign core.ApplicationCampaign, nextCheckAt time.Time) error {
 	expectedRevision := campaign.Revision
 	if err := campaign.WaitForApplications(handler.clock.Now()); err != nil {
 		return err
 	}
-	return handler.saveAndEnqueue(ctx, campaign, expectedRevision, handler.tickDelay)
+	return handler.saveAndEnqueue(ctx, campaign, expectedRevision, handler.delayUntil(nextCheckAt))
+}
+
+func (handler *ApplicationCampaignHandler) delayUntil(nextCheckAt time.Time) time.Duration {
+	now := handler.clock.Now()
+	if nextCheckAt.After(now) {
+		return nextCheckAt.Sub(now)
+	}
+	return handler.tickDelay
+}
+
+func earlierTime(current, candidate time.Time) time.Time {
+	if current.IsZero() || candidate.Before(current) {
+		return candidate
+	}
+	return current
 }
 
 func (handler *ApplicationCampaignHandler) stop(ctx context.Context, campaign core.ApplicationCampaign, status core.ApplicationCampaignStatus, reason string) error {

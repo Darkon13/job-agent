@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/broker"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
@@ -162,6 +163,52 @@ func TestApplicationCampaignHandlerAdvancesFallbackAndExhausts(t *testing.T) {
 	}
 	if primary.searchCalls != 1 || fallback.searchCalls != 1 {
 		t.Fatalf("search calls primary=%d fallback=%d", primary.searchCalls, fallback.searchCalls)
+	}
+}
+
+func TestApplicationCampaignHandlerAlignsNextTickWithApplicationRetry(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	handler, err := NewApplicationCampaignHandler(repository, repository, repository, queue, fixedClock{now}, &sequentialIDs{}, time.Second)
+	if err != nil {
+		t.Fatalf("new campaign handler: %v", err)
+	}
+	searcher := &fakeSearcher{page: core.SearchPage{Done: true, Vacancies: []core.Vacancy{{
+		Platform: "hh", ExternalID: "42", Title: "Go", State: core.VacancyStateOpen, ObservedAt: now,
+	}}}}
+	if err := handler.Register(ApplicationCampaignRoute{
+		SearchID: "primary", Platform: "hh", SearchProfileID: "profile", Query: json.RawMessage(`{}`), Searcher: searcher,
+	}); err != nil {
+		t.Fatalf("register route: %v", err)
+	}
+	start := campaignStartTask(t, now, []core.ProfileID{"profile"}, []core.SearchID{"primary"}, 1, 1)
+	if err := handler.Handle(ctx, start); err != nil {
+		t.Fatalf("start campaign: %v", err)
+	}
+	lease, found, err := queue.Claim(ctx, broker.ClaimParams{
+		WorkerID: "application-worker", TaskType: core.TaskApplicationSubmit,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim application: found=%v err=%v", found, err)
+	}
+	retryAt := now.Add(time.Hour)
+	operationError := &core.OperationError{
+		Category: core.ErrorQuotaExceeded, Operation: "applications.budget.reserve",
+		Platform: "hh", Message: "daily budget exhausted", RetryAfter: &retryAt,
+	}
+	if err := queue.Retry(ctx, lease, operationError, retryAt, now.Add(time.Second)); err != nil {
+		t.Fatalf("schedule application retry: %v", err)
+	}
+	campaignID := core.ApplicationCampaignID("campaign-" + string(start.ID))
+	if err := handler.Handle(ctx, campaignTickTask(t, queue, campaignID, 2)); err != nil {
+		t.Fatalf("reconcile delayed application: %v", err)
+	}
+	next := campaignTickTask(t, queue, campaignID, 3)
+	if !next.AvailableAt.Equal(retryAt) {
+		t.Fatalf("next campaign tick available_at=%s, want %s", next.AvailableAt, retryAt)
 	}
 }
 
