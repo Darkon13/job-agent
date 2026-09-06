@@ -56,6 +56,14 @@ type ProfileReaderFactory interface {
 	NewProfileReader(profileID core.ProfileID, credentialsRef string) (ProfileReader, error)
 }
 
+// BrowserSessionBinder binds a previously exported browser storage state to
+// read-only platform operations. It deliberately returns only a vacancy
+// reader: a browser session must not silently become permission to submit an
+// application through an API transport.
+type BrowserSessionBinder interface {
+	BindBrowserSession(profileID core.ProfileID, stateFile string) (VacancyReader, error)
+}
+
 type ConversationSendCommand struct {
 	ProfileID              core.ProfileID
 	ConversationID         core.ConversationID

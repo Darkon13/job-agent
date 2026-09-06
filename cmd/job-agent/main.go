@@ -98,6 +98,17 @@ func main() {
 		runtime := profiles[profileID]
 		instance := instances[profile.Adapter]
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
+		if !apiReady && profile.StateFile != "" && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun {
+			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
+				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
+				if err != nil {
+					log.Fatalf("bind browser session for profile %q: %v", profile.Tag, err)
+				}
+				runtime.BrowserReader = reader
+				profiles[profileID] = runtime
+				log.Printf("profile %q uses browser-backed read-only vacancy access", profile.Tag)
+			}
+		}
 		if apiReady {
 			if transport, ok := instance.(adapter.ConversationTransport); ok {
 				if err := conversationTransports.Register(profileID, transport); err != nil {
@@ -109,13 +120,20 @@ func main() {
 					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
 				}
 			}
+		} else if runtime.BrowserReader == nil {
+			log.Printf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
+		}
+		if apiReady || runtime.BrowserReader != nil {
+			if !apiReady {
+				if err := applicationTransports.RegisterVacancyReader(profileID, runtime.BrowserReader); err != nil {
+					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
+				}
+			}
 			applicationPlans[profileID] = taskworker.ApplicationPlan{
 				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
 				Message: profile.Applications.Message, Preparer: preparer, DailyLimit: profile.Applications.DailyLimit,
 				Timezone: profile.Applications.LocationName(),
 			}
-		} else {
-			log.Printf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 		}
 		if toucher, ok := instance.(adapter.ResumeToucher); ok {
 			if err := resumeTouchers.Register(profileID, toucher); err != nil {
@@ -143,7 +161,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
 	}
-	if applicationTransports.Count() > 0 {
+	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
 			store, store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
 		)
@@ -249,11 +267,11 @@ func configureSearchRuns(
 		for _, value := range search.Profiles {
 			profileID := core.ProfileID(value)
 			runtime := profiles[profileID]
-			if runtime.Status != core.ProfileEnabled || runtime.Reader == nil {
+			if !runtime.canReadVacancies() {
 				continue
 			}
 			targetProfiles = append(targetProfiles, profileID)
-			if searchProfileID == "" && runtime.Reader != nil {
+			if searchProfileID == "" {
 				searchProfileID = profileID
 			}
 		}
@@ -315,8 +333,8 @@ func configureApplicationCampaigns(
 		runnable := true
 		for _, value := range job.Action.Profiles {
 			runtime := profiles[core.ProfileID(value)]
-			if runtime.Status != core.ProfileEnabled || runtime.Reader == nil {
-				log.Printf("application campaign %q is disabled until profile %q is authorized", job.Tag, value)
+			if !runtime.canReadVacancies() {
+				log.Printf("application campaign %q is disabled until profile %q has read access", job.Tag, value)
 				runnable = false
 			}
 		}
@@ -335,13 +353,13 @@ func configureApplicationCampaigns(
 			for _, profile := range search.Profiles {
 				profileID := core.ProfileID(profile)
 				runtime := profiles[profileID]
-				if runtime.Status == core.ProfileEnabled && runtime.Reader != nil {
+				if runtime.canReadVacancies() {
 					searchProfileID = profileID
 					break
 				}
 			}
 			if searchProfileID == "" {
-				log.Printf("application campaign route %q is disabled until one of its profiles is authorized", search.Tag)
+				log.Printf("application campaign route %q is disabled until one of its profiles has read access", search.Tag)
 				runnable = false
 				continue
 			}
@@ -389,6 +407,11 @@ type profileRuntime struct {
 	Status            core.ProfileStatus
 	ExternalAccountID string
 	Reader            adapter.ProfileReader
+	BrowserReader     adapter.VacancyReader
+}
+
+func (runtime profileRuntime) canReadVacancies() bool {
+	return runtime.Status == core.ProfileEnabled && (runtime.Reader != nil || runtime.BrowserReader != nil)
 }
 
 func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Profile, instances map[string]adapter.Adapter) (map[core.ProfileID]profileRuntime, error) {

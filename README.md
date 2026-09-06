@@ -53,16 +53,22 @@ discovery-поиска durable `search_runs` владеет текущим curso
 конкретного запуска campaign и не стартует параллельный автономный проход.
 Успешная страница атомарно продвигает cursor, частичный сбой повторяет ту же
 страницу, а restart восстанавливает незавершённую задачу. Поиск останавливается
-по `pages`, пустой странице или пределу HH в 2000 результатов. SQLite и
+по `pages`, пустой странице, локальному `max_pages` или пределу HH в 2000
+результатов. `page_size` ограничивает число нормализованных карточек одной
+страницы. SQLite и
 in-memory repository хранят одну вакансию на `(platform, external_id)` и один
 отклик на `(profile, vacancy)`; задачи дедуплицируются по стабильным
 idempotency keys.
 
-HH adapter отправляет OAuth Bearer token и `HH-User-Agent`, использует
-`per_page=100`, нормализует краткую вакансию и строго отклоняет неизвестные либо
+HH adapter выбирает один из двух read-каналов. При наличии OAuth Bearer token
+он использует официальный JSON API. Без токена, но с `state_file`, профиль в
+режиме `dry_run` читает server-rendered web search и страницы вакансий через
+сохранённую browser-сессию. Browser fallback реализует только GET и не
+регистрируется как `ApplicationTransport`, поэтому физически не может отправить
+отклик. Оба канала нормализуют вакансию и строго отклоняют неизвестные либо
 структурно некорректные search-поля. `429 Retry-After` переводит page task в
-отложенный retry и освобождает worker lease; ожидание не выполняется внутри
-handler. Пока этим транспортом реализован только `source=global`.
+отложенный retry и освобождает worker lease. Пока реализован только
+`source=global`.
 
 Для постоянного состояния доступен SQLite store: он реализует те же
 repository/broker-порты и сохраняет vacancies, discoveries, applications,
@@ -120,9 +126,10 @@ terminal fail. После падения worker задача повторно в
 
 Основной `application.submit` worker ведёт отклик через состояния
 `new → preparing → ready → submitting → submitted`. Выбор резюме задаётся для
-профиля полем `resume`. До решения worker авторизованно читает полную вакансию
-через `GET /vacancies/{id}` и обновляет её в repository: краткой поисковой
-карточки недостаточно для требований и applicant relations. Закрытая вакансия
+профиля полем `resume`. До решения worker читает полную вакансию через API либо
+browser GET и обновляет её в repository: краткой поисковой карточки недостаточно
+для требований. Applicant relations и suitable resumes доступны только
+API-каналу и не нужны для browser-backed `dry_run`. Закрытая вакансия
 или уже существующий `got_response` пропускаются без `POST`; обязательный тест
 либо отсутствующее обязательное сопроводительное переводят отклик в
 `waiting_validation`. Для выбранного `resume` worker также читает все страницы
@@ -230,9 +237,11 @@ HH-адаптер умеет проверять собственную поис�
 токеном ссылается на отдельный credential-файл через `credentials_ref`; токен
 не хранится в основном config и не попадает в диагностические ошибки. Проверки
 одного профиля сериализуются, а `401/403` переводят профиль в
-`auth_required` и не запускают его workers. Conversation transport пока
-возвращает явный `unsupported`; application transport и его reconciliation
-работают через официальный HH API.
+`auth_required`. Conversation transport пока возвращает явный `unsupported`;
+application transport и его reconciliation работают через официальный HH API.
+Если OAuth отсутствует, валидный browser state включает только search и
+application preparation в `dry_run`; режимы `approval` и `submit` по такому
+каналу не запускаются.
 
 Минимальный credential-файл имеет права `0600` (или строже):
 
@@ -253,18 +262,26 @@ HH-адаптер умеет проверять собственную поис�
 }
 ```
 
-Импорт готового токена уже работает; OAuth login и обновление access token по
-refresh token остаются отдельными следующими срезами. Browser `state_file`
-по-прежнему используется независимо для browser-only операций вроде поднятия
-резюме.
+Импорт готового токена уже работает. Однако 6 сентября 2026 года форма
+регистрации приложения в кабинете HH сообщала, что поддержка API для соискателей
+прекращена 15 декабря 2025 года, тогда как публичная OpenAPI-документация всё
+ещё описывает соискательский OAuth. Поэтому получение нового client ID не
+считается доступным путём запуска, пока HH не уточнит условия. Browser
+`state_file` используется для read-only discovery/dry-run и поднятия резюме.
 
 ```sh
 go test ./...
 go run ./cmd/job-agent-migrate -config ./config/example/config.json up
+go run ./cmd/job-agent-browser-state sanitize ./data/profiles/primary.json
 go run ./cmd/job-agent-check ./config/example/config.json
 go run ./cmd/job-agent-trigger -idempotency-key manual-touch-001 ./config/example/config.json touch-primary-resume
 go run ./cmd/job-agent ./config/example/config.json
 ```
+
+`job-agent-browser-state sanitize` атомарно оставляет в общем Playwright export
+только cookies и origins доменов HH, принудительно выставляет `0600` и выводит
+лишь количества записей. Значения cookies не выводятся. Команду нужно выполнять
+после каждого ручного обновления `state_file` из общего browser-профиля.
 
 `job-agent-check` — безопасная предпусковая проверка. Она проверяет конфиг,
 точную версию схемы и статистику SQLite, структуру browser state, поисковые
@@ -273,15 +290,15 @@ go run ./cmd/job-agent ./config/example/config.json
 расписание, не ставит задачи в очередь и не выполняет `POST`.
 Если настроенный search или job фактически не может работать, проверка
 завершается ошибкой вместо «зелёного» запуска с молча отключённым контуром.
-Перед запуском она также показывает только агрегированные типы/статусы уже
-сохранённых задач и просроченные расписания, не раскрывая payload или внешние
-идентификаторы. `persisted_due` означает, что `misfire: run_once` создаст задачу
-сразу после старта сервиса.
+Перед запуском она также показывает только агрегированные типы/статусы задач,
+статусы/decision codes откликов и просроченные расписания, не раскрывая payload,
+причины решения или внешние идентификаторы. `persisted_due` означает, что
+`misfire: run_once` создаст задачу сразу после старта сервиса.
 
-API-операции и browser-сессия профиля считаются независимо: отсутствие
-`credentials_ref` не мешает browser-only поднятию резюме, но такой профиль не
-получает search/application workers. Для campaign OAuth должен быть готов у
-каждого профиля, которому она распределяет отклики.
+API-операции и browser-сессия профиля считаются независимо. Отсутствие
+`credentials_ref` не мешает поднятию резюме и ограниченному browser-backed
+search/application `dry_run`. Для `approval`, `submit`, suitable-resume check и
+API campaign по-прежнему нужен OAuth у каждого целевого профиля.
 
 `job-agent-trigger` ставит одну включённую job в ту же durable-очередь, не
 выполняя внешнее действие внутри CLI. Обязательный `-idempotency-key` делает

@@ -61,6 +61,13 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	for _, item := range taskCounts {
 		fmt.Fprintf(output, "INFO queue type=%s status=%s count=%d\n", item.Type, item.Status, item.Count)
 	}
+	applicationCounts, err := store.ApplicationCounts(ctx)
+	if err != nil {
+		return fmt.Errorf("database application summary: %w", err)
+	}
+	for _, item := range applicationCounts {
+		fmt.Fprintf(output, "INFO applications status=%s decision=%s count=%d\n", item.Status, emptyAs(item.DecisionCode, "none"), item.Count)
+	}
 	dueSchedules, err := store.DueSchedules(ctx, time.Now().UTC(), 100)
 	if err != nil {
 		return fmt.Errorf("database due schedules: %w", err)
@@ -121,7 +128,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 			fmt.Fprintf(output, "INFO profile=%s api=not_configured\n", profile.Tag)
 		}
 		if profile.StateFile != "" {
-			if err := validateBrowserState(profile.StateFile); err != nil {
+			if err := validateBrowserState(profile.StateFile, instances[profile.Adapter].Name()); err != nil {
 				fmt.Fprintf(output, "WARN profile=%s browser_state=%s\n", profile.Tag, err)
 			} else {
 				state.browserReady = true
@@ -136,7 +143,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	for _, search := range cfg.Searches {
 		runnable := false
 		for _, profile := range search.Profiles {
-			if readiness[profile].apiReady {
+			configured := configuredProfile(cfg.Profiles, profile)
+			if profileCanRead(configured, readiness[profile], instances[configured.Adapter]) {
 				runnable = true
 				break
 			}
@@ -144,7 +152,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		if runnable {
 			runnableSearches++
 		} else {
-			blocked = append(blocked, "search "+search.Tag+" has no API-authorized profile")
+			blocked = append(blocked, "search "+search.Tag+" has no API or browser read profile")
 		}
 	}
 
@@ -192,7 +200,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		case appconfig.JobActionApplicationCampaign:
 			runnable := true
 			for _, profile := range job.Action.Profiles {
-				if !readiness[profile].apiReady {
+				configured := configuredProfiles[profile]
+				if !profileCanRead(configured, readiness[profile], instances[configured.Adapter]) {
 					runnable = false
 					break
 				}
@@ -200,7 +209,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 			if runnable {
 				runnableJobs++
 			} else {
-				blocked = append(blocked, "job "+job.Tag+" has a profile without API authorization")
+				blocked = append(blocked, "job "+job.Tag+" has a profile without API or browser read access")
 			}
 		}
 	}
@@ -216,7 +225,34 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	return nil
 }
 
-func validateBrowserState(path string) error {
+func emptyAs(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func configuredProfile(profiles []appconfig.Profile, tag string) appconfig.Profile {
+	for _, profile := range profiles {
+		if profile.Tag == tag {
+			return profile
+		}
+	}
+	return appconfig.Profile{}
+}
+
+func profileCanRead(profile appconfig.Profile, readiness profileReadiness, instance adapter.Adapter) bool {
+	if readiness.apiReady {
+		return true
+	}
+	if !readiness.browserReady || profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun || instance == nil {
+		return false
+	}
+	_, supported := instance.(adapter.BrowserSessionBinder)
+	return supported
+}
+
+func validateBrowserState(path, platform string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return errors.New("unavailable")
@@ -238,14 +274,27 @@ func validateBrowserState(path string) error {
 	if len(state.Cookies) == 0 {
 		return errors.New("no_cookies")
 	}
+	matchingPlatformCookie := false
 	for _, cookie := range state.Cookies {
 		var item struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name   string `json:"name"`
+			Value  string `json:"value"`
+			Domain string `json:"domain"`
 		}
 		if err := json.Unmarshal(cookie, &item); err != nil || strings.TrimSpace(item.Name) == "" || item.Value == "" {
 			return errors.New("invalid_cookie")
 		}
+		if platform != hh.Name || hhBrowserDomain(item.Domain) {
+			matchingPlatformCookie = true
+		}
+	}
+	if !matchingPlatformCookie {
+		return errors.New("no_platform_cookies")
 	}
 	return nil
+}
+
+func hhBrowserDomain(value string) bool {
+	domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), ".")
+	return domain == "hh.ru" || strings.HasSuffix(domain, ".hh.ru")
 }

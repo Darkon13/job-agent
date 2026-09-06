@@ -57,6 +57,12 @@ type TaskCount struct {
 	Count  int
 }
 
+type ApplicationCount struct {
+	Status       core.ApplicationStatus
+	DecisionCode string
+	Count        int
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("sqlite path is required")
@@ -361,6 +367,29 @@ func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate task counts: %w", err)
+	}
+	return counts, nil
+}
+
+// ApplicationCounts exposes lifecycle totals without profile, vacancy,
+// decision text or prepared message data.
+func (store *Store) ApplicationCounts(ctx context.Context) ([]ApplicationCount, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT status, decision_code, COUNT(*)
+		FROM applications GROUP BY status, decision_code ORDER BY status, decision_code`)
+	if err != nil {
+		return nil, fmt.Errorf("count applications by status: %w", err)
+	}
+	defer rows.Close()
+	counts := make([]ApplicationCount, 0)
+	for rows.Next() {
+		var item ApplicationCount
+		if err := rows.Scan(&item.Status, &item.DecisionCode, &item.Count); err != nil {
+			return nil, fmt.Errorf("scan application count: %w", err)
+		}
+		counts = append(counts, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application counts: %w", err)
 	}
 	return counts, nil
 }

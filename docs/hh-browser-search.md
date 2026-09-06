@@ -105,6 +105,16 @@ public vacancy search API. `page` участвует в URL; `search_session_id`
 результат. Browser parsing нужен как fallback/compatibility transport, но его
 selectors и pagination contract тестируются fixtures отдельно от core.
 
+На 2026-09-06 анонимный `GET https://api.hh.ru/vacancies` с этой рабочей сети
+сразу получал anti-bot `403`, в то время как тот же global search в
+авторизованной web-сессии возвращал выдачу. Поэтому реализованный fallback
+повторяет только GET `/search/vacancy` с HH cookies из Playwright storage state,
+извлекает карточки по `data-qa` и отдельно читает полную страницу вакансии.
+Параметры `page_size` и `max_pages` являются локальными предохранителями: они
+ограничивают число создаваемых applications даже если UI вернул больше
+карточек. Для browser transport значения по умолчанию — 20 карточек и одна
+страница.
+
 ## Инварианты adapter
 
 - `source=global` никогда не добавляет resume reference.
@@ -115,3 +125,5 @@ selectors и pagination contract тестируются fixtures отдельн�
 - Search result дедуплицируется по `(platform, vacancy_id)` независимо от source
   и transport.
 - Переход по apply link не выполняется во время search/extraction.
+- Browser reader не реализует submit-интерфейс и используется только для
+  `dry_run`.

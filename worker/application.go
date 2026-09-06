@@ -65,12 +65,18 @@ func (plans StaticApplicationPlans) ResolveApplicationPlan(_ context.Context, ap
 }
 
 type ApplicationTransportRegistry struct {
-	mu         sync.RWMutex
-	transports map[core.ProfileID]adapter.ApplicationTransport
+	mu                    sync.RWMutex
+	transports            map[core.ProfileID]adapter.ApplicationTransport
+	vacancyReaders        map[core.ProfileID]adapter.VacancyReader
+	suitableResumeReaders map[core.ProfileID]adapter.SuitableResumeReader
 }
 
 func NewApplicationTransportRegistry() *ApplicationTransportRegistry {
-	return &ApplicationTransportRegistry{transports: make(map[core.ProfileID]adapter.ApplicationTransport)}
+	return &ApplicationTransportRegistry{
+		transports:            make(map[core.ProfileID]adapter.ApplicationTransport),
+		vacancyReaders:        make(map[core.ProfileID]adapter.VacancyReader),
+		suitableResumeReaders: make(map[core.ProfileID]adapter.SuitableResumeReader),
+	}
 }
 
 func (registry *ApplicationTransportRegistry) Register(profileID core.ProfileID, transport adapter.ApplicationTransport) error {
@@ -83,6 +89,25 @@ func (registry *ApplicationTransportRegistry) Register(profileID core.ProfileID,
 		return fmt.Errorf("application transport for profile %s is already registered", profileID)
 	}
 	registry.transports[profileID] = transport
+	if reader, ok := transport.(adapter.VacancyReader); ok {
+		registry.vacancyReaders[profileID] = reader
+	}
+	if reader, ok := transport.(adapter.SuitableResumeReader); ok {
+		registry.suitableResumeReaders[profileID] = reader
+	}
+	return nil
+}
+
+func (registry *ApplicationTransportRegistry) RegisterVacancyReader(profileID core.ProfileID, reader adapter.VacancyReader) error {
+	if profileID == "" || reader == nil {
+		return errors.New("vacancy reader registration requires profile and reader")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.vacancyReaders[profileID]; exists {
+		return fmt.Errorf("vacancy reader for profile %s is already registered", profileID)
+	}
+	registry.vacancyReaders[profileID] = reader
 	return nil
 }
 
@@ -97,30 +122,26 @@ func (registry *ApplicationTransportRegistry) Resolve(profileID core.ProfileID) 
 }
 
 func (registry *ApplicationTransportRegistry) ResolveVacancyReader(profileID core.ProfileID) (adapter.VacancyReader, error) {
-	transport, err := registry.Resolve(profileID)
-	if err != nil {
-		return nil, err
-	}
-	reader, ok := transport.(adapter.VacancyReader)
-	if !ok {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	reader := registry.vacancyReaders[profileID]
+	if reader == nil {
 		return nil, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "vacancies.read",
-			Message: "application transport cannot load a full vacancy",
+			Message: "profile has no full vacancy reader",
 		}
 	}
 	return reader, nil
 }
 
 func (registry *ApplicationTransportRegistry) ResolveSuitableResumeReader(profileID core.ProfileID) (adapter.SuitableResumeReader, error) {
-	transport, err := registry.Resolve(profileID)
-	if err != nil {
-		return nil, err
-	}
-	reader, ok := transport.(adapter.SuitableResumeReader)
-	if !ok {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	reader := registry.suitableResumeReaders[profileID]
+	if reader == nil {
 		return nil, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "vacancies.suitable_resumes",
-			Message: "application transport cannot list suitable resumes",
+			Message: "profile has no suitable resume reader",
 		}
 	}
 	return reader, nil
@@ -130,6 +151,12 @@ func (registry *ApplicationTransportRegistry) Count() int {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
 	return len(registry.transports)
+}
+
+func (registry *ApplicationTransportRegistry) VacancyReaderCount() int {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	return len(registry.vacancyReaders)
 }
 
 type ApplicationHandler struct {
@@ -230,7 +257,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		preparedResumeID := ""
 		preparation, decided := applicationPlatformPreflight(vacancy)
-		if !decided && plan.ResumeID != "" {
+		if !decided && plan.Mode != core.ApplicationExecutionDryRun && plan.ResumeID != "" {
 			preparation, decided, err = handler.applicationResumePreflight(ctx, application, plan.ResumeID)
 			if err != nil {
 				return err

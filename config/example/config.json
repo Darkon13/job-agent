@@ -103,7 +103,9 @@
         "schedule": ["remote"],
         "salary": 250000,
         "order_by": "publication_time",
-        "period": 7
+        "period": 7,
+        "page_size": 20,
+        "max_pages": 1
       }
     },
     {
@@ -118,7 +120,9 @@
         "area": ["1"],
         "schedule": ["remote"],
         "order_by": "publication_time",
-        "period": 7
+        "period": 7,
+        "page_size": 20,
+        "max_pages": 1
       }
     }
   ]

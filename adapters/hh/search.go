@@ -87,8 +87,12 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 		return core.SearchPage{}, err
 	}
 	parameters := encodeGlobalSearchQuery(query)
+	pageSize := query.PageSize
+	if pageSize == 0 {
+		pageSize = searchPageSize
+	}
 	parameters.Set("page", strconv.Itoa(page))
-	parameters.Set("per_page", strconv.Itoa(searchPageSize))
+	parameters.Set("per_page", strconv.Itoa(pageSize))
 	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/vacancies?" + parameters.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -119,7 +123,7 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 	if err := decoder.Decode(&result); err != nil {
 		return core.SearchPage{}, operationError(core.ErrorTemporaryFailure, "vacancies.search.global", "HH returned an invalid vacancy search response", err)
 	}
-	if result.Page != page || result.PerPage != searchPageSize || result.Pages < 0 || result.Found < 0 {
+	if result.Page != page || result.PerPage != pageSize || result.Pages < 0 || result.Found < 0 {
 		return core.SearchPage{}, operationError(core.ErrorPermanentFailure, "vacancies.search.global", "HH returned inconsistent vacancy pagination", nil)
 	}
 
@@ -138,6 +142,9 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 		vacancies = append(vacancies, vacancy)
 	}
 	done := len(result.Items) == 0 || page+1 >= result.Pages || (page+1)*result.PerPage >= searchMaximumDepth
+	if query.MaxPages > 0 && page+1 >= query.MaxPages {
+		done = true
+	}
 	nextCursor := ""
 	if !done {
 		nextCursor = strconv.Itoa(page + 1)

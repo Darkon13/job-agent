@@ -34,6 +34,9 @@ func (stub *profileAdapterStub) ValidateSearch(json.RawMessage) error { return n
 func (stub *profileAdapterStub) Search(context.Context, core.ProfileID, json.RawMessage, string) (core.SearchPage, error) {
 	return core.SearchPage{}, errors.New("not implemented")
 }
+func (stub *profileAdapterStub) ReadVacancy(context.Context, core.ProfileID, core.VacancyKey) (core.Vacancy, error) {
+	return core.Vacancy{}, errors.New("not implemented")
+}
 func (stub *profileAdapterStub) NewProfileReader(core.ProfileID, string) (adapter.ProfileReader, error) {
 	return stub.reader, nil
 }
@@ -178,5 +181,42 @@ func TestConfigureApplicationCampaignsRequiresEveryProfileAPIReader(t *testing.T
 	}
 	if jobs != 0 || len(definitions) != 0 {
 		t.Fatalf("jobs=%d definitions=%d, want disabled campaign", jobs, len(definitions))
+	}
+}
+
+func TestConfigureApplicationCampaignsAcceptsReadOnlyBrowserProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate sqlite: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	reader := &profileAdapterStub{}
+	cfg := appconfig.Config{
+		Searches: []appconfig.Search{{
+			Tag: "golang", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`),
+		}},
+		Jobs: []appconfig.Job{{
+			Tag: "dry-run", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "30 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionApplicationCampaign, Profiles: []string{"primary"}, Routes: []string{"golang"},
+				TargetSuccessful: 1, MaxInFlight: 1,
+			},
+		}},
+	}
+	_, definitions, _, jobs, err := configureApplicationCampaigns(
+		cfg, map[string]adapter.Adapter{"platform": reader}, map[core.ProfileID]profileRuntime{
+			"primary": {Status: core.ProfileEnabled, BrowserReader: reader},
+		}, store,
+	)
+	if err != nil {
+		t.Fatalf("configure browser campaign: %v", err)
+	}
+	if jobs != 1 || len(definitions) != 1 {
+		t.Fatalf("jobs=%d definitions=%d", jobs, len(definitions))
 	}
 }

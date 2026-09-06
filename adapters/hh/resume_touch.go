@@ -150,6 +150,9 @@ func (transport *ResumeTouchTransport) authenticatedClient() (*http.Client, erro
 		target, _ := url.Parse(rawURL)
 		cookies := make([]*http.Cookie, 0, len(state.Cookies))
 		for _, item := range state.Cookies {
+			if !browserCookieMatchesURL(item, target) {
+				continue
+			}
 			cookie := &http.Cookie{Name: item.Name, Value: item.Value, Domain: item.Domain, Path: item.Path, HttpOnly: item.HTTPOnly, Secure: item.Secure}
 			if item.Expires > 0 {
 				cookie.Expires = time.Unix(int64(item.Expires), 0)
@@ -161,6 +164,12 @@ func (transport *ResumeTouchTransport) authenticatedClient() (*http.Client, erro
 	copy := *transport.client
 	copy.Jar = jar
 	return &copy, nil
+}
+
+func browserCookieMatchesURL(cookie browserCookie, target *url.URL) bool {
+	domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(cookie.Domain)), ".")
+	host := strings.ToLower(target.Hostname())
+	return domain == "" || host == domain || strings.HasSuffix(host, "."+domain)
 }
 
 func (transport *ResumeTouchTransport) readTouchState(ctx context.Context, client *http.Client, resumeID string) (resumeTouchState, error) {

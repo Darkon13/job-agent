@@ -293,3 +293,38 @@ func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {
 		t.Fatalf("counts = %#v", counts)
 	}
 }
+
+func TestStoreCountsApplicationsWithoutReturningDetails(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	for index := range 2 {
+		vacancy := core.Vacancy{
+			Platform: "hh", ExternalID: fmt.Sprint(index), Title: "Vacancy",
+			State: core.VacancyStateOpen, ObservedAt: now,
+		}
+		if _, err := store.UpsertVacancy(ctx, vacancy); err != nil {
+			t.Fatalf("create vacancy: %v", err)
+		}
+		candidate, err := core.NewApplication(core.ApplicationID(fmt.Sprintf("application-%d", index)), core.ApplicationKey{
+			ProfileID: "primary", Vacancy: vacancy.Key(),
+		}, now)
+		if err != nil {
+			t.Fatalf("new application: %v", err)
+		}
+		if _, _, err := store.CreateApplication(ctx, candidate); err != nil {
+			t.Fatalf("create application: %v", err)
+		}
+	}
+	counts, err := store.ApplicationCounts(ctx)
+	if err != nil {
+		t.Fatalf("application counts: %v", err)
+	}
+	if len(counts) != 1 || counts[0].Status != core.ApplicationNew || counts[0].Count != 2 {
+		t.Fatalf("counts = %#v", counts)
+	}
+}

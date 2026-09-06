@@ -488,6 +488,40 @@ func TestApplicationHandlerDryRunAndApprovalNeverReachTransport(t *testing.T) {
 	}
 }
 
+func TestApplicationHandlerDryRunDoesNotResolveSuitableResume(t *testing.T) {
+	transport := &fakeApplicationTransport{suitableErr: errors.New("must not be called")}
+	plan := ApplicationPlan{
+		ResumeID: "resume-1", Mode: core.ApplicationExecutionDryRun, Timezone: "UTC",
+	}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": plan}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle dry run: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationDryRun || transport.suitableCalls != 0 || transport.calls != 0 {
+		t.Fatalf("application=%#v suitable=%d submit=%d err=%v", application, transport.suitableCalls, transport.calls, err)
+	}
+}
+
+func TestApplicationRegistryCanExposeReadOnlyVacancyReaderWithoutSubmitTransport(t *testing.T) {
+	registry := NewApplicationTransportRegistry()
+	reader := &fakeApplicationTransport{}
+	if err := registry.RegisterVacancyReader("profile-1", reader); err != nil {
+		t.Fatalf("register vacancy reader: %v", err)
+	}
+	if _, err := registry.ResolveVacancyReader("profile-1"); err != nil {
+		t.Fatalf("resolve vacancy reader: %v", err)
+	}
+	if _, err := registry.Resolve("profile-1"); err == nil {
+		t.Fatal("read-only profile unexpectedly exposed submit transport")
+	}
+	if registry.Count() != 0 || registry.VacancyReaderCount() != 1 {
+		t.Fatalf("submit=%d readers=%d", registry.Count(), registry.VacancyReaderCount())
+	}
+}
+
 func TestApplicationHandlerEnforcesDailyBudgetBeforeTransport(t *testing.T) {
 	transport := &fakeApplicationTransport{}
 	plan := liveApplicationPlan("resume-1")

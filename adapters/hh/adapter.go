@@ -74,17 +74,21 @@ type SearchQuery struct {
 	WorkFormat         []string     `json:"work_format,omitempty"`
 	ExcludedText       string       `json:"excluded_text,omitempty"`
 	Education          []string     `json:"education,omitempty"`
+	PageSize           int          `json:"page_size,omitempty"`
+	MaxPages           int          `json:"max_pages,omitempty"`
 }
 
 type Adapter struct {
-	config  Config
-	mu      sync.RWMutex
-	clients map[core.ProfileID]*ReadClient
+	config         Config
+	mu             sync.RWMutex
+	clients        map[core.ProfileID]*ReadClient
+	browserClients map[core.ProfileID]*BrowserReadClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
+var _ adapter.BrowserSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
@@ -97,7 +101,10 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 			return nil, fmt.Errorf("decode hh config: %w", err)
 		}
 	}
-	return &Adapter{config: cfg, clients: make(map[core.ProfileID]*ReadClient)}, nil
+	return &Adapter{
+		config: cfg, clients: make(map[core.ProfileID]*ReadClient),
+		browserClients: make(map[core.ProfileID]*BrowserReadClient),
+	}, nil
 }
 
 func (a *Adapter) Name() string { return Name }
@@ -116,6 +123,23 @@ func (a *Adapter) NewProfileReader(profileID core.ProfileID, credentialsRef stri
 		return existing, nil
 	}
 	a.clients[profileID] = client
+	return client, nil
+}
+
+func (a *Adapter) BindBrowserSession(profileID core.ProfileID, stateFile string) (adapter.VacancyReader, error) {
+	client, err := NewBrowserReadClient(profileID, stateFile, a.config.UserAgent, nil)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if existing := a.browserClients[profileID]; existing != nil {
+		if existing.stateFile != client.stateFile {
+			return nil, fmt.Errorf("HH profile %s is already bound to another browser state", profileID)
+		}
+		return existing, nil
+	}
+	a.browserClients[profileID] = client
 	return client, nil
 }
 
@@ -164,6 +188,12 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 	}
 	if query.Salary != nil && *query.Salary < 0 {
 		return errors.New("hh salary must not be negative")
+	}
+	if query.PageSize < 0 || query.PageSize > searchPageSize {
+		return fmt.Errorf("hh page_size must be between 1 and %d when set", searchPageSize)
+	}
+	if query.MaxPages < 0 || query.MaxPages > searchMaximumDepth/searchPageSize {
+		return fmt.Errorf("hh max_pages must be between 1 and %d when set", searchMaximumDepth/searchPageSize)
 	}
 	geoFields := 0
 	for _, value := range []*float64{query.TopLat, query.BottomLat, query.LeftLng, query.RightLng} {
@@ -248,11 +278,15 @@ func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json
 	}
 	a.mu.RLock()
 	client := a.clients[profileID]
+	browserClient := a.browserClients[profileID]
 	a.mu.RUnlock()
-	if client == nil {
-		return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound credentials", nil)
+	if client != nil {
+		return client.SearchGlobal(ctx, query, cursor)
 	}
-	return client.SearchGlobal(ctx, query, cursor)
+	if browserClient != nil {
+		return browserClient.SearchGlobal(ctx, query, cursor)
+	}
+	return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound read session", nil)
 }
 
 func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error) {
@@ -261,11 +295,15 @@ func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key
 	}
 	a.mu.RLock()
 	client := a.clients[profileID]
+	browserClient := a.browserClients[profileID]
 	a.mu.RUnlock()
-	if client == nil {
-		return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read", "HH profile has no bound credentials", nil)
+	if client != nil {
+		return client.ReadVacancy(ctx, profileID, key)
 	}
-	return client.ReadVacancy(ctx, profileID, key)
+	if browserClient != nil {
+		return browserClient.ReadVacancy(ctx, profileID, key)
+	}
+	return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read", "HH profile has no bound read session", nil)
 }
 
 func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) ([]adapter.SuitableResume, error) {

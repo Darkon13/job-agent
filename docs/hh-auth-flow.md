@@ -314,9 +314,32 @@ Local/session storage после входа в основном содержал
 anti-bot keys; очевидного OAuth token key не обнаружено. Значения storage keys
 не исследуются и не логируются.
 
-Предпочтительно сохранять полный browser storage state, а не вручную выбирать
-cookies: HH может менять состав сессии. Минимальный cookie contract нужен для
-диагностики и HTTP web client, но не как пользовательский способ входа.
+Из браузера сначала экспортируется полный storage state: HH может менять состав
+сессии, а ручной allowlist по именам cookies быстро устаревает. Перед помещением
+в профиль Job Agent export обязательно атомарно очищается командой
+`job-agent-browser-state sanitize`: сохраняются все записи доменов `hh.ru` и
+`hhcdn.ru`, но удаляются cookies и origins остальных сайтов общего Playwright
+профиля. Имена отдельных HH cookies не становятся контрактом.
+
+### Ограничение новых applicant OAuth integrations
+
+На 2026-09-06 публичная OpenAPI-документация всё ещё описывала applicant OAuth,
+но форма регистрации нового приложения в `dev.hh.ru/admin` сообщала о
+прекращении поддержки API для соискателей с 15 декабря 2025 года. Это разные
+сигналы: существующий токен по-прежнему поддерживается кодом, но возможность
+зарегистрировать новое соискательское приложение не считается доступной.
+
+Текущий путь локального запуска поэтому не ждёт OAuth client credentials:
+
+1. пользователь входит через общий Playwright/VNC browser;
+2. storage state экспортируется и санитизируется до HH-доменов;
+3. server-rendered поиск и полная вакансия читаются только GET-запросами;
+4. application доходит до `dry_run`, а submit transport не регистрируется;
+5. browser-only поднятие резюме остаётся отдельной явно настроенной job.
+
+Анонимный public vacancy search не заменяет этот путь: актуальная документация
+предупреждает о captcha без access token, а живая проверка с этой машины получила
+`403` уже на первом запросе.
 
 ### Импорт готового API token
 
@@ -340,14 +363,16 @@ lock станет границей refresh, чтобы два конкурент
 - challenge timeout приводит к `expired`, а не бесконечному ожиданию;
 - captcha всегда переводится в manual input, без автоматического обхода;
 - один profile не может иметь две конкурирующие auth sessions;
-- после входа выполняется API `/me` и browser session probe.
+- после входа выполняется browser session probe; API `/me` вызывается только
+  при наличии отдельного OAuth token.
 
 ## Что ещё проверить в живом потоке
 
 - поведение resend после истечения таймера;
 - captcha branch;
 - password branch после валидного identifier;
-- OAuth redirect URI и token exchange;
+- условия выдачи новых applicant client credentials и только после этого OAuth
+  redirect URI/token exchange;
 - cookie/storage diff в новом чистом context до и после входа;
 - признаки истёкшей browser session;
 - logout и повторную авторизацию;
