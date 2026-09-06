@@ -307,6 +307,29 @@ func (store *Store) AppendReviewSelection(ctx context.Context, session core.Revi
 	return nil
 }
 
+func (store *Store) FinishReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error {
+	if err := session.Validate(); err != nil {
+		return err
+	}
+	if session.Status != core.ReviewCompleted || session.Revision != expectedRevision {
+		return errors.New("completed review session does not match expected revision")
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE review_sessions SET status = ?, updated_at = ?
+		WHERE id = ? AND revision = ? AND status = ?`, session.Status, session.UpdatedAt.UnixNano(),
+		session.ID, expectedRevision, core.ReviewAnswered)
+	if err != nil {
+		return fmt.Errorf("finish review session: %w", err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return storage.ErrRevisionConflict
+	}
+	return nil
+}
+
 func (store *Store) ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error) {
 	if sessionID == "" {
 		return nil, errors.New("review session id is required")

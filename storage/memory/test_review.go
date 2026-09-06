@@ -198,6 +198,26 @@ func (repository *Repository) AppendReviewSelection(ctx context.Context, session
 	return nil
 }
 
+func (repository *Repository) FinishReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := session.Validate(); err != nil {
+		return err
+	}
+	if session.Status != core.ReviewCompleted || session.Revision != expectedRevision {
+		return errors.New("completed review session does not match expected revision")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	stored, exists := repository.reviews[session.ID]
+	if !exists || stored.Status != core.ReviewAnswered || stored.Revision != expectedRevision {
+		return storage.ErrRevisionConflict
+	}
+	repository.reviews[session.ID] = session
+	return nil
+}
+
 func (repository *Repository) ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

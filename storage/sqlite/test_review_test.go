@@ -167,4 +167,17 @@ func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 	if storedSession.Revision != 2 || storedSession.Status != core.ReviewAnswered || len(selections) != 1 {
 		t.Fatalf("review state is not atomic: session=%#v selections=%#v", storedSession, selections)
 	}
+	if err := storedSession.Complete(now.Add(3 * time.Minute)); err != nil {
+		t.Fatalf("complete review session: %v", err)
+	}
+	if err := store.FinishReviewSession(ctx, storedSession, 2); err != nil {
+		t.Fatalf("finish review session: %v", err)
+	}
+	finished, err := store.ReviewSession(ctx, session.ID)
+	if err != nil || finished.Status != core.ReviewCompleted {
+		t.Fatalf("review session was not finished: %#v err=%v", finished, err)
+	}
+	if err := store.FinishReviewSession(ctx, storedSession, 2); !errors.Is(err, storage.ErrRevisionConflict) {
+		t.Fatalf("second finish error = %v, want revision conflict", err)
+	}
 }
