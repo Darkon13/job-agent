@@ -29,6 +29,7 @@ var errReviewStopped = errors.New("review stopped by user")
 type qualificationBrowser interface {
 	OpenOffering(context.Context, string, string, string) (hh.QualificationOffering, error)
 	StartAttempt(context.Context) (hh.QualificationCapture, error)
+	Capture(context.Context) (hh.QualificationCapture, error)
 	Select(context.Context, string, []string) (hh.QualificationCapture, error)
 	Next(context.Context, string, []string) (hh.QualificationCapture, error)
 }
@@ -113,7 +114,7 @@ func run(ctx context.Context, args []string, input io.Reader, output, errorOutpu
 	result, err := reviewAttempt(ctx, store, browser, workflow.SystemClock{}, workflow.RandomIDGenerator{},
 		core.ProfileID(profile.Tag), offering, scanner, output)
 	if errors.Is(err, errReviewStopped) {
-		fmt.Fprintf(output, "Остановлено без нажатия «Далее». Сессия %s сохранена для аудита.\n", result.SessionID)
+		fmt.Fprintf(output, "Остановлено без дополнительного нажатия «Далее». Сессия %s сохранена для аудита.\n", result.SessionID)
 		return nil
 	}
 	if err != nil {
@@ -245,9 +246,13 @@ func reviewAttempt(
 			return result, fmt.Errorf("store confirmed selection: %w", err)
 		}
 		result.Answers++
+		previousCapture := capture
 		capture, err = browser.Next(ctx, prompt.Question.Text, optionIDs)
 		if err != nil {
-			return result, fmt.Errorf("answer was recorded, but HH outcome is ambiguous: %w", err)
+			capture, err = recoverAmbiguousNext(ctx, browser, previousCapture, input, output, err)
+			if err != nil {
+				return result, err
+			}
 		}
 	}
 	completedAt := clock.Now()
@@ -265,6 +270,58 @@ func reviewAttempt(
 	}
 	result.KnownQuestions = len(definition.Questions)
 	return result, nil
+}
+
+// recoverAmbiguousNext never sends another Next command. The selection is
+// already durable at this point, so recovery is limited to read-only captures;
+// a human may inspect or advance the still-open page before requesting another
+// capture. This avoids answering the following question with stale option IDs.
+func recoverAmbiguousNext(
+	ctx context.Context,
+	browser qualificationBrowser,
+	previous hh.QualificationCapture,
+	input *bufio.Scanner,
+	output io.Writer,
+	nextErr error,
+) (hh.QualificationCapture, error) {
+	fmt.Fprintf(output, "HH не подтвердил результат единственного нажатия «Далее»: %v\n", nextErr)
+	fmt.Fprintln(output, "Повторно кнопку не нажимаю; проверяю текущее состояние страницы только чтением.")
+	for {
+		current, err := browser.Capture(ctx)
+		if err == nil {
+			if current.Completed() {
+				fmt.Fprintln(output, "Переход восстановлен: HH уже завершил тест.")
+				return current, nil
+			}
+			if current.Status == "question" && !sameQuestion(previous.Question, current.Question) {
+				fmt.Fprintln(output, "Переход восстановлен: HH уже показывает следующий вопрос.")
+				return current, nil
+			}
+			fmt.Fprintln(output, "На странице пока остаётся тот же вопрос.")
+		} else {
+			fmt.Fprintf(output, "Не удалось перечитать страницу: %v\n", err)
+		}
+		fmt.Fprint(output, "Проверьте открытый браузер. Enter — перечитать без клика; q — остановиться: ")
+		line, ok := scanLine(input)
+		if !ok {
+			if err := input.Err(); err != nil {
+				return hh.QualificationCapture{}, err
+			}
+			return hh.QualificationCapture{}, errReviewStopped
+		}
+		if strings.EqualFold(line, "q") {
+			return hh.QualificationCapture{}, errReviewStopped
+		}
+		if line != "" {
+			fmt.Fprintln(output, "Используйте Enter для повторного чтения или q для остановки.")
+		}
+	}
+}
+
+func sameQuestion(left, right core.Question) bool {
+	leftFingerprint, leftErr := core.QuestionFingerprint(left)
+	rightFingerprint, rightErr := core.QuestionFingerprint(right)
+	return leftErr == nil && rightErr == nil && leftFingerprint == rightFingerprint
 }
 
 func reviewQuestion(ctx context.Context, browser qualificationBrowser, capture hh.QualificationCapture, previous *core.AnswerBlock, input *bufio.Scanner, output io.Writer) ([]string, []string, error) {

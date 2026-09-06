@@ -2,6 +2,13 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { chromium } from 'playwright-core';
 
+import {
+  applyOptionSelection,
+  captureChoiceQuestion,
+  questionDOMSignature,
+  sameIDs,
+} from './qualification-dom.mjs';
+
 const options = parseArguments(process.argv.slice(2));
 const browser = await chromium.launch({
   executablePath: options.browser,
@@ -148,43 +155,7 @@ async function captureQuestion() {
     throw new Error('assessment page has no supported answer controls');
   }
 
-  const options = [];
-  let kind = 'single';
-  for (let index = 0; index < await inputs.count(); index += 1) {
-    const input = inputs.nth(index);
-    const observed = await input.evaluate((element, optionIndex) => {
-      const label = element.closest('label');
-      const visibleText = label?.innerText || element.getAttribute('aria-label') || '';
-      return {
-        id: element.value || `option-${optionIndex + 1}`,
-        text: visibleText.replace(/\s+/g, ' ').trim(),
-        checked: element.checked,
-        input_type: element.type,
-      };
-    }, index);
-    if (!observed.text) throw new Error(`answer option ${index + 1} has no visible text`);
-    if (observed.input_type === 'checkbox') kind = 'multiple';
-    options.push(observed);
-  }
-
-  const questionText = await inputs.first().evaluate(element => {
-    const top = (element.closest('label') ?? element).getBoundingClientRect().top;
-    const root = document.querySelector('main, [role="main"]') ?? document;
-    const candidates = Array.from(root.querySelectorAll('p, pre'))
-      .filter(candidate => !candidate.closest('label, button, header, nav'))
-      .map(candidate => {
-        const box = candidate.getBoundingClientRect();
-        return {
-          text: candidate.innerText?.replace(/\s+/g, ' ').trim(),
-          bottom: box.bottom,
-          visible: box.width > 0 && box.height > 0,
-        };
-      })
-      .filter(candidate => candidate.visible && candidate.text && candidate.bottom <= top + 2)
-      .sort((left, right) => right.bottom - left.bottom);
-    return candidates[0]?.text ?? '';
-  });
-  if (!questionText) throw new Error('assessment question text was not found');
+  const observed = await captureChoiceQuestion(page);
 
   const progress = await readProgress();
   const timeLeftSeconds = await readTimeLeft();
@@ -194,11 +165,11 @@ async function captureQuestion() {
     title: await page.title(),
     question: {
       id: `runtime-question-${progress.current || 0}`,
-      text: normalize(questionText),
-      kind,
-      options: options.map(option => ({ id: option.id, text: option.text })),
+      text: observed.text,
+      kind: observed.kind,
+      options: observed.options,
     },
-    selected_option_ids: options.filter(option => option.checked).map(option => option.id),
+    selected_option_ids: observed.selected_option_ids,
     progress,
     time_left_seconds: timeLeftSeconds,
   };
@@ -207,33 +178,18 @@ async function captureQuestion() {
 async function selectOptions(command) {
   const capture = await captureQuestion();
   assertCurrentQuestion(capture, command);
-  const requested = new Set(command.option_ids ?? []);
-  if (requested.size === 0) throw new Error('at least one option id is required');
-  if (capture.question.kind === 'single' && requested.size !== 1) {
-    throw new Error('single-choice question requires exactly one option');
+  await applyOptionSelection(page, command.option_ids);
+  const marked = await captureQuestion();
+  if (!sameIDs(marked.selected_option_ids, command.option_ids ?? [])) {
+    throw new Error('assessment selection verification failed');
   }
-  const known = new Set(capture.question.options.map(option => option.id));
-  for (const id of requested) {
-    if (!known.has(id)) throw new Error(`unknown runtime option id ${id}`);
-  }
-
-  const inputs = page.locator('input[name="answer"]');
-  for (let index = 0; index < await inputs.count(); index += 1) {
-    const input = inputs.nth(index);
-    const id = await input.inputValue();
-    const checked = await input.isChecked();
-    const wanted = requested.has(id);
-    if (checked !== wanted) await input.click();
-  }
-  return captureQuestion();
+  return marked;
 }
 
 async function submitAndContinue(command) {
   const before = await captureQuestion();
   assertCurrentQuestion(before, command);
-  const selected = [...before.selected_option_ids].sort();
-  const expected = [...(command.option_ids ?? [])].sort();
-  if (JSON.stringify(selected) !== JSON.stringify(expected)) {
+  if (!sameIDs(before.selected_option_ids, command.option_ids ?? [])) {
     throw new Error('checked options do not match the confirmed selection');
   }
 
@@ -241,18 +197,32 @@ async function submitAndContinue(command) {
   await button.waitFor({ state: 'visible', timeout: 5_000 });
   if (!(await button.isEnabled())) throw new Error('next button is disabled');
   await button.click();
-  await page.waitForTimeout(250);
-  await page.waitForFunction(
-    previousIDs => {
-      const current = Array.from(document.querySelectorAll('input[name="answer"]'))
-        .map(input => input.value)
-        .sort();
-      return current.length === 0 || JSON.stringify(current) !== JSON.stringify(previousIDs);
-    },
-    before.question.options.map(option => option.id).sort(),
-    { timeout: 15_000 },
-  ).catch(() => {});
-  return captureQuestion();
+  return waitForNextCapture(before, 20_000);
+}
+
+async function waitForNextCapture(before, timeout) {
+  const previousSignature = questionDOMSignature(before.question);
+  const deadline = Date.now() + timeout;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const inputs = page.locator('input[name="answer"]');
+      if (await inputs.count() > 0) {
+        const current = await captureChoiceQuestion(page);
+        if (questionDOMSignature(current) !== previousSignature) return captureQuestion();
+      } else {
+        const text = normalize(await page.locator('body').innerText().catch(() => ''));
+        if (/результат|завершен|завершён|подтвержден|подтверждён|правильн/i.test(text)) {
+          return { status: 'completed', url: page.url(), title: await page.title() };
+        }
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await page.waitForTimeout(250);
+  }
+  const suffix = lastError ? `; last DOM error: ${publicError(lastError)}` : '';
+  throw new Error(`HH did not show a different question after Next; the button was not clicked twice${suffix}`);
 }
 
 function assertCurrentQuestion(capture, command) {

@@ -2,6 +2,9 @@
   "name": "job-agent-browser-worker",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test qualification-dom.test.mjs"
+  },
   "dependencies": {
     "playwright-core": "1.63.0"
   }

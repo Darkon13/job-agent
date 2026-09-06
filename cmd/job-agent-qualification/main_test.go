@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,8 +17,12 @@ import (
 )
 
 type qualificationFakeBrowser struct {
-	selects [][]string
-	nexts   int
+	selects         [][]string
+	nexts           int
+	nextCapture     hh.QualificationCapture
+	nextErr         error
+	captureSequence []hh.QualificationCapture
+	captures        int
 }
 
 func (browser *qualificationFakeBrowser) OpenOffering(context.Context, string, string, string) (hh.QualificationOffering, error) {
@@ -35,11 +40,27 @@ func (browser *qualificationFakeBrowser) Select(_ context.Context, _ string, opt
 	return capture, nil
 }
 
+func (browser *qualificationFakeBrowser) Capture(context.Context) (hh.QualificationCapture, error) {
+	browser.captures++
+	if len(browser.captureSequence) == 0 {
+		return qualificationQuestion(), nil
+	}
+	capture := browser.captureSequence[0]
+	browser.captureSequence = browser.captureSequence[1:]
+	return capture, nil
+}
+
 func (browser *qualificationFakeBrowser) Next(_ context.Context, _ string, optionIDs []string) (hh.QualificationCapture, error) {
 	if len(optionIDs) != 1 || optionIDs[0] != "runtime-a" {
 		return hh.QualificationCapture{}, fmt.Errorf("unexpected confirmed ids: %v", optionIDs)
 	}
 	browser.nexts++
+	if browser.nextErr != nil {
+		return hh.QualificationCapture{}, browser.nextErr
+	}
+	if browser.nextCapture.Status != "" {
+		return browser.nextCapture, nil
+	}
 	return hh.QualificationCapture{Status: "completed"}, nil
 }
 
@@ -133,5 +154,56 @@ func TestParseOptionIndexesSupportsMultipleAndDeduplicates(t *testing.T) {
 	}
 	if _, err := parseOptionIndexes("1,2", 3, core.QuestionSingle); err == nil {
 		t.Fatal("single-choice parser accepted two options")
+	}
+}
+
+func TestReviewAttemptRecoversAmbiguousNextWithoutClickingAgain(t *testing.T) {
+	ctx := context.Background()
+	repository := memory.NewRepository()
+	browser := &qualificationFakeBrowser{
+		nextErr:         fmt.Errorf("response timeout"),
+		captureSequence: []hh.QualificationCapture{{Status: "completed"}},
+	}
+	ids := &qualificationSequenceIDs{}
+	input := bufio.NewScanner(strings.NewReader("1\n\n"))
+	var output bytes.Buffer
+	offering := hh.QualificationOffering{
+		SkillID: "510338", FamilyName: "Docker", Level: "Базовый", Kind: "theory", StartAvailable: true,
+	}
+	result, err := reviewAttempt(ctx, repository, browser,
+		qualificationFixedClock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
+		ids, "primary", offering, input, &output)
+	if err != nil {
+		t.Fatalf("review attempt: %v\n%s", err, output.String())
+	}
+	if result.Answers != 1 || browser.nexts != 1 || browser.captures != 1 {
+		t.Fatalf("unexpected result=%#v nexts=%d captures=%d", result, browser.nexts, browser.captures)
+	}
+	if !strings.Contains(output.String(), "Переход восстановлен: HH уже завершил тест") {
+		t.Fatalf("recovery was not explained:\n%s", output.String())
+	}
+}
+
+func TestReviewAttemptStopsOnUnresolvedNextWithoutSecondClick(t *testing.T) {
+	ctx := context.Background()
+	repository := memory.NewRepository()
+	browser := &qualificationFakeBrowser{
+		nextErr:         fmt.Errorf("response timeout"),
+		captureSequence: []hh.QualificationCapture{qualificationQuestion()},
+	}
+	ids := &qualificationSequenceIDs{}
+	input := bufio.NewScanner(strings.NewReader("1\n\nq\n"))
+	var output bytes.Buffer
+	offering := hh.QualificationOffering{
+		SkillID: "510338", FamilyName: "Docker", Level: "Базовый", Kind: "theory", StartAvailable: true,
+	}
+	result, err := reviewAttempt(ctx, repository, browser,
+		qualificationFixedClock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
+		ids, "primary", offering, input, &output)
+	if !errors.Is(err, errReviewStopped) {
+		t.Fatalf("expected safe stop, got result=%#v err=%v\n%s", result, err, output.String())
+	}
+	if result.Answers != 1 || browser.nexts != 1 || browser.captures != 1 {
+		t.Fatalf("unexpected result=%#v nexts=%d captures=%d", result, browser.nexts, browser.captures)
 	}
 }
