@@ -73,6 +73,10 @@ func TestStorePersistsApplicationCampaignAndLinks(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].ApplicationID != application.ID {
 		t.Fatalf("persisted items=%#v err=%v", items, err)
 	}
+	states, err := reopened.ListCampaignApplicationStates(ctx, campaign.ID)
+	if err != nil || len(states) != 1 || states[0].Application.ID != application.ID || states[0].Application.Key != application.Key {
+		t.Fatalf("persisted application states=%#v err=%v", states, err)
+	}
 	stats, err := reopened.Stats(ctx)
 	if err != nil || stats.ApplicationCampaigns != 1 || stats.CampaignApplications != 1 {
 		t.Fatalf("stats=%#v err=%v", stats, err)

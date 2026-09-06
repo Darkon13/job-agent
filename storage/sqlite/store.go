@@ -306,7 +306,11 @@ func (store *Store) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 	row := store.db.QueryRowContext(ctx, `SELECT id, type, status, idempotency_key, source, platform,
 		profile_id, correlation_id, payload, attempts, available_at, deadline, created_at, updated_at,
 		failure_category, failure_message FROM tasks WHERE idempotency_key = ?`, key)
-	return scanTask(row)
+	task, err := scanTask(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	return task, err
 }
 
 func (store *Store) Stats(ctx context.Context) (Stats, error) {

@@ -15,11 +15,13 @@ import (
 type cursorSearcher struct {
 	pages    map[string]core.SearchPage
 	failOnce map[string]error
+	cursors  []string
 }
 
 func (searcher *cursorSearcher) ValidateSearch(json.RawMessage) error { return nil }
 
 func (searcher *cursorSearcher) Search(_ context.Context, _ core.ProfileID, _ json.RawMessage, cursor string) (core.SearchPage, error) {
+	searcher.cursors = append(searcher.cursors, cursor)
 	if err := searcher.failOnce[cursor]; err != nil {
 		delete(searcher.failOnce, cursor)
 		return core.SearchPage{}, err

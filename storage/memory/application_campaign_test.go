@@ -62,4 +62,8 @@ func TestApplicationCampaignRepositoryLifecycle(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].ApplicationID != application.ID {
 		t.Fatalf("campaign items=%#v err=%v", items, err)
 	}
+	states, err := repository.ListCampaignApplicationStates(ctx, campaign.ID)
+	if err != nil || len(states) != 1 || states[0].Application.ID != application.ID || states[0].Application.Key != application.Key {
+		t.Fatalf("campaign application states=%#v err=%v", states, err)
+	}
 }

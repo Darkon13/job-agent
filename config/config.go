@@ -22,11 +22,12 @@ type Config struct {
 }
 
 const (
-	JobActionResumeTouch    = "resume.touch"
-	JobConcurrencyForbid    = "forbid"
-	ApplicationModeDryRun   = "dry_run"
-	ApplicationModeApproval = "approval"
-	ApplicationModeSubmit   = "submit"
+	JobActionResumeTouch         = "resume.touch"
+	JobActionApplicationCampaign = "application.campaign"
+	JobConcurrencyForbid         = "forbid"
+	ApplicationModeDryRun        = "dry_run"
+	ApplicationModeApproval      = "approval"
+	ApplicationModeSubmit        = "submit"
 )
 
 type Job struct {
@@ -57,9 +58,13 @@ func (jitter JitterConfig) Durations() (time.Duration, time.Duration) {
 }
 
 type JobAction struct {
-	Type    string `json:"type"`
-	Profile string `json:"profile"`
-	Resume  string `json:"resume,omitempty"`
+	Type             string   `json:"type"`
+	Profile          string   `json:"profile,omitempty"`
+	Resume           string   `json:"resume,omitempty"`
+	Profiles         []string `json:"profiles,omitempty"`
+	Routes           []string `json:"routes,omitempty"`
+	TargetSuccessful int      `json:"target_successful,omitempty"`
+	MaxInFlight      int      `json:"max_in_flight,omitempty"`
 }
 
 type ServerConfig struct {
@@ -270,7 +275,7 @@ func (c Config) Validate() error {
 		profiles[profile.Tag] = struct{}{}
 	}
 
-	searches := make(map[string]struct{}, len(c.Searches))
+	searches := make(map[string]Search, len(c.Searches))
 	for _, search := range c.Searches {
 		if search.Tag == "" || search.Adapter == "" {
 			return fmt.Errorf("every search requires tag and adapter")
@@ -289,7 +294,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("search %q references unknown profile %q", search.Tag, profile)
 			}
 		}
-		searches[search.Tag] = struct{}{}
+		searches[search.Tag] = search
 	}
 	for _, search := range c.Searches {
 		if search.Fallback != "" {
@@ -321,23 +326,76 @@ func (c Config) Validate() error {
 				return fmt.Errorf("job %q trigger %d: %w", job.Tag, index, err)
 			}
 		}
-		if job.Action.Type != JobActionResumeTouch {
-			return fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
-		}
-		if _, exists := profiles[job.Action.Profile]; !exists {
-			return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
-		}
-		resume := job.Action.Resume
-		if resume == "" {
-			for _, profile := range c.Profiles {
-				if profile.Tag == job.Action.Profile {
-					resume = profile.Resume
-					break
+		switch job.Action.Type {
+		case JobActionResumeTouch:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			resume := job.Action.Resume
+			if resume == "" {
+				for _, profile := range c.Profiles {
+					if profile.Tag == job.Action.Profile {
+						resume = profile.Resume
+						break
+					}
 				}
 			}
+			if resume == "" {
+				return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+			}
+		case JobActionApplicationCampaign:
+			if err := validateApplicationCampaignAction(job, profiles, searches); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
 		}
-		if resume == "" {
-			return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+	}
+	return nil
+}
+
+func validateApplicationCampaignAction(job Job, profiles map[string]struct{}, searches map[string]Search) error {
+	action := job.Action
+	if action.TargetSuccessful < 1 || action.MaxInFlight < 1 {
+		return fmt.Errorf("job %q application campaign requires positive target_successful and max_in_flight", job.Tag)
+	}
+	if len(action.Profiles) == 0 || len(action.Routes) == 0 {
+		return fmt.Errorf("job %q application campaign requires profiles and routes", job.Tag)
+	}
+	seenProfiles := make(map[string]struct{}, len(action.Profiles))
+	for _, profile := range action.Profiles {
+		if _, exists := profiles[profile]; !exists {
+			return fmt.Errorf("job %q references unknown profile %q", job.Tag, profile)
+		}
+		if _, exists := seenProfiles[profile]; exists {
+			return fmt.Errorf("job %q contains duplicate campaign profile %q", job.Tag, profile)
+		}
+		seenProfiles[profile] = struct{}{}
+	}
+	seenRoutes := make(map[string]struct{}, len(action.Routes))
+	adapterTag := ""
+	for _, route := range action.Routes {
+		search, exists := searches[route]
+		if !exists {
+			return fmt.Errorf("job %q references unknown campaign route %q", job.Tag, route)
+		}
+		if _, exists := seenRoutes[route]; exists {
+			return fmt.Errorf("job %q contains duplicate campaign route %q", job.Tag, route)
+		}
+		seenRoutes[route] = struct{}{}
+		if adapterTag == "" {
+			adapterTag = search.Adapter
+		} else if search.Adapter != adapterTag {
+			return fmt.Errorf("job %q campaign routes must use one adapter", job.Tag)
+		}
+		routeProfiles := make(map[string]struct{}, len(search.Profiles))
+		for _, profile := range search.Profiles {
+			routeProfiles[profile] = struct{}{}
+		}
+		for _, profile := range action.Profiles {
+			if _, exists := routeProfiles[profile]; !exists {
+				return fmt.Errorf("job %q campaign route %q does not target profile %q", job.Tag, route, profile)
+			}
 		}
 	}
 	return nil

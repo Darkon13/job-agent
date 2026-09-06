@@ -78,7 +78,7 @@ func (queue *Queue) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 	defer queue.mu.RUnlock()
 	task, exists := queue.tasks[key]
 	if !exists {
-		return core.Task{}, errors.New("task not found")
+		return core.Task{}, broker.ErrTaskNotFound
 	}
 	return cloneTask(task), nil
 }

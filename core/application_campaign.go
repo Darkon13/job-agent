@@ -158,6 +158,22 @@ func (campaign *ApplicationCampaign) AdvanceRoute(now time.Time) error {
 	return campaign.Validate()
 }
 
+// WaitForApplications advances the durable tick generation without moving the
+// search cursor. It gives a later reconciliation task a fresh idempotency key
+// while application tasks occupy all available slots.
+func (campaign *ApplicationCampaign) WaitForApplications(now time.Time) error {
+	if campaign == nil {
+		return errors.New("application campaign is nil")
+	}
+	if campaign.Status != ApplicationCampaignRunning {
+		return errors.New("only a running application campaign can wait")
+	}
+	if err := campaign.advanceRevision(now); err != nil {
+		return err
+	}
+	return campaign.Validate()
+}
+
 func (campaign *ApplicationCampaign) Stop(status ApplicationCampaignStatus, reason string, now time.Time) error {
 	if campaign == nil {
 		return errors.New("application campaign is nil")
@@ -212,6 +228,20 @@ type CampaignApplication struct {
 	RouteIndex    int                   `json:"route_index"`
 	ApplicationID ApplicationID         `json:"application_id"`
 	DiscoveredAt  time.Time             `json:"discovered_at"`
+}
+
+type CampaignApplicationState struct {
+	Link        CampaignApplication `json:"link"`
+	Application Application         `json:"application"`
+}
+
+type ApplicationCampaignProgress struct {
+	Planned   int `json:"planned"`
+	InFlight  int `json:"in_flight"`
+	Submitted int `json:"submitted"`
+	Blocked   int `json:"blocked"`
+	Skipped   int `json:"skipped"`
+	Failed    int `json:"failed"`
 }
 
 func (item CampaignApplication) Validate() error {

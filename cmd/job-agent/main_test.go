@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/Darkon13/job-agent/adapter"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
 type profileReaderStub struct {
@@ -90,5 +92,53 @@ func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected invalid application message template")
+	}
+}
+
+func TestConfigureApplicationCampaignsBuildsScheduledRoute(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate sqlite: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	reader := &profileReaderStub{}
+	instance := &profileAdapterStub{reader: reader}
+	cfg := appconfig.Config{
+		Searches: []appconfig.Search{{
+			Tag: "golang", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`),
+		}},
+		Jobs: []appconfig.Job{{
+			Tag: "daily", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "30 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionApplicationCampaign, Profiles: []string{"primary"}, Routes: []string{"golang"},
+				TargetSuccessful: 20, MaxInFlight: 3,
+			},
+		}},
+	}
+	handler, definitions, routes, jobs, err := configureApplicationCampaigns(
+		cfg, map[string]adapter.Adapter{"platform": instance}, map[core.ProfileID]profileRuntime{
+			"primary": {Status: core.ProfileEnabled, Reader: reader},
+		}, store,
+	)
+	if err != nil {
+		t.Fatalf("configure campaigns: %v", err)
+	}
+	if handler == nil || jobs != 1 || len(definitions) != 1 {
+		t.Fatalf("handler=%v jobs=%d definitions=%d", handler != nil, jobs, len(definitions))
+	}
+	if definitions[0].ActionType != core.TaskApplicationCampaign || definitions[0].ProfileID != "primary" {
+		t.Fatalf("definition=%#v", definitions[0])
+	}
+	if _, exists := routes["golang"]; !exists {
+		t.Fatalf("campaign-owned routes=%#v", routes)
+	}
+	var payload core.ApplicationCampaignPayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.Validate() != nil {
+		t.Fatalf("campaign payload=%#v decode_err=%v validation_err=%v", payload, err, payload.Validate())
 	}
 }

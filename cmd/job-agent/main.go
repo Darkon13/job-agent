@@ -160,7 +160,20 @@ func main() {
 		}
 		workers = append(workers, resumeWorker)
 	}
-	searchHandler, searchRuns, err := configureSearchRuns(context.Background(), cfg, instances, profiles, store)
+	campaignHandler, campaignDefinitions, campaignRoutes, campaignJobs, err := configureApplicationCampaigns(
+		cfg, instances, profiles, store,
+	)
+	if err != nil {
+		log.Fatalf("configure application campaigns: %v", err)
+	}
+	if campaignJobs > 0 {
+		campaignWorker, err := newTaskWorker(store, core.TaskApplicationCampaign, campaignHandler.Handle)
+		if err != nil {
+			log.Fatalf("create application campaign worker: %v", err)
+		}
+		workers = append(workers, campaignWorker)
+	}
+	searchHandler, searchRuns, err := configureSearchRuns(context.Background(), cfg, instances, profiles, campaignRoutes, store)
 	if err != nil {
 		log.Fatalf("configure vacancy searches: %v", err)
 	}
@@ -175,6 +188,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
+	definitions = append(definitions, campaignDefinitions...)
 	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
 		log.Fatalf("create scheduler: %v", err)
@@ -208,6 +222,7 @@ func configureSearchRuns(
 	cfg appconfig.Config,
 	instances map[string]adapter.Adapter,
 	profiles map[core.ProfileID]profileRuntime,
+	campaignRoutes map[core.SearchID]struct{},
 	store *storesqlite.Store,
 ) (*workflow.SearchPageHandler, int, error) {
 	clock := workflow.SystemClock{}
@@ -218,6 +233,9 @@ func configureSearchRuns(
 	}
 	configured := 0
 	for _, search := range cfg.Searches {
+		if _, ownedByCampaign := campaignRoutes[core.SearchID(search.Tag)]; ownedByCampaign {
+			continue
+		}
 		instance := instances[search.Adapter]
 		targetProfiles := make([]core.ProfileID, 0, len(search.Profiles))
 		var searchProfileID core.ProfileID
@@ -261,6 +279,102 @@ func configureSearchRuns(
 		configured++
 	}
 	return handler, configured, nil
+}
+
+func configureApplicationCampaigns(
+	cfg appconfig.Config,
+	instances map[string]adapter.Adapter,
+	profiles map[core.ProfileID]profileRuntime,
+	store *storesqlite.Store,
+) (*workflow.ApplicationCampaignHandler, []jobscheduler.Definition, map[core.SearchID]struct{}, int, error) {
+	clock := workflow.SystemClock{}
+	ids := workflow.RandomIDGenerator{}
+	handler, err := workflow.NewApplicationCampaignHandler(store, store, store, store, clock, ids, 5*time.Second)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	searches := make(map[string]appconfig.Search, len(cfg.Searches))
+	for _, search := range cfg.Searches {
+		searches[search.Tag] = search
+	}
+	registered := make(map[core.SearchID]struct{})
+	ownedRoutes := make(map[core.SearchID]struct{})
+	definitions := make([]jobscheduler.Definition, 0)
+	configuredJobs := 0
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationCampaign {
+			continue
+		}
+		runnable := true
+		for _, value := range job.Action.Profiles {
+			if profiles[core.ProfileID(value)].Status != core.ProfileEnabled {
+				log.Printf("application campaign %q is disabled until profile %q is authorized", job.Tag, value)
+				runnable = false
+			}
+		}
+		var platform core.Platform
+		for _, value := range job.Action.Routes {
+			search := searches[value]
+			searchID := core.SearchID(search.Tag)
+			instance := instances[search.Adapter]
+			if platform == "" {
+				platform = core.Platform(instance.Name())
+			}
+			if _, exists := registered[searchID]; exists {
+				continue
+			}
+			var searchProfileID core.ProfileID
+			for _, profile := range search.Profiles {
+				profileID := core.ProfileID(profile)
+				runtime := profiles[profileID]
+				if runtime.Status == core.ProfileEnabled && runtime.Reader != nil {
+					searchProfileID = profileID
+					break
+				}
+			}
+			if searchProfileID == "" {
+				log.Printf("application campaign route %q is disabled until one of its profiles is authorized", search.Tag)
+				runnable = false
+				continue
+			}
+			if err := handler.Register(workflow.ApplicationCampaignRoute{
+				SearchID: searchID, Platform: core.Platform(instance.Name()), SearchProfileID: searchProfileID,
+				Query: search.Query, Searcher: instance,
+			}); err != nil {
+				return nil, nil, nil, configuredJobs, err
+			}
+			registered[searchID] = struct{}{}
+		}
+		if !runnable {
+			continue
+		}
+		profileIDs := make([]core.ProfileID, 0, len(job.Action.Profiles))
+		for _, value := range job.Action.Profiles {
+			profileIDs = append(profileIDs, core.ProfileID(value))
+		}
+		routeIDs := make([]core.SearchID, 0, len(job.Action.Routes))
+		for _, value := range job.Action.Routes {
+			routeID := core.SearchID(value)
+			routeIDs = append(routeIDs, routeID)
+			ownedRoutes[routeID] = struct{}{}
+		}
+		payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
+			job.Tag, profileIDs, routeIDs, job.Action.TargetSuccessful, job.Action.MaxInFlight,
+		))
+		if err != nil {
+			return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q: %w", job.Tag, err)
+		}
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileIDs[0],
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+		configuredJobs++
+	}
+	return handler, definitions, ownedRoutes, configuredJobs, nil
 }
 
 type profileRuntime struct {

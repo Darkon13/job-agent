@@ -4,8 +4,50 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 )
+
+type ApplicationCampaignPayload struct {
+	CampaignID       ApplicationCampaignID `json:"campaign_id,omitempty"`
+	ExpectedRevision uint64                `json:"expected_revision,omitempty"`
+	JobTag           string                `json:"job_tag,omitempty"`
+	Profiles         []ProfileID           `json:"profiles,omitempty"`
+	Routes           []SearchID            `json:"routes,omitempty"`
+	TargetSuccessful int                   `json:"target_successful,omitempty"`
+	MaxInFlight      int                   `json:"max_in_flight,omitempty"`
+}
+
+func (payload ApplicationCampaignPayload) Validate() error {
+	if payload.CampaignID != "" {
+		if payload.ExpectedRevision == 0 {
+			return errors.New("application campaign tick requires expected revision")
+		}
+		if payload.JobTag != "" || len(payload.Profiles) != 0 || len(payload.Routes) != 0 || payload.TargetSuccessful != 0 || payload.MaxInFlight != 0 {
+			return errors.New("application campaign tick must not redefine the campaign")
+		}
+		return nil
+	}
+	if payload.ExpectedRevision != 0 || strings.TrimSpace(payload.JobTag) == "" ||
+		payload.TargetSuccessful < 1 || payload.MaxInFlight < 1 {
+		return errors.New("application campaign start requires job, target and max in flight")
+	}
+	if err := validateCampaignIDs(payload.Profiles, "profile"); err != nil {
+		return err
+	}
+	return validateCampaignIDs(payload.Routes, "route")
+}
+
+func NewApplicationCampaignStartPayload(jobTag string, profiles []ProfileID, routes []SearchID, targetSuccessful, maxInFlight int) ApplicationCampaignPayload {
+	return ApplicationCampaignPayload{
+		JobTag: strings.TrimSpace(jobTag), Profiles: slices.Clone(profiles), Routes: slices.Clone(routes),
+		TargetSuccessful: targetSuccessful, MaxInFlight: maxInFlight,
+	}
+}
+
+func NewApplicationCampaignTickPayload(campaignID ApplicationCampaignID, revision uint64) ApplicationCampaignPayload {
+	return ApplicationCampaignPayload{CampaignID: campaignID, ExpectedRevision: revision}
+}
 
 type ApplicationSubmitPayload struct {
 	ApplicationID ApplicationID  `json:"application_id"`

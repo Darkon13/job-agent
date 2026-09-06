@@ -78,3 +78,30 @@ func TestApplicationCampaignTickIdempotencyKeyIncludesRevision(t *testing.T) {
 		t.Fatalf("keys first=%q repeated=%q next=%q", first, repeated, next)
 	}
 }
+
+func TestApplicationCampaignWaitAdvancesOnlyRevision(t *testing.T) {
+	campaign := campaignFixture(t)
+	before := campaign
+	if err := campaign.WaitForApplications(before.UpdatedAt.Add(time.Minute)); err != nil {
+		t.Fatalf("wait for applications: %v", err)
+	}
+	if campaign.Revision != before.Revision+1 || campaign.RouteIndex != before.RouteIndex ||
+		campaign.Cursor != before.Cursor || campaign.RouteDone != before.RouteDone {
+		t.Fatalf("wait changed routing state: before=%#v after=%#v", before, campaign)
+	}
+}
+
+func TestApplicationCampaignPayloadSeparatesStartFromTick(t *testing.T) {
+	start := NewApplicationCampaignStartPayload("daily", []ProfileID{"primary"}, []SearchID{"golang"}, 20, 3)
+	if err := start.Validate(); err != nil {
+		t.Fatalf("valid start payload: %v", err)
+	}
+	tick := NewApplicationCampaignTickPayload("campaign-1", 2)
+	if err := tick.Validate(); err != nil {
+		t.Fatalf("valid tick payload: %v", err)
+	}
+	tick.JobTag = "changed"
+	if err := tick.Validate(); err == nil {
+		t.Fatal("expected tick redefinition to fail")
+	}
+}

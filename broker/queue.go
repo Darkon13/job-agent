@@ -8,7 +8,10 @@ import (
 	"github.com/Darkon13/job-agent/core"
 )
 
-var ErrLeaseLost = errors.New("task lease is no longer active")
+var (
+	ErrLeaseLost    = errors.New("task lease is no longer active")
+	ErrTaskNotFound = errors.New("task not found")
+)
 
 type TaskQueue interface {
 	// Enqueue deduplicates against the durable idempotency key, not the task ID.

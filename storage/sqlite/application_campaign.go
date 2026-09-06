@@ -3,6 +3,7 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -162,6 +163,60 @@ func (store *Store) ListCampaignApplications(ctx context.Context, id core.Applic
 		return nil, err
 	}
 	return items, nil
+}
+
+func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.ApplicationCampaignID) ([]core.CampaignApplicationState, error) {
+	if id == "" {
+		return nil, errors.New("application campaign requires id")
+	}
+	if _, err := store.ApplicationCampaign(ctx, id); err != nil {
+		return nil, err
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT
+		i.route_index, i.application_id, i.discovered_at,
+		a.profile_id, a.platform, a.external_id, a.status, a.attempts,
+		a.external_negotiation_id, a.failure_category, a.failure_message,
+		a.decision_code, a.decision_reason, a.prepared_resume_id, a.prepared_message,
+		a.created_at, a.updated_at, a.prepared_at, a.submitted_at
+		FROM application_campaign_items i
+		JOIN applications a ON a.id = i.application_id
+		WHERE i.campaign_id = ?
+		ORDER BY i.route_index, i.discovered_at, i.application_id`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list campaign application states %s: %w", id, err)
+	}
+	defer rows.Close()
+	states := make([]core.CampaignApplicationState, 0)
+	for rows.Next() {
+		var state core.CampaignApplicationState
+		var discoveredAt, createdAt, updatedAt int64
+		var preparedAt, submittedAt sql.NullInt64
+		state.Link.CampaignID = id
+		if err := rows.Scan(
+			&state.Link.RouteIndex, &state.Link.ApplicationID, &discoveredAt,
+			&state.Application.Key.ProfileID, &state.Application.Key.Vacancy.Platform,
+			&state.Application.Key.Vacancy.ExternalID, &state.Application.Status, &state.Application.Attempts,
+			&state.Application.ExternalNegotiationID, &state.Application.FailureCategory, &state.Application.FailureMessage,
+			&state.Application.DecisionCode, &state.Application.DecisionReason, &state.Application.PreparedResumeID,
+			&state.Application.PreparedMessage, &createdAt, &updatedAt, &preparedAt, &submittedAt,
+		); err != nil {
+			return nil, err
+		}
+		state.Link.DiscoveredAt = time.Unix(0, discoveredAt).UTC()
+		state.Application.ID = state.Link.ApplicationID
+		state.Application.CreatedAt = time.Unix(0, createdAt).UTC()
+		state.Application.UpdatedAt = time.Unix(0, updatedAt).UTC()
+		state.Application.PreparedAt = timeFromNull(preparedAt)
+		state.Application.SubmittedAt = timeFromNull(submittedAt)
+		if err := state.Link.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid campaign application %s: %w", state.Link.ApplicationID, err)
+		}
+		states = append(states, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return states, nil
 }
 
 func encodeCampaignDefinition(campaign core.ApplicationCampaign) ([]byte, []byte, error) {

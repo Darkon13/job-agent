@@ -65,6 +65,27 @@
         "type": "resume.touch",
         "profile": "primary"
       }
+    },
+    {
+      "tag": "daily-backend-applications",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "30 9 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {"min": "1m", "max": "10m"}
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "application.campaign",
+        "profiles": ["primary", "secondary"],
+        "routes": ["golang-primary", "backend-fallback"],
+        "target_successful": 20,
+        "max_in_flight": 3
+      }
     }
   ],
   "searches": [

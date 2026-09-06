@@ -47,13 +47,16 @@ Core уже содержит:
   таймеры с idempotency, deadline и проверкой входящего ответа перед отправкой;
 - одноразовый idempotent bootstrap чистого профиля из mounted JSON.
 
-Global HH search выполняется отдельными задачами по одной странице. Durable
-`search_runs` владеет текущим cursor и revision: успешная страница атомарно
-продвигает cursor, частичный сбой повторяет ту же страницу, а restart
-восстанавливает незавершённую задачу. Поиск останавливается по `pages`, пустой
-странице или пределу HH в 2000 результатов. SQLite и in-memory repository
-хранят одну вакансию на `(platform, external_id)` и один отклик на
-`(profile, vacancy)`; задачи дедуплицируются по стабильным idempotency keys.
+Global HH search выполняется отдельными задачами по одной странице. У обычного
+discovery-поиска durable `search_runs` владеет текущим cursor и revision. Route,
+который принадлежит application campaign, вместо этого использует cursor
+конкретного запуска campaign и не стартует параллельный автономный проход.
+Успешная страница атомарно продвигает cursor, частичный сбой повторяет ту же
+страницу, а restart восстанавливает незавершённую задачу. Поиск останавливается
+по `pages`, пустой странице или пределу HH в 2000 результатов. SQLite и
+in-memory repository хранят одну вакансию на `(platform, external_id)` и один
+отклик на `(profile, vacancy)`; задачи дедуплицируются по стабильным
+idempotency keys.
 
 HH adapter отправляет OAuth Bearer token и `HH-User-Agent`, использует
 `per_page=100`, нормализует краткую вакансию и строго отклоняет неизвестные либо
@@ -65,9 +68,10 @@ handler. Пока этим транспортом реализован толь�
 repository/broker-порты и сохраняет vacancies, discoveries, applications,
 application campaign с route cursor и связями на найденные отклики, а также
 idempotent tasks в одном файле. Campaign definition неизменяема, продвижение
-защищено revision CAS; фактические результаты будут считаться по связанным
-applications без дублирующих счётчиков. In-memory реализации остаются для
-быстрых unit-тестов. Путь задаётся через `database.path`.
+защищено revision CAS; фактические результаты считаются по связанным
+applications и их durable tasks без дублирующих изменяемых счётчиков.
+In-memory реализации остаются для быстрых unit-тестов. Путь задаётся через
+`database.path`.
 
 Миграции не выполняются при старте основного сервиса. Отдельный entrypoint на
 `golang-migrate` применяет embedded versioned SQL; после этого `job-agent`
@@ -169,14 +173,41 @@ worker читает `relations` полной вакансии: `got_response` п
 Запись каждого перехода защищена сравнением ожидаемого статуса, поэтому два
 worker не могут одновременно завершить один отклик.
 
+`application.campaign` — короткий повторяемый workflow, а не один длинный
+handler. Каждый tick читает одну страницу route либо сверяет уже созданные
+отклики, сохраняет revision и ставит следующий tick с новым idempotency key.
+Вся страница сохраняется как campaign items, но одновременно в
+`application.submit` выдаётся не больше `max_in_flight` задач; оставшиеся items
+остаются `planned`, поэтому хвост страницы не теряется. После завершения
+активных откликов campaign либо продолжает cursor, либо переходит к следующему
+route. Она останавливается на `target_successful` или после исчерпания всех
+fallback routes. Сбой после сохранения cursor, но до enqueue следующего tick,
+восстанавливается повтором старой задачи без повторного продвижения страницы.
+
+Пример action внутри cron job:
+
+```json
+"action": {
+  "type": "application.campaign",
+  "profiles": ["primary", "secondary"],
+  "routes": ["golang-primary", "backend-fallback"],
+  "target_successful": 20,
+  "max_in_flight": 3
+}
+```
+
+Campaign routes должны использовать один adapter и включать все указанные
+профили. Пока профиль не авторизован, соответствующий job не регистрируется.
+
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
-`next_run_at` в SQLite и создаёт обычную durable `resume.touch` task. После
-простоя пропущенные интервалы схлопываются в один запуск. Jitter записывается в
-`available_at`, поэтому worker не удерживает lease во время ожидания. Реальный
-HH transport читает `canTouch`/`nextTouchAt` из server-rendered profile state и
-возвращает `Retry-After`; четырёхчасовой интервал не зашит в core. Первая
-публикация (`resume.publish`) остаётся отдельной операцией.
+`next_run_at` в SQLite и создаёт обычные durable `resume.touch` или
+`application.campaign` tasks. После простоя пропущенные интервалы схлопываются
+в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает
+lease во время ожидания. Реальный HH transport читает
+`canTouch`/`nextTouchAt` из server-rendered profile state и возвращает
+`Retry-After`; четырёхчасовой интервал не зашит в core. Первая публикация
+(`resume.publish`) остаётся отдельной операцией.
 Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
 transport, чтобы не копить заведомо невыполнимые действия.
 

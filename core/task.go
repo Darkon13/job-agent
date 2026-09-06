@@ -11,6 +11,7 @@ type TaskType string
 
 const (
 	TaskVacancySearchPage      TaskType = "vacancy.search_page"
+	TaskApplicationCampaign    TaskType = "application.campaign"
 	TaskApplicationSubmit      TaskType = "application.submit"
 	TaskQuestionnaireAnswer    TaskType = "questionnaire.answer"
 	TaskTestComplete           TaskType = "test.complete"

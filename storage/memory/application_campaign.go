@@ -130,6 +130,41 @@ func (repository *Repository) ListCampaignApplications(ctx context.Context, id c
 	return items, nil
 }
 
+func (repository *Repository) ListCampaignApplicationStates(ctx context.Context, id core.ApplicationCampaignID) ([]core.CampaignApplicationState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return nil, errors.New("application campaign requires id")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	if _, exists := repository.applicationCampaigns[id]; !exists {
+		return nil, errors.New("application campaign not found")
+	}
+	states := make([]core.CampaignApplicationState, 0)
+	for key, item := range repository.campaignApplications {
+		if key.campaignID != id {
+			continue
+		}
+		application, exists := repository.applicationsByID(item.ApplicationID)
+		if !exists {
+			return nil, errors.New("campaign application target not found")
+		}
+		states = append(states, core.CampaignApplicationState{Link: item, Application: application})
+	}
+	sort.Slice(states, func(i, j int) bool {
+		if states[i].Link.RouteIndex != states[j].Link.RouteIndex {
+			return states[i].Link.RouteIndex < states[j].Link.RouteIndex
+		}
+		if !states[i].Link.DiscoveredAt.Equal(states[j].Link.DiscoveredAt) {
+			return states[i].Link.DiscoveredAt.Before(states[j].Link.DiscoveredAt)
+		}
+		return states[i].Link.ApplicationID < states[j].Link.ApplicationID
+	})
+	return states, nil
+}
+
 func (repository *Repository) applicationsByID(id core.ApplicationID) (core.Application, bool) {
 	for _, application := range repository.applications {
 		if application.ID == id {

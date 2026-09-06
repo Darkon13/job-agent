@@ -143,3 +143,34 @@ func TestResumeTouchJobValidation(t *testing.T) {
 		t.Fatal("expected inverted jitter bounds to fail")
 	}
 }
+
+func TestApplicationCampaignJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Searches: []Search{{
+			Tag: "golang", Adapter: "hh-main", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`),
+		}},
+		Jobs: []Job{{
+			Tag: "daily", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "30 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: JobAction{
+				Type: JobActionApplicationCampaign, Profiles: []string{"primary"}, Routes: []string{"golang"},
+				TargetSuccessful: 20, MaxInFlight: 3,
+			},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid application campaign: %v", err)
+	}
+	config.Jobs[0].Action.Routes = []string{"missing"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown campaign route to fail")
+	}
+	config.Jobs[0].Action.Routes = []string{"golang"}
+	config.Jobs[0].Action.Profiles = []string{"primary", "primary"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected duplicate campaign profile to fail")
+	}
+}
