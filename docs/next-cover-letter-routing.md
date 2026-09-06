@@ -2,6 +2,11 @@
 
 Статус: `planned`. Реализация в рамках этой задачи ещё не начата.
 
+Общий контракт `rule_sets → policy rules → named action`, а также processors,
+которые разделяют детерминированные преобразования и LLM, зафиксирован в
+[`docs/profile-desired-state-and-routing.md`](profile-desired-state-and-routing.md).
+Этот документ остаётся владельцем конкретного application/message среза.
+
 ## Зачем
 
 Сейчас профиль выбирает один статический текст либо один шаблон. Следующий срез
