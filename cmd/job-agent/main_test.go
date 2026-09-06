@@ -142,3 +142,41 @@ func TestConfigureApplicationCampaignsBuildsScheduledRoute(t *testing.T) {
 		t.Fatalf("campaign payload=%#v decode_err=%v validation_err=%v", payload, err, payload.Validate())
 	}
 }
+
+func TestConfigureApplicationCampaignsRequiresEveryProfileAPIReader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate sqlite: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	reader := &profileReaderStub{}
+	cfg := appconfig.Config{
+		Searches: []appconfig.Search{{
+			Tag: "golang", Adapter: "platform", Profiles: []string{"primary", "secondary"}, Query: json.RawMessage(`{}`),
+		}},
+		Jobs: []appconfig.Job{{
+			Tag: "daily", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "30 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionApplicationCampaign, Profiles: []string{"primary", "secondary"}, Routes: []string{"golang"},
+				TargetSuccessful: 20, MaxInFlight: 3,
+			},
+		}},
+	}
+	_, definitions, _, jobs, err := configureApplicationCampaigns(
+		cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{reader: reader}}, map[core.ProfileID]profileRuntime{
+			"primary":   {Status: core.ProfileEnabled, Reader: reader},
+			"secondary": {Status: core.ProfileEnabled},
+		}, store,
+	)
+	if err != nil {
+		t.Fatalf("configure campaigns: %v", err)
+	}
+	if jobs != 0 || len(definitions) != 0 {
+		t.Fatalf("jobs=%d definitions=%d, want disabled campaign", jobs, len(definitions))
+	}
+}

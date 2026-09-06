@@ -91,22 +91,34 @@ func main() {
 		if err != nil {
 			log.Fatalf("build application operator for profile %q: %v", profile.Tag, err)
 		}
-		if profiles[core.ProfileID(profile.Tag)].Status != core.ProfileEnabled {
+		if !profile.Enabled {
 			continue
 		}
+		profileID := core.ProfileID(profile.Tag)
+		runtime := profiles[profileID]
 		instance := instances[profile.Adapter]
-		if transport, ok := instance.(adapter.ConversationTransport); ok {
-			if err := conversationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
-				log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
+		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
+		if apiReady {
+			if transport, ok := instance.(adapter.ConversationTransport); ok {
+				if err := conversationTransports.Register(profileID, transport); err != nil {
+					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
+				}
 			}
-		}
-		if transport, ok := instance.(adapter.ApplicationTransport); ok {
-			if err := applicationTransports.Register(core.ProfileID(profile.Tag), transport); err != nil {
-				log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+			if transport, ok := instance.(adapter.ApplicationTransport); ok {
+				if err := applicationTransports.Register(profileID, transport); err != nil {
+					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+				}
 			}
+			applicationPlans[profileID] = taskworker.ApplicationPlan{
+				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
+				Message: profile.Applications.Message, Preparer: preparer, DailyLimit: profile.Applications.DailyLimit,
+				Timezone: profile.Applications.LocationName(),
+			}
+		} else {
+			log.Printf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 		}
 		if toucher, ok := instance.(adapter.ResumeToucher); ok {
-			if err := resumeTouchers.Register(core.ProfileID(profile.Tag), toucher); err != nil {
+			if err := resumeTouchers.Register(profileID, toucher); err != nil {
 				log.Fatalf("register resume toucher for profile %q: %v", profile.Tag, err)
 			}
 		} else if instance.Name() == hh.Name && profile.StateFile != "" {
@@ -115,15 +127,10 @@ func main() {
 				if err != nil {
 					log.Fatalf("create HH resume toucher for profile %q: %v", profile.Tag, err)
 				}
-				if err := resumeTouchers.Register(core.ProfileID(profile.Tag), toucher); err != nil {
+				if err := resumeTouchers.Register(profileID, toucher); err != nil {
 					log.Fatalf("register HH resume toucher for profile %q: %v", profile.Tag, err)
 				}
 			}
-		}
-		applicationPlans[core.ProfileID(profile.Tag)] = taskworker.ApplicationPlan{
-			ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-			Message: profile.Applications.Message, Preparer: preparer, DailyLimit: profile.Applications.DailyLimit,
-			Timezone: profile.Applications.LocationName(),
 		}
 	}
 	conversationHandlers, err := taskworker.NewConversationHandlers(
@@ -242,7 +249,7 @@ func configureSearchRuns(
 		for _, value := range search.Profiles {
 			profileID := core.ProfileID(value)
 			runtime := profiles[profileID]
-			if runtime.Status != core.ProfileEnabled {
+			if runtime.Status != core.ProfileEnabled || runtime.Reader == nil {
 				continue
 			}
 			targetProfiles = append(targetProfiles, profileID)
@@ -307,7 +314,8 @@ func configureApplicationCampaigns(
 		}
 		runnable := true
 		for _, value := range job.Action.Profiles {
-			if profiles[core.ProfileID(value)].Status != core.ProfileEnabled {
+			runtime := profiles[core.ProfileID(value)]
+			if runtime.Status != core.ProfileEnabled || runtime.Reader == nil {
 				log.Printf("application campaign %q is disabled until profile %q is authorized", job.Tag, value)
 				runnable = false
 			}

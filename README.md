@@ -261,8 +261,26 @@ refresh token остаются отдельными следующими сре�
 ```sh
 go test ./...
 go run ./cmd/job-agent-migrate -config ./config/example/config.json up
+go run ./cmd/job-agent-check ./config/example/config.json
 go run ./cmd/job-agent ./config/example/config.json
 ```
+
+`job-agent-check` — безопасная предпусковая проверка. Она проверяет конфиг,
+точную версию схемы и статистику SQLite, структуру browser state, поисковые
+фильтры, доступность OAuth-профилей через read-only `GET /me` и browser-сессию
+поднятия резюме через read-only GET страницы профиля. Команда не синхронизирует
+расписание, не ставит задачи в очередь и не выполняет `POST`.
+Если настроенный search или job фактически не может работать, проверка
+завершается ошибкой вместо «зелёного» запуска с молча отключённым контуром.
+Перед запуском она также показывает только агрегированные типы/статусы уже
+сохранённых задач и просроченные расписания, не раскрывая payload или внешние
+идентификаторы. `persisted_due` означает, что `misfire: run_once` создаст задачу
+сразу после старта сервиса.
+
+API-операции и browser-сессия профиля считаются независимо: отсутствие
+`credentials_ref` не мешает browser-only поднятию резюме, но такой профиль не
+получает search/application workers. Для campaign OAuth должен быть готов у
+каждого профиля, которому она распределяет отклики.
 
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и

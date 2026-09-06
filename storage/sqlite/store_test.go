@@ -262,3 +262,34 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 		t.Fatalf("unexpected stored application: %#v", stored)
 	}
 }
+
+func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	for index, taskType := range []core.TaskType{core.TaskResumeTouch, core.TaskResumeTouch, core.TaskApplicationSubmit} {
+		task, err := core.NewTask(core.NewTaskParams{
+			ID: core.TaskID(fmt.Sprintf("task-%d", index)), Type: taskType,
+			IdempotencyKey: fmt.Sprintf("key-%d", index), Source: "test", CorrelationID: "correlation-1",
+			Payload: json.RawMessage(`{"secret":"must-not-be-returned"}`),
+		}, now)
+		if err != nil {
+			t.Fatalf("new task: %v", err)
+		}
+		if _, err := store.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue task: %v", err)
+		}
+	}
+	counts, err := store.TaskCounts(ctx)
+	if err != nil {
+		t.Fatalf("task counts: %v", err)
+	}
+	if len(counts) != 2 || counts[0].Count+counts[1].Count != 3 {
+		t.Fatalf("counts = %#v", counts)
+	}
+}

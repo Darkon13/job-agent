@@ -70,6 +70,21 @@ func TestResumeTouchTransportUsesNextTouchAtWithoutEarlyPOST(t *testing.T) {
 	}
 }
 
+func TestResumeTouchProbeNeverPosts(t *testing.T) {
+	next := time.Date(2026, 7, 19, 16, 2, 47, 683_000_000, time.UTC)
+	transport, touches := touchTransportFixture(t, true, next.UnixMilli(), http.StatusNoContent)
+	result, err := transport.ProbeResume(context.Background(), "resume-hash")
+	if err != nil {
+		t.Fatalf("probe resume: %v", err)
+	}
+	if !result.CanTouch || result.NextTouchAt == nil || !result.NextTouchAt.Equal(next) {
+		t.Fatalf("unexpected probe result: %#v", result)
+	}
+	if *touches != 0 {
+		t.Fatalf("probe performed %d POST requests", *touches)
+	}
+}
+
 func TestResumeTouchTransportPostsHashWithXSRF(t *testing.T) {
 	transport, touches := touchTransportFixture(t, true, 0, http.StatusNoContent)
 	if _, err := transport.TouchResume(context.Background(), adapter.ResumeTouchCommand{ProfileID: "primary", ResumeID: "42"}); err != nil {

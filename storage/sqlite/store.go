@@ -51,6 +51,12 @@ type Stats struct {
 	FollowUps            int
 }
 
+type TaskCount struct {
+	Type   core.TaskType
+	Status core.TaskStatus
+	Count  int
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("sqlite path is required")
@@ -334,6 +340,29 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		}
 	}
 	return stats, nil
+}
+
+// TaskCounts exposes an operator-safe queue summary without task payloads,
+// profile identifiers or external vacancy identifiers.
+func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT type, status, COUNT(*)
+		FROM tasks GROUP BY type, status ORDER BY type, status`)
+	if err != nil {
+		return nil, fmt.Errorf("count tasks by type and status: %w", err)
+	}
+	defer rows.Close()
+	counts := make([]TaskCount, 0)
+	for rows.Next() {
+		var item TaskCount
+		if err := rows.Scan(&item.Type, &item.Status, &item.Count); err != nil {
+			return nil, fmt.Errorf("scan task count: %w", err)
+		}
+		counts = append(counts, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task counts: %w", err)
+	}
+	return counts, nil
 }
 
 type rowScanner interface {

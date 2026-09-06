@@ -34,6 +34,11 @@ type ResumeTouchTransport struct {
 	client     *http.Client
 }
 
+type ResumeTouchProbe struct {
+	CanTouch    bool
+	NextTouchAt *time.Time
+}
+
 type browserStorageState struct {
 	Cookies []browserCookie `json:"cookies"`
 }
@@ -61,6 +66,23 @@ func NewResumeTouchTransport(stateFile string, client *http.Client) (*ResumeTouc
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
 	return &ResumeTouchTransport{stateFile: stateFile, profileURL: defaultProfileURL, touchURL: defaultTouchURL, client: client}, nil
+}
+
+// ProbeResume verifies the browser session and configured resume using only a
+// GET request. It is safe for operator preflight and never touches the resume.
+func (transport *ResumeTouchTransport) ProbeResume(ctx context.Context, resumeID string) (ResumeTouchProbe, error) {
+	if strings.TrimSpace(resumeID) == "" {
+		return ResumeTouchProbe{}, errors.New("HH resume probe requires resume")
+	}
+	client, err := transport.authenticatedClient()
+	if err != nil {
+		return ResumeTouchProbe{}, err
+	}
+	state, err := transport.readTouchState(ctx, client, resumeID)
+	if err != nil {
+		return ResumeTouchProbe{}, err
+	}
+	return ResumeTouchProbe{CanTouch: state.CanTouch, NextTouchAt: millisTime(state.NextTouchAtMS)}, nil
 }
 
 func (transport *ResumeTouchTransport) TouchResume(ctx context.Context, command adapter.ResumeTouchCommand) (adapter.ResumeTouchResult, error) {
