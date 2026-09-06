@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,9 +26,15 @@ import (
 	"github.com/Darkon13/job-agent/workflow"
 )
 
+type mainOptions struct {
+	configPath string
+	migrateUp  bool
+}
+
 func main() {
-	if len(os.Args) != 2 {
-		log.Fatalf("usage: %s <config.json>", os.Args[0])
+	options, err := parseMainOptions(os.Args[1:])
+	if err != nil {
+		log.Fatalf("usage: %s [-migrate-up] <config.json>: %v", os.Args[0], err)
 	}
 
 	registry := adapter.NewRegistry()
@@ -35,9 +42,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cfg, err := appconfig.Load(os.Args[1])
+	cfg, err := appconfig.Load(options.configPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if options.migrateUp {
+		if err := storesqlite.MigrateUp(cfg.Database.Path); err != nil {
+			log.Fatalf("migrate database: %v", err)
+		}
 	}
 	store, err := storesqlite.Open(cfg.Database.Path)
 	if err != nil {
@@ -249,6 +261,18 @@ func main() {
 	if err := serve(ctx, cfg, runtimeAPI.Handler(conversationAPI.Handler()), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func parseMainOptions(arguments []string) (mainOptions, error) {
+	flags := flag.NewFlagSet("job-agent", flag.ContinueOnError)
+	migrateUp := flags.Bool("migrate-up", false, "apply pending database migrations before startup")
+	if err := flags.Parse(arguments); err != nil {
+		return mainOptions{}, err
+	}
+	if flags.NArg() != 1 {
+		return mainOptions{}, errors.New("exactly one config path is required")
+	}
+	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
 }
 
 func applicationPreparer(profile appconfig.Profile) (applicationoperator.ApplicationPreparer, error) {

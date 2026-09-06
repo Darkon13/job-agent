@@ -18,7 +18,7 @@ job-agent API -> workflows -> durable task table -> typed consumers
                                                 -> browser service (later)
 ```
 
-Dashboard запускается Compose-профилем `dashboard`, поэтому без профиля сервис не создаётся. Backend имеет только `expose`, но не `ports`: с хоста и внешней сети он напрямую не публикуется. В контейнерном конфиге используется `server.exposure: private`; обычное значение по умолчанию `loopback` продолжает запрещать non-loopback bind.
+В одном `compose.yaml` описаны ровно два сервиса: `job-agent` и `dashboard`. Они запускаются разными командами из одного runtime image с тремя статическими Go-бинарниками; `job-agent -migrate-up` применяет ожидающие миграции перед открытием хранилища, а отдельный `job-agent-migrate` остаётся в image для ручного управления схемой. Полный `docker compose up` включает UI; запуск только `job-agent` оставляет dashboard выключенным без дополнительного Compose profile или override-файла. Backend имеет только `expose`, но не `ports`: с хоста и внешней сети он напрямую не публикуется. В контейнерном конфиге используется `server.exposure: private`; обычное значение по умолчанию `loopback` продолжает запрещать non-loopback bind.
 
 ## Доступ через WireGuard/WireGuard
 

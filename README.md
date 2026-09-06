@@ -15,18 +15,19 @@ Xray и sing-box. Идея проекта появилась как самост
 
 ## Docker Compose и dashboard
 
-Основной сервис, миграции и опциональный dashboard собираются отдельными
-минимальными target-образами из одного multi-stage `Dockerfile`:
+Backend и опциональный dashboard запускаются разными командами из одного
+минимального runtime image. В нём лежат три бинарника, а
+build toolchain остаётся только в промежуточном слое multi-stage `Dockerfile`:
 
 ```sh
 mkdir -p data
 chmod 0770 data
 
-# backend без UI
-docker compose up -d --build
+# backend без UI; миграции применяются до запуска процесса
+docker compose up -d --build job-agent
 
-# backend и dashboard на loopback
-docker compose --profile dashboard up -d --build
+# backend и отдельный dashboard service на loopback
+docker compose up -d --build
 ```
 
 Для реального профиля скопируйте `deploy/config.example.json` вне Git,
@@ -40,7 +41,7 @@ WireGuard/WireGuard укажите точный адрес tunnel-интерфе
 
 ```sh
 JOB_AGENT_DASHBOARD_BIND_IP=10.66.66.1 \
-  docker compose --profile dashboard up -d --build
+  docker compose up -d --build
 ```
 
 Не используйте `0.0.0.0`: пользовательская аутентификация API ещё не

@@ -28,6 +28,31 @@ type profileAdapterStub struct {
 	reader adapter.ProfileReader
 }
 
+func TestParseMainOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+		want      mainOptions
+		wantErr   bool
+	}{
+		{name: "compatible positional config", arguments: []string{"config.json"}, want: mainOptions{configPath: "config.json"}},
+		{name: "migrate before startup", arguments: []string{"-migrate-up", "/config/config.json"}, want: mainOptions{configPath: "/config/config.json", migrateUp: true}},
+		{name: "missing config", arguments: []string{"-migrate-up"}, wantErr: true},
+		{name: "extra positional argument", arguments: []string{"one.json", "two.json"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseMainOptions(test.arguments)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseMainOptions() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("parseMainOptions() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func (stub *profileAdapterStub) Name() string                         { return "stub" }
 func (stub *profileAdapterStub) Capabilities() []core.Capability      { return nil }
 func (stub *profileAdapterStub) ValidateSearch(json.RawMessage) error { return nil }

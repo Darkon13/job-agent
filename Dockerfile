@@ -11,14 +11,5 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/job-agent-migrate ./cmd/job-agent-migrate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/job-agent-dashboard ./cmd/job-agent-dashboard
 
-FROM gcr.io/distroless/static-debian12:nonroot AS job-agent
-COPY --from=build /out/job-agent /job-agent
-ENTRYPOINT ["/job-agent"]
-
-FROM gcr.io/distroless/static-debian12:nonroot AS job-agent-migrate
-COPY --from=build /out/job-agent-migrate /job-agent-migrate
-ENTRYPOINT ["/job-agent-migrate"]
-
-FROM gcr.io/distroless/static-debian12:nonroot AS job-agent-dashboard
-COPY --from=build /out/job-agent-dashboard /job-agent-dashboard
-ENTRYPOINT ["/job-agent-dashboard"]
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+COPY --from=build /out/ /usr/local/bin/
