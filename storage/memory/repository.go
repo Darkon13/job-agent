@@ -13,13 +13,14 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository           = (*Repository)(nil)
-	_ storage.SearchRunRepository         = (*Repository)(nil)
-	_ storage.ApplicationRepository       = (*Repository)(nil)
-	_ storage.ApplicationBudgetRepository = (*Repository)(nil)
-	_ storage.TestCatalogRepository       = (*Repository)(nil)
-	_ storage.ReviewRepository            = (*Repository)(nil)
-	_ storage.ConversationRepository      = (*Repository)(nil)
+	_ storage.VacancyRepository             = (*Repository)(nil)
+	_ storage.SearchRunRepository           = (*Repository)(nil)
+	_ storage.ApplicationCampaignRepository = (*Repository)(nil)
+	_ storage.ApplicationRepository         = (*Repository)(nil)
+	_ storage.ApplicationBudgetRepository   = (*Repository)(nil)
+	_ storage.TestCatalogRepository         = (*Repository)(nil)
+	_ storage.ReviewRepository              = (*Repository)(nil)
+	_ storage.ConversationRepository        = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -38,6 +39,8 @@ type Repository struct {
 	mu                   sync.RWMutex
 	vacancies            map[core.VacancyKey]core.Vacancy
 	searchRuns           map[core.SearchID]core.SearchRun
+	applicationCampaigns map[core.ApplicationCampaignID]core.ApplicationCampaign
+	campaignApplications map[campaignApplicationKey]core.CampaignApplication
 	discoveries          map[discoveryKey]core.VacancyDiscovery
 	applications         map[core.ApplicationKey]core.Application
 	applicationBudgets   map[core.ApplicationID]core.ApplicationBudgetReservation
@@ -56,6 +59,8 @@ func NewRepository() *Repository {
 	return &Repository{
 		vacancies:            make(map[core.VacancyKey]core.Vacancy),
 		searchRuns:           make(map[core.SearchID]core.SearchRun),
+		applicationCampaigns: make(map[core.ApplicationCampaignID]core.ApplicationCampaign),
+		campaignApplications: make(map[campaignApplicationKey]core.CampaignApplication),
 		discoveries:          make(map[discoveryKey]core.VacancyDiscovery),
 		applications:         make(map[core.ApplicationKey]core.Application),
 		applicationBudgets:   make(map[core.ApplicationID]core.ApplicationBudgetReservation),

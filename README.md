@@ -62,9 +62,12 @@ HH adapter отправляет OAuth Bearer token и `HH-User-Agent`, испо�
 handler. Пока этим транспортом реализован только `source=global`.
 
 Для постоянного состояния доступен SQLite store: он реализует те же
-repository/broker-порты и сохраняет vacancies, discoveries, applications и
-idempotent tasks в одном файле. In-memory реализации остаются для быстрых
-unit-тестов. Путь задаётся через `database.path`.
+repository/broker-порты и сохраняет vacancies, discoveries, applications,
+application campaign с route cursor и связями на найденные отклики, а также
+idempotent tasks в одном файле. Campaign definition неизменяема, продвижение
+защищено revision CAS; фактические результаты будут считаться по связанным
+applications без дублирующих счётчиков. In-memory реализации остаются для
+быстрых unit-тестов. Путь задаётся через `database.path`.
 
 Миграции не выполняются при старте основного сервиса. Отдельный entrypoint на
 `golang-migrate` применяет embedded versioned SQL; после этого `job-agent`

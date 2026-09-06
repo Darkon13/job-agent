@@ -19,13 +19,14 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository           = (*Store)(nil)
-	_ storage.SearchRunRepository         = (*Store)(nil)
-	_ storage.ApplicationRepository       = (*Store)(nil)
-	_ storage.ApplicationBudgetRepository = (*Store)(nil)
-	_ storage.ConversationRepository      = (*Store)(nil)
-	_ broker.TaskQueue                    = (*Store)(nil)
-	_ broker.TaskStore                    = (*Store)(nil)
+	_ storage.VacancyRepository             = (*Store)(nil)
+	_ storage.SearchRunRepository           = (*Store)(nil)
+	_ storage.ApplicationCampaignRepository = (*Store)(nil)
+	_ storage.ApplicationRepository         = (*Store)(nil)
+	_ storage.ApplicationBudgetRepository   = (*Store)(nil)
+	_ storage.ConversationRepository        = (*Store)(nil)
+	_ broker.TaskQueue                      = (*Store)(nil)
+	_ broker.TaskStore                      = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")
@@ -35,17 +36,19 @@ type Store struct {
 }
 
 type Stats struct {
-	SearchRuns       int
-	Vacancies        int
-	Discoveries      int
-	Applications     int
-	Tasks            int
-	TestDefinitions  int
-	ReviewSessions   int
-	ReviewSelections int
-	Conversations    int
-	Messages         int
-	FollowUps        int
+	SearchRuns           int
+	Vacancies            int
+	Discoveries          int
+	Applications         int
+	ApplicationCampaigns int
+	CampaignApplications int
+	Tasks                int
+	TestDefinitions      int
+	ReviewSessions       int
+	ReviewSelections     int
+	Conversations        int
+	Messages             int
+	FollowUps            int
 }
 
 func Open(path string) (*Store, error) {
@@ -315,6 +318,8 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		{"vacancies", &stats.Vacancies}, {"vacancy_discoveries", &stats.Discoveries},
 		{"search_runs", &stats.SearchRuns},
 		{"applications", &stats.Applications}, {"tasks", &stats.Tasks},
+		{"application_campaigns", &stats.ApplicationCampaigns},
+		{"application_campaign_items", &stats.CampaignApplications},
 		{"test_definitions", &stats.TestDefinitions}, {"review_sessions", &stats.ReviewSessions},
 		{"review_selections", &stats.ReviewSelections},
 		{"conversations", &stats.Conversations}, {"conversation_messages", &stats.Messages},

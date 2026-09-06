@@ -16,6 +16,14 @@ type SearchRunRepository interface {
 	SaveSearchRun(ctx context.Context, candidate core.SearchRun, expectedRevision uint64) error
 }
 
+type ApplicationCampaignRepository interface {
+	CreateApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign) (stored core.ApplicationCampaign, created bool, err error)
+	ApplicationCampaign(ctx context.Context, id core.ApplicationCampaignID) (core.ApplicationCampaign, error)
+	SaveApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign, expectedRevision uint64) error
+	LinkCampaignApplication(ctx context.Context, item core.CampaignApplication) (created bool, err error)
+	ListCampaignApplications(ctx context.Context, id core.ApplicationCampaignID) ([]core.CampaignApplication, error)
+}
+
 type VacancyRepository interface {
 	UpsertVacancy(ctx context.Context, vacancy core.Vacancy) (created bool, err error)
 	Vacancy(ctx context.Context, key core.VacancyKey) (core.Vacancy, error)
