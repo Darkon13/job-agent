@@ -66,6 +66,7 @@ func TestReviewAttemptAllowsReselectionAndPersistsOnlyConfirmedChoice(t *testing
 	ctx := context.Background()
 	repository := memory.NewRepository()
 	browser := &qualificationFakeBrowser{}
+	ids := &qualificationSequenceIDs{}
 	input := bufio.NewScanner(strings.NewReader("2\nr\n1\n\n"))
 	var output bytes.Buffer
 	offering := hh.QualificationOffering{
@@ -73,7 +74,7 @@ func TestReviewAttemptAllowsReselectionAndPersistsOnlyConfirmedChoice(t *testing
 	}
 	result, err := reviewAttempt(ctx, repository, browser,
 		qualificationFixedClock{now: time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)},
-		&qualificationSequenceIDs{}, "primary", offering, input, &output)
+		ids, "primary", offering, input, &output)
 	if err != nil {
 		t.Fatalf("review attempt: %v\n%s", err, output.String())
 	}
@@ -103,6 +104,22 @@ func TestReviewAttemptAllowsReselectionAndPersistsOnlyConfirmedChoice(t *testing
 	}
 	if len(definitions) != 1 || len(definitions[0].Questions) != 1 || len(definitions[0].Questions[0].Options) != 2 {
 		t.Fatalf("question variants were not retained: %#v", definitions)
+	}
+
+	replayBrowser := &qualificationFakeBrowser{}
+	replayInput := bufio.NewScanner(strings.NewReader("\n"))
+	var replayOutput bytes.Buffer
+	replay, err := reviewAttempt(ctx, repository, replayBrowser,
+		qualificationFixedClock{now: time.Date(2026, 9, 6, 12, 1, 0, 0, time.UTC)},
+		ids, "secondary", offering, replayInput, &replayOutput)
+	if err != nil {
+		t.Fatalf("review replay: %v\n%s", err, replayOutput.String())
+	}
+	if replay.Answers != 1 || len(replayBrowser.selects) != 1 || replayBrowser.selects[0][0] != "runtime-a" {
+		t.Fatalf("previous choice was not reused: result=%#v selects=%v", replay, replayBrowser.selects)
+	}
+	if !strings.Contains(replayOutput.String(), "Точное совпадение с прошлым подтверждённым выбором: Alpha") {
+		t.Fatalf("replay was not explained to the user:\n%s", replayOutput.String())
 	}
 }
 

@@ -232,6 +232,56 @@ func (repository *Repository) ReviewSelections(ctx context.Context, sessionID co
 	return result, nil
 }
 
+// ReviewChoices returns the newest user-confirmed choice for each exact
+// question fingerprint in a test definition.
+func (repository *Repository) ReviewChoices(ctx context.Context, testDefinitionID core.TestDefinitionID) ([]core.StoredAnswer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if testDefinitionID == "" {
+		return nil, errors.New("test definition id is required")
+	}
+	type candidate struct {
+		answer core.StoredAnswer
+		value  core.ReviewSelection
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	var candidates []candidate
+	for sessionID, session := range repository.reviews {
+		if session.TestDefinitionID != testDefinitionID {
+			continue
+		}
+		for _, selection := range repository.selections[sessionID] {
+			prompt, exists := repository.prompts[selection.PromptID]
+			if !exists {
+				continue
+			}
+			fingerprint, err := core.QuestionFingerprint(prompt.Question)
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, candidate{answer: core.StoredAnswer{
+				Question: prompt.Question.Text, QuestionFingerprint: fingerprint,
+				SelectedOptions: append([]string(nil), selection.SelectedOptions...), Text: selection.Text,
+			}, value: selection})
+		}
+	}
+	sort.SliceStable(candidates, func(left, right int) bool {
+		return candidates[left].value.SelectedAt.After(candidates[right].value.SelectedAt)
+	})
+	seen := make(map[string]struct{}, len(candidates))
+	answers := make([]core.StoredAnswer, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, exists := seen[candidate.answer.QuestionFingerprint]; exists {
+			continue
+		}
+		seen[candidate.answer.QuestionFingerprint] = struct{}{}
+		answers = append(answers, candidate.answer)
+	}
+	return answers, nil
+}
+
 func cloneTestDefinition(source core.TestDefinition) core.TestDefinition {
 	result := source
 	if source.Qualification != nil {

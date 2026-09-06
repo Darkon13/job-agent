@@ -364,6 +364,55 @@ func (store *Store) ReviewSelections(ctx context.Context, sessionID core.ReviewS
 	return selections, nil
 }
 
+// ReviewChoices returns the latest user-confirmed choice for each exact
+// question fingerprint. Runtime IDs are reconstructed only by the browser.
+func (store *Store) ReviewChoices(ctx context.Context, testDefinitionID core.TestDefinitionID) ([]core.StoredAnswer, error) {
+	if testDefinitionID == "" {
+		return nil, errors.New("test definition id is required")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT p.question, s.selected_options, s.text
+		FROM review_selections s
+		JOIN review_prompts p ON p.id = s.prompt_id AND p.session_id = s.session_id AND p.revision = s.revision
+		JOIN review_sessions r ON r.id = s.session_id
+		WHERE r.test_definition_id = ?
+		ORDER BY s.selected_at DESC, s.session_id DESC, s.revision DESC`, testDefinitionID)
+	if err != nil {
+		return nil, fmt.Errorf("list review choices: %w", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]struct{})
+	var answers []core.StoredAnswer
+	for rows.Next() {
+		var questionJSON, selectedOptions []byte
+		var question core.Question
+		var answer core.StoredAnswer
+		if err := rows.Scan(&questionJSON, &selectedOptions, &answer.Text); err != nil {
+			return nil, fmt.Errorf("scan review choice: %w", err)
+		}
+		if err := json.Unmarshal(questionJSON, &question); err != nil {
+			return nil, fmt.Errorf("decode review choice question: %w", err)
+		}
+		if err := json.Unmarshal(selectedOptions, &answer.SelectedOptions); err != nil {
+			return nil, fmt.Errorf("decode review choice options: %w", err)
+		}
+		fingerprint, err := core.QuestionFingerprint(question)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[fingerprint]; exists {
+			continue
+		}
+		seen[fingerprint] = struct{}{}
+		answer.Question = question.Text
+		answer.QuestionFingerprint = fingerprint
+		answers = append(answers, answer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate review choices: %w", err)
+	}
+	return answers, nil
+}
+
 type definitionQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)

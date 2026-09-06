@@ -81,6 +81,7 @@ func run(ctx context.Context, args []string, input io.Reader, output, errorOutpu
 		return fmt.Errorf("database: %w", err)
 	}
 	defer store.Close()
+	fmt.Fprintln(output, "[1/3] Запускаю изолированный Chrome с сохранённой HH-сессией…")
 	browser, err := hh.StartQualificationBrowser(ctx, hh.QualificationBrowserOptions{
 		NodePath: *nodePath, WorkerPath: *workerPath, BrowserPath: *browserPath,
 		StateFile: profile.StateFile, Proxy: *proxy, Headless: *headless, Stderr: errorOutput,
@@ -95,10 +96,13 @@ func run(ctx context.Context, args []string, input io.Reader, output, errorOutpu
 	}()
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	openedAt := time.Now()
+	fmt.Fprintln(output, "[2/3] Открываю карточку навыка и проверяю доступность уровня…")
 	offering, err := browser.OpenOffering(ctx, *skillID, *level, *kind)
 	if err != nil {
 		return fmt.Errorf("open qualification: %w", err)
 	}
+	fmt.Fprintf(output, "[3/3] Карточка готова за %s. До START серверная попытка не создаётся.\n", time.Since(openedAt).Round(time.Second))
 	printOffering(output, offering)
 	fmt.Fprint(output, "Введите START, чтобы создать реальную таймированную попытку: ")
 	line, ok := scanLine(scanner)
@@ -159,6 +163,18 @@ func reviewAttempt(
 	if err != nil {
 		return reviewResult{}, fmt.Errorf("load qualification definition: %w", err)
 	}
+	previousChoices, err := store.ReviewChoices(ctx, definition.ID)
+	if err != nil {
+		return reviewResult{}, fmt.Errorf("load previous review choices: %w", err)
+	}
+	var previousBlock *core.AnswerBlock
+	if len(previousChoices) > 0 {
+		previousBlock = &core.AnswerBlock{
+			Tag: "local-review-history", Name: "Previously confirmed choices",
+			Kind: core.AnswerBlockQualification, Platform: definition.Platform,
+			Qualification: definition.Qualification, Answers: previousChoices,
+		}
+	}
 	reviewID, err := ids.NewID("review")
 	if err != nil {
 		return reviewResult{}, err
@@ -175,10 +191,12 @@ func reviewAttempt(
 	if _, err := store.CreateReviewSession(ctx, session); err != nil {
 		return result, fmt.Errorf("create review session: %w", err)
 	}
+	fmt.Fprintf(output, "Сессия %s сохранена. Прохожу два информационных экрана HH и запускаю таймер…\n", session.ID)
 	capture, err := browser.StartAttempt(ctx)
 	if err != nil {
 		return result, fmt.Errorf("start qualification attempt: %w", err)
 	}
+	fmt.Fprintln(output, "Попытка открыта; первый вопрос получен.")
 	var observed []string
 	for !capture.Completed() {
 		if capture.Status != "question" {
@@ -213,7 +231,7 @@ func reviewAttempt(
 			return result, fmt.Errorf("store review prompt: %w", err)
 		}
 
-		optionIDs, optionTexts, err := reviewQuestion(ctx, browser, capture, input, output)
+		optionIDs, optionTexts, err := reviewQuestion(ctx, browser, capture, previousBlock, input, output)
 		if err != nil {
 			return result, err
 		}
@@ -249,9 +267,48 @@ func reviewAttempt(
 	return result, nil
 }
 
-func reviewQuestion(ctx context.Context, browser qualificationBrowser, capture hh.QualificationCapture, input *bufio.Scanner, output io.Writer) ([]string, []string, error) {
+func reviewQuestion(ctx context.Context, browser qualificationBrowser, capture hh.QualificationCapture, previous *core.AnswerBlock, input *bufio.Scanner, output io.Writer) ([]string, []string, error) {
+	printQuestion(output, capture)
+	if previous != nil {
+		resolved, err := core.ResolveQuestionAnswer(capture.Question, *previous)
+		if err == nil {
+			optionTexts, err := selectedOptionTexts(capture.Question, resolved.SelectedOptionIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			marked, err := browser.Select(ctx, capture.Question.Text, resolved.SelectedOptionIDs)
+			if err != nil {
+				return nil, nil, fmt.Errorf("mark previous browser choice: %w", err)
+			}
+			if !sameStrings(marked.SelectedOptionIDs, resolved.SelectedOptionIDs) {
+				return nil, nil, errors.New("browser did not retain the previous option marks")
+			}
+			fmt.Fprintf(output, "Точное совпадение с прошлым подтверждённым выбором: %s\n", strings.Join(optionTexts, " | "))
+			for {
+				fmt.Fprint(output, "Enter — записать выбор и нажать «Далее»; r — выбрать вручную; q — остановиться: ")
+				confirmation, ok := scanLine(input)
+				if !ok {
+					if err := input.Err(); err != nil {
+						return nil, nil, err
+					}
+					return nil, nil, errReviewStopped
+				}
+				switch strings.ToLower(confirmation) {
+				case "":
+					return resolved.SelectedOptionIDs, optionTexts, nil
+				case "r":
+					goto manual
+				case "q":
+					return nil, nil, errReviewStopped
+				default:
+					fmt.Fprintln(output, "«Далее» не нажато: используйте Enter, r или q.")
+				}
+			}
+		}
+	}
+
+manual:
 	for {
-		printQuestion(output, capture)
 		fmt.Fprint(output, "Выбор (например 2 или 1,3; q — остановиться): ")
 		line, ok := scanLine(input)
 		if !ok {
@@ -302,6 +359,22 @@ func reviewQuestion(ctx context.Context, browser qualificationBrowser, capture h
 			fmt.Fprintln(output, "«Далее» не нажато: используйте Enter, r или q.")
 		}
 	}
+}
+
+func selectedOptionTexts(question core.Question, optionIDs []string) ([]string, error) {
+	byID := make(map[string]string, len(question.Options))
+	for _, option := range question.Options {
+		byID[option.ID] = option.Text
+	}
+	texts := make([]string, 0, len(optionIDs))
+	for _, optionID := range optionIDs {
+		text, exists := byID[optionID]
+		if !exists {
+			return nil, fmt.Errorf("question has no resolved runtime option %q", optionID)
+		}
+		texts = append(texts, text)
+	}
+	return texts, nil
 }
 
 func parseOptionIndexes(value string, optionCount int, kind core.QuestionKind) ([]int, error) {

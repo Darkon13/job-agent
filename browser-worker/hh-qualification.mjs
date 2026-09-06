@@ -13,6 +13,10 @@ const context = await browser.newContext({
   locale: 'ru-RU',
   viewport: { width: 1440, height: 960 },
 });
+await context.route('**/*', route => {
+  if (['font', 'image', 'media'].includes(route.request().resourceType())) return route.abort();
+  return route.continue();
+});
 let page;
 let selectedKind = '';
 
@@ -56,9 +60,11 @@ async function openOffering(command) {
   if (!['theory', 'practice'].includes(command.kind)) throw new Error('kind must be theory or practice');
 
   page = await context.newPage();
-  const url = `https://hh.ru/applicant/skills/${command.skill_id}/verification_methods`;
+  const url = `https://hh.ru/applicant/skills/${command.skill_id}/verification_methods?kind=${command.kind}`;
+  progress('загружаю страницу HH');
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await ensureAuthenticated(page);
+  progress('страница HH загружена, ожидаю список уровней');
 
   const levelTab = page.getByRole('tab', { name: command.level, exact: true });
   try {
@@ -66,13 +72,19 @@ async function openOffering(command) {
   } catch {
     throw new Error(`qualification level not found: ${command.level}`);
   }
-  await levelTab.click();
+  if (await levelTab.getAttribute('aria-selected') !== 'true') {
+    await levelTab.click({ timeout: 10_000 });
+  }
+  progress(`уровень «${command.level}» выбран`);
 
   const kindCard = page.locator(
     `[data-qa="applicant-keyskills-verification-methods-kind-card-${command.kind}"]`,
   );
-  if (await kindCard.count() > 0) await kindCard.first().locator('xpath=..').click();
+  if (new URL(page.url()).searchParams.get('kind') !== command.kind && await kindCard.count() > 0) {
+    await kindCard.first().locator('xpath=..').click({ timeout: 10_000 });
+  }
   selectedKind = command.kind;
+  progress(`тип «${command.kind}» выбран`);
 
   const start = startButton(command.kind);
   await start.waitFor({ state: 'visible', timeout: 10_000 });
@@ -94,8 +106,28 @@ async function startAttempt() {
   const start = startButton(selectedKind);
   if (!(await start.isEnabled())) throw new Error('qualification start button is disabled');
 
-  await start.click();
-  page = await waitForAssessmentPage(15_000);
+  progress('открываю обязательные инструкции перед стартом');
+  await start.click({ timeout: 10_000 });
+  const surface = await waitForStartSurface(5_000);
+  if (surface === 'modal') {
+    let actualStart;
+    for (let step = 0; step < 6; step += 1) {
+      actualStart = page.locator('[data-qa="modal-start-btn"]');
+      if (await actualStart.isVisible()) break;
+      const next = page.locator('[data-qa="modal-next-btn"]');
+      if (!(await next.isVisible())) throw new Error('pre-start modal has no next or start control');
+      progress(`информационный экран ${step + 1} прочитан`);
+      await next.click({ timeout: 5_000 });
+      await page.waitForTimeout(100);
+    }
+    if (!actualStart || !(await actualStart.isVisible())) {
+      throw new Error('pre-start modal exceeded the supported number of steps');
+    }
+    progress('подтверждаю финальный старт и запускаю серверный таймер');
+    await actualStart.click({ timeout: 10_000 });
+  }
+  progress('ожидаю страницу assessment.hh.ru');
+  page = await waitForAssessmentPage(30_000);
   if (!page.url().startsWith('https://assessment.hh.ru/')) {
     throw new Error(`assessment page did not open; current URL is ${page.url()}`);
   }
@@ -267,7 +299,32 @@ async function waitForAssessmentPage(timeout) {
     if (candidate) return candidate;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  throw new Error('assessment page timeout');
+  throw new Error(`assessment page timeout; open pages: ${publicPageLocations()}`);
+}
+
+async function waitForStartSurface(timeout) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const assessment = context.pages().find(item => item.url().startsWith('https://assessment.hh.ru/'));
+    if (assessment || page?.url().startsWith('https://assessment.hh.ru/')) return 'assessment';
+    if (await page.locator('[data-qa="modal-next-btn"], [data-qa="modal-start-btn"]').first().isVisible()) {
+      return 'modal';
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`start click opened neither instructions nor assessment; open pages: ${publicPageLocations()}`);
+}
+
+function publicPageLocations() {
+  return context.pages().map(candidate => {
+    try {
+      const url = new URL(candidate.url());
+      const path = url.pathname.replace(/\/tests\/[^/]+/, '/tests/<attempt>');
+      return `${url.origin}${path}`;
+    } catch {
+      return '<invalid-url>';
+    }
+  }).join(', ');
 }
 
 async function ensureAuthenticated(candidate) {
@@ -297,6 +354,10 @@ function publicError(error) {
 
 function send(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function progress(message) {
+  process.stderr.write(`[browser] ${message}\n`);
 }
 
 function parseArguments(args) {

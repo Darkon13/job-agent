@@ -167,6 +167,10 @@ func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 	if storedSession.Revision != 2 || storedSession.Status != core.ReviewAnswered || len(selections) != 1 {
 		t.Fatalf("review state is not atomic: session=%#v selections=%#v", storedSession, selections)
 	}
+	choices, err := store.ReviewChoices(ctx, definition.ID)
+	if err != nil || len(choices) != 1 || len(choices[0].SelectedOptions) != 1 || choices[0].QuestionFingerprint == "" {
+		t.Fatalf("review choices were not reconstructed: %#v err=%v", choices, err)
+	}
 	if err := storedSession.Complete(now.Add(3 * time.Minute)); err != nil {
 		t.Fatalf("complete review session: %v", err)
 	}

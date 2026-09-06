@@ -65,6 +65,7 @@ type ReviewRepository interface {
 	AppendReviewSelection(ctx context.Context, session core.ReviewSession, selection core.ReviewSelection, expectedRevision uint64) error
 	FinishReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error
 	ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error)
+	ReviewChoices(ctx context.Context, testDefinitionID core.TestDefinitionID) ([]core.StoredAnswer, error)
 }
 
 type ConversationFilter struct {
