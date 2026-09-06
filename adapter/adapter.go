@@ -64,6 +64,21 @@ type BrowserSessionBinder interface {
 	BindBrowserSession(profileID core.ProfileID, stateFile string) (VacancyReader, error)
 }
 
+// BrowserApplicationOptions contains the explicit permissions granted to a
+// browser-backed application transport. Binding a browser session alone must
+// never imply permission to change account visibility or submit applications.
+type BrowserApplicationOptions struct {
+	AllowVisibilityChange bool
+	ResumeID              string
+}
+
+// BrowserApplicationSessionBinder binds a browser session to the write side
+// of the application workflow. Composition roots call it only for a profile
+// whose application mode is approval or submit.
+type BrowserApplicationSessionBinder interface {
+	BindBrowserApplicationSession(profileID core.ProfileID, stateFile string, options BrowserApplicationOptions) (ApplicationTransport, error)
+}
+
 type ConversationSendCommand struct {
 	ProfileID              core.ProfileID
 	ConversationID         core.ConversationID
@@ -94,6 +109,7 @@ type ApplicationSubmitCommand struct {
 
 type ApplicationSubmitResult struct {
 	ExternalNegotiationID string
+	Applied               bool
 	AlreadyApplied        bool
 }
 

@@ -201,7 +201,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 			runnable := true
 			for _, profile := range job.Action.Profiles {
 				configured := configuredProfiles[profile]
-				if !profileCanRead(configured, readiness[profile], instances[configured.Adapter]) {
+				if !profileCanRunApplications(configured, readiness[profile], instances[configured.Adapter]) {
 					runnable = false
 					break
 				}
@@ -245,10 +245,24 @@ func profileCanRead(profile appconfig.Profile, readiness profileReadiness, insta
 	if readiness.apiReady {
 		return true
 	}
-	if !readiness.browserReady || profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun || instance == nil {
+	if !readiness.browserReady || instance == nil {
 		return false
 	}
 	_, supported := instance.(adapter.BrowserSessionBinder)
+	return supported
+}
+
+func profileCanRunApplications(profile appconfig.Profile, readiness profileReadiness, instance adapter.Adapter) bool {
+	if readiness.apiReady {
+		return true
+	}
+	if !profileCanRead(profile, readiness, instance) {
+		return false
+	}
+	if profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun {
+		return true
+	}
+	_, supported := instance.(adapter.BrowserApplicationSessionBinder)
 	return supported
 }
 

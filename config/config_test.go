@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -80,6 +82,46 @@ func TestApplicationPolicyRejectsAmbiguousMessageAndDuplicateTerms(t *testing.T)
 	config.Profiles[0].Applications.Qualification.IncludeAny = []string{"Go", " go "}
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected case-insensitive duplicate term")
+	}
+}
+
+func TestLoadResolvesExternalApplicationMessageTemplate(t *testing.T) {
+	directory := t.TempDir()
+	messageDirectory := filepath.Join(directory, "messages")
+	if err := os.Mkdir(messageDirectory, 0o700); err != nil {
+		t.Fatalf("create messages directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(messageDirectory, "backend.json"), []byte(`{"template":"Здравствуйте, {{.Employer}}!"}`), 0o600); err != nil {
+		t.Fatalf("write message template: %v", err)
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[{"tag":"primary","adapter":"hh-main","enabled":true,"applications":{"message_template_file":"messages/backend.json"}}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	config, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if actual := config.Profiles[0].Applications.ResolvedMessageTemplate(); actual != "Здравствуйте, {{.Employer}}!" {
+		t.Fatalf("resolved template = %q", actual)
+	}
+}
+
+func TestApplicationPolicyRejectsMultipleMessageSources(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Applications: ApplicationPolicy{
+			Message: "static", MessageTemplateFile: "messages/backend.json", resolvedTemplate: "template",
+		}}},
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected multiple application message sources to fail")
 	}
 }
 

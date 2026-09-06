@@ -94,7 +94,7 @@ func (transport *fakeApplicationTransport) SubmitApplication(_ context.Context, 
 	if transport.err != nil {
 		return adapter.ApplicationSubmitResult{}, transport.err
 	}
-	if transport.result.ExternalNegotiationID != "" || transport.result.AlreadyApplied {
+	if transport.result.ExternalNegotiationID != "" || transport.result.Applied || transport.result.AlreadyApplied {
 		return transport.result, nil
 	}
 	return adapter.ApplicationSubmitResult{ExternalNegotiationID: "negotiation-1"}, nil
@@ -290,6 +290,37 @@ func TestApplicationHandlerWaitsWhenConfiguredResumeIsNotSuitable(t *testing.T) 
 	}
 	if transport.calls != 0 || transport.suitableCalls != 1 {
 		t.Fatalf("waiting validation was bypassed: submit=%d suitable=%d", transport.calls, transport.suitableCalls)
+	}
+}
+
+func TestApplicationHandlerPersistsBrowserPreflightReview(t *testing.T) {
+	transport := &fakeApplicationTransport{suitableErr: &core.OperationError{
+		Category: core.ErrorValidationRequired, Operation: "applications.preflight.browser", Platform: "hh",
+		Message: "HH vacancy requires a test or questionnaire", Metadata: map[string]string{"code": "questionnaire_required"},
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "questionnaire_required" || transport.calls != 0 {
+		t.Fatalf("application=%#v submit=%d err=%v", application, transport.calls, err)
+	}
+}
+
+func TestApplicationHandlerAcceptsKnownSuccessWithoutNegotiationID(t *testing.T) {
+	transport := &fakeApplicationTransport{result: adapter.ApplicationSubmitResult{Applied: true}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationSubmitted || application.ExternalNegotiationID != "" || transport.calls != 1 {
+		t.Fatalf("application=%#v submit=%d err=%v", application, transport.calls, err)
 	}
 }
 

@@ -98,7 +98,8 @@ func main() {
 		runtime := profiles[profileID]
 		instance := instances[profile.Adapter]
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
-		if !apiReady && profile.StateFile != "" && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun {
+		browserApplicationsReady := false
+		if !apiReady && profile.StateFile != "" {
 			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
 				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
 				if err != nil {
@@ -106,7 +107,23 @@ func main() {
 				}
 				runtime.BrowserReader = reader
 				profiles[profileID] = runtime
-				log.Printf("profile %q uses browser-backed read-only vacancy access", profile.Tag)
+				log.Printf("profile %q uses browser-backed vacancy access", profile.Tag)
+			}
+			if profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
+				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
+					transport, err := binder.BindBrowserApplicationSession(profileID, profile.StateFile, adapter.BrowserApplicationOptions{
+						AllowVisibilityChange: profile.Applications.AllowVisibilityChange,
+						ResumeID:              profile.Resume,
+					})
+					if err != nil {
+						log.Fatalf("bind browser application session for profile %q: %v", profile.Tag, err)
+					}
+					if err := applicationTransports.Register(profileID, transport); err != nil {
+						log.Fatalf("register browser application transport for profile %q: %v", profile.Tag, err)
+					}
+					browserApplicationsReady = true
+					log.Printf("profile %q uses explicit browser-backed application transport", profile.Tag)
+				}
 			}
 		}
 		if apiReady {
@@ -123,8 +140,9 @@ func main() {
 		} else if runtime.BrowserReader == nil {
 			log.Printf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 		}
-		if apiReady || runtime.BrowserReader != nil {
-			if !apiReady {
+		applicationReady := apiReady || browserApplicationsReady || runtime.BrowserReader != nil && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun
+		if applicationReady {
+			if !apiReady && !browserApplicationsReady {
 				if err := applicationTransports.RegisterVacancyReader(profileID, runtime.BrowserReader); err != nil {
 					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
 				}
@@ -234,7 +252,7 @@ func applicationPreparer(profile appconfig.Profile) (applicationoperator.Applica
 		IncludeAny:      profile.Applications.Qualification.IncludeAny,
 		ExcludeAny:      profile.Applications.Qualification.ExcludeAny,
 		StaticMessage:   profile.Applications.Message,
-		MessageTemplate: profile.Applications.MessageTemplate,
+		MessageTemplate: profile.Applications.ResolvedMessageTemplate(),
 	})
 	if err != nil {
 		return nil, err

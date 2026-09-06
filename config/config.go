@@ -1,11 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -119,12 +122,15 @@ type Profile struct {
 }
 
 type ApplicationPolicy struct {
-	Mode            string                   `json:"mode,omitempty"`
-	Message         string                   `json:"message,omitempty"`
-	MessageTemplate string                   `json:"message_template,omitempty"`
-	Qualification   ApplicationQualification `json:"qualification,omitempty"`
-	DailyLimit      int                      `json:"daily_limit,omitempty"`
-	Timezone        string                   `json:"timezone,omitempty"`
+	Mode                  string                   `json:"mode,omitempty"`
+	Message               string                   `json:"message,omitempty"`
+	MessageTemplate       string                   `json:"message_template,omitempty"`
+	MessageTemplateFile   string                   `json:"message_template_file,omitempty"`
+	Qualification         ApplicationQualification `json:"qualification,omitempty"`
+	DailyLimit            int                      `json:"daily_limit,omitempty"`
+	Timezone              string                   `json:"timezone,omitempty"`
+	AllowVisibilityChange bool                     `json:"allow_visibility_change,omitempty"`
+	resolvedTemplate      string
 }
 
 type ApplicationQualification struct {
@@ -144,6 +150,13 @@ func (policy ApplicationPolicy) LocationName() string {
 		return "UTC"
 	}
 	return policy.Timezone
+}
+
+func (policy ApplicationPolicy) ResolvedMessageTemplate() string {
+	if policy.resolvedTemplate != "" {
+		return policy.resolvedTemplate
+	}
+	return policy.MessageTemplate
 }
 
 // ProfileBootstrap schedules one idempotent initial profile fill after auth.
@@ -174,10 +187,46 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
+	if err := cfg.resolveApplicationMessageFiles(filepath.Dir(path)); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func (c *Config) resolveApplicationMessageFiles(baseDirectory string) error {
+	for index := range c.Profiles {
+		policy := &c.Profiles[index].Applications
+		if strings.TrimSpace(policy.MessageTemplateFile) == "" {
+			continue
+		}
+		path := policy.MessageTemplateFile
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("profile %q message_template_file: %w", c.Profiles[index].Tag, err)
+		}
+		var file struct {
+			Template string `json:"template"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&file); err != nil {
+			return fmt.Errorf("profile %q message_template_file: decode: %w", c.Profiles[index].Tag, err)
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return fmt.Errorf("profile %q message_template_file contains trailing JSON", c.Profiles[index].Tag)
+		}
+		if strings.TrimSpace(file.Template) == "" {
+			return fmt.Errorf("profile %q message_template_file requires template", c.Profiles[index].Tag)
+		}
+		policy.resolvedTemplate = file.Template
+	}
+	return nil
 }
 
 func (c Config) Validate() error {
@@ -253,8 +302,17 @@ func (c Config) Validate() error {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
 			}
 		}
-		if strings.TrimSpace(profile.Applications.Message) != "" && strings.TrimSpace(profile.Applications.MessageTemplate) != "" {
-			return fmt.Errorf("profile %q applications must choose message or message_template", profile.Tag)
+		messageSources := 0
+		for _, value := range []string{profile.Applications.Message, profile.Applications.MessageTemplate, profile.Applications.MessageTemplateFile} {
+			if strings.TrimSpace(value) != "" {
+				messageSources++
+			}
+		}
+		if messageSources > 1 {
+			return fmt.Errorf("profile %q applications must choose message, message_template or message_template_file", profile.Tag)
+		}
+		if profile.Applications.MessageTemplateFile != "" && profile.Applications.resolvedTemplate == "" {
+			return fmt.Errorf("profile %q message_template_file must be resolved by config loader", profile.Tag)
 		}
 		for field, terms := range map[string][]string{
 			"include_any": profile.Applications.Qualification.IncludeAny,

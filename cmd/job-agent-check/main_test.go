@@ -93,6 +93,45 @@ func TestRunAllowsDryRunSearchWithHHBrowserState(t *testing.T) {
 	}
 }
 
+func TestRunAllowsSubmitCampaignWithHHBrowserState(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "job-agent.db")
+	if err := storesqlite.MigrateUp(databasePath); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	statePath := filepath.Join(directory, "browser-state.json")
+	if err := os.WriteFile(statePath, []byte(`{"cookies":[{"name":"session","value":"opaque","domain":".hh.ru"}]}`), 0o600); err != nil {
+		t.Fatalf("write browser state: %v", err)
+	}
+	configPath := writeConfig(t, directory, appconfig.Config{
+		Database: appconfig.DatabaseConfig{Driver: "sqlite", Path: databasePath},
+		Adapters: []appconfig.AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []appconfig.Profile{{
+			Tag: "primary", Adapter: "hh-main", StateFile: statePath, Resume: "resume-1", Enabled: true,
+			Applications: appconfig.ApplicationPolicy{Mode: appconfig.ApplicationModeSubmit, DailyLimit: 3, Timezone: "Europe/Moscow", Message: "Здравствуйте!"},
+		}},
+		Searches: []appconfig.Search{{
+			Tag: "backend", Adapter: "hh-main", Profiles: []string{"primary"}, Priority: 1,
+			TargetApplications: 1, Query: json.RawMessage(`{"source":"global","text":"Backend","max_pages":1}`),
+		}},
+		Jobs: []appconfig.Job{{
+			Tag: "applications", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionApplicationCampaign, Profiles: []string{"primary"}, Routes: []string{"backend"},
+				TargetSuccessful: 1, MaxInFlight: 1,
+			},
+		}},
+	})
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{configPath}, &output); err != nil {
+		t.Fatalf("preflight: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "searches=1/1") || !strings.Contains(output.String(), "jobs=1/1") {
+		t.Fatalf("unexpected output:\n%s", output.String())
+	}
+}
+
 func TestValidateBrowserStateRejectsBroadPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte(`{"cookies":[{"name":"session","value":"opaque","domain":".hh.ru"}]}`), 0o644); err != nil {

@@ -347,7 +347,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err != nil {
 		return handler.finishFailure(ctx, application, err)
 	}
-	if result.ExternalNegotiationID == "" && !result.AlreadyApplied {
+	if result.ExternalNegotiationID == "" && !result.Applied && !result.AlreadyApplied {
 		return handler.finishFailure(ctx, application, errors.New("application transport returned empty negotiation id"))
 	}
 	application.ExternalNegotiationID = result.ExternalNegotiationID
@@ -367,6 +367,22 @@ func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Contex
 	}
 	resumes, err := reader.ListSuitableResumes(ctx, application.Key.ProfileID, application.Key.Vacancy)
 	if err != nil {
+		if core.ErrorIsCategory(err, core.ErrorValidationRequired) || core.ErrorIsCategory(err, core.ErrorConfirmationRequired) {
+			code := "platform_validation_required"
+			reason := err.Error()
+			var operationError *core.OperationError
+			if errors.As(err, &operationError) {
+				if value := strings.TrimSpace(operationError.Metadata["code"]); value != "" {
+					code = value
+				}
+				if strings.TrimSpace(operationError.Message) != "" {
+					reason = operationError.Message
+				}
+			}
+			return applicationoperator.ApplicationPreparation{
+				Outcome: applicationoperator.ApplicationReview, Code: code, Reason: reason,
+			}, true, nil
+		}
 		return applicationoperator.ApplicationPreparation{}, false, err
 	}
 	for _, resume := range resumes {

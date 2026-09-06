@@ -26,7 +26,8 @@
       "state_file": "./data/profiles/primary.json",
       "applications": {
         "mode": "dry_run",
-        "message_template": "Здравствуйте, {{.Employer}}! Меня заинтересовала вакансия {{.Title}}.",
+        "message_template_file": "messages/backend.json",
+        "allow_visibility_change": false,
         "qualification": {
           "include_any": ["Go", "Golang", "Backend"],
           "exclude_any": ["директор", "руководитель направления"]

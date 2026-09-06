@@ -128,8 +128,9 @@ terminal fail. После падения worker задача повторно в
 `new → preparing → ready → submitting → submitted`. Выбор резюме задаётся для
 профиля полем `resume`. До решения worker читает полную вакансию через API либо
 browser GET и обновляет её в repository: краткой поисковой карточки недостаточно
-для требований. Applicant relations и suitable resumes доступны только
-API-каналу и не нужны для browser-backed `dry_run`. Закрытая вакансия
+для требований. Applicant relations и подходящие резюме API получает из
+публичных endpoints, а browser transport — из безопасного popup preflight.
+Закрытая вакансия
 или уже существующий `got_response` пропускаются без `POST`; обязательный тест
 либо отсутствующее обязательное сопроводительное переводят отклик в
 `waiting_validation`. Для выбранного `resume` worker также читает все страницы
@@ -150,8 +151,10 @@ API-каналу и не нужны для browser-backed `dry_run`. Закры�
 Детерминированный application operator проверяет `include_any`/`exclude_any`
 по названию, работодателю, описанию и ключевым навыкам полной вакансии. Границы
 слов учитываются, поэтому термин `Go` не совпадает с `Django`. Статическое
-письмо задаётся через `message`, а шаблон — через `message_template`; одновременно
-их включать нельзя. Шаблону доступны `ProfileID`, `Title`, `Employer`, `URL`,
+письмо задаётся через `message`, а шаблон — предпочтительно через отдельный
+`message_template_file`; встроенный `message_template` сохранён для простых
+конфигураций. Одновременно разрешён только один источник. Шаблону доступны
+`ProfileID`, `Title`, `Employer`, `URL`,
 `Description` и `KeySkills`. Результат решения (`decision_code`, причина и
 готовый текст) сохраняется в `Application` до внешнего действия и повторно
 используется после retry вместе с выбранным резюме.
@@ -161,7 +164,8 @@ API-каналу и не нужны для browser-backed `dry_run`. Закры�
 ```json
 "applications": {
   "mode": "dry_run",
-  "message_template": "Здравствуйте, {{.Employer}}! Меня заинтересовала вакансия {{.Title}}.",
+  "message_template_file": "messages/backend.json",
+  "allow_visibility_change": false,
   "qualification": {
     "include_any": ["Go", "Golang", "Backend"],
     "exclude_any": ["директор", "руководитель направления"]
@@ -171,7 +175,13 @@ API-каналу и не нужны для browser-backed `dry_run`. Закры�
 }
 ```
 
-HH-адаптер отправляет multipart-отклик через официальный API. Локальный
+HH-адаптер предпочитает официальный API, когда профиль привязан к OAuth.
+Явно привязанный browser transport перед каждым web-откликом выполняет
+идемпотентный popup preflight, проверяет выбранное резюме, тест и лимит письма,
+затем отправляет multipart с `resume_hash` и готовым `letter`. Изменение
+видимости резюме по умолчанию запрещено и требует
+`allow_visibility_change: true`. CAPTCHA и неизвестные варианты формы не
+обходятся и переводят отклик на ручную проверку. Локальный
 idempotency key не передаётся HH, потому что endpoint не предоставляет такого
 параметра: он дедуплицирует durable task и пару profile/vacancy. Ответ
 `already_applied` считается идемпотентным успехом. После неоднозначного исхода
@@ -237,11 +247,11 @@ HH-адаптер умеет проверять собственную поис�
 токеном ссылается на отдельный credential-файл через `credentials_ref`; токен
 не хранится в основном config и не попадает в диагностические ошибки. Проверки
 одного профиля сериализуются, а `401/403` переводят профиль в
-`auth_required`. Conversation transport пока возвращает явный `unsupported`;
-application transport и его reconciliation работают через официальный HH API.
-Если OAuth отсутствует, валидный browser state включает только search и
-application preparation в `dry_run`; режимы `approval` и `submit` по такому
-каналу не запускаются.
+`auth_required`. Conversation transport пока возвращает явный `unsupported`.
+Application transport и reconciliation предпочитают официальный HH API, а без
+OAuth работают через отдельно привязанный browser transport. Само наличие
+browser state по-прежнему даёт только чтение: write transport создаётся
+composition root только для режимов `approval` и `submit`.
 
 Минимальный credential-файл имеет права `0600` (или строже):
 
@@ -267,7 +277,9 @@ application preparation в `dry_run`; режимы `approval` и `submit` по �
 прекращена 15 декабря 2025 года, тогда как публичная OpenAPI-документация всё
 ещё описывает соискательский OAuth. Поэтому получение нового client ID не
 считается доступным путём запуска, пока HH не уточнит условия. Browser
-`state_file` используется для read-only discovery/dry-run и поднятия резюме.
+`state_file` используется для discovery, поднятия резюме и явно включённого
+browser application transport. Последний всегда делает безопасный popup GET
+перед POST и не является неявным fallback после ошибки OAuth API.
 
 ```sh
 go test ./...
@@ -275,6 +287,7 @@ go run ./cmd/job-agent-migrate -config ./config/example/config.json up
 go run ./cmd/job-agent-browser-state sanitize ./data/profiles/primary.json
 go run ./cmd/job-agent-check ./config/example/config.json
 go run ./cmd/job-agent-trigger -idempotency-key manual-touch-001 ./config/example/config.json touch-primary-resume
+go run ./cmd/job-agent-approve -idempotency-key approval-primary-hh-42 ./config/example/config.json primary 42
 go run ./cmd/job-agent ./config/example/config.json
 ```
 
@@ -296,9 +309,11 @@ go run ./cmd/job-agent ./config/example/config.json
 `misfire: run_once` создаст задачу сразу после старта сервиса.
 
 API-операции и browser-сессия профиля считаются независимо. Отсутствие
-`credentials_ref` не мешает поднятию резюме и ограниченному browser-backed
-search/application `dry_run`. Для `approval`, `submit`, suitable-resume check и
-API campaign по-прежнему нужен OAuth у каждого целевого профиля.
+`credentials_ref` не мешает поднятию резюме, browser-backed search и
+application campaign. Для `approval` и `submit` browser write transport
+привязывается отдельно; `dry_run` получает только read transport. Тесты,
+CAPTCHA, неподходящее резюме, неизвестная форма и запрещённое изменение
+видимости останавливаются в `waiting_validation` без POST.
 
 `job-agent-trigger` ставит одну включённую job в ту же durable-очередь, не
 выполняя внешнее действие внутри CLI. Обязательный `-idempotency-key` делает
@@ -306,6 +321,12 @@ API campaign по-прежнему нужен OAuth у каждого целев
 другой payload под тем же ключом отклоняется. После успешного preflight можно
 поставить job вручную и запустить обычный `job-agent`; cron при этом остаётся
 единственным владельцем периодического расписания.
+
+`job-agent-approve` выпускает один уже подготовленный `waiting_approval`
+отклик. Команда работает только после явного переключения профиля в `submit`,
+требует непустое сохранённое письмо и ставит idempotent submit-task. Если
+процесс оборвался между сменой статуса и постановкой задачи, повтор с тем же
+ключом безопасно восстанавливает очередь.
 
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и

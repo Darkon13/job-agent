@@ -1,6 +1,7 @@
 # HH: applicant browser operations
 
-Наблюдения сделаны 2026-07-18 в авторизованной applicant session. Значения
+Наблюдения сделаны 2026-07-18 и повторно проверены 2026-09-06 в авторизованной
+applicant session. Значения
 cookies, XSRF, идентификаторы аккаунта/резюме/чатов и персональные данные не
 фиксируются.
 
@@ -67,9 +68,11 @@ POST использовал multipart поля:
 
 - `resume_hash`;
 - `vacancy_id`;
-- `letterRequired`;
+- `letter`;
 - `lux`;
 - `ignore_postponed`;
+- `incomplete`;
+- `withoutTest`;
 - `mark_applicant_visible_in_vacancy_country`;
 - `country_ids`.
 
@@ -77,9 +80,17 @@ POST использовал multipart поля:
 `applicantActivity`, `responseStatus.test.hasTests`, состояния резюме,
 `responseImpossible` и `alreadyApplied`.
 
-До POST adapter обязан повторно проверить уникальность
+После подтверждённого отклика последующий preflight может вернуть
+`type: "alreadyApplied"` без отдельного negotiation ID. Это достаточный признак
+для reconciliation, но не повод повторять POST.
+
+До POST adapter повторно выполняет popup preflight, проверяет уникальность
 `(profile_id, vacancy_id)`, требования формы и выбранное резюме. Идентификаторы
 topic/chat сохраняются как platform references, но не выводятся в обычные логи.
+Потерянный ответ считается неоднозначным исходом и сверяется новым GET вместо
+повторного POST. CAPTCHA, тест и неизвестный flow останавливаются на ручной
+проверке. Изменение видимости резюме разрешается только явной настройкой
+профиля `allow_visibility_change`.
 
 ## Vacancy questionnaire/test form
 

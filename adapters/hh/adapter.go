@@ -79,16 +79,18 @@ type SearchQuery struct {
 }
 
 type Adapter struct {
-	config         Config
-	mu             sync.RWMutex
-	clients        map[core.ProfileID]*ReadClient
-	browserClients map[core.ProfileID]*BrowserReadClient
+	config                    Config
+	mu                        sync.RWMutex
+	clients                   map[core.ProfileID]*ReadClient
+	browserClients            map[core.ProfileID]*BrowserReadClient
+	browserApplicationClients map[core.ProfileID]*BrowserApplicationClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
 var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 var _ adapter.BrowserSessionBinder = (*Adapter)(nil)
+var _ adapter.BrowserApplicationSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
@@ -103,7 +105,8 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 	}
 	return &Adapter{
 		config: cfg, clients: make(map[core.ProfileID]*ReadClient),
-		browserClients: make(map[core.ProfileID]*BrowserReadClient),
+		browserClients:            make(map[core.ProfileID]*BrowserReadClient),
+		browserApplicationClients: make(map[core.ProfileID]*BrowserApplicationClient),
 	}, nil
 }
 
@@ -140,6 +143,31 @@ func (a *Adapter) BindBrowserSession(profileID core.ProfileID, stateFile string)
 		return existing, nil
 	}
 	a.browserClients[profileID] = client
+	return client, nil
+}
+
+func (a *Adapter) BindBrowserApplicationSession(profileID core.ProfileID, stateFile string, options adapter.BrowserApplicationOptions) (adapter.ApplicationTransport, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reader := a.browserClients[profileID]
+	if reader == nil {
+		var err error
+		reader, err = NewBrowserReadClient(profileID, stateFile, a.config.UserAgent, nil)
+		if err != nil {
+			return nil, err
+		}
+		a.browserClients[profileID] = reader
+	} else if reader.stateFile != stateFile {
+		return nil, fmt.Errorf("HH profile %s is already bound to another browser state", profileID)
+	}
+	if existing := a.browserApplicationClients[profileID]; existing != nil {
+		if existing.options != options {
+			return nil, fmt.Errorf("HH profile %s is already bound with different browser application permissions", profileID)
+		}
+		return existing, nil
+	}
+	client := newBrowserApplicationClient(reader, options)
+	a.browserApplicationClients[profileID] = client
 	return client, nil
 }
 
@@ -312,31 +340,43 @@ func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.Profil
 	}
 	a.mu.RLock()
 	client := a.clients[profileID]
+	browserClient := a.browserApplicationClients[profileID]
 	a.mu.RUnlock()
-	if client == nil {
-		return nil, operationError(core.ErrorUnauthorized, "vacancies.suitable_resumes", "HH profile has no bound credentials", nil)
+	if client != nil {
+		return client.ListSuitableResumes(ctx, profileID, key)
 	}
-	return client.ListSuitableResumes(ctx, profileID, key)
+	if browserClient != nil {
+		return browserClient.ListSuitableResumes(ctx, profileID, key)
+	}
+	return nil, operationError(core.ErrorUnauthorized, "vacancies.suitable_resumes", "HH profile has no bound application session", nil)
 }
 
 func (a *Adapter) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	a.mu.RLock()
 	client := a.clients[command.ProfileID]
+	browserClient := a.browserApplicationClients[command.ProfileID]
 	a.mu.RUnlock()
-	if client == nil {
-		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorUnauthorized, "applications.submit", "HH profile has no bound credentials", nil)
+	if client != nil {
+		return client.SubmitApplication(ctx, command)
 	}
-	return client.SubmitApplication(ctx, command)
+	if browserClient != nil {
+		return browserClient.SubmitApplication(ctx, command)
+	}
+	return adapter.ApplicationSubmitResult{}, operationError(core.ErrorUnauthorized, "applications.submit", "HH profile has no bound application session", nil)
 }
 
 func (a *Adapter) ReconcileApplication(ctx context.Context, command adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
 	a.mu.RLock()
 	client := a.clients[command.ProfileID]
+	browserClient := a.browserApplicationClients[command.ProfileID]
 	a.mu.RUnlock()
-	if client == nil {
-		return adapter.ApplicationReconcileResult{}, operationError(core.ErrorUnauthorized, "applications.reconcile", "HH profile is not bound to OAuth credentials", nil)
+	if client != nil {
+		return client.ReconcileApplication(ctx, command)
 	}
-	return client.ReconcileApplication(ctx, command)
+	if browserClient != nil {
+		return browserClient.ReconcileApplication(ctx, command)
+	}
+	return adapter.ApplicationReconcileResult{}, operationError(core.ErrorUnauthorized, "applications.reconcile", "HH profile has no bound application session", nil)
 }
 
 func (a *Adapter) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
