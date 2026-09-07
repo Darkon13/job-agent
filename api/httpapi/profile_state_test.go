@@ -66,7 +66,7 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/resources", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) || !strings.Contains(response.Body.String(), `"writable":true`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"editable_paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) || !strings.Contains(response.Body.String(), `"writable":true`) {
 		t.Fatalf("resources response: %d %s", response.Code, response.Body.String())
 	}
 	assertProfileStateSecretsAbsent(t, response.Body.String())
@@ -104,6 +104,89 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/plans", nil))
 	if response.Code != http.StatusOK || reads != 2 {
 		t.Fatalf("idempotent plan response: %d reads=%d %s", response.Code, reads, response.Body.String())
+	}
+}
+
+func TestProfileStateAPIPlansOneShotEditorOverrideWithoutLeakingIt(t *testing.T) {
+	now := time.Date(2026, 9, 7, 18, 0, 0, 0, time.UTC)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"from config"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	repository := memory.NewRepository()
+	planner, err := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, profileStateAPIClock{now}, &profileStateAPIIDs{})
+	if err != nil {
+		t.Fatalf("new planner: %v", err)
+	}
+	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"about":"current"}}}`), "", now)
+	})
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, brokermemory.NewQueue(), profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil {
+		t.Fatalf("new apply workflow: %v", err)
+	}
+	api, err := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	handler := api.Handler(nil)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/resources/backend/editor", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"value":"from config"`) {
+		t.Fatalf("editor response: %d %s", response.Code, response.Body.String())
+	}
+
+	body := fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/about","value":"from dashboard"}]}`, resource.ManifestDigest)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/plans", strings.NewReader(body)))
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"status":"planned"`) {
+		t.Fatalf("override plan response: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "from dashboard") || strings.Contains(response.Body.String(), "current") {
+		t.Fatalf("plan response leaked state: %s", response.Body.String())
+	}
+	var redacted core.ProfileStateProposal
+	if err := json.Unmarshal(response.Body.Bytes(), &redacted); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	stored, err := repository.ProfileStateProposal(context.Background(), redacted.ID)
+	if err != nil || !strings.Contains(string(stored.DesiredState), "from dashboard") {
+		t.Fatalf("stored override = %s err=%v", stored.DesiredState, err)
+	}
+	registered, _ := planner.Resource("backend")
+	if string(registered.State) != string(resource.State) {
+		t.Fatalf("registered source changed: %s", registered.State)
+	}
+}
+
+func TestProfileStateAPIRejectsStaleOrUnsupportedEditorOverride(t *testing.T) {
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"from config","title":"Backend"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	repository := memory.NewRepository()
+	planner, _ := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, brokermemory.NewQueue(), workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation(request.ProfileID, resource.State, "", time.Now().UTC())
+	})
+	api, _ := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	handler := api.Handler(nil)
+
+	for _, test := range []struct {
+		body string
+		want int
+	}{
+		{body: `{"base_manifest_digest":"stale","overrides":[{"path":"/resumes/resume-1/about","value":"new"}]}`, want: http.StatusConflict},
+		{body: fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/title","value":"new"}]}`, resource.ManifestDigest), want: http.StatusUnprocessableEntity},
+		{body: fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/about","value":42}]}`, resource.ManifestDigest), want: http.StatusUnprocessableEntity},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/plans", strings.NewReader(test.body)))
+		if response.Code != test.want {
+			t.Fatalf("body %s: status %d, want %d: %s", test.body, response.Code, test.want, response.Body.String())
+		}
 	}
 }
 

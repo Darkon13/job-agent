@@ -48,6 +48,10 @@ td:last-child, th:last-child { text-align: right; }
 .path-list li { padding: .38rem .5rem; border-radius: 6px; background: var(--surface-2); }
 .plan-result { display: grid; gap: .35rem; padding: .7rem; border: 1px solid var(--line); border-radius: 9px; background: #191e29; }
 .plan-result strong { color: var(--text); font-size: .82rem; }
+.resource-editor { display: grid; gap: .7rem; padding: .8rem; border: 1px solid #45606e; border-radius: 10px; background: #191e29; }
+.resource-editor label { display: grid; gap: .4rem; color: var(--blue); font: .72rem/1.4 ui-monospace, monospace; }
+.resource-editor textarea { min-height: 9rem; font: .84rem/1.5 ui-monospace, monospace; }
+.editor-actions { display: flex; justify-content: flex-end; gap: .6rem; }
 .resource-actions { display: flex; align-items: center; justify-content: flex-end; gap: .6rem; margin-top: auto; }
 .resource-actions .muted { margin-right: auto; overflow-wrap: anywhere; }
 .chat-layout { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); gap: 1rem; min-height: 520px; }

@@ -40,6 +40,13 @@ type ProfileStateResource struct {
 	ManifestDigest string          `json:"manifest_digest"`
 }
 
+// ProfileStateValueOverride changes one already-declared leaf for a one-shot
+// proposal. It never mutates the registered resource or expands its ownership.
+type ProfileStateValueOverride struct {
+	Path  string          `json:"path"`
+	Value json.RawMessage `json:"value"`
+}
+
 func NewProfileStateResource(tag string, profileID ProfileID, ownership string, state json.RawMessage) (ProfileStateResource, error) {
 	tag = strings.TrimSpace(tag)
 	ownership = strings.TrimSpace(ownership)
@@ -95,6 +102,99 @@ func (resource ProfileStateResource) DeclaredPaths() ([]string, error) {
 	collectDeclaredPaths("", value, &paths)
 	sort.Strings(paths)
 	return paths, nil
+}
+
+// ValueAt returns one declared desired value as canonical JSON.
+func (resource ProfileStateResource) ValueAt(path string) (json.RawMessage, bool, error) {
+	if err := resource.Validate(); err != nil {
+		return nil, false, err
+	}
+	paths, err := resource.DeclaredPaths()
+	if err != nil {
+		return nil, false, err
+	}
+	index := sort.SearchStrings(paths, path)
+	if index == len(paths) || paths[index] != path {
+		return nil, false, nil
+	}
+	value, err := decodeJSONValue(resource.State)
+	if err != nil {
+		return nil, false, err
+	}
+	selected, exists := jsonPointerValue(value, path)
+	if !exists {
+		return nil, false, nil
+	}
+	encoded, err := json.Marshal(selected)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode profile state value at %s: %w", path, err)
+	}
+	return encoded, true, nil
+}
+
+// WithOverrides derives an immutable one-shot resource from a registered
+// source resource. Overrides may replace existing leaves only; they cannot add
+// fields or silently broaden declared ownership.
+func (resource ProfileStateResource) WithOverrides(overrides []ProfileStateValueOverride) (ProfileStateResource, error) {
+	if err := resource.Validate(); err != nil {
+		return ProfileStateResource{}, err
+	}
+	if len(overrides) == 0 {
+		return ProfileStateResource{}, errors.New("profile state override requires at least one value")
+	}
+	declaredPaths, err := resource.DeclaredPaths()
+	if err != nil {
+		return ProfileStateResource{}, err
+	}
+	declared := make(map[string]struct{}, len(declaredPaths))
+	for _, path := range declaredPaths {
+		declared[path] = struct{}{}
+	}
+	state, err := decodeJSONValue(resource.State)
+	if err != nil {
+		return ProfileStateResource{}, err
+	}
+	seen := make(map[string]struct{}, len(overrides))
+	for _, override := range overrides {
+		if _, exists := declared[override.Path]; !exists {
+			return ProfileStateResource{}, fmt.Errorf("profile state override path %q is not a declared leaf", override.Path)
+		}
+		if _, duplicate := seen[override.Path]; duplicate {
+			return ProfileStateResource{}, fmt.Errorf("duplicate profile state override path %q", override.Path)
+		}
+		seen[override.Path] = struct{}{}
+		value, err := decodeJSONValue(override.Value)
+		if err != nil {
+			return ProfileStateResource{}, fmt.Errorf("decode profile state override %q: %w", override.Path, err)
+		}
+		if _, object := value.(map[string]any); object {
+			return ProfileStateResource{}, fmt.Errorf("profile state override %q cannot replace a leaf with an object", override.Path)
+		}
+		if !setJSONPointerValue(state, override.Path, value) {
+			return ProfileStateResource{}, fmt.Errorf("profile state override path %q cannot be replaced", override.Path)
+		}
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return ProfileStateResource{}, fmt.Errorf("encode overridden profile state: %w", err)
+	}
+	derived, err := NewProfileStateResource(resource.Tag, resource.ProfileID, resource.Ownership, encoded)
+	if err != nil {
+		return ProfileStateResource{}, err
+	}
+	derivedPaths, err := derived.DeclaredPaths()
+	if err != nil {
+		return ProfileStateResource{}, err
+	}
+	if len(derivedPaths) != len(declaredPaths) {
+		return ProfileStateResource{}, errors.New("profile state override changed declared ownership")
+	}
+	for index := range declaredPaths {
+		if derivedPaths[index] != declaredPaths[index] {
+			return ProfileStateResource{}, errors.New("profile state override changed declared ownership")
+		}
+	}
+	return derived, nil
 }
 
 type ProfileStateObservation struct {
@@ -537,6 +637,39 @@ func jsonPointerValue(root any, pointer string) (any, bool) {
 		}
 	}
 	return current, true
+}
+
+func setJSONPointerValue(root any, pointer string, value any) bool {
+	if !strings.HasPrefix(pointer, "/") {
+		return false
+	}
+	segments := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	if len(segments) == 0 {
+		return false
+	}
+	current := root
+	for index, rawSegment := range segments {
+		segment, ok := unescapeJSONPointer(rawSegment)
+		if !ok {
+			return false
+		}
+		object, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		if index == len(segments)-1 {
+			if _, exists := object[segment]; !exists {
+				return false
+			}
+			object[segment] = value
+			return true
+		}
+		current, ok = object[segment]
+		if !ok {
+			return false
+		}
+	}
+	return false
 }
 
 func unescapeJSONPointer(value string) (string, bool) {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -27,6 +28,25 @@ type ProfileStateResourceSummary struct {
 	Paths          []string       `json:"paths"`
 	Readable       bool           `json:"readable"`
 	Writable       bool           `json:"writable"`
+	EditablePaths  []string       `json:"editable_paths"`
+}
+
+type ProfileStateEditorField struct {
+	Path  string  `json:"path"`
+	Kind  string  `json:"kind"`
+	Value *string `json:"value"`
+}
+
+type ProfileStateResourceEditor struct {
+	ResourceTag    string                    `json:"resource_tag"`
+	ProfileID      core.ProfileID            `json:"profile_id"`
+	ManifestDigest string                    `json:"manifest_digest"`
+	Fields         []ProfileStateEditorField `json:"fields"`
+}
+
+type profileStatePlanRequest struct {
+	BaseManifestDigest string                           `json:"base_manifest_digest"`
+	Overrides          []core.ProfileStateValueOverride `json:"overrides"`
 }
 
 func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
@@ -49,6 +69,7 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/profile-state/resources", api.listResources)
+	mux.HandleFunc("GET /api/v1/profile-state/resources/{resource_tag}/editor", api.getResourceEditor)
 	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/plans", api.plan)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
@@ -70,11 +91,41 @@ func (api *ProfileStateAPI) listResources(response http.ResponseWriter, _ *http.
 		result = append(result, ProfileStateResourceSummary{
 			Tag: resource.Tag, ProfileID: resource.ProfileID, Ownership: resource.Ownership,
 			ManifestDigest: resource.ManifestDigest, Paths: paths, Readable: readable,
-			Writable: api.apply.Writable(resource.ProfileID),
+			Writable:      api.apply.Writable(resource.ProfileID),
+			EditablePaths: editableProfileStatePaths(resource),
 		})
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, result)
+}
+
+func (api *ProfileStateAPI) getResourceEditor(response http.ResponseWriter, request *http.Request) {
+	resourceTag := strings.TrimSpace(request.PathValue("resource_tag"))
+	resource, exists := api.planner.Resource(resourceTag)
+	if !exists {
+		writeProblem(response, http.StatusNotFound, "profile state resource not found")
+		return
+	}
+	paths := editableProfileStatePaths(resource)
+	fields := make([]ProfileStateEditorField, 0, len(paths))
+	for _, path := range paths {
+		raw, exists, err := resource.ValueAt(path)
+		if err != nil || !exists {
+			writeProblem(response, http.StatusInternalServerError, "load profile state editor")
+			return
+		}
+		var value *string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			writeProblem(response, http.StatusUnprocessableEntity, "editable profile state value must be text or null")
+			return
+		}
+		fields = append(fields, ProfileStateEditorField{Path: path, Kind: "multiline_text", Value: value})
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, ProfileStateResourceEditor{
+		ResourceTag: resource.Tag, ProfileID: resource.ProfileID,
+		ManifestDigest: resource.ManifestDigest, Fields: fields,
+	})
 }
 
 func (api *ProfileStateAPI) applyProposal(response http.ResponseWriter, request *http.Request) {
@@ -101,8 +152,13 @@ func (api *ProfileStateAPI) applyProposal(response http.ResponseWriter, request 
 }
 
 func (api *ProfileStateAPI) plan(response http.ResponseWriter, request *http.Request) {
-	if !emptyRequestBody(response, request) {
-		return
+	var body *profileStatePlanRequest
+	if request.Body != nil && request.Body != http.NoBody {
+		var decoded profileStatePlanRequest
+		if !decodeJSON(response, request, &decoded) {
+			return
+		}
+		body = &decoded
 	}
 	resourceTag := strings.TrimSpace(request.PathValue("resource_tag"))
 	resource, exists := api.planner.Resource(resourceTag)
@@ -115,7 +171,37 @@ func (api *ProfileStateAPI) plan(response http.ResponseWriter, request *http.Req
 		writeProblem(response, http.StatusConflict, "profile state resource has no trusted reader")
 		return
 	}
-	proposal, created, err := api.planner.ReadAndPlan(request.Context(), resource.Tag, reader)
+	var proposal core.ProfileStateProposal
+	var created bool
+	var err error
+	if body == nil {
+		proposal, created, err = api.planner.ReadAndPlan(request.Context(), resource.Tag, reader)
+	} else {
+		if strings.TrimSpace(body.BaseManifestDigest) == "" || len(body.Overrides) == 0 {
+			writeProblem(response, http.StatusBadRequest, "profile state override requires base_manifest_digest and overrides")
+			return
+		}
+		if body.BaseManifestDigest != resource.ManifestDigest {
+			writeProblem(response, http.StatusConflict, "profile state resource changed; reload the editor")
+			return
+		}
+		editable := make(map[string]struct{})
+		for _, path := range editableProfileStatePaths(resource) {
+			editable[path] = struct{}{}
+		}
+		for _, override := range body.Overrides {
+			if _, allowed := editable[override.Path]; !allowed {
+				writeProblem(response, http.StatusUnprocessableEntity, "profile state path is not editable")
+				return
+			}
+			var textValue *string
+			if err := json.Unmarshal(override.Value, &textValue); err != nil {
+				writeProblem(response, http.StatusUnprocessableEntity, "editable profile state value must be text or null")
+				return
+			}
+		}
+		proposal, created, err = api.planner.ReadAndPlanWithOverrides(request.Context(), resource.Tag, body.Overrides, reader)
+	}
 	if err != nil {
 		writeProfileStateError(response, err)
 		return
@@ -126,6 +212,21 @@ func (api *ProfileStateAPI) plan(response http.ResponseWriter, request *http.Req
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, status, proposal)
+}
+
+func editableProfileStatePaths(resource core.ProfileStateResource) []string {
+	paths, err := resource.DeclaredPaths()
+	if err != nil {
+		return nil
+	}
+	result := make([]string, 0)
+	for _, path := range paths {
+		segments := strings.Split(path, "/")
+		if len(segments) == 4 && segments[1] == "resumes" && segments[2] != "" && segments[3] == "about" {
+			result = append(result, path)
+		}
+	}
+	return result
 }
 
 func (api *ProfileStateAPI) listProposals(response http.ResponseWriter, request *http.Request) {

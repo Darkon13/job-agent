@@ -100,6 +100,50 @@ func TestProfileStateResourceRejectsInvalidShapeAndEmptyOwnership(t *testing.T) 
 	}
 }
 
+func TestProfileStateResourceDerivesOneShotLeafOverrides(t *testing.T) {
+	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"backend":{"about":"from config","skills":["Go"]}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	derived, err := resource.WithOverrides([]ProfileStateValueOverride{{
+		Path: "/resumes/backend/about", Value: json.RawMessage(`"from dashboard"`),
+	}})
+	if err != nil {
+		t.Fatalf("derive resource: %v", err)
+	}
+	if string(resource.State) != `{"resumes":{"backend":{"about":"from config","skills":["Go"]}}}` {
+		t.Fatalf("source resource was mutated: %s", resource.State)
+	}
+	value, exists, err := derived.ValueAt("/resumes/backend/about")
+	if err != nil || !exists || string(value) != `"from dashboard"` {
+		t.Fatalf("derived value = %s exists=%v err=%v", value, exists, err)
+	}
+	if derived.ManifestDigest == resource.ManifestDigest {
+		t.Fatal("one-shot override must have its own manifest digest")
+	}
+	paths, err := derived.DeclaredPaths()
+	if err != nil || strings.Join(paths, ",") != "/resumes/backend/about,/resumes/backend/skills" {
+		t.Fatalf("derived paths = %v err=%v", paths, err)
+	}
+}
+
+func TestProfileStateResourceRejectsOwnershipChangingOverrides(t *testing.T) {
+	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"backend":{"about":"from config"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	for _, overrides := range [][]ProfileStateValueOverride{
+		{{Path: "/resumes/backend/missing", Value: json.RawMessage(`"value"`)}},
+		{{Path: "/resumes/backend/about", Value: json.RawMessage(`{"nested":"value"}`)}},
+		{{Path: "/resumes/backend/about", Value: json.RawMessage(`"one"`)}, {Path: "/resumes/backend/about", Value: json.RawMessage(`"two"`)}},
+		{{Path: "/resumes/backend/about", Value: json.RawMessage(`not-json`)}},
+	} {
+		if _, err := resource.WithOverrides(overrides); err == nil {
+			t.Fatalf("expected overrides to fail: %#v", overrides)
+		}
+	}
+}
+
 func TestProfileStateChangeEscapesJSONPointer(t *testing.T) {
 	now := time.Now().UTC()
 	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"profile":{"a/b~c":true}}`))

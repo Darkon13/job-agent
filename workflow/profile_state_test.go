@@ -92,3 +92,32 @@ func TestProfileStatePlannerReadsOnlyDeclaredPathsBeforePlanning(t *testing.T) {
 		t.Fatalf("read and plan: %#v created=%v err=%v", proposal, created, err)
 	}
 }
+
+func TestProfileStatePlannerUsesOneShotOverrideWithoutMutatingSource(t *testing.T) {
+	now := time.Date(2026, 9, 7, 14, 0, 0, 0, time.UTC)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"from config"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	repository := memory.NewRepository()
+	planner, err := NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, fixedClock{now}, &sequentialIDs{})
+	if err != nil {
+		t.Fatalf("new planner: %v", err)
+	}
+	reader := profileStateReaderFunc(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"about":"current"}}}`), "", now)
+	})
+	proposal, created, err := planner.ReadAndPlanWithOverrides(context.Background(), "backend", []core.ProfileStateValueOverride{{
+		Path: "/resumes/resume-1/about", Value: json.RawMessage(`"from dashboard"`),
+	}}, reader)
+	if err != nil || !created {
+		t.Fatalf("override plan: %#v created=%v err=%v", proposal, created, err)
+	}
+	if string(proposal.DesiredState) != `{"resumes":{"resume-1":{"about":"from dashboard"}}}` {
+		t.Fatalf("proposal desired state = %s", proposal.DesiredState)
+	}
+	storedResource, exists := planner.Resource("backend")
+	if !exists || string(storedResource.State) != string(resource.State) || storedResource.ManifestDigest != resource.ManifestDigest {
+		t.Fatalf("registered resource changed: %#v", storedResource)
+	}
+}

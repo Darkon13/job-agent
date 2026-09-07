@@ -1,4 +1,4 @@
-const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileMessages: new Map(), profileBusy: new Set() };
+const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set() };
 const elements = Object.fromEntries([
   "applications", "tasks", "stats", "conversations", "messages", "chat-title", "chat-meta",
   "connection-dot", "connection-state", "updated-at", "refresh", "mark-read", "reply-form",
@@ -38,6 +38,23 @@ function renderProfileResources() {
     const paths = document.createElement("ul"); paths.className = "path-list";
     for (const path of resource.paths || []) paths.append(text("li", path));
     card.append(paths);
+    const editor = state.profileEditors.get(resource.tag);
+    if (editor) {
+      const form = document.createElement("div"); form.className = "resource-editor";
+      form.append(text("p", "Одноразовое изменение: конфигурационный resource останется источником истины.", "muted"));
+      for (const field of editor.fields) {
+        const label = text("label", field.path);
+        const input = document.createElement("textarea"); input.rows = 6; input.value = field.draftValue; input.setAttribute("aria-label", field.path);
+        input.addEventListener("input", () => { field.draftValue = input.value; });
+        label.append(input); form.append(label);
+      }
+      const editorActions = document.createElement("div"); editorActions.className = "editor-actions";
+      const cancel = text("button", "Отмена", "secondary"); cancel.type = "button"; cancel.disabled = state.profileBusy.has(resource.tag);
+      cancel.addEventListener("click", () => { state.profileEditors.delete(resource.tag); renderProfileResources(); });
+      const build = text("button", "Построить план изменения"); build.type = "button"; build.disabled = state.profileBusy.has(resource.tag);
+      build.addEventListener("click", () => planProfileState(resource, build, editor));
+      editorActions.append(cancel, build); form.append(editorActions); card.append(form);
+    }
     const plan = state.profilePlans.get(resource.tag);
     if (plan) {
       const result = document.createElement("div"); result.className = "plan-result";
@@ -49,6 +66,10 @@ function renderProfileResources() {
     const status = text("span", state.profileMessages.get(resource.tag) || "", "muted");
     const planButton = text("button", "Построить план"); planButton.type = "button"; planButton.disabled = !resource.readable || state.profileBusy.has(resource.tag);
     planButton.addEventListener("click", () => planProfileState(resource, planButton)); actions.append(status, planButton);
+    if ((resource.editable_paths || []).length) {
+      const editButton = text("button", editor ? "Редактор открыт" : "Изменить desired", "secondary"); editButton.type = "button"; editButton.disabled = !resource.readable || Boolean(editor) || state.profileBusy.has(resource.tag);
+      editButton.addEventListener("click", () => loadProfileEditor(resource)); actions.append(editButton);
+    }
     if (plan?.status === "planned") {
       const applyButton = text("button", "Применить", "secondary"); applyButton.type = "button"; applyButton.disabled = !resource.writable || state.profileBusy.has(resource.tag);
       applyButton.addEventListener("click", () => applyProfileState(resource, plan, applyButton)); actions.append(applyButton);
@@ -62,8 +83,12 @@ async function refreshProfileResources() {
     const resources = await request("/api/v1/profile-state/resources");
     for (const resource of resources) {
       const plan = state.profilePlans.get(resource.tag);
-      if (plan && plan.manifest_digest !== resource.manifest_digest) {
+      if (plan && (plan.source_manifest_digest || plan.manifest_digest) !== resource.manifest_digest) {
         state.profilePlans.delete(resource.tag); state.profileMessages.set(resource.tag, "Resource изменился — постройте новый план");
+      }
+      const editor = state.profileEditors.get(resource.tag);
+      if (editor && editor.manifest_digest !== resource.manifest_digest) {
+        state.profileEditors.delete(resource.tag); state.profileMessages.set(resource.tag, "Resource изменился — откройте редактор заново");
       }
     }
     state.profileResources = resources;
@@ -75,11 +100,31 @@ async function refreshProfileResources() {
   }
 }
 
-async function planProfileState(resource, button) {
+async function loadProfileEditor(resource) {
+  state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Загружаю desired state…"); renderProfileResources();
+  try {
+    const editor = await request(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/editor`);
+    editor.fields = (editor.fields || []).map((field) => ({ ...field, draftValue: field.value ?? "" }));
+    state.profileEditors.set(resource.tag, editor); state.profileMessages.set(resource.tag, "Редактируется одноразовый override");
+  } catch (error) { state.profileMessages.set(resource.tag, error.message); }
+  state.profileBusy.delete(resource.tag); renderProfileResources();
+}
+
+async function planProfileState(resource, button, editor = null) {
   button.disabled = true; state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Читаю текущее состояние…"); renderProfileResources();
   try {
-    const proposal = await request(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/plans`, { method: "POST" });
+    const options = { method: "POST" };
+    if (editor) {
+      options.headers = { "Content-Type": "application/json" };
+      options.body = JSON.stringify({
+        base_manifest_digest: editor.manifest_digest,
+        overrides: editor.fields.map((field) => ({ path: field.path, value: field.draftValue.trim() === "" ? null : field.draftValue })),
+      });
+    }
+    const proposal = await request(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/plans`, options);
+    proposal.source_manifest_digest = resource.manifest_digest;
     state.profilePlans.set(resource.tag, proposal); state.profileMessages.set(resource.tag, `План ${proposal.id}`);
+    if (editor) state.profileEditors.delete(resource.tag);
   } catch (error) { state.profileMessages.set(resource.tag, error.message); }
   state.profileBusy.delete(resource.tag);
   renderProfileResources();

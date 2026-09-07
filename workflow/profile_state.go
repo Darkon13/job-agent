@@ -67,6 +67,10 @@ func (planner *ProfileStatePlanner) Plan(ctx context.Context, resourceTag string
 	if !exists {
 		return core.ProfileStateProposal{}, false, fmt.Errorf("profile state resource %q is not registered", resourceTag)
 	}
+	return planner.planResource(ctx, resource, observation)
+}
+
+func (planner *ProfileStatePlanner) planResource(ctx context.Context, resource core.ProfileStateResource, observation core.ProfileStateObservation) (core.ProfileStateProposal, bool, error) {
 	if observation.ProfileID != resource.ProfileID {
 		return core.ProfileStateProposal{}, false, errors.New("profile state observation belongs to another profile")
 	}
@@ -91,6 +95,31 @@ func (planner *ProfileStatePlanner) ReadAndPlan(ctx context.Context, resourceTag
 	if !exists {
 		return core.ProfileStateProposal{}, false, fmt.Errorf("profile state resource %q is not registered", resourceTag)
 	}
+	return planner.readAndPlanResource(ctx, resource, reader)
+}
+
+// ReadAndPlanWithOverrides creates an immutable one-shot proposal without
+// changing the registered resource that remains the persistent source of
+// truth. The derived resource retains exactly the same declared ownership.
+func (planner *ProfileStatePlanner) ReadAndPlanWithOverrides(ctx context.Context, resourceTag string, overrides []core.ProfileStateValueOverride, reader adapter.ProfileStateReader) (core.ProfileStateProposal, bool, error) {
+	if planner == nil {
+		return core.ProfileStateProposal{}, false, errors.New("profile state planner is nil")
+	}
+	resource, exists := planner.Resource(resourceTag)
+	if !exists {
+		return core.ProfileStateProposal{}, false, fmt.Errorf("profile state resource %q is not registered", resourceTag)
+	}
+	derived, err := resource.WithOverrides(overrides)
+	if err != nil {
+		return core.ProfileStateProposal{}, false, err
+	}
+	return planner.readAndPlanResource(ctx, derived, reader)
+}
+
+func (planner *ProfileStatePlanner) readAndPlanResource(ctx context.Context, resource core.ProfileStateResource, reader adapter.ProfileStateReader) (core.ProfileStateProposal, bool, error) {
+	if reader == nil {
+		return core.ProfileStateProposal{}, false, errors.New("profile state reader is nil")
+	}
 	paths, err := resource.DeclaredPaths()
 	if err != nil {
 		return core.ProfileStateProposal{}, false, err
@@ -99,7 +128,7 @@ func (planner *ProfileStatePlanner) ReadAndPlan(ctx context.Context, resourceTag
 	if err != nil {
 		return core.ProfileStateProposal{}, false, err
 	}
-	return planner.Plan(ctx, resource.Tag, observation)
+	return planner.planResource(ctx, resource, observation)
 }
 
 func cloneProfileStateResource(resource core.ProfileStateResource) core.ProfileStateResource {

@@ -196,7 +196,12 @@ sing-box final    -> Job Agent explicit fallback action
 - частично выполненный multi-resume plan безопасно продолжается с оставшихся
   полей; потерянный ответ POST сначала сверяется read-back;
 - dashboard даёт раздельные команды plan/apply и показывает только redacted
-  список операций.
+  список операций;
+- dashboard может загрузить разрешённое поле `about`, собрать one-shot override
+  и построить для него обычный immutable proposal. Override хранится только в
+  proposal и не переписывает декларативный resource; пустой текст означает
+  явное `null`/очистку. API принимает только уже объявленные редактируемые пути
+  и требует digest базового manifest, поэтому устаревшая форма не применяется;
 - `profile_state.apply` и `resume.touch` проходят через одну process-local
   mutation lane на `profile_id`: один профиль изменяется последовательно, а
   разные профили могут исполняться параллельно. Текущий Compose-контракт
@@ -208,9 +213,9 @@ sing-box final    -> Job Agent explicit fallback action
 
 Ссылки вида `{"processor":"about-backend"}` пока намеренно отвергаются как
 неразрешённые. Сначала config builder должен выполнить processor и передать в
-core итоговое значение. Редактирование desired value прямо в dashboard и
-остальные поля профиля в этом срезе отсутствуют; простое наличие resource в
-конфиге не вызывает side effect.
+core итоговое значение. В dashboard редактируется только уже объявленный
+`about`; остальные поля профиля в этом срезе отсутствуют. Простое наличие
+resource в конфиге не вызывает side effect.
 
 ## Порядок реализации
 
@@ -222,7 +227,7 @@ core итоговое значение. Редактирование desired val
 6. ✅ Подключить durable `profile_state.apply` task и явный API run.
 7. ✅ Объединить apply и touch в общую per-profile mutation lane; подключить к
    ней publish при появлении этого worker.
-8. Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
+8. ✅ Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
 9. Обобщить update на остальные profile/resume fields по живой HH schema.
 10. Добавить named actions, cron/event/API triggers.
 11. Реализовать employer rule sets, policy routing и explain evidence.

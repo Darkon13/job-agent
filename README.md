@@ -326,6 +326,12 @@ process-local lane по `profile_id`: операции одного профил
 разные профили продолжают работать параллельно. Текущий Compose запускает один
 backend; для нескольких mutating-реплик потребуется shared lease в хранилище.
 
+Dashboard позволяет открыть разрешённое поле `about`, подготовить одноразовый
+desired override и провести его через тот же plan/apply workflow. Форма не
+перезаписывает конфигурацию: исходный resource остаётся источником истины,
+override фиксируется только в immutable proposal и защищён digest базового
+manifest от применения устаревшего редактора.
+
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.mark_read` и
 `conversation.sync`. Handler передаёт transport-у task idempotency key,

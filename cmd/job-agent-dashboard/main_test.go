@@ -30,6 +30,11 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 	if response.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("missing content security policy")
 	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") {
+		t.Fatalf("dashboard script response: %d %s", response.Code, response.Body.String())
+	}
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/summary", nil))
