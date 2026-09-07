@@ -354,6 +354,12 @@ anti-bot keys; очевидного OAuth token key не обнаружено. �
 lock станет границей refresh, чтобы два конкурентных запроса не обновляли одну
 сессию одновременно.
 
+Следующий вертикальный срез — единая backend auth session, безопасная запись
+access/refresh token в JSON или dotenv, dashboard-клиент и вывод captcha/QR
+через Kitty graphics protocol либо Sixel. CLI syntax, разделение stdout/TTY и
+критерии готовности зафиксированы в
+[`next-auth-control-plane.md`](next-auth-control-plane.md).
+
 ## Security
 
 - identifier маскируется в событиях и логах;

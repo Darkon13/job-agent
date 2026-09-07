@@ -62,13 +62,15 @@ Go backend отправляет узкие операции (`application.submit
 - постановка `conversation.send` и `conversation.mark_read` в durable queue;
 - liveness dashboard и proxy к backend health/readiness.
 
-UI уже вызывает настоящие backend endpoints, однако живой HH conversation transport пока возвращает `unsupported`. Поэтому задача из UI сохранится и будет видна в очереди, но реальная отправка/mark-read в HH появится после реализации transport.
+UI вызывает настоящие backend endpoints. HH browser conversation transport уже
+поддерживает sync, отправку и mark-read; мутации дополнительно защищены
+profile-policy `conversations.allow_send` и `allow_mark_read`.
 
 ## Следующие срезы
 
-1. API authentication/session для доступа не только из доверенного туннеля.
+1. Единый auth control plane для CLI/dashboard, credential sinks и Kitty/Sixel
+   challenges — [`next-auth-control-plane.md`](next-auth-control-plane.md).
 2. Фильтры и пагинация dashboard, подробности campaign/application и task retry/cancel.
-3. Реальный HH conversation transport и sync входящих сообщений.
-4. Priority в persistent task schema и fairness между профилями.
-5. Узкий browser RPC, один Chromium, контексты профилей и bounded page pool.
-6. SSE для обновлений вместо периодического polling.
+3. Priority в persistent task schema и fairness между профилями.
+4. Узкий browser RPC, один Chromium, контексты профилей и bounded page pool.
+5. SSE для обновлений вместо периодического polling и для auth challenges.
