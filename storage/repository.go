@@ -14,19 +14,20 @@ var ErrRevisionConflict = errors.New("repository revision conflict")
 // dashboards. It deliberately contains counts only and never task payloads,
 // message bodies, profile credentials or external identifiers.
 type RuntimeStats struct {
-	SearchRuns           int `json:"search_runs"`
-	Vacancies            int `json:"vacancies"`
-	Discoveries          int `json:"discoveries"`
-	Applications         int `json:"applications"`
-	ApplicationCampaigns int `json:"application_campaigns"`
-	CampaignApplications int `json:"campaign_applications"`
-	Tasks                int `json:"tasks"`
-	TestDefinitions      int `json:"test_definitions"`
-	ReviewSessions       int `json:"review_sessions"`
-	ReviewSelections     int `json:"review_selections"`
-	Conversations        int `json:"conversations"`
-	Messages             int `json:"messages"`
-	FollowUps            int `json:"follow_ups"`
+	SearchRuns            int `json:"search_runs"`
+	Vacancies             int `json:"vacancies"`
+	Discoveries           int `json:"discoveries"`
+	Applications          int `json:"applications"`
+	ApplicationCampaigns  int `json:"application_campaigns"`
+	CampaignApplications  int `json:"campaign_applications"`
+	Tasks                 int `json:"tasks"`
+	TestDefinitions       int `json:"test_definitions"`
+	ReviewSessions        int `json:"review_sessions"`
+	ReviewSelections      int `json:"review_selections"`
+	Conversations         int `json:"conversations"`
+	Messages              int `json:"messages"`
+	FollowUps             int `json:"follow_ups"`
+	ProfileStateProposals int `json:"profile_state_proposals"`
 }
 
 type TaskCount struct {
@@ -74,6 +75,18 @@ type ApplicationBudgetRepository interface {
 	ReserveApplicationBudget(ctx context.Context, params core.ReserveApplicationBudgetParams) (core.ApplicationBudgetReservation, error)
 	CommitApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
 	ReleaseApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
+}
+
+type ProfileStateProposalFilter struct {
+	ResourceTag string
+	ProfileID   core.ProfileID
+	Status      core.ProfileStateProposalStatus
+}
+
+type ProfileStateProposalRepository interface {
+	CreateProfileStateProposal(ctx context.Context, candidate core.ProfileStateProposal) (stored core.ProfileStateProposal, created bool, err error)
+	ProfileStateProposal(ctx context.Context, id core.ProfileStateProposalID) (core.ProfileStateProposal, error)
+	ListProfileStateProposals(ctx context.Context, filter ProfileStateProposalFilter) ([]core.ProfileStateProposal, error)
 }
 
 type TestDefinitionFilter struct {

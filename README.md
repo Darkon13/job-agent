@@ -115,10 +115,11 @@ applications и их durable tasks без дублирующих изменяе�
 In-memory реализации остаются для быстрых unit-тестов. Путь задаётся через
 `database.path`.
 
-Миграции не выполняются при старте основного сервиса. Отдельный entrypoint на
-`golang-migrate` применяет embedded versioned SQL; после этого `job-agent`
-проверяет точную schema version и отказывается работать с отсутствующей,
-устаревшей или dirty-схемой:
+При обычном CLI-запуске миграции не выполняются автоматически. Отдельный
+entrypoint на `golang-migrate` применяет embedded versioned SQL; после этого
+`job-agent` проверяет точную schema version и отказывается работать с
+отсутствующей, устаревшей или dirty-схемой. Compose явно запускает backend с
+`-migrate-up`, поэтому контейнер сначала применяет ожидающие миграции:
 
 ```sh
 go run ./cmd/job-agent-migrate -config ./config/example/config.json up
@@ -135,6 +136,43 @@ go run ./cmd/job-agent ./config/example/config.json
 Базы раннего прототипа с `PRAGMA user_version` 1–3 проверяются по ожидаемым
 таблицам/колонкам и один раз переводятся на `schema_migrations`; неизвестная или
 несовместимая legacy-схема автоматически не принимается.
+
+Декларативные `resources` типа `profile_state` описывают желаемые поля профиля
+и резюме с ownership `declared_fields`: отсутствующее поле не управляется,
+`null` означает явную очистку, а массив заменяется целиком. Core строит
+канонический JSON, SHA-256 digests и semantic diff только по объявленным
+путям. Proposal сохраняется в SQLite без старых/новых значений в публичном
+JSON; точный desired snapshot остаётся внутренним, чтобы изменение конфига не
+меняло уже построенный план. Доверенный browser reader умеет читать поле
+`about` по внешнему ID резюме из уже привязанной HH-сессии. Он выполняет только
+`GET`, а неподдерживаемый путь отклоняет целиком до запроса. Apply пока не
+подключён: наличие resource при старте ничего само по себе не изменяет.
+
+```json
+"resources": [
+  {
+    "tag": "primary-backend",
+    "type": "profile_state",
+    "profile": "primary",
+    "ownership": "declared_fields",
+    "state": {
+      "resumes": {
+        "replace-with-hh-resume-id": {"about": "Итоговый текст раздела «О себе»"}
+      }
+    }
+  }
+]
+```
+
+Read/plan API не принимает observation от клиента:
+
+- `GET /api/v1/profile-state/resources` возвращает только metadata, объявленные
+  JSON Pointer paths и доступность доверенного reader;
+- `POST /api/v1/profile-state/resources/{tag}/plans` сам читает актуальный HH
+  state и сохраняет immutable proposal;
+- `GET /api/v1/profile-state/proposals` и
+  `GET /api/v1/profile-state/proposals/{id}` возвращают redacted plans без
+  текущего и желаемого текста.
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;

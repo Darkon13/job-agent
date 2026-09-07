@@ -2,12 +2,14 @@ package hh
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ type BrowserReadClient struct {
 }
 
 var _ adapter.VacancyReader = (*BrowserReadClient)(nil)
+var _ adapter.ProfileStateReader = (*BrowserReadClient)(nil)
 
 func NewBrowserReadClient(profileID core.ProfileID, stateFile, userAgent string, client *http.Client) (*BrowserReadClient, error) {
 	if profileID == "" {
@@ -187,6 +190,50 @@ func (client *BrowserReadClient) ReadVacancy(ctx context.Context, profileID core
 	}, nil
 }
 
+func (client *BrowserReadClient) ReadProfileState(ctx context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+	const operation = "profile_state.read.browser"
+	if request.ProfileID == "" || request.ProfileID != client.profileID {
+		return core.ProfileStateObservation{}, errors.New("HH browser profile state reader profile does not match")
+	}
+	resumeIDs := make([]string, 0, len(request.Paths))
+	seen := make(map[string]struct{}, len(request.Paths))
+	for _, pointer := range request.Paths {
+		resumeID, supported := hhAboutResumeID(pointer)
+		if !supported {
+			return core.ProfileStateObservation{}, operationError(core.ErrorUnsupported, operation, "HH browser reader does not support one or more declared profile state paths", nil)
+		}
+		if _, exists := seen[resumeID]; !exists {
+			seen[resumeID] = struct{}{}
+			resumeIDs = append(resumeIDs, resumeID)
+		}
+	}
+	if len(resumeIDs) == 0 {
+		return core.ProfileStateObservation{}, errors.New("HH browser profile state reader requires declared paths")
+	}
+	sort.Strings(resumeIDs)
+	resumes := make(map[string]any, len(resumeIDs))
+	for _, resumeID := range resumeIDs {
+		endpoint := strings.TrimRight(client.webBaseURL, "/") + "/resume/edit/" + url.PathEscape(resumeID) + "/about"
+		document, finalURL, err := client.getHTML(ctx, endpoint, operation)
+		if err != nil {
+			return core.ProfileStateObservation{}, err
+		}
+		if isLoginURL(finalURL) {
+			return core.ProfileStateObservation{}, operationError(core.ErrorUnauthorized, operation, "HH browser session requires authentication", nil)
+		}
+		aboutNode := findHTMLByQA(document, "resume-editor-about")
+		if aboutNode == nil || aboutNode.Data != "textarea" {
+			return core.ProfileStateObservation{}, operationError(core.ErrorPermanentFailure, operation, "HH resume edit page has no about field", nil)
+		}
+		resumes[resumeID] = map[string]any{"about": htmlRawText(aboutNode)}
+	}
+	state, err := json.Marshal(map[string]any{"resumes": resumes})
+	if err != nil {
+		return core.ProfileStateObservation{}, fmt.Errorf("encode HH profile state observation: %w", err)
+	}
+	return core.NewProfileStateObservation(request.ProfileID, state, "", time.Now().UTC())
+}
+
 func (client *BrowserReadClient) getHTML(ctx context.Context, endpoint, operation string) (*html.Node, *url.URL, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -317,4 +364,53 @@ func htmlText(node *html.Node) string {
 		return true
 	})
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+func htmlRawText(node *html.Node) string {
+	if node == nil {
+		return ""
+	}
+	var value strings.Builder
+	walkHTML(node, func(current *html.Node) bool {
+		if current.Type == html.TextNode {
+			value.WriteString(current.Data)
+		}
+		return true
+	})
+	return value.String()
+}
+
+func hhAboutResumeID(pointer string) (string, bool) {
+	if !strings.HasPrefix(pointer, "/") {
+		return "", false
+	}
+	segments := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	if len(segments) != 3 || segments[0] != "resumes" || segments[2] != "about" {
+		return "", false
+	}
+	resumeID, ok := unescapeJSONPointerSegment(segments[1])
+	return resumeID, ok && strings.TrimSpace(resumeID) != ""
+}
+
+func unescapeJSONPointerSegment(value string) (string, bool) {
+	var result strings.Builder
+	for index := 0; index < len(value); index++ {
+		if value[index] != '~' {
+			result.WriteByte(value[index])
+			continue
+		}
+		if index+1 >= len(value) {
+			return "", false
+		}
+		index++
+		switch value[index] {
+		case '0':
+			result.WriteByte('~')
+		case '1':
+			result.WriteByte('/')
+		default:
+			return "", false
+		}
+	}
+	return result.String(), true
 }

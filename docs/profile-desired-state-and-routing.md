@@ -170,14 +170,41 @@ sing-box final    -> Job Agent explicit fallback action
 - Неизвестное обязательное поле, новый enum, captcha или schema drift переводят задачу в review.
 - External processor не получает shell, credentials или произвольный доступ к filesystem по умолчанию.
 
+## Реализованная граница
+
+Внутренний read/plan-фундамент уже реализован:
+
+- конфиг принимает `resources` типа `profile_state` и проверяет ссылки на профиль;
+- state канонизируется, ограничивается по размеру и вложенности и использует ownership `declared_fields`;
+- semantic diff возвращает только JSON Pointer, операцию и digests, не публикуя значения;
+- immutable proposal хранит точный desired snapshot внутри SQLite, но исключает его из публичного JSON;
+- одинаковые manifest + observed state + remote revision дедуплицируются после restart;
+- SQLite migration 11 и memory repository реализуют одинаковый repository port;
+- planner принимает только observation от доверенного adapter reader;
+- HH browser reader делает только `GET` и сейчас полностью поддерживает путь
+  `/resumes/{external-id}/about`; неподдерживаемый набор полей отвергается без
+  частичного observation;
+- read/plan API публикует metadata ресурсов и redacted proposals, а при
+  создании плана сам вызывает reader. Прислать фактический state в теле запроса
+  нельзя.
+
+В текущем формате ключ `resumes` является внешним ID/hash резюме. Именованные
+локальные aliases появятся вместе с отдельным каталогом resume targets.
+
+Ссылки вида `{"processor":"about-backend"}` пока намеренно отвергаются как
+неразрешённые. Сначала config builder должен выполнить processor и передать в
+core итоговое значение. Dashboard-форма и любые внешние update в этом срезе
+отсутствуют; простое наличие resource в конфиге не вызывает side effect.
+
 ## Порядок реализации
 
-1. Ввести registry/chain детерминированных text processors и provenance.
-2. Добавить versioned `ProfileStateResource`, proposal и semantic diff без внешнего apply.
-3. Сделать read/plan API и форму «О себе» в dashboard.
-4. Реализовать HH adapter для read schema, update about и обязательного read-back.
-5. Подключить `profile.apply` task, per-profile mutation lane и manual run.
-6. Обобщить update на остальные profile/resume fields по живой HH schema.
-7. Добавить named actions, cron/event/API triggers.
-8. Реализовать employer rule sets, policy routing и explain evidence.
-9. Подключить external/model processors с limits и fallback.
+1. ✅ Ввести registry/chain детерминированных text processors и provenance.
+2. ✅ Добавить versioned `ProfileStateResource`, proposal и semantic diff без внешнего apply.
+3. ✅ Сделать доверенный HH read поля `about` и read/plan API.
+4. Добавить форму «О себе» в dashboard поверх read/plan API.
+5. Реализовать HH adapter для update about и обязательного read-back.
+6. Подключить `profile.apply` task, per-profile mutation lane и manual run.
+7. Обобщить update на остальные profile/resume fields по живой HH schema.
+8. Добавить named actions, cron/event/API triggers.
+9. Реализовать employer rule sets, policy routing и explain evidence.
+10. Подключить external/model processors с limits и fallback.

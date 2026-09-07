@@ -12,16 +12,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Darkon13/job-agent/core"
 	"github.com/robfig/cron/v3"
 )
 
 type Config struct {
-	Database DatabaseConfig  `json:"database"`
-	Adapters []AdapterConfig `json:"adapters"`
-	Profiles []Profile       `json:"profiles"`
-	Searches []Search        `json:"searches"`
-	Jobs     []Job           `json:"jobs,omitempty"`
-	Server   ServerConfig    `json:"server,omitempty"`
+	Database  DatabaseConfig               `json:"database"`
+	Adapters  []AdapterConfig              `json:"adapters"`
+	Profiles  []Profile                    `json:"profiles"`
+	Searches  []Search                     `json:"searches"`
+	Resources []ProfileStateResourceConfig `json:"resources,omitempty"`
+	Jobs      []Job                        `json:"jobs,omitempty"`
+	Server    ServerConfig                 `json:"server,omitempty"`
+}
+
+const ResourceTypeProfileState = "profile_state"
+
+type ProfileStateResourceConfig struct {
+	Tag       string          `json:"tag"`
+	Type      string          `json:"type"`
+	Profile   string          `json:"profile"`
+	Ownership string          `json:"ownership"`
+	State     json.RawMessage `json:"state"`
 }
 
 const (
@@ -354,6 +366,9 @@ func (c Config) Validate() error {
 		}
 		profiles[profile.Tag] = struct{}{}
 	}
+	if _, err := c.BuildProfileStateResources(); err != nil {
+		return err
+	}
 
 	searches := make(map[string]Search, len(c.Searches))
 	for _, search := range c.Searches {
@@ -432,6 +447,38 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) BuildProfileStateResources() ([]core.ProfileStateResource, error) {
+	profiles := make(map[string]struct{}, len(c.Profiles))
+	for _, profile := range c.Profiles {
+		profiles[profile.Tag] = struct{}{}
+	}
+	tags := make(map[string]struct{}, len(c.Resources))
+	resources := make([]core.ProfileStateResource, 0, len(c.Resources))
+	for _, configured := range c.Resources {
+		if strings.TrimSpace(configured.Tag) == "" {
+			return nil, errors.New("every resource requires tag")
+		}
+		if _, exists := tags[configured.Tag]; exists {
+			return nil, fmt.Errorf("duplicate resource tag %q", configured.Tag)
+		}
+		tags[configured.Tag] = struct{}{}
+		if configured.Type != ResourceTypeProfileState {
+			return nil, fmt.Errorf("resource %q has unsupported type %q", configured.Tag, configured.Type)
+		}
+		if _, exists := profiles[configured.Profile]; !exists {
+			return nil, fmt.Errorf("resource %q references unknown profile %q", configured.Tag, configured.Profile)
+		}
+		resource, err := core.NewProfileStateResource(
+			configured.Tag, core.ProfileID(configured.Profile), configured.Ownership, configured.State,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resource %q: %w", configured.Tag, err)
+		}
+		resources = append(resources, resource)
+	}
+	return resources, nil
 }
 
 func validateApplicationCampaignAction(job Job, profiles map[string]struct{}, searches map[string]Search) error {

@@ -92,6 +92,7 @@ var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 var _ adapter.BrowserSessionBinder = (*Adapter)(nil)
 var _ adapter.BrowserApplicationSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
+var _ adapter.ProfileStateReader = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
@@ -332,6 +333,16 @@ func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key
 		return browserClient.ReadVacancy(ctx, profileID, key)
 	}
 	return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read", "HH profile has no bound read session", nil)
+}
+
+func (a *Adapter) ReadProfileState(ctx context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+	a.mu.RLock()
+	browserClient := a.browserClients[request.ProfileID]
+	a.mu.RUnlock()
+	if browserClient != nil {
+		return browserClient.ReadProfileState(ctx, request)
+	}
+	return core.ProfileStateObservation{}, operationError(core.ErrorUnauthorized, "profile_state.read", "HH profile has no bound browser read session", nil)
 }
 
 func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) ([]adapter.SuitableResume, error) {

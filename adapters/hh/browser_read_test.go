@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -124,5 +125,48 @@ func TestBrowserReadNormalizesRejectedSession(t *testing.T) {
 	_, err := client.SearchGlobal(context.Background(), SearchQuery{Source: SearchSourceGlobal}, "")
 	if !core.ErrorIsCategory(err, core.ErrorUnauthorized) {
 		t.Fatalf("error = %v, want unauthorized", err)
+	}
+}
+
+func TestBrowserReadLoadsResumeAboutAsProfileStateWithoutMutation(t *testing.T) {
+	want := "  Первая строка\nВторая & третья  "
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/resume/edit/resume-42/about" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "session=ready" {
+			t.Errorf("unexpected browser auth headers: Authorization=%q Cookie=%q", request.Header.Get("Authorization"), request.Header.Get("Cookie"))
+		}
+		_, _ = response.Write([]byte(`<html><body><textarea data-qa="resume-editor-about">  Первая строка
+Вторая &amp; третья  </textarea></body></html>`))
+	}))
+
+	observation, err := client.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: "primary", Paths: []string{"/resumes/resume-42/about"},
+	})
+	if err != nil {
+		t.Fatalf("read profile state: %v", err)
+	}
+	var state struct {
+		Resumes map[string]struct {
+			About string `json:"about"`
+		} `json:"resumes"`
+	}
+	if err := json.Unmarshal(observation.State, &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if got := state.Resumes["resume-42"].About; got != want {
+		t.Fatalf("about = %q, want %q", got, want)
+	}
+}
+
+func TestBrowserReadRejectsUnsupportedProfileStateBeforeRequest(t *testing.T) {
+	requests := 0
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	_, err := client.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: "primary", Paths: []string{"/profile/first_name"},
+	})
+	if !core.ErrorIsCategory(err, core.ErrorUnsupported) || requests != 0 {
+		t.Fatalf("error=%v requests=%d, want unsupported without request", err, requests)
 	}
 }

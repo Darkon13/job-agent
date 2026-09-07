@@ -1,0 +1,119 @@
+package core
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestProfileStateProposalUsesDeclaredFieldsAndRedactedDiff(t *testing.T) {
+	now := time.Date(2026, 9, 7, 10, 0, 0, 0, time.UTC)
+	resource, err := NewProfileStateResource("primary-backend", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{
+		"resumes":{"backend":{"about":"Новый текст","salary":{"amount":250000},"skills":["Go","PostgreSQL"]}},
+		"profile":{"first_name":"Иван","middle_name":null}
+	}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	observation, err := NewProfileStateObservation("primary", json.RawMessage(`{
+		"profile":{"first_name":"Иван","middle_name":"Иванович","last_name":"Скрытое поле"},
+		"resumes":{"backend":{"about":"Старый текст","salary":{"amount":200000,"currency":"RUR"},"skills":["Go"]}}
+	}`), "revision-42", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	proposal, err := NewProfileStateProposal("proposal-1", resource, observation, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	wantPaths := []string{"/profile/middle_name", "/resumes/backend/about", "/resumes/backend/salary/amount", "/resumes/backend/skills"}
+	if proposal.Status != ProfileStateProposalPlanned || len(proposal.Changes) != len(wantPaths) {
+		t.Fatalf("proposal status/changes: %#v", proposal)
+	}
+	for index, path := range wantPaths {
+		if proposal.Changes[index].Path != path || proposal.Changes[index].BeforeDigest == "" || proposal.Changes[index].AfterDigest == "" {
+			t.Fatalf("change %d = %#v, want path %s with digests", index, proposal.Changes[index], path)
+		}
+	}
+	if proposal.Changes[0].Operation != "clear" {
+		t.Fatalf("middle name change = %#v, want clear", proposal.Changes[0])
+	}
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		t.Fatalf("marshal proposal: %v", err)
+	}
+	for _, secret := range []string{"Новый текст", "Старый текст", "Иванович", "250000"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("public proposal JSON leaked value %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestProfileStateProposalIsStableAndDetectsNoChanges(t *testing.T) {
+	now := time.Date(2026, 9, 7, 10, 0, 0, 0, time.UTC)
+	first, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"profile":{"first_name":"Иван"}}`))
+	if err != nil {
+		t.Fatalf("new first resource: %v", err)
+	}
+	second, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{ "profile": { "first_name": "Иван" } }`))
+	if err != nil {
+		t.Fatalf("new second resource: %v", err)
+	}
+	if string(first.State) != string(second.State) || first.ManifestDigest != second.ManifestDigest {
+		t.Fatalf("resource canonicalization differs: %#v %#v", first, second)
+	}
+	paths, err := first.DeclaredPaths()
+	if err != nil {
+		t.Fatalf("declared paths: %v", err)
+	}
+	if got, want := strings.Join(paths, ","), "/profile/first_name"; got != want {
+		t.Fatalf("declared paths: got %q want %q", got, want)
+	}
+	observation, err := NewProfileStateObservation("primary", first.State, "", now)
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	proposal, err := NewProfileStateProposal("proposal", first, observation, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	if proposal.Status != ProfileStateProposalNoChanges || len(proposal.Changes) != 0 {
+		t.Fatalf("proposal = %#v, want no changes", proposal)
+	}
+}
+
+func TestProfileStateResourceRejectsInvalidShapeAndEmptyOwnership(t *testing.T) {
+	for _, state := range []string{
+		`{}`,
+		`{"unknown":{"value":1}}`,
+		`{"profile":[]}`,
+		`{"resumes":{"backend":"text"}}`,
+		`{"profile":{"nested":{}}}`,
+		`{"resumes":{"backend":{"about":{"processor":"about-backend"}}}}`,
+		`{"resumes":{"backend":{"skills":[{"processor":"skills"}]}}}`,
+	} {
+		if _, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(state)); err == nil {
+			t.Fatalf("expected state to fail: %s", state)
+		}
+	}
+}
+
+func TestProfileStateChangeEscapesJSONPointer(t *testing.T) {
+	now := time.Now().UTC()
+	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"profile":{"a/b~c":true}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	observation, err := NewProfileStateObservation("primary", json.RawMessage(`{"profile":{}}`), "", now)
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	proposal, err := NewProfileStateProposal("proposal", resource, observation, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	if len(proposal.Changes) != 1 || proposal.Changes[0].Path != "/profile/a~1b~0c" || proposal.Changes[0].BeforePresent {
+		t.Fatalf("changes = %#v", proposal.Changes)
+	}
+}

@@ -13,14 +13,15 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository             = (*Repository)(nil)
-	_ storage.SearchRunRepository           = (*Repository)(nil)
-	_ storage.ApplicationCampaignRepository = (*Repository)(nil)
-	_ storage.ApplicationRepository         = (*Repository)(nil)
-	_ storage.ApplicationBudgetRepository   = (*Repository)(nil)
-	_ storage.TestCatalogRepository         = (*Repository)(nil)
-	_ storage.ReviewRepository              = (*Repository)(nil)
-	_ storage.ConversationRepository        = (*Repository)(nil)
+	_ storage.VacancyRepository              = (*Repository)(nil)
+	_ storage.SearchRunRepository            = (*Repository)(nil)
+	_ storage.ApplicationCampaignRepository  = (*Repository)(nil)
+	_ storage.ApplicationRepository          = (*Repository)(nil)
+	_ storage.ApplicationBudgetRepository    = (*Repository)(nil)
+	_ storage.TestCatalogRepository          = (*Repository)(nil)
+	_ storage.ReviewRepository               = (*Repository)(nil)
+	_ storage.ConversationRepository         = (*Repository)(nil)
+	_ storage.ProfileStateProposalRepository = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -36,43 +37,47 @@ type conversationExternalKey struct {
 }
 
 type Repository struct {
-	mu                   sync.RWMutex
-	vacancies            map[core.VacancyKey]core.Vacancy
-	searchRuns           map[core.SearchID]core.SearchRun
-	applicationCampaigns map[core.ApplicationCampaignID]core.ApplicationCampaign
-	campaignApplications map[campaignApplicationKey]core.CampaignApplication
-	discoveries          map[discoveryKey]core.VacancyDiscovery
-	applications         map[core.ApplicationKey]core.Application
-	applicationBudgets   map[core.ApplicationID]core.ApplicationBudgetReservation
-	tests                map[core.TestDefinitionID]core.TestDefinition
-	reviews              map[core.ReviewSessionID]core.ReviewSession
-	prompts              map[core.ReviewPromptID]core.ReviewPrompt
-	selections           map[core.ReviewSessionID][]core.ReviewSelection
-	conversations        map[core.ConversationID]core.Conversation
-	conversationExternal map[conversationExternalKey]core.ConversationID
-	messages             map[core.ConversationID]map[core.MessageID]core.ConversationMessage
-	followUps            map[core.FollowUpID]core.FollowUp
-	followUpKeys         map[string]core.FollowUpID
+	mu                    sync.RWMutex
+	vacancies             map[core.VacancyKey]core.Vacancy
+	searchRuns            map[core.SearchID]core.SearchRun
+	applicationCampaigns  map[core.ApplicationCampaignID]core.ApplicationCampaign
+	campaignApplications  map[campaignApplicationKey]core.CampaignApplication
+	discoveries           map[discoveryKey]core.VacancyDiscovery
+	applications          map[core.ApplicationKey]core.Application
+	applicationBudgets    map[core.ApplicationID]core.ApplicationBudgetReservation
+	tests                 map[core.TestDefinitionID]core.TestDefinition
+	reviews               map[core.ReviewSessionID]core.ReviewSession
+	prompts               map[core.ReviewPromptID]core.ReviewPrompt
+	selections            map[core.ReviewSessionID][]core.ReviewSelection
+	conversations         map[core.ConversationID]core.Conversation
+	conversationExternal  map[conversationExternalKey]core.ConversationID
+	messages              map[core.ConversationID]map[core.MessageID]core.ConversationMessage
+	followUps             map[core.FollowUpID]core.FollowUp
+	followUpKeys          map[string]core.FollowUpID
+	profileStateProposals map[core.ProfileStateProposalID]core.ProfileStateProposal
+	profileStateKeys      map[string]core.ProfileStateProposalID
 }
 
 func NewRepository() *Repository {
 	return &Repository{
-		vacancies:            make(map[core.VacancyKey]core.Vacancy),
-		searchRuns:           make(map[core.SearchID]core.SearchRun),
-		applicationCampaigns: make(map[core.ApplicationCampaignID]core.ApplicationCampaign),
-		campaignApplications: make(map[campaignApplicationKey]core.CampaignApplication),
-		discoveries:          make(map[discoveryKey]core.VacancyDiscovery),
-		applications:         make(map[core.ApplicationKey]core.Application),
-		applicationBudgets:   make(map[core.ApplicationID]core.ApplicationBudgetReservation),
-		tests:                make(map[core.TestDefinitionID]core.TestDefinition),
-		reviews:              make(map[core.ReviewSessionID]core.ReviewSession),
-		prompts:              make(map[core.ReviewPromptID]core.ReviewPrompt),
-		selections:           make(map[core.ReviewSessionID][]core.ReviewSelection),
-		conversations:        make(map[core.ConversationID]core.Conversation),
-		conversationExternal: make(map[conversationExternalKey]core.ConversationID),
-		messages:             make(map[core.ConversationID]map[core.MessageID]core.ConversationMessage),
-		followUps:            make(map[core.FollowUpID]core.FollowUp),
-		followUpKeys:         make(map[string]core.FollowUpID),
+		vacancies:             make(map[core.VacancyKey]core.Vacancy),
+		searchRuns:            make(map[core.SearchID]core.SearchRun),
+		applicationCampaigns:  make(map[core.ApplicationCampaignID]core.ApplicationCampaign),
+		campaignApplications:  make(map[campaignApplicationKey]core.CampaignApplication),
+		discoveries:           make(map[discoveryKey]core.VacancyDiscovery),
+		applications:          make(map[core.ApplicationKey]core.Application),
+		applicationBudgets:    make(map[core.ApplicationID]core.ApplicationBudgetReservation),
+		tests:                 make(map[core.TestDefinitionID]core.TestDefinition),
+		reviews:               make(map[core.ReviewSessionID]core.ReviewSession),
+		prompts:               make(map[core.ReviewPromptID]core.ReviewPrompt),
+		selections:            make(map[core.ReviewSessionID][]core.ReviewSelection),
+		conversations:         make(map[core.ConversationID]core.Conversation),
+		conversationExternal:  make(map[conversationExternalKey]core.ConversationID),
+		messages:              make(map[core.ConversationID]map[core.MessageID]core.ConversationMessage),
+		followUps:             make(map[core.FollowUpID]core.FollowUp),
+		followUpKeys:          make(map[string]core.FollowUpID),
+		profileStateProposals: make(map[core.ProfileStateProposalID]core.ProfileStateProposal),
+		profileStateKeys:      make(map[string]core.ProfileStateProposalID),
 	}
 }
 

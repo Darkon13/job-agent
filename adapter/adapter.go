@@ -64,6 +64,19 @@ type BrowserSessionBinder interface {
 	BindBrowserSession(profileID core.ProfileID, stateFile string) (VacancyReader, error)
 }
 
+// ProfileStateReadRequest contains only declared JSON Pointer paths. Desired
+// values deliberately stay outside the adapter read boundary.
+type ProfileStateReadRequest struct {
+	ProfileID core.ProfileID
+	Paths     []string
+}
+
+// ProfileStateReader returns current platform state for all requested paths or
+// fails the complete observation. Partial observations must not be planned.
+type ProfileStateReader interface {
+	ReadProfileState(ctx context.Context, request ProfileStateReadRequest) (core.ProfileStateObservation, error)
+}
+
 // BrowserApplicationOptions contains the explicit permissions granted to a
 // browser-backed application transport. Binding a browser session alone must
 // never imply permission to change account visibility or submit applications.

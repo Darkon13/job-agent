@@ -98,6 +98,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
 	}
+	profileStateResources, err := cfg.BuildProfileStateResources()
+	if err != nil {
+		log.Fatalf("build profile state resources: %v", err)
+	}
+	profileStatePlanner, err := workflow.NewProfileStatePlanner(
+		profileStateResources, store, workflow.SystemClock{}, workflow.RandomIDGenerator{},
+	)
+	if err != nil {
+		log.Fatalf("create profile state planner: %v", err)
+	}
+	profileStateReaders := make(map[core.ProfileID]adapter.ProfileStateReader)
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
@@ -115,7 +126,7 @@ func main() {
 		instance := instances[profile.Adapter]
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
 		browserApplicationsReady := false
-		if !apiReady && profile.StateFile != "" {
+		if profile.StateFile != "" {
 			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
 				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
 				if err != nil {
@@ -123,9 +134,12 @@ func main() {
 				}
 				runtime.BrowserReader = reader
 				profiles[profileID] = runtime
-				log.Printf("profile %q uses browser-backed vacancy access", profile.Tag)
+				log.Printf("profile %q has a browser-backed read session", profile.Tag)
+				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
+					profileStateReaders[profileID] = profileStateReader
+				}
 			}
-			if profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
+			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
 				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
 					transport, err := binder.BindBrowserApplicationSession(profileID, profile.StateFile, adapter.BrowserApplicationOptions{
 						AllowVisibilityChange: profile.Applications.AllowVisibilityChange,
@@ -184,6 +198,10 @@ func main() {
 				}
 			}
 		}
+	}
+	profileStateAPI, err := httpapi.NewProfileStateAPI(profileStatePlanner, store, profileStateReaders)
+	if err != nil {
+		log.Fatalf("create profile state API: %v", err)
 	}
 	conversationHandlers, err := taskworker.NewConversationHandlers(
 		store, conversationWorkflow, conversationTransports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
@@ -258,7 +276,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, runtimeAPI.Handler(conversationAPI.Handler()), conversationWorkflow, scheduler, workers); err != nil {
+	if err := serve(ctx, cfg, runtimeAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler())), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
 }

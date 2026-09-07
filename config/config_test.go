@@ -148,6 +148,49 @@ func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 	}
 }
 
+func TestProfileStateResourcesBuildCanonicalDesiredState(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Resume: "backend", Enabled: true}},
+		Resources: []ProfileStateResourceConfig{{
+			Tag: "primary-backend", Type: ResourceTypeProfileState, Profile: "primary",
+			Ownership: "declared_fields",
+			State:     json.RawMessage(`{ "resumes": { "backend": { "about": "Go developer" } } }`),
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid profile state resource: %v", err)
+	}
+	resources, err := config.BuildProfileStateResources()
+	if err != nil {
+		t.Fatalf("build profile state resources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Tag != "primary-backend" || resources[0].ManifestDigest == "" || string(resources[0].State) != `{"resumes":{"backend":{"about":"Go developer"}}}` {
+		t.Fatalf("resources = %#v", resources)
+	}
+}
+
+func TestProfileStateResourcesRejectUnknownReferencesAndDuplicates(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Resources: []ProfileStateResourceConfig{{
+			Tag: "state", Type: ResourceTypeProfileState, Profile: "missing", Ownership: "declared_fields",
+			State: json.RawMessage(`{"profile":{"first_name":"Иван"}}`),
+		}},
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown profile reference to fail")
+	}
+	config.Resources[0].Profile = "primary"
+	config.Resources = append(config.Resources, config.Resources[0])
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected duplicate resource tag to fail")
+	}
+}
+
 func TestServerDefaultsToLoopbackAndRejectsPublicBind(t *testing.T) {
 	config := Config{Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"}}
 	if err := config.Validate(); err != nil {

@@ -9,6 +9,7 @@ import (
 type Platform string
 type AdapterInstanceID string
 type ProfileID string
+type ProfileStateProposalID string
 type SearchID string
 type ApplicationID string
 type ApplicationCampaignID string

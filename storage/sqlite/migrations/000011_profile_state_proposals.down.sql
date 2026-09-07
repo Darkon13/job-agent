@@ -1,0 +1,3 @@
+DROP INDEX profile_state_proposals_profile_idx;
+DROP INDEX profile_state_proposals_resource_idx;
+DROP TABLE profile_state_proposals;
