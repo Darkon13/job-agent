@@ -70,6 +70,10 @@ function renderProfileResources() {
       const editButton = text("button", editor ? "Редактор открыт" : "Изменить desired", "secondary"); editButton.type = "button"; editButton.disabled = !resource.readable || Boolean(editor) || state.profileBusy.has(resource.tag);
       editButton.addEventListener("click", () => loadProfileEditor(resource)); actions.append(editButton);
     }
+    if (resource.reconcilable) {
+      const reconcileButton = text("button", "Сверить и применить", "secondary"); reconcileButton.type = "button"; reconcileButton.disabled = state.profileBusy.has(resource.tag);
+      reconcileButton.addEventListener("click", () => reconcileProfileState(resource)); actions.append(reconcileButton);
+    }
     if (plan?.status === "planned") {
       const applyButton = text("button", "Применить", "secondary"); applyButton.type = "button"; applyButton.disabled = !resource.writable || state.profileBusy.has(resource.tag);
       applyButton.addEventListener("click", () => applyProfileState(resource, plan, applyButton)); actions.append(applyButton);
@@ -138,6 +142,14 @@ async function applyProfileState(resource, proposal, button) {
   } catch (error) { state.profileMessages.set(resource.tag, error.message); }
   state.profileBusy.delete(resource.tag);
   renderProfileResources();
+}
+async function reconcileProfileState(resource) {
+  state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Ставлю reconcile в очередь…"); renderProfileResources();
+  try {
+    const task = await enqueue(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/reconcile`);
+    state.profileMessages.set(resource.tag, `Reconcile ${task.id}: ${task.status}`); await refreshSummary();
+  } catch (error) { state.profileMessages.set(resource.tag, error.message); }
+  state.profileBusy.delete(resource.tag); renderProfileResources();
 }
 async function request(path, options = {}) { const response = await fetch(path, { cache: "no-store", ...options }); let body = {}; try { body = await response.json(); } catch (_) {} if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); return body; }
 

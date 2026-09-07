@@ -48,7 +48,39 @@
       "enabled": true
     }
   ],
+  "resources": [
+    {
+      "tag": "primary-backend-about",
+      "type": "profile_state",
+      "profile": "primary",
+      "ownership": "declared_fields",
+      "state": {
+        "resumes": {
+          "replace-with-hh-resume-id": {
+            "about": "Итоговый текст раздела «О себе»"
+          }
+        }
+      }
+    }
+  ],
   "jobs": [
+    {
+      "tag": "reconcile-primary-about",
+      "enabled": false,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 10 * * 1",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "profile_state.reconcile",
+        "resource": "primary-backend-about"
+      }
+    },
     {
       "tag": "touch-primary-resume",
       "enabled": true,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	appconfig "github.com/Darkon13/job-agent/config"
@@ -26,6 +27,12 @@ func (reader *profileReaderStub) ReadProfile(context.Context, core.ProfileID) (a
 
 type profileAdapterStub struct {
 	reader adapter.ProfileReader
+}
+
+type profileStateReaderStub func(context.Context, adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error)
+
+func (reader profileStateReaderStub) ReadProfileState(ctx context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+	return reader(ctx, request)
 }
 
 func TestParseMainOptions(t *testing.T) {
@@ -120,6 +127,40 @@ func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected invalid application message template")
+	}
+}
+
+func TestProfileStateReconcileDefinitionsRequireReadAndWriteCapabilities(t *testing.T) {
+	resource, err := core.NewProfileStateResource("primary-about", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"Backend"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	cfg := appconfig.Config{Jobs: []appconfig.Job{{
+		Tag: "reconcile-about", Enabled: true,
+		Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 9 * * *", Timezone: "UTC"}},
+		Action:   appconfig.JobAction{Type: appconfig.JobActionProfileStateReconcile, Resource: resource.Tag},
+	}}}
+	reader := profileStateReaderStub(func(context.Context, adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation("primary", resource.State, "", time.Now().UTC())
+	})
+	definitions, err := profileStateReconcileDefinitions(
+		cfg, []core.ProfileStateResource{resource},
+		map[core.ProfileID]adapter.ProfileStateReader{"primary": reader},
+		map[core.ProfileID]core.Platform{"primary": "hh"},
+	)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions = %#v err=%v", definitions, err)
+	}
+	if definitions[0].ActionType != core.TaskProfileStateReconcile || definitions[0].ProfileID != "primary" || definitions[0].Platform != "hh" {
+		t.Fatalf("definition = %#v", definitions[0])
+	}
+	var payload core.ProfileStateReconcilePayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.ResourceTag != resource.Tag {
+		t.Fatalf("payload = %#v err=%v", payload, err)
+	}
+	disabled, err := profileStateReconcileDefinitions(cfg, []core.ProfileStateResource{resource}, nil, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil || len(disabled) != 0 {
+		t.Fatalf("definition without reader = %#v err=%v", disabled, err)
 	}
 }
 

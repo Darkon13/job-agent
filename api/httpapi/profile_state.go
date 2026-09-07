@@ -16,6 +16,7 @@ import (
 type ProfileStateAPI struct {
 	planner    *workflow.ProfileStatePlanner
 	apply      *workflow.ProfileStateApplyWorkflow
+	reconcile  *workflow.ProfileStateReconcileWorkflow
 	repository storage.ProfileStateProposalRepository
 	readers    map[core.ProfileID]adapter.ProfileStateReader
 }
@@ -29,6 +30,7 @@ type ProfileStateResourceSummary struct {
 	Readable       bool           `json:"readable"`
 	Writable       bool           `json:"writable"`
 	EditablePaths  []string       `json:"editable_paths"`
+	Reconcilable   bool           `json:"reconcilable"`
 }
 
 type ProfileStateEditorField struct {
@@ -49,9 +51,9 @@ type profileStatePlanRequest struct {
 	Overrides          []core.ProfileStateValueOverride `json:"overrides"`
 }
 
-func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
-	if planner == nil || apply == nil || repository == nil {
-		return nil, errors.New("profile state API requires planner, apply workflow and repository")
+func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, reconcile *workflow.ProfileStateReconcileWorkflow, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
+	if planner == nil || apply == nil || reconcile == nil || repository == nil {
+		return nil, errors.New("profile state API requires planner, apply and reconcile workflows and repository")
 	}
 	copiedReaders := make(map[core.ProfileID]adapter.ProfileStateReader, len(readers))
 	for profileID, reader := range readers {
@@ -60,7 +62,7 @@ func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.P
 		}
 		copiedReaders[profileID] = reader
 	}
-	return &ProfileStateAPI{planner: planner, apply: apply, repository: repository, readers: copiedReaders}, nil
+	return &ProfileStateAPI{planner: planner, apply: apply, reconcile: reconcile, repository: repository, readers: copiedReaders}, nil
 }
 
 func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
@@ -71,6 +73,7 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/profile-state/resources", api.listResources)
 	mux.HandleFunc("GET /api/v1/profile-state/resources/{resource_tag}/editor", api.getResourceEditor)
 	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/plans", api.plan)
+	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/reconcile", api.reconcileResource)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/apply", api.applyProposal)
@@ -93,10 +96,42 @@ func (api *ProfileStateAPI) listResources(response http.ResponseWriter, _ *http.
 			ManifestDigest: resource.ManifestDigest, Paths: paths, Readable: readable,
 			Writable:      api.apply.Writable(resource.ProfileID),
 			EditablePaths: editableProfileStatePaths(resource),
+			Reconcilable:  readable && api.reconcile.Available(resource.Tag),
 		})
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, result)
+}
+
+func (api *ProfileStateAPI) reconcileResource(response http.ResponseWriter, request *http.Request) {
+	if !emptyRequestBody(response, request) {
+		return
+	}
+	requestKey, ok := requireIdempotencyKey(response, request)
+	if !ok {
+		return
+	}
+	resourceTag := strings.TrimSpace(request.PathValue("resource_tag"))
+	resource, exists := api.planner.Resource(resourceTag)
+	if !exists {
+		writeProblem(response, http.StatusNotFound, "profile state resource not found")
+		return
+	}
+	if api.readers[resource.ProfileID] == nil || !api.reconcile.Available(resource.Tag) {
+		writeProblem(response, http.StatusConflict, workflow.ErrProfileStateReconcileUnavailable.Error())
+		return
+	}
+	task, created, err := api.reconcile.Enqueue(request.Context(), resource.Tag, "api", requestKey)
+	if err != nil {
+		writeProfileStateError(response, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, task)
 }
 
 func (api *ProfileStateAPI) getResourceEditor(response http.ResponseWriter, request *http.Request) {

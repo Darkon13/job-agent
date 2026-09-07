@@ -170,8 +170,14 @@ Read/plan API не принимает observation от клиента:
 
 - `GET /api/v1/profile-state/resources` возвращает только metadata, объявленные
   JSON Pointer paths и доступность доверенного reader;
+- `GET /api/v1/profile-state/resources/{tag}/editor` явно загружает разрешённые
+  desired-значения для локальной формы; этот endpoint содержит персональный
+  текст и остаётся за той же доверенной tunnel-boundary, что и переписки;
 - `POST /api/v1/profile-state/resources/{tag}/plans` сам читает актуальный HH
-  state и сохраняет immutable proposal;
+  state и сохраняет immutable proposal; опциональный one-shot override требует
+  digest базового manifest;
+- `POST /api/v1/profile-state/resources/{tag}/reconcile` с `Idempotency-Key`
+  ставит durable read-plan-apply task и подходит для dashboard/API trigger;
 - `GET /api/v1/profile-state/proposals` и
   `GET /api/v1/profile-state/proposals/{id}` возвращают redacted plans без
   текущего и желаемого текста;
@@ -180,10 +186,12 @@ Read/plan API не принимает observation от клиента:
   worker'ом из SQLite.
 
 Dashboard показывает ресурсы, объявленные пути и redacted diff и разделяет
-кнопки «Построить план» и «Применить». Сейчас HH browser writer поддерживает
-только `about`: строка обновляет поле, `null` очищает его. При стороннем
-изменении после plan POST не выполняется, а задача завершается конфликтом;
-повтор после потерянного ответа сначала проверяет фактическое состояние.
+кнопки «Построить план» и «Применить». Команда «Сверить и применить» ставит
+асинхронный reconcile, не выполняя HH-запрос внутри HTTP request. Сейчас HH
+browser writer поддерживает только `about`: строка обновляет поле, `null`
+очищает его. При стороннем изменении после plan POST не выполняется, а задача
+завершается конфликтом; повтор после потерянного ответа сначала проверяет
+фактическое состояние.
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;
@@ -311,8 +319,8 @@ Campaign routes должны использовать один adapter и вкл
 
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
-`next_run_at` в SQLite и создаёт обычные durable `resume.touch` или
-`application.campaign` tasks. После простоя пропущенные интервалы схлопываются
+`next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
+`profile_state.reconcile` или `application.campaign` tasks. После простоя пропущенные интервалы схлопываются
 в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает
 lease во время ожидания. Реальный HH transport читает
 `canTouch`/`nextTouchAt` из server-rendered profile state и возвращает
@@ -331,6 +339,12 @@ desired override и провести его через тот же plan/apply wo
 перезаписывает конфигурацию: исходный resource остаётся источником истины,
 override фиксируется только в immutable proposal и защищён digest базового
 manifest от применения устаревшего редактора.
+
+Для автоматической сверки job использует action
+`{"type":"profile_state.reconcile","resource":"<tag>"}`. Reconcile task не
+содержит desired-текст: worker читает resource, строит или переиспользует
+proposal и ставит обычный apply. Совпавшее состояние завершается без внешнего
+POST. Тот же job можно вручную поставить через `job-agent-trigger`.
 
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.mark_read` и

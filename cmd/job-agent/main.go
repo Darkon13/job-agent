@@ -223,7 +223,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile state apply workflow: %v", err)
 	}
-	profileStateAPI, err := httpapi.NewProfileStateAPI(profileStatePlanner, profileStateApplyWorkflow, store, profileStateReaders)
+	profileStateReconcileWorkflow, err := workflow.NewProfileStateReconcileWorkflow(
+		profileStatePlanner, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileStatePlatforms,
+	)
+	if err != nil {
+		log.Fatalf("create profile state reconcile workflow: %v", err)
+	}
+	profileStateAPI, err := httpapi.NewProfileStateAPI(
+		profileStatePlanner, profileStateApplyWorkflow, profileStateReconcileWorkflow, store, profileStateReaders,
+	)
 	if err != nil {
 		log.Fatalf("create profile state API: %v", err)
 	}
@@ -238,6 +246,21 @@ func main() {
 		log.Fatalf("create conversation workers: %v", err)
 	}
 	profileMutationLane := taskworker.NewProfileMutationLane()
+	if len(profileStateReaders) > 0 && profileStateWriters.Count() > 0 {
+		profileStateReconcileHandler, err := workflow.NewProfileStateReconcileHandler(
+			profileStatePlanner, profileStateApplyWorkflow, profileStateReaders,
+		)
+		if err != nil {
+			log.Fatalf("create profile state reconcile handler: %v", err)
+		}
+		profileStateReconcileWorker, err := newTaskWorker(
+			store, core.TaskProfileStateReconcile, profileStateReconcileHandler.Handle,
+		)
+		if err != nil {
+			log.Fatalf("create profile state reconcile worker: %v", err)
+		}
+		workers = append(workers, profileStateReconcileWorker)
+	}
 	if profileStateWriters.Count() > 0 {
 		profileStateHandler, err := taskworker.NewProfileStateApplyHandler(store, profileStateWriters)
 		if err != nil {
@@ -305,6 +328,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
+	profileStateDefinitions, err := profileStateReconcileDefinitions(
+		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
+	)
+	if err != nil {
+		log.Fatalf("build profile state scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, profileStateDefinitions...)
 	definitions = append(definitions, campaignDefinitions...)
 	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
@@ -634,6 +664,45 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func profileStateReconcileDefinitions(
+	cfg appconfig.Config,
+	resources []core.ProfileStateResource,
+	readers map[core.ProfileID]adapter.ProfileStateReader,
+	platforms map[core.ProfileID]core.Platform,
+) ([]jobscheduler.Definition, error) {
+	resourcesByTag := make(map[string]core.ProfileStateResource, len(resources))
+	for _, resource := range resources {
+		resourcesByTag[resource.Tag] = resource
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileStateReconcile {
+			continue
+		}
+		resource, exists := resourcesByTag[job.Action.Resource]
+		if !exists {
+			return nil, fmt.Errorf("job %q references unknown profile state resource %q", job.Tag, job.Action.Resource)
+		}
+		platform, writable := platforms[resource.ProfileID]
+		if readers[resource.ProfileID] == nil || !writable {
+			continue
+		}
+		payload, err := json.Marshal(core.ProfileStateReconcilePayload{ResourceTag: resource.Tag})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskProfileStateReconcile, Platform: platform, ProfileID: resource.ProfileID,
 				Payload: payload, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

@@ -37,12 +37,13 @@ type ProfileStateResourceConfig struct {
 }
 
 const (
-	JobActionResumeTouch         = "resume.touch"
-	JobActionApplicationCampaign = "application.campaign"
-	JobConcurrencyForbid         = "forbid"
-	ApplicationModeDryRun        = "dry_run"
-	ApplicationModeApproval      = "approval"
-	ApplicationModeSubmit        = "submit"
+	JobActionResumeTouch           = "resume.touch"
+	JobActionApplicationCampaign   = "application.campaign"
+	JobActionProfileStateReconcile = "profile_state.reconcile"
+	JobConcurrencyForbid           = "forbid"
+	ApplicationModeDryRun          = "dry_run"
+	ApplicationModeApproval        = "approval"
+	ApplicationModeSubmit          = "submit"
 )
 
 type Job struct {
@@ -74,6 +75,7 @@ func (jitter JitterConfig) Durations() (time.Duration, time.Duration) {
 
 type JobAction struct {
 	Type             string   `json:"type"`
+	Resource         string   `json:"resource,omitempty"`
 	Profile          string   `json:"profile,omitempty"`
 	Resume           string   `json:"resume,omitempty"`
 	Profiles         []string `json:"profiles,omitempty"`
@@ -366,8 +368,13 @@ func (c Config) Validate() error {
 		}
 		profiles[profile.Tag] = struct{}{}
 	}
-	if _, err := c.BuildProfileStateResources(); err != nil {
+	profileStateResources, err := c.BuildProfileStateResources()
+	if err != nil {
 		return err
+	}
+	resources := make(map[string]core.ProfileID, len(profileStateResources))
+	for _, resource := range profileStateResources {
+		resources[resource.Tag] = resource.ProfileID
 	}
 
 	searches := make(map[string]Search, len(c.Searches))
@@ -441,6 +448,10 @@ func (c Config) Validate() error {
 		case JobActionApplicationCampaign:
 			if err := validateApplicationCampaignAction(job, profiles, searches); err != nil {
 				return err
+			}
+		case JobActionProfileStateReconcile:
+			if _, exists := resources[job.Action.Resource]; !exists {
+				return fmt.Errorf("job %q references unknown profile state resource %q", job.Tag, job.Action.Resource)
 			}
 		default:
 			return fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)

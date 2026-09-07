@@ -68,6 +68,27 @@ type ProfileStateApplyPayload struct {
 	ProposalID ProfileStateProposalID `json:"proposal_id"`
 }
 
+type ProfileStateReconcilePayload struct {
+	ResourceTag string `json:"resource_tag"`
+}
+
+func (payload ProfileStateReconcilePayload) Validate() error {
+	if strings.TrimSpace(payload.ResourceTag) == "" {
+		return errors.New("profile state reconcile payload requires resource")
+	}
+	return nil
+}
+
+func ProfileStateReconcileIdempotencyKey(resourceTag, requestKey string) (string, error) {
+	resourceTag = strings.TrimSpace(resourceTag)
+	requestKey = strings.TrimSpace(requestKey)
+	if resourceTag == "" || requestKey == "" {
+		return "", errors.New("profile state reconcile idempotency requires resource and request key")
+	}
+	digest := sha256.Sum256([]byte(resourceTag + "\x00" + requestKey))
+	return "profile_state.reconcile:" + hex.EncodeToString(digest[:]), nil
+}
+
 func (payload ProfileStateApplyPayload) Validate() error {
 	if payload.ProposalID == "" {
 		return errors.New("profile state apply payload requires proposal")

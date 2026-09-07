@@ -32,7 +32,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") || !strings.Contains(response.Body.String(), "/reconcile") {
 		t.Fatalf("dashboard script response: %d %s", response.Code, response.Body.String())
 	}
 

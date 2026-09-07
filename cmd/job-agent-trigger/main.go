@@ -137,6 +137,18 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 			job.Tag, profiles, routes, job.Action.TargetSuccessful, job.Action.MaxInFlight,
 		))
 		return core.TaskApplicationCampaign, profiles[0], payload, err
+	case appconfig.JobActionProfileStateReconcile:
+		resources, err := cfg.BuildProfileStateResources()
+		if err != nil {
+			return "", "", nil, err
+		}
+		for _, resource := range resources {
+			if resource.Tag == job.Action.Resource {
+				payload, err := json.Marshal(core.ProfileStateReconcilePayload{ResourceTag: resource.Tag})
+				return core.TaskProfileStateReconcile, resource.ProfileID, payload, err
+			}
+		}
+		return "", "", nil, fmt.Errorf("job %q references an unknown profile state resource", job.Tag)
 	default:
 		return "", "", nil, fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
 	}
@@ -157,6 +169,22 @@ func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {
 			}
 		}
 		return "", fmt.Errorf("job %q references an unknown route", job.Tag)
+	case appconfig.JobActionProfileStateReconcile:
+		resources, err := cfg.BuildProfileStateResources()
+		if err != nil {
+			return "", err
+		}
+		for _, resource := range resources {
+			if resource.Tag != job.Action.Resource {
+				continue
+			}
+			profile, exists := configuredProfile(cfg, string(resource.ProfileID))
+			if !exists {
+				return "", fmt.Errorf("job %q references an unknown profile", job.Tag)
+			}
+			return profile.Adapter, nil
+		}
+		return "", fmt.Errorf("job %q references an unknown profile state resource", job.Tag)
 	default:
 		return "", fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
 	}

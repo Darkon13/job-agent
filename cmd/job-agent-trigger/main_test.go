@@ -53,6 +53,30 @@ func TestRunRequiresExplicitIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestRunEnqueuesProfileStateReconcile(t *testing.T) {
+	directory := t.TempDir()
+	configPath, databasePath := triggerConfig(t, directory)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"-idempotency-key", "manual-reconcile-1", configPath, "reconcile-about",
+	}, &output, time.Date(2026, 9, 7, 20, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("trigger reconcile: %v", err)
+	}
+	store, err := storesqlite.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	task, err := store.TaskByIdempotencyKey(context.Background(), "manual-reconcile-1")
+	if err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	var payload core.ProfileStateReconcilePayload
+	if task.Type != core.TaskProfileStateReconcile || json.Unmarshal(task.Payload, &payload) != nil || payload.ResourceTag != "primary-about" {
+		t.Fatalf("unexpected task: %#v payload=%#v", task, payload)
+	}
+}
+
 func triggerConfig(t *testing.T, directory string) (string, string) {
 	t.Helper()
 	databasePath := filepath.Join(directory, "job-agent.db")
@@ -63,11 +87,23 @@ func triggerConfig(t *testing.T, directory string) (string, string) {
 		Database: appconfig.DatabaseConfig{Driver: "sqlite", Path: databasePath},
 		Adapters: []appconfig.AdapterConfig{{Tag: "hh-main", Type: "hh"}},
 		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true}},
-		Jobs: []appconfig.Job{{
-			Tag: "touch-primary", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
-			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 * * * *", Timezone: "UTC", Misfire: "run_once"}},
-			Action:   appconfig.JobAction{Type: appconfig.JobActionResumeTouch, Profile: "primary"},
+		Resources: []appconfig.ProfileStateResourceConfig{{
+			Tag: "primary-about", Type: appconfig.ResourceTypeProfileState, Profile: "primary",
+			Ownership: core.ProfileStateOwnershipDeclaredFields,
+			State:     json.RawMessage(`{"resumes":{"resume-1":{"about":"Backend"}}}`),
 		}},
+		Jobs: []appconfig.Job{
+			{
+				Tag: "touch-primary", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+				Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 * * * *", Timezone: "UTC", Misfire: "run_once"}},
+				Action:   appconfig.JobAction{Type: appconfig.JobActionResumeTouch, Profile: "primary"},
+			},
+			{
+				Tag: "reconcile-about", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+				Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 9 * * *", Timezone: "UTC", Misfire: "run_once"}},
+				Action:   appconfig.JobAction{Type: appconfig.JobActionProfileStateReconcile, Resource: "primary-about"},
+			},
+		},
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

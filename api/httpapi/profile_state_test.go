@@ -58,7 +58,8 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new apply workflow: %v", err)
 	}
-	api, err := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{next: 100}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/resources", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"editable_paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) || !strings.Contains(response.Body.String(), `"writable":true`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"editable_paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) || !strings.Contains(response.Body.String(), `"writable":true`) || !strings.Contains(response.Body.String(), `"reconcilable":true`) {
 		t.Fatalf("resources response: %d %s", response.Code, response.Body.String())
 	}
 	assertProfileStateSecretsAbsent(t, response.Body.String())
@@ -105,6 +106,22 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 	if response.Code != http.StatusOK || reads != 2 {
 		t.Fatalf("idempotent plan response: %d reads=%d %s", response.Code, reads, response.Body.String())
 	}
+
+	reconcileRequest := httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/reconcile", nil)
+	reconcileRequest.Header.Set("Idempotency-Key", "reconcile-1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, reconcileRequest)
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"type":"profile_state.reconcile"`) {
+		t.Fatalf("reconcile response: %d %s", response.Code, response.Body.String())
+	}
+	assertProfileStateSecretsAbsent(t, response.Body.String())
+	reconcileRequest = httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/reconcile", nil)
+	reconcileRequest.Header.Set("Idempotency-Key", "reconcile-1")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, reconcileRequest)
+	if response.Code != http.StatusOK {
+		t.Fatalf("idempotent reconcile response: %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestProfileStateAPIPlansOneShotEditorOverrideWithoutLeakingIt(t *testing.T) {
@@ -121,11 +138,13 @@ func TestProfileStateAPIPlansOneShotEditorOverrideWithoutLeakingIt(t *testing.T)
 	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
 		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"about":"current"}}}`), "", now)
 	})
-	apply, err := workflow.NewProfileStateApplyWorkflow(repository, brokermemory.NewQueue(), profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	queue := brokermemory.NewQueue()
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
 	if err != nil {
 		t.Fatalf("new apply workflow: %v", err)
 	}
-	api, err := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -167,11 +186,13 @@ func TestProfileStateAPIRejectsStaleOrUnsupportedEditorOverride(t *testing.T) {
 	}
 	repository := memory.NewRepository()
 	planner, _ := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, workflow.SystemClock{}, workflow.RandomIDGenerator{})
-	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, brokermemory.NewQueue(), workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	queue := brokermemory.NewQueue()
+	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
 	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
 		return core.NewProfileStateObservation(request.ProfileID, resource.State, "", time.Now().UTC())
 	})
-	api, _ := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	handler := api.Handler(nil)
 
 	for _, test := range []struct {
@@ -205,7 +226,8 @@ func TestProfileStateAPIRejectsCallerObservationAndUnavailableReader(t *testing.
 	if err != nil {
 		t.Fatalf("new apply workflow: %v", err)
 	}
-	api, err := NewProfileStateAPI(planner, apply, repository, nil)
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, nil)
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}

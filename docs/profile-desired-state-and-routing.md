@@ -90,7 +90,30 @@ Resource описывает состояние, action — способ и по�
 }
 ```
 
-Тот же action вызывают `POST /api/v1/actions/apply-primary-about/runs` и dashboard. Startup reconciliation включается отдельной политикой, а не следует автоматически из наличия resource в конфиге: изменение ФИО или текста «О себе» не должно неожиданно примениться при обычном рестарте.
+В целевом контракте тот же action вызывают
+`POST /api/v1/actions/apply-primary-about/runs` и dashboard. Startup
+reconciliation включается отдельной политикой, а не следует автоматически из
+наличия resource в конфиге: изменение ФИО или текста «О себе» не должно
+неожиданно примениться при обычном рестарте.
+
+Текущий промежуточный контракт уже поддерживает inline action job:
+
+```json
+{
+  "tag": "reconcile-primary-about",
+  "enabled": true,
+  "triggers": [{"type": "cron", "expression": "0 10 * * 1", "timezone": "Europe/Moscow", "misfire": "run_once"}],
+  "concurrency": "forbid",
+  "action": {"type": "profile_state.reconcile", "resource": "primary-backend-profile"}
+}
+```
+
+Scheduler, `job-agent-trigger`, dashboard и
+`POST /api/v1/profile-state/resources/{tag}/reconcile` создают одну и ту же
+durable task. Она хранит только `resource_tag`, выполняет trusted read, строит
+immutable proposal и идемпотентно ставит apply; при уже совпавшем состоянии
+внешнего изменения нет. Отдельный registry переиспользуемых `actions` и
+универсальный `/actions/{tag}/runs` остаются следующим обобщением.
 
 ## Processor — преобразователь, а не обязательно AI
 
@@ -202,6 +225,9 @@ sing-box final    -> Job Agent explicit fallback action
   proposal и не переписывает декларативный resource; пустой текст означает
   явное `null`/очистку. API принимает только уже объявленные редактируемые пути
   и требует digest базового manifest, поэтому устаревшая форма не применяется;
+- cron, ручной CLI и API/dashboard trigger могут поставить durable
+  `profile_state.reconcile`; payload содержит только tag ресурса, а worker
+  выполняет read → plan → enqueue apply и ничего не меняет при `no_changes`;
 - `profile_state.apply` и `resume.touch` проходят через одну process-local
   mutation lane на `profile_id`: один профиль изменяется последовательно, а
   разные профили могут исполняться параллельно. Текущий Compose-контракт
@@ -229,6 +255,7 @@ resource в конфиге не вызывает side effect.
    ней publish при появлении этого worker.
 8. ✅ Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
 9. Обобщить update на остальные profile/resume fields по живой HH schema.
-10. Добавить named actions, cron/event/API triggers.
+10. Частично: cron, ручной CLI и API/dashboard reconcile готовы; вынести inline
+    actions в переиспользуемый registry и добавить event triggers.
 11. Реализовать employer rule sets, policy routing и explain evidence.
 12. Подключить external/model processors с limits и fallback.

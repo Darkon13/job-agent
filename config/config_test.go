@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Darkon13/job-agent/core"
 )
 
 func TestConfigRequiresSQLiteDatabase(t *testing.T) {
@@ -265,5 +267,30 @@ func TestApplicationCampaignJobValidation(t *testing.T) {
 	config.Jobs[0].Action.Profiles = []string{"primary", "primary"}
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected duplicate campaign profile to fail")
+	}
+}
+
+func TestProfileStateReconcileJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Resources: []ProfileStateResourceConfig{{
+			Tag: "primary-about", Type: ResourceTypeProfileState, Profile: "primary",
+			Ownership: core.ProfileStateOwnershipDeclaredFields,
+			State:     json.RawMessage(`{"resumes":{"resume-1":{"about":"Backend"}}}`),
+		}},
+		Jobs: []Job{{
+			Tag: "reconcile-about", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "0 9 * * *", Timezone: "UTC", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionProfileStateReconcile, Resource: "primary-about"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid profile state reconcile job: %v", err)
+	}
+	config.Jobs[0].Action.Resource = "missing"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown profile state resource to fail")
 	}
 }
