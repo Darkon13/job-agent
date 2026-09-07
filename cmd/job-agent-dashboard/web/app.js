@@ -1,10 +1,11 @@
-const state = { summary: null, selectedConversation: null };
+const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileMessages: new Map(), profileBusy: new Set() };
 const elements = Object.fromEntries([
   "applications", "tasks", "stats", "conversations", "messages", "chat-title", "chat-meta",
   "connection-dot", "connection-state", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
+  "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
-const statLabels = [["vacancies", "Вакансии"], ["applications", "Отклики"], ["application_campaigns", "Кампании"], ["tasks", "Задачи"], ["conversations", "Диалоги"], ["messages", "Сообщения"], ["follow_ups", "Follow-up"]];
+const statLabels = [["vacancies", "Вакансии"], ["applications", "Отклики"], ["application_campaigns", "Кампании"], ["tasks", "Задачи"], ["profile_state_proposals", "Планы профиля"], ["conversations", "Диалоги"], ["messages", "Сообщения"], ["follow_ups", "Follow-up"]];
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
@@ -24,6 +25,74 @@ function renderConversations(items = []) {
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
   elements.messages.replaceChildren(...items.map((item) => { const article = document.createElement("article"); article.className = `message ${item.direction || ""}`; article.append(text("p", item.text || `[${item.kind}]`), text("time", formatDate(item.occurred_at))); return article; })); elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function renderProfileResources() {
+  if (!state.profileResources.length) { elements.profileResources.replaceChildren(text("p", "Desired-state ресурсов пока нет.", "empty panel")); return; }
+  elements.profileResources.replaceChildren(...state.profileResources.map((resource) => {
+    const card = document.createElement("article"); card.className = "panel resource-card";
+    const heading = document.createElement("div"); heading.className = "panel-heading";
+    const identity = document.createElement("div"); identity.append(text("h2", resource.tag), text("p", `${resource.profile_id} · ${resource.ownership}`, "muted"));
+    const capabilities = text("span", `${resource.readable ? "read" : "no read"} · ${resource.writable ? "write" : "no write"}`, `tag ${resource.readable && resource.writable ? "ready" : ""}`);
+    heading.append(identity, capabilities); card.append(heading);
+    const paths = document.createElement("ul"); paths.className = "path-list";
+    for (const path of resource.paths || []) paths.append(text("li", path));
+    card.append(paths);
+    const plan = state.profilePlans.get(resource.tag);
+    if (plan) {
+      const result = document.createElement("div"); result.className = "plan-result";
+      result.append(text("strong", plan.status === "no_changes" ? "Изменений нет" : `Изменений: ${(plan.changes || []).length}`));
+      for (const change of plan.changes || []) result.append(text("code", `${change.operation} ${change.path}`));
+      card.append(result);
+    }
+    const actions = document.createElement("div"); actions.className = "resource-actions";
+    const status = text("span", state.profileMessages.get(resource.tag) || "", "muted");
+    const planButton = text("button", "Построить план"); planButton.type = "button"; planButton.disabled = !resource.readable || state.profileBusy.has(resource.tag);
+    planButton.addEventListener("click", () => planProfileState(resource, planButton)); actions.append(status, planButton);
+    if (plan?.status === "planned") {
+      const applyButton = text("button", "Применить", "secondary"); applyButton.type = "button"; applyButton.disabled = !resource.writable || state.profileBusy.has(resource.tag);
+      applyButton.addEventListener("click", () => applyProfileState(resource, plan, applyButton)); actions.append(applyButton);
+    }
+    card.append(actions); return card;
+  }));
+}
+
+async function refreshProfileResources() {
+  try {
+    const resources = await request("/api/v1/profile-state/resources");
+    for (const resource of resources) {
+      const plan = state.profilePlans.get(resource.tag);
+      if (plan && plan.manifest_digest !== resource.manifest_digest) {
+        state.profilePlans.delete(resource.tag); state.profileMessages.set(resource.tag, "Resource изменился — постройте новый план");
+      }
+    }
+    state.profileResources = resources;
+    elements.profileStateState.textContent = `${state.profileResources.length} ресурсов`;
+    renderProfileResources();
+  } catch (error) {
+    elements.profileStateState.textContent = error.message;
+    elements.profileResources.replaceChildren(text("p", "Не удалось загрузить desired state.", "empty panel"));
+  }
+}
+
+async function planProfileState(resource, button) {
+  button.disabled = true; state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Читаю текущее состояние…"); renderProfileResources();
+  try {
+    const proposal = await request(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/plans`, { method: "POST" });
+    state.profilePlans.set(resource.tag, proposal); state.profileMessages.set(resource.tag, `План ${proposal.id}`);
+  } catch (error) { state.profileMessages.set(resource.tag, error.message); }
+  state.profileBusy.delete(resource.tag);
+  renderProfileResources();
+}
+
+async function applyProfileState(resource, proposal, button) {
+  button.disabled = true; state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Ставлю применение в очередь…"); renderProfileResources();
+  try {
+    const task = await request(`/api/v1/profile-state/proposals/${encodeURIComponent(proposal.id)}/apply`, { method: "POST" });
+    state.profileMessages.set(resource.tag, `Задача ${task.id}: ${task.status}`); await refreshSummary();
+  } catch (error) { state.profileMessages.set(resource.tag, error.message); }
+  state.profileBusy.delete(resource.tag);
+  renderProfileResources();
 }
 async function request(path, options = {}) { const response = await fetch(path, { cache: "no-store", ...options }); let body = {}; try { body = await response.json(); } catch (_) {} if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); return body; }
 
@@ -55,5 +124,5 @@ elements.markRead.addEventListener("click", async () => {
   if (!state.selectedConversation) return; elements.markRead.disabled = true; elements.actionState.textContent = "Создаю задачу…";
   try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/mark-read`); elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.markRead.disabled = false; }
 });
-elements.refresh.addEventListener("click", refreshSummary);
-refreshSummary(); setInterval(refreshSummary, 30_000);
+elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
+refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);

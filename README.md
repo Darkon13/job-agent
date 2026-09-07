@@ -145,8 +145,10 @@ go run ./cmd/job-agent ./config/example/config.json
 JSON; точный desired snapshot остаётся внутренним, чтобы изменение конфига не
 меняло уже построенный план. Доверенный browser reader умеет читать поле
 `about` по внешнему ID резюме из уже привязанной HH-сессии. Он выполняет только
-`GET`, а неподдерживаемый путь отклоняет целиком до запроса. Apply пока не
-подключён: наличие resource при старте ничего само по себе не изменяет.
+`GET`, а неподдерживаемый путь отклоняет целиком до запроса. Явный apply
+ставится в durable queue, повторно сверяет before/after digests, отправляет
+узкий HH update и считается успешным только после read-back. Наличие resource
+при старте ничего само по себе не изменяет.
 
 ```json
 "resources": [
@@ -172,7 +174,16 @@ Read/plan API не принимает observation от клиента:
   state и сохраняет immutable proposal;
 - `GET /api/v1/profile-state/proposals` и
   `GET /api/v1/profile-state/proposals/{id}` возвращают redacted plans без
-  текущего и желаемого текста.
+  текущего и желаемого текста;
+- `POST /api/v1/profile-state/proposals/{id}/apply` явно ставит immutable plan
+  в очередь. Task содержит только `proposal_id`, точный snapshot загружается
+  worker'ом из SQLite.
+
+Dashboard показывает ресурсы, объявленные пути и redacted diff и разделяет
+кнопки «Построить план» и «Применить». Сейчас HH browser writer поддерживает
+только `about`: строка обновляет поле, `null` очищает его. При стороннем
+изменении после plan POST не выполняется, а задача завершается конфликтом;
+повтор после потерянного ответа сначала проверяет фактическое состояние.
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;

@@ -109,6 +109,12 @@ func main() {
 		log.Fatalf("create profile state planner: %v", err)
 	}
 	profileStateReaders := make(map[core.ProfileID]adapter.ProfileStateReader)
+	profileStateProfiles := make(map[core.ProfileID]struct{}, len(profileStateResources))
+	for _, resource := range profileStateResources {
+		profileStateProfiles[resource.ProfileID] = struct{}{}
+	}
+	profileStateWriters := taskworker.NewProfileStateWriterRegistry()
+	profileStatePlatforms := make(map[core.ProfileID]core.Platform)
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
@@ -137,6 +143,18 @@ func main() {
 				log.Printf("profile %q has a browser-backed read session", profile.Tag)
 				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 					profileStateReaders[profileID] = profileStateReader
+				}
+			}
+			if _, needed := profileStateProfiles[profileID]; needed {
+				if binder, ok := instance.(adapter.BrowserProfileStateSessionBinder); ok {
+					writer, err := binder.BindBrowserProfileStateSession(profileID, profile.StateFile)
+					if err != nil {
+						log.Fatalf("bind browser profile state session for profile %q: %v", profile.Tag, err)
+					}
+					if err := profileStateWriters.Register(profileID, writer); err != nil {
+						log.Fatalf("register profile state writer for profile %q: %v", profile.Tag, err)
+					}
+					profileStatePlatforms[profileID] = core.Platform(instance.Name())
 				}
 			}
 			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
@@ -199,7 +217,13 @@ func main() {
 			}
 		}
 	}
-	profileStateAPI, err := httpapi.NewProfileStateAPI(profileStatePlanner, store, profileStateReaders)
+	profileStateApplyWorkflow, err := workflow.NewProfileStateApplyWorkflow(
+		store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileStatePlatforms,
+	)
+	if err != nil {
+		log.Fatalf("create profile state apply workflow: %v", err)
+	}
+	profileStateAPI, err := httpapi.NewProfileStateAPI(profileStatePlanner, profileStateApplyWorkflow, store, profileStateReaders)
 	if err != nil {
 		log.Fatalf("create profile state API: %v", err)
 	}
@@ -212,6 +236,17 @@ func main() {
 	workers, err := conversationWorkers(store, conversationHandlers)
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
+	}
+	if profileStateWriters.Count() > 0 {
+		profileStateHandler, err := taskworker.NewProfileStateApplyHandler(store, profileStateWriters)
+		if err != nil {
+			log.Fatalf("create profile state apply handler: %v", err)
+		}
+		profileStateWorker, err := newTaskWorker(store, core.TaskProfileStateApply, profileStateHandler.Handle)
+		if err != nil {
+			log.Fatalf("create profile state apply worker: %v", err)
+		}
+		workers = append(workers, profileStateWorker)
 	}
 	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(

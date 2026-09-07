@@ -24,7 +24,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") {
 		t.Fatalf("index response: %d %s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" {

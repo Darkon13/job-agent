@@ -79,11 +79,12 @@ type SearchQuery struct {
 }
 
 type Adapter struct {
-	config                    Config
-	mu                        sync.RWMutex
-	clients                   map[core.ProfileID]*ReadClient
-	browserClients            map[core.ProfileID]*BrowserReadClient
-	browserApplicationClients map[core.ProfileID]*BrowserApplicationClient
+	config                     Config
+	mu                         sync.RWMutex
+	clients                    map[core.ProfileID]*ReadClient
+	browserClients             map[core.ProfileID]*BrowserReadClient
+	browserApplicationClients  map[core.ProfileID]*BrowserApplicationClient
+	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
@@ -91,6 +92,7 @@ var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 var _ adapter.BrowserSessionBinder = (*Adapter)(nil)
 var _ adapter.BrowserApplicationSessionBinder = (*Adapter)(nil)
+var _ adapter.BrowserProfileStateSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.ProfileStateReader = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
@@ -106,9 +108,32 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 	}
 	return &Adapter{
 		config: cfg, clients: make(map[core.ProfileID]*ReadClient),
-		browserClients:            make(map[core.ProfileID]*BrowserReadClient),
-		browserApplicationClients: make(map[core.ProfileID]*BrowserApplicationClient),
+		browserClients:             make(map[core.ProfileID]*BrowserReadClient),
+		browserApplicationClients:  make(map[core.ProfileID]*BrowserApplicationClient),
+		browserProfileStateClients: make(map[core.ProfileID]*BrowserProfileStateClient),
 	}, nil
+}
+
+func (a *Adapter) BindBrowserProfileStateSession(profileID core.ProfileID, stateFile string) (adapter.ProfileStateWriter, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reader := a.browserClients[profileID]
+	if reader == nil {
+		var err error
+		reader, err = NewBrowserReadClient(profileID, stateFile, a.config.UserAgent, nil)
+		if err != nil {
+			return nil, err
+		}
+		a.browserClients[profileID] = reader
+	} else if reader.stateFile != stateFile {
+		return nil, fmt.Errorf("HH profile %s is already bound to another browser state", profileID)
+	}
+	if existing := a.browserProfileStateClients[profileID]; existing != nil {
+		return existing, nil
+	}
+	client := newBrowserProfileStateClient(reader)
+	a.browserProfileStateClients[profileID] = client
+	return client, nil
 }
 
 func (a *Adapter) Name() string { return Name }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -115,5 +116,43 @@ func TestProfileStateChangeEscapesJSONPointer(t *testing.T) {
 	}
 	if len(proposal.Changes) != 1 || proposal.Changes[0].Path != "/profile/a~1b~0c" || proposal.Changes[0].BeforePresent {
 		t.Fatalf("changes = %#v", proposal.Changes)
+	}
+}
+
+func TestProfileStateProposalClassifiesPartialApplyAndConflict(t *testing.T) {
+	now := time.Now().UTC()
+	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"one":{"about":"new-1"},"two":{"about":"new-2"}},"profile":{"area":"1"}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	before, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"one":{"about":"old-1"},"two":{"about":"old-2"}},"profile":{"area":"1"}}`), "", now)
+	if err != nil {
+		t.Fatalf("new before observation: %v", err)
+	}
+	proposal, err := NewProfileStateProposal("proposal", resource, before, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	partial, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"one":{"about":"new-1"},"two":{"about":"old-2"}},"profile":{"area":"1"}}`), "", now)
+	if err != nil {
+		t.Fatalf("new partial observation: %v", err)
+	}
+	pending, err := proposal.ChangesToApply(partial)
+	if err != nil || len(pending) != 1 || pending[0].Path != "/resumes/two/about" {
+		t.Fatalf("pending = %#v err=%v", pending, err)
+	}
+	conflict, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"one":{"about":"third"},"two":{"about":"old-2"}},"profile":{"area":"1"}}`), "", now)
+	if err != nil {
+		t.Fatalf("new conflict observation: %v", err)
+	}
+	if _, err := proposal.ChangesToApply(conflict); !errors.Is(err, ErrProfileStateChanged) {
+		t.Fatalf("conflict error = %v", err)
+	}
+	unchangedFieldConflict, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"one":{"about":"old-1"},"two":{"about":"old-2"}},"profile":{"area":"2"}}`), "", now)
+	if err != nil {
+		t.Fatalf("new unchanged-field conflict observation: %v", err)
+	}
+	if _, err := proposal.ChangesToApply(unchangedFieldConflict); !errors.Is(err, ErrProfileStateChanged) {
+		t.Fatalf("unchanged field conflict error = %v", err)
 	}
 }

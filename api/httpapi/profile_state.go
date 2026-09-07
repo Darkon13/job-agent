@@ -14,6 +14,7 @@ import (
 
 type ProfileStateAPI struct {
 	planner    *workflow.ProfileStatePlanner
+	apply      *workflow.ProfileStateApplyWorkflow
 	repository storage.ProfileStateProposalRepository
 	readers    map[core.ProfileID]adapter.ProfileStateReader
 }
@@ -25,11 +26,12 @@ type ProfileStateResourceSummary struct {
 	ManifestDigest string         `json:"manifest_digest"`
 	Paths          []string       `json:"paths"`
 	Readable       bool           `json:"readable"`
+	Writable       bool           `json:"writable"`
 }
 
-func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
-	if planner == nil || repository == nil {
-		return nil, errors.New("profile state API requires planner and repository")
+func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
+	if planner == nil || apply == nil || repository == nil {
+		return nil, errors.New("profile state API requires planner, apply workflow and repository")
 	}
 	copiedReaders := make(map[core.ProfileID]adapter.ProfileStateReader, len(readers))
 	for profileID, reader := range readers {
@@ -38,7 +40,7 @@ func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, repository storag
 		}
 		copiedReaders[profileID] = reader
 	}
-	return &ProfileStateAPI{planner: planner, repository: repository, readers: copiedReaders}, nil
+	return &ProfileStateAPI{planner: planner, apply: apply, repository: repository, readers: copiedReaders}, nil
 }
 
 func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
@@ -50,6 +52,7 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/plans", api.plan)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
+	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/apply", api.applyProposal)
 	mux.Handle("/", next)
 	return mux
 }
@@ -67,10 +70,34 @@ func (api *ProfileStateAPI) listResources(response http.ResponseWriter, _ *http.
 		result = append(result, ProfileStateResourceSummary{
 			Tag: resource.Tag, ProfileID: resource.ProfileID, Ownership: resource.Ownership,
 			ManifestDigest: resource.ManifestDigest, Paths: paths, Readable: readable,
+			Writable: api.apply.Writable(resource.ProfileID),
 		})
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, result)
+}
+
+func (api *ProfileStateAPI) applyProposal(response http.ResponseWriter, request *http.Request) {
+	if !emptyRequestBody(response, request) {
+		return
+	}
+	proposalID := core.ProfileStateProposalID(strings.TrimSpace(request.PathValue("proposal_id")))
+	task, created, err := api.apply.Enqueue(request.Context(), proposalID, "api")
+	if err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrProfileStateNoChanges), errors.Is(err, workflow.ErrProfileStateWriterUnavailable):
+			writeProblem(response, http.StatusConflict, err.Error())
+		default:
+			writeProfileStateError(response, err)
+		}
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, task)
 }
 
 func (api *ProfileStateAPI) plan(response http.ResponseWriter, request *http.Request) {
@@ -141,7 +168,7 @@ func emptyRequestBody(response http.ResponseWriter, request *http.Request) bool 
 		return false
 	}
 	if len(data) != 0 {
-		writeProblem(response, http.StatusBadRequest, "profile state planning request body must be empty")
+		writeProblem(response, http.StatusBadRequest, "profile state command request body must be empty")
 		return false
 	}
 	return true
@@ -157,6 +184,8 @@ func writeProfileStateError(response http.ResponseWriter, err error) {
 		writeProblem(response, http.StatusTooManyRequests, err.Error())
 	case core.ErrorIsCategory(err, core.ErrorTemporaryFailure):
 		writeProblem(response, http.StatusServiceUnavailable, err.Error())
+	case core.ErrorIsCategory(err, core.ErrorConflict):
+		writeProblem(response, http.StatusConflict, err.Error())
 	case core.ErrorIsCategory(err, core.ErrorPermanentFailure):
 		writeProblem(response, http.StatusBadGateway, err.Error())
 	default:

@@ -225,7 +225,12 @@ func (client *BrowserReadClient) ReadProfileState(ctx context.Context, request a
 		if aboutNode == nil || aboutNode.Data != "textarea" {
 			return core.ProfileStateObservation{}, operationError(core.ErrorPermanentFailure, operation, "HH resume edit page has no about field", nil)
 		}
-		resumes[resumeID] = map[string]any{"about": htmlRawText(aboutNode)}
+		about := htmlRawText(aboutNode)
+		var normalized any = about
+		if about == "" {
+			normalized = nil
+		}
+		resumes[resumeID] = map[string]any{"about": normalized}
 	}
 	state, err := json.Marshal(map[string]any{"resumes": resumes})
 	if err != nil {

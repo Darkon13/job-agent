@@ -64,6 +64,25 @@ type ResumeTouchPayload struct {
 	ResumeID  string    `json:"resume_id"`
 }
 
+type ProfileStateApplyPayload struct {
+	ProposalID ProfileStateProposalID `json:"proposal_id"`
+}
+
+func (payload ProfileStateApplyPayload) Validate() error {
+	if payload.ProposalID == "" {
+		return errors.New("profile state apply payload requires proposal")
+	}
+	return nil
+}
+
+func ProfileStateApplyIdempotencyKey(proposal ProfileStateProposal) (string, error) {
+	if err := proposal.Validate(); err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(string(proposal.ID) + "\x00" + proposal.DesiredDigest))
+	return "profile_state.apply:" + hex.EncodeToString(digest[:]), nil
+}
+
 func (payload ResumeTouchPayload) Validate() error {
 	if strings.TrimSpace(string(payload.ProfileID)) == "" || strings.TrimSpace(payload.ResumeID) == "" {
 		return errors.New("resume touch payload requires profile and resume")

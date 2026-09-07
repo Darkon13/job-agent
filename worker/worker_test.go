@@ -132,6 +132,7 @@ func TestWorkerFailsUntypedAndUnsupportedErrors(t *testing.T) {
 	for name, handlerError := range map[string]error{
 		"plain":       errors.New("bug"),
 		"unsupported": &core.OperationError{Category: core.ErrorUnsupported, Operation: "conversation.send"},
+		"conflict":    &core.OperationError{Category: core.ErrorConflict, Operation: "profile_state.apply"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Date(2026, 7, 19, 13, 0, 0, 0, time.UTC)

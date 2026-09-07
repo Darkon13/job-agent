@@ -186,25 +186,38 @@ sing-box final    -> Job Agent explicit fallback action
   частичного observation;
 - read/plan API публикует metadata ресурсов и redacted proposals, а при
   создании плана сам вызывает reader. Прислать фактический state в теле запроса
-  нельзя.
+  нельзя;
+- явный apply endpoint ставит durable `profile_state.apply` task, содержащий
+  только `proposal_id`; worker получает неизменяемый desired snapshot из
+  SQLite;
+- HH browser writer поддерживает `about`, проверяет все declared paths до POST
+  и подтверждает результат повторным GET. Состояние, не совпадающее ни с
+  before, ни с after digest, завершается конфликтом;
+- частично выполненный multi-resume plan безопасно продолжается с оставшихся
+  полей; потерянный ответ POST сначала сверяется read-back;
+- dashboard даёт раздельные команды plan/apply и показывает только redacted
+  список операций.
 
 В текущем формате ключ `resumes` является внешним ID/hash резюме. Именованные
 локальные aliases появятся вместе с отдельным каталогом resume targets.
 
 Ссылки вида `{"processor":"about-backend"}` пока намеренно отвергаются как
 неразрешённые. Сначала config builder должен выполнить processor и передать в
-core итоговое значение. Dashboard-форма и любые внешние update в этом срезе
-отсутствуют; простое наличие resource в конфиге не вызывает side effect.
+core итоговое значение. Редактирование desired value прямо в dashboard и
+остальные поля профиля в этом срезе отсутствуют; простое наличие resource в
+конфиге не вызывает side effect.
 
 ## Порядок реализации
 
 1. ✅ Ввести registry/chain детерминированных text processors и provenance.
 2. ✅ Добавить versioned `ProfileStateResource`, proposal и semantic diff без внешнего apply.
 3. ✅ Сделать доверенный HH read поля `about` и read/plan API.
-4. Добавить форму «О себе» в dashboard поверх read/plan API.
-5. Реализовать HH adapter для update about и обязательного read-back.
-6. Подключить `profile.apply` task, per-profile mutation lane и manual run.
-7. Обобщить update на остальные profile/resume fields по живой HH schema.
-8. Добавить named actions, cron/event/API triggers.
-9. Реализовать employer rule sets, policy routing и explain evidence.
-10. Подключить external/model processors с limits и fallback.
+4. ✅ Добавить plan/apply controls в dashboard поверх API.
+5. ✅ Реализовать HH adapter для update about и обязательного read-back.
+6. ✅ Подключить durable `profile_state.apply` task и явный API run.
+7. Объединить apply, touch и publish в общую per-profile mutation lane.
+8. Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
+9. Обобщить update на остальные profile/resume fields по живой HH schema.
+10. Добавить named actions, cron/event/API triggers.
+11. Реализовать employer rule sets, policy routing и explain evidence.
+12. Подключить external/model processors с limits и fallback.

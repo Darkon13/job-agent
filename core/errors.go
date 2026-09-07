@@ -18,6 +18,7 @@ const (
 	ErrorPermanentFailure     ErrorCategory = "permanent_failure"
 	ErrorConfirmationRequired ErrorCategory = "confirmation_required"
 	ErrorAmbiguousResult      ErrorCategory = "ambiguous_result"
+	ErrorConflict             ErrorCategory = "conflict"
 )
 
 // OperationError is the transport-neutral error returned by adapters and
@@ -63,7 +64,7 @@ func (err *OperationError) Validate() error {
 	switch err.Category {
 	case ErrorUnsupported, ErrorUnauthorized, ErrorRateLimited, ErrorQuotaExceeded,
 		ErrorValidationRequired, ErrorTemporaryFailure, ErrorPermanentFailure,
-		ErrorConfirmationRequired, ErrorAmbiguousResult:
+		ErrorConfirmationRequired, ErrorAmbiguousResult, ErrorConflict:
 	default:
 		return fmt.Errorf("unknown error category %q", err.Category)
 	}

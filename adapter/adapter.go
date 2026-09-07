@@ -77,6 +77,24 @@ type ProfileStateReader interface {
 	ReadProfileState(ctx context.Context, request ProfileStateReadRequest) (core.ProfileStateObservation, error)
 }
 
+type ProfileStateApplyResult struct {
+	Observation    core.ProfileStateObservation `json:"-"`
+	AlreadyApplied bool                         `json:"already_applied"`
+}
+
+// ProfileStateWriter applies one immutable proposal. Implementations must
+// compare current fields with the proposal before state and verify the desired
+// state with a read-back before reporting success.
+type ProfileStateWriter interface {
+	ApplyProfileState(ctx context.Context, proposal core.ProfileStateProposal) (ProfileStateApplyResult, error)
+}
+
+// BrowserProfileStateSessionBinder is an explicit write-side grant. A normal
+// BrowserSessionBinder remains read-only.
+type BrowserProfileStateSessionBinder interface {
+	BindBrowserProfileStateSession(profileID core.ProfileID, stateFile string) (ProfileStateWriter, error)
+}
+
 // BrowserApplicationOptions contains the explicit permissions granted to a
 // browser-backed application transport. Binding a browser session alone must
 // never imply permission to change account visibility or submit applications.

@@ -20,6 +20,8 @@ const (
 	maximumProfileStateDepth            = 32
 )
 
+var ErrProfileStateChanged = errors.New("profile state changed since proposal")
+
 type ProfileStateProposalStatus string
 
 const (
@@ -242,6 +244,79 @@ func (proposal ProfileStateProposal) Validate() error {
 	return nil
 }
 
+// DeclaredPaths returns every field owned by the immutable desired snapshot.
+func (proposal ProfileStateProposal) DeclaredPaths() ([]string, error) {
+	if err := proposal.Validate(); err != nil {
+		return nil, err
+	}
+	value, err := decodeJSONValue(proposal.DesiredState)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0)
+	collectDeclaredPaths("", value, &paths)
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// ChangesToApply classifies each declared field against the proposal's
+// before/after digests. This makes a retry after a partially completed apply
+// safe while rejecting any third state written after the plan was created.
+func (proposal ProfileStateProposal) ChangesToApply(observation ProfileStateObservation) ([]ProfileStateChange, error) {
+	if err := proposal.Validate(); err != nil {
+		return nil, err
+	}
+	if err := observation.Validate(); err != nil {
+		return nil, err
+	}
+	if proposal.ProfileID != observation.ProfileID {
+		return nil, errors.New("profile state proposal and observation profiles differ")
+	}
+	desired, err := decodeJSONValue(proposal.DesiredState)
+	if err != nil {
+		return nil, err
+	}
+	observed, err := decodeJSONValue(observation.State)
+	if err != nil {
+		return nil, err
+	}
+	changes := make(map[string]ProfileStateChange, len(proposal.Changes))
+	for _, change := range proposal.Changes {
+		changes[change.Path] = change
+	}
+	paths, err := proposal.DeclaredPaths()
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]ProfileStateChange, 0, len(proposal.Changes))
+	for _, path := range paths {
+		desiredValue, desiredPresent := jsonPointerValue(desired, path)
+		if !desiredPresent {
+			return nil, errors.New("profile state proposal declared path is missing from desired state")
+		}
+		observedValue, observedPresent := jsonPointerValue(observed, path)
+		change, changedAtPlan := changes[path]
+		if !changedAtPlan {
+			if !profileStateValueMatches(observedValue, observedPresent, desiredValue, true) {
+				return nil, fmt.Errorf("%w at %s", ErrProfileStateChanged, path)
+			}
+			continue
+		}
+		if profileStateValueMatches(observedValue, observedPresent, desiredValue, true) {
+			continue
+		}
+		beforeMatches := observedPresent == change.BeforePresent
+		if observedPresent {
+			beforeMatches = beforeMatches && digestJSONValue(observedValue) == change.BeforeDigest
+		}
+		if !beforeMatches {
+			return nil, fmt.Errorf("%w at %s", ErrProfileStateChanged, path)
+		}
+		pending = append(pending, change)
+	}
+	return pending, nil
+}
+
 func diffProfileState(observedRaw, desiredRaw json.RawMessage) ([]ProfileStateChange, error) {
 	observed, err := decodeJSONValue(observedRaw)
 	if err != nil {
@@ -430,6 +505,61 @@ func jsonValuesEqual(left, right any) bool {
 	leftJSON, _ := json.Marshal(left)
 	rightJSON, _ := json.Marshal(right)
 	return bytes.Equal(leftJSON, rightJSON)
+}
+
+func profileStateValueMatches(observed any, observedPresent bool, desired any, desiredPresent bool) bool {
+	if desiredPresent && desired == nil && !observedPresent {
+		return true
+	}
+	return observedPresent == desiredPresent && observedPresent && jsonValuesEqual(observed, desired)
+}
+
+func jsonPointerValue(root any, pointer string) (any, bool) {
+	if pointer == "" {
+		return root, true
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, false
+	}
+	current := root
+	for _, rawSegment := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
+		segment, ok := unescapeJSONPointer(rawSegment)
+		if !ok {
+			return nil, false
+		}
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[segment]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func unescapeJSONPointer(value string) (string, bool) {
+	var result strings.Builder
+	for index := 0; index < len(value); index++ {
+		if value[index] != '~' {
+			result.WriteByte(value[index])
+			continue
+		}
+		if index+1 >= len(value) {
+			return "", false
+		}
+		index++
+		switch value[index] {
+		case '0':
+			result.WriteByte('~')
+		case '1':
+			result.WriteByte('/')
+		default:
+			return "", false
+		}
+	}
+	return result.String(), true
 }
 
 func escapeJSONPointer(value string) string {

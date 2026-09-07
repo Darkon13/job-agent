@@ -27,6 +27,7 @@ const (
 	TaskResumeTouch            TaskType = "resume.touch"
 	TaskResumeUpdate           TaskType = "resume.update"
 	TaskProfileBootstrap       TaskType = "profile.bootstrap"
+	TaskProfileStateApply      TaskType = "profile_state.apply"
 	TaskSkillVerificationStart TaskType = "skill_verification.start"
 	TaskCalendarFindSlots      TaskType = "calendar.find_slots"
 	TaskCalendarCreateEvent    TaskType = "calendar.create_event"

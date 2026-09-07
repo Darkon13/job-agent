@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage/memory"
 	"github.com/Darkon13/job-agent/workflow"
@@ -40,6 +41,7 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 		t.Fatalf("new resource: %v", err)
 	}
 	repository := memory.NewRepository()
+	queue := brokermemory.NewQueue()
 	planner, err := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, profileStateAPIClock{now}, &profileStateAPIIDs{})
 	if err != nil {
 		t.Fatalf("new planner: %v", err)
@@ -52,7 +54,11 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 		}
 		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"about":"current secret"}}}`), "", now)
 	})
-	api, err := NewProfileStateAPI(planner, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil {
+		t.Fatalf("new apply workflow: %v", err)
+	}
+	api, err := NewProfileStateAPI(planner, apply, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -60,7 +66,7 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/resources", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paths":["/resumes/resume-1/about"]`) || !strings.Contains(response.Body.String(), `"readable":true`) || !strings.Contains(response.Body.String(), `"writable":true`) {
 		t.Fatalf("resources response: %d %s", response.Code, response.Body.String())
 	}
 	assertProfileStateSecretsAbsent(t, response.Body.String())
@@ -75,6 +81,17 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 	var created core.ProfileStateProposal
 	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode proposal: %v", err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/proposals/"+string(created.ID)+"/apply", nil))
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"type":"profile_state.apply"`) {
+		t.Fatalf("apply response: %d %s", response.Code, response.Body.String())
+	}
+	assertProfileStateSecretsAbsent(t, response.Body.String())
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/proposals/"+string(created.ID)+"/apply", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("idempotent apply response: %d %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/proposals/"+string(created.ID), nil))
@@ -96,11 +113,16 @@ func TestProfileStateAPIRejectsCallerObservationAndUnavailableReader(t *testing.
 		t.Fatalf("new resource: %v", err)
 	}
 	repository := memory.NewRepository()
+	queue := brokermemory.NewQueue()
 	planner, err := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
 		t.Fatalf("new planner: %v", err)
 	}
-	api, err := NewProfileStateAPI(planner, repository, nil)
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	if err != nil {
+		t.Fatalf("new apply workflow: %v", err)
+	}
+	api, err := NewProfileStateAPI(planner, apply, repository, nil)
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
