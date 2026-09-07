@@ -153,6 +153,17 @@ type ConversationSendPayload struct {
 	Content        MessageContent `json:"content"`
 }
 
+type ConversationDiscoverPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+}
+
+func (payload ConversationDiscoverPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("conversation discovery payload requires profile")
+	}
+	return nil
+}
+
 func (payload ConversationSendPayload) Validate() error {
 	if payload.ConversationID == "" {
 		return errors.New("conversation send payload requires conversation id")
@@ -220,6 +231,14 @@ func ConversationSendIdempotencyKey(conversationID ConversationID, requestKey st
 	}
 	digest := sha256.Sum256([]byte(string(conversationID) + "\x00" + requestKey))
 	return "conversation.send:" + hex.EncodeToString(digest[:]), nil
+}
+
+func ConversationSyncIdempotencyKey(conversationID ConversationID, requestKey string) (string, error) {
+	if conversationID == "" || strings.TrimSpace(requestKey) == "" {
+		return "", errors.New("conversation sync idempotency requires conversation and request key")
+	}
+	digest := sha256.Sum256([]byte(string(conversationID) + "\x00" + requestKey))
+	return "conversation.sync:" + hex.EncodeToString(digest[:]), nil
 }
 
 func ConversationFollowUpIdempotencyKey(followUpID FollowUpID) (string, error) {

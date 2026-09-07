@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Darkon13/job-agent/buildinfo"
 )
 
 func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
@@ -49,5 +51,19 @@ func TestDashboardRejectsUnsafeUpstream(t *testing.T) {
 		if _, err := newDashboardHandler(value); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
 		}
+	}
+}
+
+func TestDashboardHealthReportsBuildVersion(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+	handler, err := newDashboardHandler(upstream.URL)
+	if err != nil {
+		t.Fatalf("new dashboard handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/dashboard-healthz", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ok"`) || !strings.Contains(response.Body.String(), `"version":"`+buildinfo.Current().Version+`"`) {
+		t.Fatalf("health response: %d %s", response.Code, response.Body.String())
 	}
 }

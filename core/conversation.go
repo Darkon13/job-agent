@@ -62,6 +62,54 @@ type ConversationMessage struct {
 	OccurredAt     time.Time        `json:"occurred_at"`
 }
 
+// ConversationMessageObservation is a platform message before it is attached
+// to the local conversation identity. ExternalID makes repeated catalog syncs
+// idempotent even when the local task is retried after a restart.
+type ConversationMessageObservation struct {
+	ExternalID string           `json:"external_id"`
+	Direction  MessageDirection `json:"direction"`
+	Kind       MessageKind      `json:"kind"`
+	Text       string           `json:"text,omitempty"`
+	Options    []MessageOption  `json:"options,omitempty"`
+	OccurredAt time.Time        `json:"occurred_at"`
+}
+
+func (observation ConversationMessageObservation) Message(id MessageID, conversationID ConversationID) (ConversationMessage, error) {
+	status := MessageObserved
+	if observation.Direction == MessageOutgoing {
+		status = MessageSent
+	}
+	message := ConversationMessage{
+		ID: id, ConversationID: conversationID, ExternalID: observation.ExternalID,
+		Direction: observation.Direction, Kind: observation.Kind, Status: status,
+		Text: observation.Text, Options: append([]MessageOption(nil), observation.Options...),
+		OccurredAt: observation.OccurredAt,
+	}
+	return message, message.Validate()
+}
+
+type ConversationObservation struct {
+	ExternalID  string                          `json:"external_id"`
+	Status      ConversationStatus              `json:"status"`
+	LastMessage *ConversationMessageObservation `json:"last_message,omitempty"`
+}
+
+func (observation ConversationObservation) Validate() error {
+	if strings.TrimSpace(observation.ExternalID) == "" {
+		return errors.New("conversation observation requires external id")
+	}
+	switch observation.Status {
+	case ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
+	default:
+		return errors.New("conversation observation has invalid status")
+	}
+	if observation.LastMessage == nil {
+		return nil
+	}
+	_, err := observation.LastMessage.Message("observation", "conversation")
+	return err
+}
+
 func (message ConversationMessage) Validate() error {
 	if message.ID == "" || message.ConversationID == "" {
 		return errors.New("conversation message requires id and conversation id")

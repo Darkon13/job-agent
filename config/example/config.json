@@ -35,6 +35,10 @@
         "daily_limit": 20,
         "timezone": "Europe/Moscow"
       },
+      "conversations": {
+        "allow_send": false,
+        "allow_mark_read": false
+      },
       "enabled": true
     },
     {
@@ -113,6 +117,23 @@
       "concurrency": "forbid",
       "action": {
         "type": "profile.activity.observe",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "sync-primary-conversations",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/10 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "conversation.sync",
         "profile": "primary"
       }
     },

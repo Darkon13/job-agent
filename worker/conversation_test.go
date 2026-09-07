@@ -67,8 +67,9 @@ func TestConversationFollowUpSelectionHandlerSchedulesEligibleReminder(t *testin
 }
 
 type fakeConversationTransport struct {
-	now      time.Time
-	commands []adapter.ConversationSendCommand
+	now       time.Time
+	commands  []adapter.ConversationSendCommand
+	discovery adapter.ConversationDiscoveryResult
 }
 
 func (transport *fakeConversationTransport) SendConversationMessage(_ context.Context, command adapter.ConversationSendCommand) (core.ConversationMessage, error) {
@@ -86,6 +87,10 @@ func (*fakeConversationTransport) MarkConversationRead(context.Context, core.Pro
 
 func (transport *fakeConversationTransport) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
 	return adapter.ConversationSyncResult{ObservedAt: transport.now}, nil
+}
+
+func (transport *fakeConversationTransport) DiscoverConversations(context.Context, core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+	return transport.discovery, nil
 }
 
 func newConversationHandlersFixture(t *testing.T) (*ConversationHandlers, *workflow.ConversationWorkflow, *storagememory.Repository, *brokermemory.Queue, *fakeConversationTransport, *conversationClock) {
@@ -138,6 +143,57 @@ func TestConversationSendHandlerCallsTransportAndStoresMessage(t *testing.T) {
 	activity, err := repository.ListProfileActivity(ctx, storage.ProfileActivityFilter{ProfileID: "profile-1"})
 	if err != nil || len(activity) != 1 || activity[0].Kind != core.ProfileActivityConversationMessageSent || activity[0].SourceID != string(messages[0].ID) {
 		t.Fatalf("conversation activity=%#v err=%v", activity, err)
+	}
+}
+
+func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, repository, queue, transport, clock := newConversationHandlersFixture(t)
+	transport.discovery = adapter.ConversationDiscoveryResult{
+		ObservedAt: clock.now,
+		Conversations: []core.ConversationObservation{
+			{
+				ExternalID: "external-chat-1", Status: core.ConversationActive,
+				LastMessage: &core.ConversationMessageObservation{
+					ExternalID: "message-external-1", Direction: core.MessageIncoming,
+					Kind: core.MessageText, Text: "Добрый день", OccurredAt: clock.now.Add(-time.Minute),
+				},
+			},
+			{ExternalID: "external-chat-2", Status: core.ConversationActive},
+		},
+	}
+	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "discover-task", Type: core.TaskConversationDiscover, IdempotencyKey: "discover-run-1",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-discover", Payload: payload,
+	}, clock.now)
+	if err != nil {
+		t.Fatalf("new discovery task: %v", err)
+	}
+	if err := handlers.Discover(ctx, task); err != nil {
+		t.Fatalf("discover conversations: %v", err)
+	}
+	conversations, err := repository.ListConversations(ctx, storage.ConversationFilter{ProfileID: "profile-1"})
+	if err != nil || len(conversations) != 2 {
+		t.Fatalf("conversations=%#v err=%v", conversations, err)
+	}
+	messages, err := repository.ConversationMessages(ctx, "conversation-1")
+	if err != nil || len(messages) != 1 || messages[0].ExternalID != "message-external-1" {
+		t.Fatalf("messages=%#v err=%v", messages, err)
+	}
+	if len(queue.Tasks()) != 2 {
+		t.Fatalf("sync tasks=%#v", queue.Tasks())
+	}
+	for _, queued := range queue.Tasks() {
+		if queued.Type != core.TaskConversationSync || queued.ProfileID != "profile-1" {
+			t.Fatalf("queued task=%#v", queued)
+		}
+	}
+	if err := handlers.Discover(ctx, task); err != nil {
+		t.Fatalf("repeat discovery: %v", err)
+	}
+	if len(queue.Tasks()) != 2 {
+		t.Fatalf("repeat discovery created duplicate sync tasks: %#v", queue.Tasks())
 	}
 }
 

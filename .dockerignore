@@ -1,5 +1,6 @@
 .git
 .cache
+.playwright-mcp
 data
 config.local.json
 docs/project-status.md

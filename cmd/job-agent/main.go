@@ -17,6 +17,7 @@ import (
 	"github.com/Darkon13/job-agent/adapters/hh"
 	"github.com/Darkon13/job-agent/api/httpapi"
 	"github.com/Darkon13/job-agent/broker"
+	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
@@ -32,6 +33,12 @@ type mainOptions struct {
 }
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	options, err := parseMainOptions(os.Args[1:])
 	if err != nil {
 		log.Fatalf("usage: %s [-migrate-up] <config.json>: %v", os.Args[0], err)
@@ -133,6 +140,7 @@ func main() {
 		instance := instances[profile.Adapter]
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
 		browserApplicationsReady := false
+		browserConversationsReady := false
 		if profile.StateFile != "" {
 			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
 				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
@@ -158,6 +166,19 @@ func main() {
 					profileStatePlatforms[profileID] = core.Platform(instance.Name())
 				}
 			}
+			if binder, ok := instance.(adapter.BrowserConversationSessionBinder); ok {
+				transport, err := binder.BindBrowserConversationSession(profileID, profile.StateFile, adapter.BrowserConversationOptions{
+					AllowSend: profile.Conversations.AllowSend, AllowMarkRead: profile.Conversations.AllowMarkRead,
+				})
+				if err != nil {
+					log.Fatalf("bind browser conversation session for profile %q: %v", profile.Tag, err)
+				}
+				if err := conversationTransports.Register(profileID, transport); err != nil {
+					log.Fatalf("register browser conversation transport for profile %q: %v", profile.Tag, err)
+				}
+				browserConversationsReady = true
+				log.Printf("profile %q has a browser-backed conversation session", profile.Tag)
+			}
 			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
 				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
 					transport, err := binder.BindBrowserApplicationSession(profileID, profile.StateFile, adapter.BrowserApplicationOptions{
@@ -176,7 +197,7 @@ func main() {
 			}
 		}
 		if apiReady {
-			if transport, ok := instance.(adapter.ConversationTransport); ok {
+			if transport, ok := instance.(adapter.ConversationTransport); ok && !browserConversationsReady {
 				if err := conversationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
 				}
@@ -257,7 +278,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation handlers: %v", err)
 	}
-	workers, err := conversationWorkers(store, conversationHandlers)
+	profileMutationLane := taskworker.NewProfileMutationLane()
+	workers, err := conversationWorkers(store, conversationHandlers, profileMutationLane)
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
 	}
@@ -270,7 +292,6 @@ func main() {
 		log.Fatalf("create conversation follow-up selection worker: %v", err)
 	}
 	workers = append(workers, followUpSelectionWorker)
-	profileMutationLane := taskworker.NewProfileMutationLane()
 	if len(profileStateReaders) > 0 && profileStateWriters.Count() > 0 {
 		profileStateReconcileHandler, err := workflow.NewProfileStateReconcileHandler(
 			profileStatePlanner, profileStateApplyWorkflow, profileStateReaders,
@@ -369,7 +390,12 @@ func main() {
 		log.Fatalf("build profile activity scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, activityDefinitions...)
-	followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances)
+	conversationDefinitions, err := conversationDiscoveryDefinitions(cfg, instances, conversationTransports)
+	if err != nil {
+		log.Fatalf("build conversation sync jobs: %v", err)
+	}
+	definitions = append(definitions, conversationDefinitions...)
+	followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
 	if err != nil {
 		log.Fatalf("build conversation follow-up selection jobs: %v", err)
 	}
@@ -753,7 +779,39 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 	return definitions, nil
 }
 
-func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter) ([]jobscheduler.Definition, error) {
+func conversationDiscoveryDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, transports *taskworker.ConversationTransportRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionConversationSync {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled || !transports.CanDiscover(profileID) {
+			continue
+		}
+		payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: profileID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskConversationDiscover, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, transports *taskworker.ConversationTransportRegistry) ([]jobscheduler.Definition, error) {
 	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
 	for _, profile := range cfg.Profiles {
 		profiles[profile.Tag] = profile
@@ -764,10 +822,13 @@ func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances ma
 			continue
 		}
 		profile := profiles[job.Action.Profile]
-		if !profile.Enabled || job.Action.FollowUp == nil {
+		if !profile.Enabled || job.Action.FollowUp == nil || !profile.Conversations.AllowSend {
 			continue
 		}
 		profileID := core.ProfileID(profile.Tag)
+		if !transports.Has(profileID) {
+			continue
+		}
 		instance := instances[profile.Adapter]
 		capabilities, err := core.NewCapabilitySet(instance.Capabilities()...)
 		if err != nil {
@@ -831,14 +892,18 @@ func profileStateReconcileDefinitions(
 	return definitions, nil
 }
 
-func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.ConversationHandlers) ([]*taskworker.Worker, error) {
+func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.ConversationHandlers, lane *taskworker.ProfileMutationLane) ([]*taskworker.Worker, error) {
+	if lane == nil {
+		return nil, errors.New("conversation workers require profile mutation lane")
+	}
 	definitions := []struct {
 		taskType core.TaskType
 		handler  taskworker.HandlerFunc
 	}{
-		{core.TaskConversationSend, handlers.Send},
-		{core.TaskConversationFollowUp, handlers.FollowUp},
-		{core.TaskConversationMarkRead, handlers.MarkRead},
+		{core.TaskConversationSend, lane.Wrap(handlers.Send)},
+		{core.TaskConversationFollowUp, lane.Wrap(handlers.FollowUp)},
+		{core.TaskConversationMarkRead, lane.Wrap(handlers.MarkRead)},
+		{core.TaskConversationDiscover, handlers.Discover},
 		{core.TaskConversationSync, handlers.Sync},
 	}
 	result := make([]*taskworker.Worker, 0, len(definitions))

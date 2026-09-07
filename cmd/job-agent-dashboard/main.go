@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,12 +17,20 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Darkon13/job-agent/buildinfo"
 )
 
 //go:embed web/*
 var dashboardFiles embed.FS
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-dashboard", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:]); err != nil {
@@ -92,7 +101,10 @@ func newDashboardHandler(upstreamValue string) (http.Handler, error) {
 	mux.Handle("/readyz", proxy)
 	mux.HandleFunc("GET /dashboard-healthz", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"status":"ok"}`))
+		_ = json.NewEncoder(response).Encode(struct {
+			Status string         `json:"status"`
+			Build  buildinfo.Info `json:"build"`
+		}{Status: "ok", Build: buildinfo.Current()})
 	})
 	mux.Handle("/", static)
 	return securityHeaders(mux), nil

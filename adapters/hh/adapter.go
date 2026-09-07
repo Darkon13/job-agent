@@ -84,14 +84,15 @@ type Adapter struct {
 	clients                    map[core.ProfileID]*ReadClient
 	browserClients             map[core.ProfileID]*BrowserReadClient
 	browserApplicationClients  map[core.ProfileID]*BrowserApplicationClient
+	browserConversationClients map[core.ProfileID]*BrowserConversationClient
 	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
-var _ adapter.ConversationTransport = (*Adapter)(nil)
 var _ adapter.ProfileReaderFactory = (*Adapter)(nil)
 var _ adapter.BrowserSessionBinder = (*Adapter)(nil)
 var _ adapter.BrowserApplicationSessionBinder = (*Adapter)(nil)
+var _ adapter.BrowserConversationSessionBinder = (*Adapter)(nil)
 var _ adapter.BrowserProfileStateSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.ProfileStateReader = (*Adapter)(nil)
@@ -110,8 +111,34 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 		config: cfg, clients: make(map[core.ProfileID]*ReadClient),
 		browserClients:             make(map[core.ProfileID]*BrowserReadClient),
 		browserApplicationClients:  make(map[core.ProfileID]*BrowserApplicationClient),
+		browserConversationClients: make(map[core.ProfileID]*BrowserConversationClient),
 		browserProfileStateClients: make(map[core.ProfileID]*BrowserProfileStateClient),
 	}, nil
+}
+
+func (a *Adapter) BindBrowserConversationSession(profileID core.ProfileID, stateFile string, options adapter.BrowserConversationOptions) (adapter.ConversationTransport, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reader := a.browserClients[profileID]
+	if reader == nil {
+		var err error
+		reader, err = NewBrowserReadClient(profileID, stateFile, a.config.UserAgent, nil)
+		if err != nil {
+			return nil, err
+		}
+		a.browserClients[profileID] = reader
+	} else if reader.stateFile != stateFile {
+		return nil, fmt.Errorf("HH profile %s is already bound to another browser state", profileID)
+	}
+	if existing := a.browserConversationClients[profileID]; existing != nil {
+		if existing.options != options {
+			return nil, fmt.Errorf("HH profile %s is already bound with different browser conversation permissions", profileID)
+		}
+		return existing, nil
+	}
+	client := newBrowserConversationClient(reader, options)
+	a.browserConversationClients[profileID] = client
+	return client, nil
 }
 
 func (a *Adapter) BindBrowserProfileStateSession(profileID core.ProfileID, stateFile string) (adapter.ProfileStateWriter, error) {
@@ -203,6 +230,9 @@ func (a *Adapter) Capabilities() []core.Capability {
 		core.CapabilityGetVacancy,
 		core.CapabilityApply,
 		core.CapabilityQuestionnaire,
+		core.CapabilityConversationRead,
+		core.CapabilityConversationWrite,
+		core.CapabilityConversationMarkRead,
 	}
 }
 
@@ -411,18 +441,6 @@ func (a *Adapter) ReconcileApplication(ctx context.Context, command adapter.Appl
 		return browserClient.ReconcileApplication(ctx, command)
 	}
 	return adapter.ApplicationReconcileResult{}, operationError(core.ErrorUnauthorized, "applications.reconcile", "HH profile has no bound application session", nil)
-}
-
-func (a *Adapter) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
-	return core.ConversationMessage{}, hhUnsupported("conversations.send")
-}
-
-func (a *Adapter) MarkConversationRead(context.Context, core.ProfileID, string) error {
-	return hhUnsupported("conversations.mark_read")
-}
-
-func (a *Adapter) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
-	return adapter.ConversationSyncResult{}, hhUnsupported("conversations.sync")
 }
 
 func hhUnsupported(operation string) error {

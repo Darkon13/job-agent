@@ -8,8 +8,10 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/Darkon13/job-agent/buildinfo"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/questionbank"
 )
@@ -27,6 +29,12 @@ type questionnaireResponse struct {
 }
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("questionnaire-mock", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	address := flag.String("listen", "127.0.0.1:8090", "HTTP listen address")
 	studyBankPath := flag.String("study-bank", "", "optional imported study-bank JSON")
 	flag.Parse()

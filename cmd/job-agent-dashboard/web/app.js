@@ -1,7 +1,7 @@
 const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set() };
 const elements = Object.fromEntries([
   "applications", "tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
-  "connection-dot", "connection-state", "updated-at", "refresh", "mark-read", "reply-form",
+  "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
@@ -187,6 +187,13 @@ async function refreshSummary() {
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }
 }
+async function refreshVersion() {
+  try {
+    const info = await request("/api/v1/version");
+    elements.runtimeVersion.textContent = `v${info.version} · API ${info.api_version}`;
+    elements.runtimeVersion.title = `commit ${info.commit} · build ${info.build_time} · modified ${info.modified}`;
+  } catch (error) { elements.runtimeVersion.textContent = "версия недоступна"; }
+}
 async function selectConversation(conversation) {
   state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.status} · revision ${conversation.revision}`; elements.markRead.disabled = false; elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try { const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`); renderMessages(result.items || []); } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
@@ -207,4 +214,4 @@ elements.markRead.addEventListener("click", async () => {
   try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/mark-read`); elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.markRead.disabled = false; }
 });
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
-refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);
+refreshVersion(); refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);

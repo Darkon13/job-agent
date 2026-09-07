@@ -14,6 +14,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
@@ -21,6 +22,12 @@ import (
 )
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-approve", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(context.Background(), os.Args[1:], os.Stdout, time.Now().UTC()); err != nil {
 		log.Fatal(err)
 	}

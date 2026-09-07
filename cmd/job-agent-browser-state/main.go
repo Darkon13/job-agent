@@ -8,9 +8,16 @@ import (
 	"os"
 
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/buildinfo"
 )
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-browser-state", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		log.Fatal(err)
 	}

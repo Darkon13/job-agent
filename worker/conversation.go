@@ -49,6 +49,24 @@ func (registry *ConversationTransportRegistry) Resolve(profileID core.ProfileID)
 	return transport, nil
 }
 
+func (registry *ConversationTransportRegistry) CanDiscover(profileID core.ProfileID) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	transport, exists := registry.transports[profileID]
+	if !exists {
+		return false
+	}
+	_, supported := transport.(adapter.ConversationDiscoverer)
+	return supported
+}
+
+func (registry *ConversationTransportRegistry) Has(profileID core.ProfileID) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	_, exists := registry.transports[profileID]
+	return exists
+}
+
 type MessageResolver interface {
 	Resolve(ctx context.Context, conversation core.Conversation, content core.MessageContent) (string, error)
 }
@@ -142,6 +160,49 @@ func (handlers *ConversationHandlers) MarkRead(ctx context.Context, task core.Ta
 		return err
 	}
 	return transport.MarkConversationRead(ctx, conversation.ProfileID, conversation.ExternalID)
+}
+
+func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Task) error {
+	var payload core.ConversationDiscoverPayload
+	if err := decodeTaskPayload(task, &payload); err != nil {
+		return err
+	}
+	if err := payload.Validate(); err != nil {
+		return err
+	}
+	if payload.ProfileID != task.ProfileID {
+		return errors.New("conversation discovery task profile does not match payload")
+	}
+	transport, err := handlers.transports.Resolve(payload.ProfileID)
+	if err != nil {
+		return err
+	}
+	discoverer, supported := transport.(adapter.ConversationDiscoverer)
+	if !supported {
+		return &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "conversations.discover",
+			Message: "conversation transport does not support discovery",
+		}
+	}
+	discovery, err := discoverer.DiscoverConversations(ctx, payload.ProfileID)
+	if err != nil {
+		return err
+	}
+	if discovery.ObservedAt.IsZero() {
+		return errors.New("conversation discovery returned zero observation time")
+	}
+	observed, err := handlers.workflow.ObserveConversations(
+		ctx, task.Platform, task.ProfileID, discovery.Conversations, discovery.ObservedAt,
+	)
+	if err != nil {
+		return err
+	}
+	for _, conversationID := range observed.ConversationIDs {
+		if _, err := handlers.workflow.EnqueueConversationSync(ctx, conversationID, task.IdempotencyKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) error {

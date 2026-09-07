@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/buildinfo"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
 )
@@ -80,6 +81,11 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		}
 	}
 	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+	if response.Code != http.StatusOK || !containsAll(response.Body.String(), `"version":"`+buildinfo.Current().Version+`"`, `"api_version":"v1"`, `"commit":`) {
+		t.Fatalf("version response: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/summary", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("summary status: %d body=%s", response.Code, response.Body.String())

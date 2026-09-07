@@ -59,6 +59,33 @@ func (store *Store) Conversation(ctx context.Context, id core.ConversationID) (c
 	return scanConversation(store.db.QueryRowContext(ctx, conversationSelect+` WHERE id = ?`, id))
 }
 
+func (store *Store) SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error {
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	if candidate.Revision != expectedRevision+1 {
+		return errors.New("conversation candidate must advance revision exactly once")
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE conversations SET status = ?, updated_at = ?, revision = ?
+		WHERE id = ? AND platform = ? AND profile_id = ? AND external_id = ? AND application_id = ?
+		AND last_message_id = ? AND last_message_at IS ? AND last_incoming_at IS ? AND last_outgoing_at IS ?
+		AND created_at = ? AND revision = ?`, candidate.Status, candidate.UpdatedAt.UnixNano(), candidate.Revision,
+		candidate.ID, candidate.Platform, candidate.ProfileID, candidate.ExternalID, candidate.ApplicationID,
+		candidate.LastMessageID, nullableTime(candidate.LastMessageAt), nullableTime(candidate.LastIncomingAt), nullableTime(candidate.LastOutgoingAt),
+		candidate.CreatedAt.UnixNano(), expectedRevision)
+	if err != nil {
+		return fmt.Errorf("save conversation %s: %w", candidate.ID, err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return storage.ErrRevisionConflict
+	}
+	return nil
+}
+
 func (store *Store) conversationByExternal(ctx context.Context, platform core.Platform, profileID core.ProfileID, externalID string) (core.Conversation, error) {
 	return scanConversation(store.db.QueryRowContext(ctx, conversationSelect+
 		` WHERE platform = ? AND profile_id = ? AND external_id = ?`, platform, profileID, externalID))

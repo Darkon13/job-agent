@@ -57,6 +57,29 @@ func (repository *Repository) Conversation(ctx context.Context, id core.Conversa
 	return cloneConversation(conversation), nil
 }
 
+func (repository *Repository) SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	if candidate.Revision != expectedRevision+1 {
+		return errors.New("conversation candidate must advance revision exactly once")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	stored, exists := repository.conversations[candidate.ID]
+	if !exists || stored.Revision != expectedRevision {
+		return storage.ErrRevisionConflict
+	}
+	if !sameConversationIdentity(stored, candidate) || !sameConversationTimeline(stored, candidate) {
+		return errors.New("conversation immutable identity or timeline changed")
+	}
+	repository.conversations[candidate.ID] = cloneConversation(candidate)
+	return nil
+}
+
 func (repository *Repository) ListConversations(ctx context.Context, filter storage.ConversationFilter) ([]core.Conversation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -245,6 +268,12 @@ func (repository *Repository) ListFollowUps(ctx context.Context, filter storage.
 func sameConversationIdentity(first, second core.Conversation) bool {
 	return first.ID == second.ID && first.Platform == second.Platform && first.ProfileID == second.ProfileID &&
 		first.ExternalID == second.ExternalID && first.ApplicationID == second.ApplicationID
+}
+
+func sameConversationTimeline(first, second core.Conversation) bool {
+	return first.CreatedAt.Equal(second.CreatedAt) && first.LastMessageID == second.LastMessageID &&
+		equalTime(first.LastMessageAt, second.LastMessageAt) && equalTime(first.LastIncomingAt, second.LastIncomingAt) &&
+		equalTime(first.LastOutgoingAt, second.LastOutgoingAt)
 }
 
 func sameMessage(first, second core.ConversationMessage) bool {

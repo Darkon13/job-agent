@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Darkon13/job-agent/buildinfo"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/questionbank"
 )
@@ -33,6 +34,13 @@ type importedBank struct {
 }
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-question-bank-import", os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

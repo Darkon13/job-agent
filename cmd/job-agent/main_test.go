@@ -43,6 +43,24 @@ func (profileActivityObserverStub) ObserveProfileActivity(context.Context, core.
 	return adapter.ProfileActivityObservation{ObservedAt: time.Now().UTC()}, nil
 }
 
+type conversationTransportStub struct{}
+
+func (conversationTransportStub) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
+	return core.ConversationMessage{}, errors.New("not implemented")
+}
+
+func (conversationTransportStub) MarkConversationRead(context.Context, core.ProfileID, string) error {
+	return errors.New("not implemented")
+}
+
+func (conversationTransportStub) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
+	return adapter.ConversationSyncResult{}, errors.New("not implemented")
+}
+
+func (conversationTransportStub) DiscoverConversations(context.Context, core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+	return adapter.ConversationDiscoveryResult{}, errors.New("not implemented")
+}
+
 func TestParseMainOptions(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -204,7 +222,7 @@ func TestProfileActivityDefinitionsRequireRegisteredObserver(t *testing.T) {
 
 func TestConversationFollowUpSelectionDefinitions(t *testing.T) {
 	cfg := appconfig.Config{
-		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true, Conversations: appconfig.ConversationPolicy{AllowSend: true}}},
 		Jobs: []appconfig.Job{{
 			Tag: "remind-oldest", Enabled: true,
 			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "15 11 * * 1-5", Timezone: "Europe/Moscow"}},
@@ -222,9 +240,13 @@ func TestConversationFollowUpSelectionDefinitions(t *testing.T) {
 			},
 		}},
 	}
+	transports := taskworker.NewConversationTransportRegistry()
+	if err := transports.Register("primary", conversationTransportStub{}); err != nil {
+		t.Fatalf("register conversation transport: %v", err)
+	}
 	definitions, err := conversationFollowUpSelectionDefinitions(cfg, map[string]adapter.Adapter{
 		"platform": &profileAdapterStub{capabilities: []core.Capability{core.CapabilityConversationWrite}},
-	})
+	}, transports)
 	if err != nil || len(definitions) != 1 {
 		t.Fatalf("definitions=%#v err=%v", definitions, err)
 	}
@@ -235,9 +257,41 @@ func TestConversationFollowUpSelectionDefinitions(t *testing.T) {
 	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.Strategy != core.FollowUpSelectOldestUnanswered || payload.Content.Text == "" {
 		t.Fatalf("payload=%#v err=%v", payload, err)
 	}
-	empty, err := conversationFollowUpSelectionDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}})
+	empty, err := conversationFollowUpSelectionDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}}, transports)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("definitions without conversation write capability=%#v err=%v", empty, err)
+	}
+}
+
+func TestConversationDiscoveryDefinitionsRequireDiscoverableTransport(t *testing.T) {
+	cfg := appconfig.Config{
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
+		Jobs: []appconfig.Job{{
+			Tag: "sync-conversations", Enabled: true,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "*/10 * * * *", Timezone: "UTC"}},
+			Action:   appconfig.JobAction{Type: appconfig.JobActionConversationSync, Profile: "primary"},
+		}},
+	}
+	transports := taskworker.NewConversationTransportRegistry()
+	if err := transports.Register("primary", conversationTransportStub{}); err != nil {
+		t.Fatalf("register conversation transport: %v", err)
+	}
+	definitions, err := conversationDiscoveryDefinitions(cfg, map[string]adapter.Adapter{
+		"platform": &profileAdapterStub{},
+	}, transports)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%#v err=%v", definitions, err)
+	}
+	if definitions[0].ActionType != core.TaskConversationDiscover || definitions[0].ProfileID != "primary" {
+		t.Fatalf("definition=%#v", definitions[0])
+	}
+	var payload core.ConversationDiscoverPayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.ProfileID != "primary" {
+		t.Fatalf("payload=%#v err=%v", payload, err)
+	}
+	empty, err := conversationDiscoveryDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}}, taskworker.NewConversationTransportRegistry())
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("definitions without transport=%#v err=%v", empty, err)
 	}
 }
 

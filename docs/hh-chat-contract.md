@@ -1,6 +1,6 @@
 # HH: browser chat contract
 
-Наблюдения сделаны 2026-07-18 в авторизованной applicant session. Имена,
+Наблюдения сделаны 2026-07-18 и уточнены 2026-09-07 в авторизованной applicant session. Имена,
 сообщения, chat/account/vacancy/resume IDs и значения cookies не фиксируются.
 Ни одного сообщения или варианта ответа во время исследования не отправлено.
 
@@ -37,10 +37,17 @@ Browser transport должен явно выбирать iframe/full-page contex
 ```text
 GET  /chatik/api/filter_clusters
 POST /chatik/api/notify_chat_opened
-GET  /chatik/api/chat_data?chatId=...&applicantId=...
+GET  /chatik/api/chats?filterUnread=false&filterHasTextMessage=false&from=...
+GET  /chatik/api/chat_data?chatId=...&lastMessageId=...
 POST /chatik/api/mark_read                  # при наличии unread state
 GET  https://websocket.hh.ru/proxy-webapp-config
 ```
+
+`chats` возвращает `chats.items` и cursor `chats.nextFrom`; элементы содержат
+`currentParticipantId`, `lastMessage`, `unreadCount`, `operations` и ссылки на
+resources. `chat_data` в актуальном applicant flow не требует `applicantId`, а
+историю продолжает через `lastMessageId`. Оба GET-запроса сами по себе не
+отмечают чат прочитанным.
 
 `filter_clusters` принимает web-фильтры `filterUnread` и
 `filterHasTextMessage`. Live updates доставляются через websocket proxy;
@@ -96,8 +103,14 @@ Frontend bundles содержат отдельные endpoints:
 - `/chatik/api/upload_file` — attachment;
 - `/chatik/api/delete_message` — удаление.
 
-Для text send наблюдаемая frontend-модель оперирует `chatId`, `text`,
-`resources/uploadId`, `idempotencyKey`, optional edit/message ID и
+Для text send подтверждён минимальный `POST /chatik/api/send` с body
+`{chatId, idempotencyKey, text}`; endpoint принимает query
+`hhtmSourceLabel=chat&hhtmSource=chat`. Перед POST transport повторно читает
+`chat_data` и проверяет `chatStates.writeMessageState.allowed`. Идемпотентный
+ключ внешнего workflow детерминированно преобразуется в UUID, поэтому retry не
+создаёт новый платформенный запрос с другим identity.
+
+Полная frontend-модель также оперирует `resources/uploadId`, optional edit/message ID и
 `suggestionUuid`. Для event path встречаются `messageId`, `event`, `buttonName`,
 `eventParams` и типы `chat_text_button`, `chat_event_button`,
 `chat_link_button`.
@@ -106,6 +119,10 @@ Frontend bundles содержат отдельные endpoints:
 `hasMessagesWithTextButtons=false`. Контракт, однако, явно разделяет свободный
 текст и выбор готового варианта. Точный request body фиксируется при естественном
 появлении активной кнопки; нажимать её ради исследования нельзя.
+
+Явный `POST /chatik/api/mark_read` принимает как минимум `chatId`, `messageId`
+и `hasUnreadDiscardMessage`. Transport выбирает последнее входящее видимое
+сообщение из актуального `chat_data`; нулевой `unreadCount` завершается без POST.
 
 Целевой adapter command:
 

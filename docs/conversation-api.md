@@ -148,10 +148,34 @@ conversation с pending follow-up, нарушенный minimum silence/cooldown
 Выбор создаёт обычный durable one-shot follow-up и не отправляет сообщение
 напрямую. Повтор того же scheduled task сначала находит follow-up по общей
 idempotency boundary, поэтому после частичного сбоя не выбирается второй чат.
-Текущий HH adapter ещё не реализует `conversations.send`: он не объявляет
-conversation write capability, поэтому scheduler не регистрирует такую job, а
-preflight явно помечает её заблокированной до появления подтверждённого
-browser/API transport.
+HH browser transport поддерживает каталог, историю, отправку текста и
+`mark-read`. Чтение включается наличием валидного browser state. Мутации
+разрешаются независимо через `profiles[].conversations.allow_send` и
+`allow_mark_read`; без флага transport возвращает `unsupported` до внешнего
+POST. Follow-up job дополнительно не регистрируется без реально привязанного
+transport-а.
+
+Плановая синхронизация описывается отдельной read-only job:
+
+```json
+{
+  "tag": "sync-primary-conversations",
+  "enabled": true,
+  "triggers": [{
+    "type": "cron",
+    "expression": "*/10 * * * *",
+    "timezone": "Europe/Moscow",
+    "misfire": "run_once"
+  }],
+  "concurrency": "forbid",
+  "action": {"type": "conversation.sync", "profile": "primary"}
+}
+```
+
+Её первый task имеет тип `conversation.discover`; он не открывает чат в UI и
+не вызывает `mark_read`. Для каждого найденного диалога создаётся отдельный
+идемпотентный `conversation.sync`, поэтому частичный сбой не требует повторно
+скачивать уже сохранённые сообщения.
 
 Event trigger может запланировать ту же policy после исходящего сообщения или
 изменения состояния отклика. Входящие сообщения и terminal events отклика

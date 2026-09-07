@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Darkon13/job-agent/buildinfo"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
 )
@@ -62,9 +63,15 @@ func (api *RuntimeAPI) Handler(productAPI http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /readyz", api.ready)
+	mux.HandleFunc("GET /api/v1/version", api.version)
 	mux.HandleFunc("GET /api/v1/dashboard/summary", api.summary)
 	mux.Handle("/", productAPI)
 	return mux
+}
+
+func (api *RuntimeAPI) version(response http.ResponseWriter, _ *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, buildinfo.Current())
 }
 
 func (api *RuntimeAPI) health(response http.ResponseWriter, _ *http.Request) {

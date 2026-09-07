@@ -13,6 +13,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
@@ -28,6 +29,12 @@ type browserState struct {
 }
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-check", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(context.Background(), os.Args[1:], os.Stdout); err != nil {
 		log.Fatal(err)
 	}
@@ -230,6 +237,18 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 				job.Tag, observation.ScoreHidden, optionalInt(observation.PeriodDays), optionalInt(observation.SearchShows),
 				optionalInt(observation.Views), optionalInt(observation.Invitations), optionalInt(observation.ResponseStreak), optionalInt(observation.ResponsesRequired))
 			runnableJobs++
+		case appconfig.JobActionConversationSync:
+			profile := configuredProfiles[job.Action.Profile]
+			if !readiness[job.Action.Profile].browserReady {
+				blocked = append(blocked, "job "+job.Tag+" has no valid browser state")
+				continue
+			}
+			if _, supported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder); !supported {
+				blocked = append(blocked, "job "+job.Tag+" adapter has no browser conversation discovery")
+				continue
+			}
+			fmt.Fprintf(output, "OK job=%s conversation_sync=ready\n", job.Tag)
+			runnableJobs++
 		case appconfig.JobActionConversationFollowUpSelect:
 			profile := configuredProfiles[job.Action.Profile]
 			capabilities, err := core.NewCapabilitySet(instances[profile.Adapter].Capabilities()...)
@@ -240,7 +259,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 				blocked = append(blocked, "job "+job.Tag+" adapter has no conversation write capability")
 				continue
 			}
-			if !readiness[job.Action.Profile].apiReady {
+			_, browserSupported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder)
+			if !readiness[job.Action.Profile].apiReady && !(readiness[job.Action.Profile].browserReady && browserSupported) {
 				blocked = append(blocked, "job "+job.Tag+" has no writable conversation transport")
 				continue
 			}

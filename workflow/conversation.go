@@ -19,6 +19,107 @@ type ConversationWorkflow struct {
 	ids        IDGenerator
 }
 
+type ConversationObservationResult struct {
+	Observed             int                   `json:"observed"`
+	ConversationsCreated int                   `json:"conversations_created"`
+	MessagesCreated      int                   `json:"messages_created"`
+	ConversationIDs      []core.ConversationID `json:"conversation_ids"`
+}
+
+func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, platform core.Platform, profileID core.ProfileID, observations []core.ConversationObservation, observedAt time.Time) (ConversationObservationResult, error) {
+	if platform == "" || profileID == "" || observedAt.IsZero() {
+		return ConversationObservationResult{}, errors.New("conversation catalog observation requires platform, profile and time")
+	}
+	result := ConversationObservationResult{
+		Observed: len(observations), ConversationIDs: make([]core.ConversationID, 0, len(observations)),
+	}
+	for index, observation := range observations {
+		if err := observation.Validate(); err != nil {
+			return result, fmt.Errorf("conversation observation %d: %w", index, err)
+		}
+		conversationID, err := workflow.ids.NewID("conversation")
+		if err != nil {
+			return result, err
+		}
+		candidate, err := core.NewConversation(core.ConversationID(conversationID), platform, profileID, observation.ExternalID, observedAt)
+		if err != nil {
+			return result, err
+		}
+		stored, created, err := workflow.repository.CreateConversation(ctx, candidate)
+		if err != nil {
+			return result, fmt.Errorf("store observed conversation %s: %w", observation.ExternalID, err)
+		}
+		if created {
+			result.ConversationsCreated++
+		}
+		result.ConversationIDs = append(result.ConversationIDs, stored.ID)
+		if stored.Status != observation.Status {
+			expectedRevision := stored.Revision
+			if err := stored.SetStatus(observation.Status, observedAt); err != nil {
+				return result, err
+			}
+			if err := workflow.repository.SaveConversation(ctx, stored, expectedRevision); err != nil {
+				return result, fmt.Errorf("save observed conversation %s: %w", observation.ExternalID, err)
+			}
+		}
+		if observation.LastMessage == nil {
+			continue
+		}
+		messageID, err := workflow.ids.NewID("message")
+		if err != nil {
+			return result, err
+		}
+		message, err := observation.LastMessage.Message(core.MessageID(messageID), stored.ID)
+		if err != nil {
+			return result, err
+		}
+		if _, messageCreated, err := workflow.repository.AppendConversationMessage(ctx, message, observedAt); err != nil {
+			return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
+		} else if messageCreated {
+			result.MessagesCreated++
+		}
+	}
+	return result, nil
+}
+
+func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Context, conversationID core.ConversationID, requestKey string) (bool, error) {
+	conversation, err := workflow.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("load conversation for sync: %w", err)
+	}
+	idempotencyKey, err := core.ConversationSyncIdempotencyKey(conversation.ID, requestKey)
+	if err != nil {
+		return false, err
+	}
+	payload, err := json.Marshal(core.ConversationIDPayload{ConversationID: conversation.ID})
+	if err != nil {
+		return false, fmt.Errorf("encode conversation sync task: %w", err)
+	}
+	taskID, err := workflow.ids.NewID("task")
+	if err != nil {
+		return false, err
+	}
+	correlationID, err := workflow.ids.NewID("correlation")
+	if err != nil {
+		return false, err
+	}
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: core.TaskID(taskID), Type: core.TaskConversationSync,
+		IdempotencyKey: idempotencyKey, Source: "conversation-discovery",
+		Platform: conversation.Platform, ProfileID: conversation.ProfileID,
+		CorrelationID: core.CorrelationID(correlationID), Payload: payload,
+		AvailableAt: workflow.clock.Now(),
+	}, workflow.clock.Now())
+	if err != nil {
+		return false, err
+	}
+	created, err := workflow.tasks.Enqueue(ctx, task)
+	if err != nil {
+		return false, fmt.Errorf("enqueue conversation sync %s: %w", conversation.ID, err)
+	}
+	return created, nil
+}
+
 func NewConversationWorkflow(repository storage.ConversationRepository, tasks broker.TaskStore, clock Clock, ids IDGenerator) (*ConversationWorkflow, error) {
 	if repository == nil || tasks == nil || clock == nil || ids == nil {
 		return nil, errors.New("conversation workflow requires repository, task queue, clock and id generator")

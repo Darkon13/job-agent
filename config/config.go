@@ -41,6 +41,7 @@ const (
 	JobActionApplicationCampaign        = "application.campaign"
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
+	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
 	JobConcurrencyForbid                = "forbid"
 	ApplicationModeDryRun               = "dry_run"
@@ -158,14 +159,20 @@ type AdapterConfig struct {
 }
 
 type Profile struct {
-	Tag            string            `json:"tag"`
-	Adapter        string            `json:"adapter"`
-	Resume         string            `json:"resume,omitempty"`
-	CredentialsRef string            `json:"credentials_ref,omitempty"`
-	StateFile      string            `json:"state_file,omitempty"`
-	Enabled        bool              `json:"enabled"`
-	Bootstrap      *ProfileBootstrap `json:"bootstrap,omitempty"`
-	Applications   ApplicationPolicy `json:"applications,omitempty"`
+	Tag            string             `json:"tag"`
+	Adapter        string             `json:"adapter"`
+	Resume         string             `json:"resume,omitempty"`
+	CredentialsRef string             `json:"credentials_ref,omitempty"`
+	StateFile      string             `json:"state_file,omitempty"`
+	Enabled        bool               `json:"enabled"`
+	Bootstrap      *ProfileBootstrap  `json:"bootstrap,omitempty"`
+	Applications   ApplicationPolicy  `json:"applications,omitempty"`
+	Conversations  ConversationPolicy `json:"conversations,omitempty"`
+}
+
+type ConversationPolicy struct {
+	AllowSend     bool `json:"allow_send,omitempty"`
+	AllowMarkRead bool `json:"allow_mark_read,omitempty"`
 }
 
 type ApplicationPolicy struct {
@@ -326,6 +333,7 @@ func (c Config) Validate() error {
 	}
 
 	profiles := make(map[string]struct{}, len(c.Profiles))
+	profileConfigs := make(map[string]Profile, len(c.Profiles))
 	for _, profile := range c.Profiles {
 		if profile.Tag == "" || profile.Adapter == "" {
 			return fmt.Errorf("every profile requires tag and adapter")
@@ -387,6 +395,7 @@ func (c Config) Validate() error {
 			}
 		}
 		profiles[profile.Tag] = struct{}{}
+		profileConfigs[profile.Tag] = profile
 	}
 	profileStateResources, err := c.BuildProfileStateResources()
 	if err != nil {
@@ -465,9 +474,16 @@ func (c Config) Validate() error {
 			if resume == "" {
 				return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
 			}
+		case JobActionConversationSync:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
 		case JobActionConversationFollowUpSelect:
 			if _, exists := profiles[job.Action.Profile]; !exists {
 				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			if !profileConfigs[job.Action.Profile].Conversations.AllowSend {
+				return fmt.Errorf("job %q requires conversations.allow_send for profile %q", job.Tag, job.Action.Profile)
 			}
 			if job.Action.FollowUp == nil {
 				return fmt.Errorf("job %q requires follow_up selection settings", job.Tag)

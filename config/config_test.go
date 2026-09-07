@@ -243,7 +243,7 @@ func TestConversationFollowUpSelectionJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
 		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
-		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Conversations: ConversationPolicy{AllowSend: true}}},
 		Jobs: []Job{{
 			Tag: "remind-oldest", Enabled: true, Concurrency: JobConcurrencyForbid,
 			Triggers: []JobTrigger{{Type: "cron", Expression: "15 11 * * 1-5", Timezone: "Europe/Moscow", Misfire: "run_once"}},
@@ -267,6 +267,26 @@ func TestConversationFollowUpSelectionJobValidation(t *testing.T) {
 	config.Jobs[0].Action.FollowUp.Policy.CancelOnIncoming = false
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected unsafe follow-up selection policy to fail")
+	}
+}
+
+func TestConversationSyncJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Jobs: []Job{{
+			Tag: "sync-conversations", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "*/10 * * * *", Timezone: "UTC", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionConversationSync, Profile: "primary"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid conversation sync job: %v", err)
+	}
+	config.Jobs[0].Action.Profile = "missing"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown conversation sync profile to fail")
 	}
 }
 

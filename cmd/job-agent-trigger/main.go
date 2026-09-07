@@ -13,6 +13,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
@@ -20,6 +21,12 @@ import (
 )
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-trigger", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(context.Background(), os.Args[1:], os.Stdout, time.Now().UTC()); err != nil {
 		log.Fatal(err)
 	}
@@ -128,6 +135,13 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 		}
 		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
 		return core.TaskProfileActivityObserve, core.ProfileID(profile.Tag), payload, err
+	case appconfig.JobActionConversationSync:
+		profile, ok := configuredProfile(cfg, job.Action.Profile)
+		if !ok {
+			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+		}
+		payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: core.ProfileID(profile.Tag)})
+		return core.TaskConversationDiscover, core.ProfileID(profile.Tag), payload, err
 	case appconfig.JobActionApplicationCampaign:
 		profiles := make([]core.ProfileID, 0, len(job.Action.Profiles))
 		for _, value := range job.Action.Profiles {
@@ -170,7 +184,7 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 
 func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {
 	switch job.Action.Type {
-	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve, appconfig.JobActionConversationFollowUpSelect:
+	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve, appconfig.JobActionConversationSync, appconfig.JobActionConversationFollowUpSelect:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
 			return "", fmt.Errorf("job %q references an unknown profile", job.Tag)

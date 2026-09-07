@@ -160,6 +160,7 @@ type FollowUpFilter struct {
 type ConversationRepository interface {
 	CreateConversation(ctx context.Context, candidate core.Conversation) (stored core.Conversation, created bool, err error)
 	Conversation(ctx context.Context, id core.ConversationID) (core.Conversation, error)
+	SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error
 	ListConversations(ctx context.Context, filter ConversationFilter) ([]core.Conversation, error)
 	AppendConversationMessage(ctx context.Context, message core.ConversationMessage, observedAt time.Time) (conversation core.Conversation, created bool, err error)
 	ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error)

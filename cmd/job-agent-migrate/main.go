@@ -9,11 +9,18 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
 func main() {
+	if buildinfo.Requested(os.Args[1:]) {
+		if err := buildinfo.Write("job-agent-migrate", os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		log.Fatal(err)
 	}

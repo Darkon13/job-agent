@@ -13,6 +13,11 @@ Xray и sing-box. Идея проекта появилась как самост
 Реализация пишется заново. Код сторонних проектов может использоваться только
 с соблюдением их лицензий.
 
+Текущая product version — `0.1.0-dev`; HTTP contract уже использует namespace
+`/api/v1`. Версия, commit и время сборки доступны через `job-agent --version` и
+`GET /api/v1/version`. Порядок выпуска и критерии будущего `v1.0.0` описаны в
+[`docs/releasing.md`](docs/releasing.md).
+
 ## Docker Compose и dashboard
 
 Backend и опциональный dashboard запускаются разными командами из одного
@@ -348,9 +353,10 @@ feature-флагом, snapshot помечается `score_hidden`, но неи�
 после него работодатель не ответил. Доступны стратегии `oldest_unanswered`,
 `newest_unanswered` и воспроизводимая для одного task `random`. Minimum silence,
 cooldown, deadline и максимальное число напоминаний обязательны; входящий ответ
-до отправки отменяет follow-up. Сам выбор реализован platform-neutral, но HH job
-не регистрируется и остаётся заблокированной preflight до реализации
-conversation write transport.
+до отправки отменяет follow-up. Сам выбор реализован platform-neutral. Для
+browser-backed HH-профиля изменение чатов дополнительно открывается явной
+политикой `conversations.allow_send`; `allow_mark_read` управляет независимой
+операцией чтения. Оба разрешения по умолчанию выключены.
 
 Изменяющие профиль `resume.touch` и `profile_state.apply` сериализуются общей
 process-local lane по `profile_id`: операции одного профиля не пересекаются, а
@@ -371,8 +377,10 @@ POST. Тот же job можно вручную поставить через `j
 
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.follow_up.select`,
-`conversation.mark_read` и
-`conversation.sync`. Handler передаёт transport-у task idempotency key,
+`conversation.discover`, `conversation.mark_read` и `conversation.sync`.
+Плановый action `conversation.sync` сначала читает каталог HH, идемпотентно
+создаёт локальные диалоги, а затем ставит отдельную полную sync-задачу для
+каждого диалога. Handler передаёт transport-у task idempotency key,
 сохраняет нормализованный результат и завершает follow-up только после записи
 исходящего сообщения. Временные, rate-limit и auth/confirmation ошибки получают
 bounded retry; unsupported и permanent ошибки завершают задачу terminal fail.
@@ -386,8 +394,9 @@ HH-адаптер умеет проверять собственную поис�
 токеном ссылается на отдельный credential-файл через `credentials_ref`; токен
 не хранится в основном config и не попадает в диагностические ошибки. Проверки
 одного профиля сериализуются, а `401/403` переводят профиль в
-`auth_required`. Conversation transport пока возвращает явный `unsupported`.
-Application transport и reconciliation предпочитают официальный HH API, а без
+`auth_required`. Browser conversation transport читает `chatik` catalog/history
+и, только при включённых profile-policy, отправляет текст или помечает чат
+прочитанным. Application transport и reconciliation предпочитают официальный HH API, а без
 OAuth работают через отдельно привязанный browser transport. Само наличие
 browser state по-прежнему даёт только чтение: write transport создаётся
 composition root только для режимов `approval` и `submit`.

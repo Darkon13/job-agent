@@ -110,6 +110,18 @@ type BrowserApplicationSessionBinder interface {
 	BindBrowserApplicationSession(profileID core.ProfileID, stateFile string, options BrowserApplicationOptions) (ApplicationTransport, error)
 }
 
+// BrowserConversationOptions contains the explicit permissions granted to a
+// browser-backed conversation transport. Reading conversations is always
+// allowed after binding; account mutations remain opt-in.
+type BrowserConversationOptions struct {
+	AllowSend     bool
+	AllowMarkRead bool
+}
+
+type BrowserConversationSessionBinder interface {
+	BindBrowserConversationSession(profileID core.ProfileID, stateFile string, options BrowserConversationOptions) (ConversationTransport, error)
+}
+
 type ConversationSendCommand struct {
 	ProfileID              core.ProfileID
 	ConversationID         core.ConversationID
@@ -122,6 +134,15 @@ type ConversationSendCommand struct {
 type ConversationSyncResult struct {
 	Messages   []core.ConversationMessage
 	ObservedAt time.Time
+}
+
+type ConversationDiscoveryResult struct {
+	Conversations []core.ConversationObservation
+	ObservedAt    time.Time
+}
+
+type ConversationDiscoverer interface {
+	DiscoverConversations(ctx context.Context, profileID core.ProfileID) (ConversationDiscoveryResult, error)
 }
 
 type ConversationTransport interface {
