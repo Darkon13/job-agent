@@ -321,6 +321,11 @@ lease во время ожидания. Реальный HH transport читае
 Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
 transport, чтобы не копить заведомо невыполнимые действия.
 
+Изменяющие профиль `resume.touch` и `profile_state.apply` сериализуются общей
+process-local lane по `profile_id`: операции одного профиля не пересекаются, а
+разные профили продолжают работать параллельно. Текущий Compose запускает один
+backend; для нескольких mutating-реплик потребуется shared lease в хранилище.
+
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.mark_read` и
 `conversation.sync`. Handler передаёт transport-у task idempotency key,

@@ -237,12 +237,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
 	}
+	profileMutationLane := taskworker.NewProfileMutationLane()
 	if profileStateWriters.Count() > 0 {
 		profileStateHandler, err := taskworker.NewProfileStateApplyHandler(store, profileStateWriters)
 		if err != nil {
 			log.Fatalf("create profile state apply handler: %v", err)
 		}
-		profileStateWorker, err := newTaskWorker(store, core.TaskProfileStateApply, profileStateHandler.Handle)
+		profileStateWorker, err := newTaskWorker(
+			store, core.TaskProfileStateApply, profileMutationLane.Wrap(profileStateHandler.Handle),
+		)
 		if err != nil {
 			log.Fatalf("create profile state apply worker: %v", err)
 		}
@@ -266,7 +269,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("create resume touch handler: %v", err)
 		}
-		resumeWorker, err := newTaskWorker(store, core.TaskResumeTouch, resumeHandler.Handle)
+		resumeWorker, err := newTaskWorker(
+			store, core.TaskResumeTouch, profileMutationLane.Wrap(resumeHandler.Handle),
+		)
 		if err != nil {
 			log.Fatalf("create resume touch worker: %v", err)
 		}

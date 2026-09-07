@@ -197,6 +197,11 @@ sing-box final    -> Job Agent explicit fallback action
   полей; потерянный ответ POST сначала сверяется read-back;
 - dashboard даёт раздельные команды plan/apply и показывает только redacted
   список операций.
+- `profile_state.apply` и `resume.touch` проходят через одну process-local
+  mutation lane на `profile_id`: один профиль изменяется последовательно, а
+  разные профили могут исполняться параллельно. Текущий Compose-контракт
+  допускает ровно один backend с mutating workers; перед горизонтальным
+  масштабированием lane нужно заменить общей lease/lock в durable storage.
 
 В текущем формате ключ `resumes` является внешним ID/hash резюме. Именованные
 локальные aliases появятся вместе с отдельным каталогом resume targets.
@@ -215,7 +220,8 @@ core итоговое значение. Редактирование desired val
 4. ✅ Добавить plan/apply controls в dashboard поверх API.
 5. ✅ Реализовать HH adapter для update about и обязательного read-back.
 6. ✅ Подключить durable `profile_state.apply` task и явный API run.
-7. Объединить apply, touch и publish в общую per-profile mutation lane.
+7. ✅ Объединить apply и touch в общую per-profile mutation lane; подключить к
+   ней publish при появлении этого worker.
 8. Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
 9. Обобщить update на остальные profile/resume fields по живой HH schema.
 10. Добавить named actions, cron/event/API triggers.

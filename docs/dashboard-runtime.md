@@ -50,7 +50,7 @@ Go backend отправляет узкие операции (`application.submit
 - отдельный consumer/pool изолирует бюджет ресурса и не даёт тяжёлому типу задач занять весь runtime;
 - per-profile lock защищает одну внешнюю сессию от конфликтующих мутаций.
 
-В текущем срезе все задачи лежат в одной durable SQLite-таблице, а consumer’ы claim’ят только свой `TaskType`. Физически дробить очередь сейчас не требуется. Следующий шаг — добавить priority в task schema и сортировку claim по `priority DESC, available_at, created_at`, сохранив отдельные consumer’ы для search, applications, resume и conversations. Для browser service поверх этого нужен общий ограничитель страниц и последовательная mutation lane на профиль.
+В текущем срезе все задачи лежат в одной durable SQLite-таблице, а consumer’ы claim’ят только свой `TaskType`. Физически дробить очередь сейчас не требуется. `profile_state.apply` и `resume.touch` уже проходят через общую process-local mutation lane по профилю; разные профили не блокируют друг друга. Поскольку Compose запускает один backend, этого достаточно для текущего deployment. До запуска mutating workers в нескольких репликах lane должна стать распределённой lease/lock в durable storage. Следующий шаг — добавить priority в task schema и сортировку claim по `priority DESC, available_at, created_at`, сохранив отдельные consumer’ы для search, applications, resume и conversations. Для будущего browser service дополнительно нужен общий ограничитель страниц.
 
 ## Реализованный UI-срез
 
