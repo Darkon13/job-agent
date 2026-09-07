@@ -164,9 +164,50 @@ type ConversationFollowUpPayload struct {
 	FollowUpID FollowUpID `json:"follow_up_id"`
 }
 
+type ConversationFollowUpSelectPayload struct {
+	ProfileID      ProfileID                 `json:"profile_id"`
+	Strategy       FollowUpSelectionStrategy `json:"strategy"`
+	MinimumSilence Duration                  `json:"minimum_silence"`
+	RunAfter       Duration                  `json:"run_after"`
+	DeadlineAfter  Duration                  `json:"deadline_after,omitempty"`
+	Content        MessageContent            `json:"content"`
+	Policy         FollowUpPolicy            `json:"policy"`
+}
+
 func (payload ConversationFollowUpPayload) Validate() error {
 	if payload.FollowUpID == "" {
 		return errors.New("conversation follow-up payload requires follow-up id")
+	}
+	return nil
+}
+
+func (payload ConversationFollowUpSelectPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("conversation follow-up selection requires profile")
+	}
+	if err := payload.Strategy.Validate(); err != nil {
+		return err
+	}
+	if payload.MinimumSilence.Value() <= 0 {
+		return errors.New("conversation follow-up selection requires positive minimum silence")
+	}
+	if payload.RunAfter.Value() <= 0 {
+		return errors.New("conversation follow-up selection requires positive run-after duration")
+	}
+	if payload.DeadlineAfter.Value() < 0 || payload.DeadlineAfter.Value() > 0 && payload.DeadlineAfter.Value() <= payload.RunAfter.Value() {
+		return errors.New("conversation follow-up deadline must be zero or greater than run-after duration")
+	}
+	if err := payload.Content.Validate(); err != nil {
+		return err
+	}
+	if err := payload.Policy.Validate(); err != nil {
+		return err
+	}
+	if !payload.Policy.CancelOnIncoming || !payload.Policy.RequireActiveConversation {
+		return errors.New("selected follow-ups must cancel on incoming messages and require an active conversation")
+	}
+	if payload.Policy.Cooldown.Value() < payload.MinimumSilence.Value() {
+		return errors.New("selected follow-up cooldown must not be shorter than minimum silence")
 	}
 	return nil
 }

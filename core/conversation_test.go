@@ -130,3 +130,22 @@ func TestFollowUpPolicyUsesReadableJSONDuration(t *testing.T) {
 		t.Fatalf("unexpected cooldown: %s", decoded.Cooldown.Value())
 	}
 }
+
+func TestConversationFollowUpSelectionRequiresSafePolicy(t *testing.T) {
+	payload := ConversationFollowUpSelectPayload{
+		ProfileID: "primary", Strategy: FollowUpSelectOldestUnanswered,
+		MinimumSilence: Duration(72 * time.Hour), RunAfter: Duration(time.Minute), DeadlineAfter: Duration(24 * time.Hour),
+		Content: MessageContent{Text: "Подскажите, вакансия ещё актуальна?"},
+		Policy: FollowUpPolicy{
+			CancelOnIncoming: true, RequireActiveConversation: true,
+			MaxFollowUps: 1, Cooldown: Duration(72 * time.Hour),
+		},
+	}
+	if err := payload.Validate(); err != nil {
+		t.Fatalf("validate selection payload: %v", err)
+	}
+	payload.Policy.CancelOnIncoming = false
+	if err := payload.Validate(); err == nil {
+		t.Fatal("expected selected follow-up without incoming cancellation to fail")
+	}
+}

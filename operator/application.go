@@ -8,6 +8,7 @@ import (
 	"html"
 	"strings"
 	"text/template"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -68,12 +69,31 @@ type RuleTemplatePreparer struct {
 }
 
 type ApplicationTemplateData struct {
-	ProfileID   string
-	Title       string
-	Employer    string
-	URL         string
-	Description string
-	KeySkills   []string
+	ApplicationID string                    `json:"application_id"`
+	ProfileID     string                    `json:"profile_id"`
+	Vacancy       ApplicationVacancyContext `json:"vacancy"`
+
+	// Flat fields are retained for existing templates. New templates should use
+	// Vacancy so the same structured context can later be passed to a model
+	// operator without inventing a second schema.
+	Title       string   `json:"-"`
+	Employer    string   `json:"-"`
+	URL         string   `json:"-"`
+	Description string   `json:"-"`
+	KeySkills   []string `json:"-"`
+}
+
+type ApplicationVacancyContext struct {
+	Platform    string         `json:"platform"`
+	ExternalID  string         `json:"external_id"`
+	URL         string         `json:"url"`
+	Title       string         `json:"title"`
+	Employer    string         `json:"employer,omitempty"`
+	State       string         `json:"state"`
+	PublishedAt *time.Time     `json:"published_at,omitempty"`
+	Description string         `json:"description,omitempty"`
+	KeySkills   []string       `json:"key_skills,omitempty"`
+	Attributes  map[string]any `json:"attributes,omitempty"`
 }
 
 func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, error) {
@@ -95,7 +115,7 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 			return nil, fmt.Errorf("parse cover letter template: %w", err)
 		}
 		var probe bytes.Buffer
-		if err := compiled.Execute(&probe, ApplicationTemplateData{}); err != nil {
+		if err := compiled.Execute(&probe, ApplicationTemplateData{Vacancy: ApplicationVacancyContext{Attributes: map[string]any{}}}); err != nil {
 			return nil, fmt.Errorf("validate cover letter template: %w", err)
 		}
 		if !utf8.ValidString(probe.String()) || utf8.RuneCountInString(probe.String()) > maximumApplicationMessageRunes {
@@ -165,17 +185,60 @@ func (preparer *RuleTemplatePreparer) renderMessage(application core.Application
 	if preparer.template == nil {
 		return preparer.staticMessage, nil
 	}
-	data := ApplicationTemplateData{
-		ProfileID: string(application.Key.ProfileID), Title: vacancy.Title,
-		Employer: vacancy.Employer, URL: vacancy.URL,
-		Description: vacancyAttributeString(vacancy, "description"),
-		KeySkills:   vacancyAttributeStrings(vacancy, "key_skills"),
-	}
+	data := NewApplicationTemplateData(application, vacancy)
 	var output bytes.Buffer
 	if err := preparer.template.Execute(&output, data); err != nil {
 		return "", fmt.Errorf("render cover letter template: %w", err)
 	}
 	return strings.TrimSpace(output.String()), nil
+}
+
+func NewApplicationTemplateData(application core.Application, vacancy core.Vacancy) ApplicationTemplateData {
+	description := vacancyAttributeString(vacancy, "description")
+	keySkills := vacancyAttributeStrings(vacancy, "key_skills")
+	var publishedAt *time.Time
+	if vacancy.PublishedAt != nil {
+		value := *vacancy.PublishedAt
+		publishedAt = &value
+	}
+	context := ApplicationVacancyContext{
+		Platform: string(vacancy.Platform), ExternalID: vacancy.ExternalID, URL: vacancy.URL,
+		Title: vacancy.Title, Employer: vacancy.Employer, State: string(vacancy.State), PublishedAt: publishedAt,
+		Description: description, KeySkills: append([]string(nil), keySkills...), Attributes: cloneVacancyAttributes(vacancy.Attributes),
+	}
+	return ApplicationTemplateData{
+		ApplicationID: string(application.ID), ProfileID: string(application.Key.ProfileID), Vacancy: context,
+		Title: context.Title, Employer: context.Employer, URL: context.URL,
+		Description: context.Description, KeySkills: append([]string(nil), context.KeySkills...),
+	}
+}
+
+func cloneVacancyAttributes(attributes map[string]any) map[string]any {
+	if attributes == nil {
+		return nil
+	}
+	result := make(map[string]any, len(attributes))
+	for key, value := range attributes {
+		result[key] = cloneVacancyAttributeValue(value)
+	}
+	return result
+}
+
+func cloneVacancyAttributeValue(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		return cloneVacancyAttributes(item)
+	case []any:
+		result := make([]any, len(item))
+		for index, child := range item {
+			result[index] = cloneVacancyAttributeValue(child)
+		}
+		return result
+	case []string:
+		return append([]string(nil), item...)
+	default:
+		return item
+	}
 }
 
 func normalizeTerms(field string, values []string) ([]string, error) {

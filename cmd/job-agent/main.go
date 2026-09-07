@@ -261,6 +261,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation workers: %v", err)
 	}
+	followUpSelectionHandler, err := taskworker.NewConversationFollowUpSelectionHandler(conversationWorkflow)
+	if err != nil {
+		log.Fatalf("create conversation follow-up selection handler: %v", err)
+	}
+	followUpSelectionWorker, err := newTaskWorker(store, core.TaskConversationFollowUpSelect, followUpSelectionHandler.Handle)
+	if err != nil {
+		log.Fatalf("create conversation follow-up selection worker: %v", err)
+	}
+	workers = append(workers, followUpSelectionWorker)
 	profileMutationLane := taskworker.NewProfileMutationLane()
 	if len(profileStateReaders) > 0 && profileStateWriters.Count() > 0 {
 		profileStateReconcileHandler, err := workflow.NewProfileStateReconcileHandler(
@@ -360,6 +369,11 @@ func main() {
 		log.Fatalf("build profile activity scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, activityDefinitions...)
+	followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances)
+	if err != nil {
+		log.Fatalf("build conversation follow-up selection jobs: %v", err)
+	}
+	definitions = append(definitions, followUpSelectionDefinitions...)
 	profileStateDefinitions, err := profileStateReconcileDefinitions(
 		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 	)
@@ -732,6 +746,45 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskProfileActivityObserve, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionConversationFollowUpSelect {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		if !profile.Enabled || job.Action.FollowUp == nil {
+			continue
+		}
+		profileID := core.ProfileID(profile.Tag)
+		instance := instances[profile.Adapter]
+		capabilities, err := core.NewCapabilitySet(instance.Capabilities()...)
+		if err != nil {
+			return nil, fmt.Errorf("adapter %q capabilities: %w", profile.Adapter, err)
+		}
+		if !capabilities.Supports(core.CapabilityConversationWrite) {
+			continue
+		}
+		payload, err := json.Marshal(job.Action.FollowUp.Payload(profileID))
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskConversationFollowUpSelect, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

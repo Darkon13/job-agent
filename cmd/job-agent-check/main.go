@@ -230,6 +230,22 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 				job.Tag, observation.ScoreHidden, optionalInt(observation.PeriodDays), optionalInt(observation.SearchShows),
 				optionalInt(observation.Views), optionalInt(observation.Invitations), optionalInt(observation.ResponseStreak), optionalInt(observation.ResponsesRequired))
 			runnableJobs++
+		case appconfig.JobActionConversationFollowUpSelect:
+			profile := configuredProfiles[job.Action.Profile]
+			capabilities, err := core.NewCapabilitySet(instances[profile.Adapter].Capabilities()...)
+			if err != nil {
+				return fmt.Errorf("job %q adapter capabilities: %w", job.Tag, err)
+			}
+			if !capabilities.Supports(core.CapabilityConversationWrite) {
+				blocked = append(blocked, "job "+job.Tag+" adapter has no conversation write capability")
+				continue
+			}
+			if !readiness[job.Action.Profile].apiReady {
+				blocked = append(blocked, "job "+job.Tag+" has no writable conversation transport")
+				continue
+			}
+			fmt.Fprintf(output, "OK job=%s follow_up_strategy=%s\n", job.Tag, job.Action.FollowUp.Strategy)
+			runnableJobs++
 		case appconfig.JobActionApplicationCampaign:
 			runnable := true
 			for _, profile := range job.Action.Profiles {

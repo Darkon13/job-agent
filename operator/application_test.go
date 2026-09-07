@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestRuleTemplatePreparerFiltersAndRenders(t *testing.T) {
 	application, vacancy := operatorFixture()
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
 		IncludeAny: []string{"golang", "Go"}, ExcludeAny: []string{"team lead"},
-		MessageTemplate: "Здравствуйте, {{.Employer}}! Откликаюсь на {{.Title}}. Навыки: {{range .KeySkills}}{{.}} {{end}}",
+		MessageTemplate: "Здравствуйте, {{.Vacancy.Employer}}! Откликаюсь на {{.Vacancy.Title}}. Навыки: {{range .Vacancy.KeySkills}}{{.}} {{end}}",
 	})
 	if err != nil {
 		t.Fatalf("new preparer: %v", err)
@@ -46,6 +47,28 @@ func TestRuleTemplatePreparerFiltersAndRenders(t *testing.T) {
 	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
 	if err != nil || result.Outcome != ApplicationSkip || result.Code != "excluded_term" || result.Message != "" {
 		t.Fatalf("excluded preparation = %#v err=%v", result, err)
+	}
+}
+
+func TestApplicationTemplateDataIncludesStructuredVacancyContext(t *testing.T) {
+	application, vacancy := operatorFixture()
+	vacancy.Attributes["experience"] = map[string]any{"id": "between1And3", "name": "От 1 года до 3 лет"}
+	data := NewApplicationTemplateData(application, vacancy)
+	if data.ApplicationID != "application-1" || data.ProfileID != "primary" || data.Vacancy.ExternalID != "42" ||
+		data.Vacancy.Description == "" || len(data.Vacancy.KeySkills) != 2 || data.Vacancy.Attributes["experience"] == nil {
+		t.Fatalf("template data=%#v", data)
+	}
+	delete(data.Vacancy.Attributes, "description")
+	if vacancy.Attributes["description"] == nil {
+		t.Fatal("template context mutated source vacancy attributes")
+	}
+	data.Vacancy.Attributes["experience"].(map[string]any)["name"] = "changed"
+	if vacancy.Attributes["experience"].(map[string]any)["name"] == "changed" {
+		t.Fatal("template context retained nested source attribute map")
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil || !strings.Contains(string(encoded), `"vacancy":{"platform":"hh"`) || strings.Contains(string(encoded), `"Title"`) {
+		t.Fatalf("serialized context=%s err=%v", encoded, err)
 	}
 }
 

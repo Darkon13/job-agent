@@ -104,7 +104,7 @@ Cron используется для периодической проверки
 
 ```json
 {
-  "tag": "reconcile-employer-follow-ups",
+  "tag": "remind-oldest-employer",
   "enabled": true,
   "triggers": [
     {
@@ -116,12 +116,42 @@ Cron используется для периодической проверки
   ],
   "concurrency": "forbid",
   "action": {
-    "type": "conversation.follow_up.reconcile",
+    "type": "conversation.follow_up.select",
     "profile": "primary",
-    "policy": "employer-reminder"
+    "follow_up": {
+      "strategy": "oldest_unanswered",
+      "minimum_silence": "72h",
+      "run_after": "1m",
+      "deadline_after": "24h",
+      "content": {
+        "text": "Добрый день! Подскажите, пожалуйста, актуальна ли ещё вакансия?"
+      },
+      "policy": {
+        "cancel_on_incoming": true,
+        "require_active_conversation": true,
+        "max_follow_ups": 1,
+        "cooldown": "72h"
+      }
+    }
   }
 }
 ```
+
+Стратегии выбора: `oldest_unanswered`, `newest_unanswered` и `random`.
+Последняя использует стабильный hash `(profile, task idempotency key)`, поэтому
+retry не меняет уже сделанный выбор. Перед выбором исключаются диалоги без
+исходящего сообщения, чаты с более новым входящим ответом, неактивные диалоги,
+conversation с pending follow-up, нарушенный minimum silence/cooldown и уже
+исчерпанный `max_follow_ups`. Если подходящего диалога нет, job корректно
+завершается без создания сообщения.
+
+Выбор создаёт обычный durable one-shot follow-up и не отправляет сообщение
+напрямую. Повтор того же scheduled task сначала находит follow-up по общей
+idempotency boundary, поэтому после частичного сбоя не выбирается второй чат.
+Текущий HH adapter ещё не реализует `conversations.send`: он не объявляет
+conversation write capability, поэтому scheduler не регистрирует такую job, а
+preflight явно помечает её заблокированной до появления подтверждённого
+browser/API transport.
 
 Event trigger может запланировать ту же policy после исходящего сообщения или
 изменения состояния отклика. Входящие сообщения и terminal events отклика

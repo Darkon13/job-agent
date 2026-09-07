@@ -203,8 +203,6 @@ func (a *Adapter) Capabilities() []core.Capability {
 		core.CapabilityGetVacancy,
 		core.CapabilityApply,
 		core.CapabilityQuestionnaire,
-		core.CapabilityConversationRead,
-		core.CapabilityConversationWrite,
 	}
 }
 

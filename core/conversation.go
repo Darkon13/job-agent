@@ -231,6 +231,26 @@ const (
 	FollowUpExpired   FollowUpStatus = "expired"
 )
 
+// FollowUpSelectionStrategy chooses one active conversation which is waiting
+// for an employer response. Selection never turns an incoming message awaiting
+// the applicant into an automatic reminder.
+type FollowUpSelectionStrategy string
+
+const (
+	FollowUpSelectOldestUnanswered FollowUpSelectionStrategy = "oldest_unanswered"
+	FollowUpSelectNewestUnanswered FollowUpSelectionStrategy = "newest_unanswered"
+	FollowUpSelectRandom           FollowUpSelectionStrategy = "random"
+)
+
+func (strategy FollowUpSelectionStrategy) Validate() error {
+	switch strategy {
+	case FollowUpSelectOldestUnanswered, FollowUpSelectNewestUnanswered, FollowUpSelectRandom:
+		return nil
+	default:
+		return fmt.Errorf("invalid follow-up selection strategy %q", strategy)
+	}
+}
+
 type FollowUpCancelReason string
 
 const (

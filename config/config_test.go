@@ -239,6 +239,37 @@ func TestResumeTouchJobValidation(t *testing.T) {
 	}
 }
 
+func TestConversationFollowUpSelectionJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Jobs: []Job{{
+			Tag: "remind-oldest", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "15 11 * * 1-5", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: JobAction{
+				Type: JobActionConversationFollowUpSelect, Profile: "primary",
+				FollowUp: &ConversationFollowUpSelectionConfig{
+					Strategy: core.FollowUpSelectOldestUnanswered, MinimumSilence: core.Duration(72 * time.Hour),
+					RunAfter: core.Duration(time.Minute), DeadlineAfter: core.Duration(24 * time.Hour),
+					Content: core.MessageContent{Text: "Подскажите, вакансия ещё актуальна?"},
+					Policy: core.FollowUpPolicy{
+						CancelOnIncoming: true, RequireActiveConversation: true,
+						MaxFollowUps: 1, Cooldown: core.Duration(72 * time.Hour),
+					},
+				},
+			},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid follow-up selection job: %v", err)
+	}
+	config.Jobs[0].Action.FollowUp.Policy.CancelOnIncoming = false
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unsafe follow-up selection policy to fail")
+	}
+}
+
 func TestProfileActivityObserveJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

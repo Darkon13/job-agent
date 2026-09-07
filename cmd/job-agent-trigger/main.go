@@ -141,6 +141,16 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 			job.Tag, profiles, routes, job.Action.TargetSuccessful, job.Action.MaxInFlight,
 		))
 		return core.TaskApplicationCampaign, profiles[0], payload, err
+	case appconfig.JobActionConversationFollowUpSelect:
+		profile, ok := configuredProfile(cfg, job.Action.Profile)
+		if !ok {
+			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+		}
+		if job.Action.FollowUp == nil {
+			return "", "", nil, fmt.Errorf("job %q has no follow-up selection settings", job.Tag)
+		}
+		payload, err := json.Marshal(job.Action.FollowUp.Payload(core.ProfileID(profile.Tag)))
+		return core.TaskConversationFollowUpSelect, core.ProfileID(profile.Tag), payload, err
 	case appconfig.JobActionProfileStateReconcile:
 		resources, err := cfg.BuildProfileStateResources()
 		if err != nil {
@@ -160,7 +170,7 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 
 func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {
 	switch job.Action.Type {
-	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve:
+	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve, appconfig.JobActionConversationFollowUpSelect:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
 			return "", fmt.Errorf("job %q references an unknown profile", job.Tag)

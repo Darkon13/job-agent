@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -23,6 +24,46 @@ type conversationIDs struct{ next int }
 func (ids *conversationIDs) NewID(prefix string) (string, error) {
 	ids.next++
 	return fmt.Sprintf("%s-%d", prefix, ids.next), nil
+}
+
+func TestConversationFollowUpSelectionHandlerSchedulesEligibleReminder(t *testing.T) {
+	ctx := context.Background()
+	_, conversationWorkflow, repository, _, _, clock := newConversationHandlersFixture(t)
+	outgoing := core.ConversationMessage{
+		ID: "outgoing-1", ConversationID: "conversation-1", Direction: core.MessageOutgoing,
+		Kind: core.MessageText, Status: core.MessageSent, Text: "Буду рад обратной связи", OccurredAt: clock.now,
+	}
+	if _, _, err := repository.AppendConversationMessage(ctx, outgoing, clock.now); err != nil {
+		t.Fatalf("append outgoing: %v", err)
+	}
+	clock.now = clock.now.Add(73 * time.Hour)
+	handler, err := NewConversationFollowUpSelectionHandler(conversationWorkflow)
+	if err != nil {
+		t.Fatalf("new selection handler: %v", err)
+	}
+	payload, _ := json.Marshal(core.ConversationFollowUpSelectPayload{
+		ProfileID: "profile-1", Strategy: core.FollowUpSelectOldestUnanswered,
+		MinimumSilence: core.Duration(72 * time.Hour), RunAfter: core.Duration(time.Minute),
+		Content: core.MessageContent{Text: "Подскажите, вакансия ещё актуальна?"},
+		Policy: core.FollowUpPolicy{
+			CancelOnIncoming: true, RequireActiveConversation: true,
+			MaxFollowUps: 1, Cooldown: core.Duration(72 * time.Hour),
+		},
+	})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "selection-task", Type: core.TaskConversationFollowUpSelect, IdempotencyKey: "selection-run-1",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-selection", Payload: payload,
+	}, clock.now)
+	if err != nil {
+		t.Fatalf("new selection task: %v", err)
+	}
+	if err := handler.Handle(ctx, task); err != nil {
+		t.Fatalf("handle selection: %v", err)
+	}
+	followUps, err := repository.ListFollowUps(ctx, storage.FollowUpFilter{ProfileID: "profile-1"})
+	if err != nil || len(followUps) != 1 || followUps[0].ConversationID != "conversation-1" {
+		t.Fatalf("follow-ups=%#v err=%v", followUps, err)
+	}
 }
 
 type fakeConversationTransport struct {

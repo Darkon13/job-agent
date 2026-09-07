@@ -247,8 +247,12 @@ browser GET и обновляет её в repository: краткой поиск�
 письмо задаётся через `message`, а шаблон — предпочтительно через отдельный
 `message_template_file`; встроенный `message_template` сохранён для простых
 конфигураций. Одновременно разрешён только один источник. Шаблону доступны
-`ProfileID`, `Title`, `Employer`, `URL`,
-`Description` и `KeySkills`. Результат решения (`decision_code`, причина и
+`ApplicationID`, `ProfileID` и вложенный объект `Vacancy` с идентификатором,
+platform, состоянием, датой публикации, описанием, ключевыми навыками и
+нормализованными adapter attributes. Старые плоские `Title`, `Employer`, `URL`,
+`Description` и `KeySkills` сохранены для совместимости. Поэтому шаблон и
+будущий model operator могут использовать один структурированный контекст
+полной вакансии. Результат решения (`decision_code`, причина и
 готовый текст) сохраняется в `Application` до внешнего действия и повторно
 используется после retry вместе с выбранным резюме.
 
@@ -320,7 +324,8 @@ Campaign routes должны использовать один adapter и вкл
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
 `next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
-`profile.activity.observe`, `profile_state.reconcile` или
+`profile.activity.observe`, `conversation.follow_up.select`,
+`profile_state.reconcile` или
 `application.campaign` tasks. После простоя пропущенные интервалы схлопываются
 в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает
 lease во время ожидания. Реальный HH transport читает
@@ -337,6 +342,15 @@ feature-флагом, snapshot помечается `score_hidden`, но неи�
 вычисляется локально. Отдельный идемпотентный журнал сопоставляет этим снимкам
 реальные `vacancy.inspected`, `application.submitted`,
 `conversation.message_sent` и `resume.touched`.
+
+Периодический `conversation.follow_up.select` выбирает не произвольный чат, а
+активный диалог, в котором последнее содержательное сообщение было исходящим и
+после него работодатель не ответил. Доступны стратегии `oldest_unanswered`,
+`newest_unanswered` и воспроизводимая для одного task `random`. Minimum silence,
+cooldown, deadline и максимальное число напоминаний обязательны; входящий ответ
+до отправки отменяет follow-up. Сам выбор реализован platform-neutral, но HH job
+не регистрируется и остаётся заблокированной preflight до реализации
+conversation write transport.
 
 Изменяющие профиль `resume.touch` и `profile_state.apply` сериализуются общей
 process-local lane по `profile_id`: операции одного профиля не пересекаются, а
@@ -356,7 +370,8 @@ proposal и ставит обычный apply. Совпавшее состоян
 POST. Тот же job можно вручную поставить через `job-agent-trigger`.
 
 Worker runtime запускает отдельный type-filtered consumer для
-`conversation.send`, `conversation.follow_up`, `conversation.mark_read` и
+`conversation.send`, `conversation.follow_up`, `conversation.follow_up.select`,
+`conversation.mark_read` и
 `conversation.sync`. Handler передаёт transport-у task idempotency key,
 сохраняет нормализованный результат и завершает follow-up только после записи
 исходящего сообщения. Временные, rate-limit и auth/confirmation ошибки получают

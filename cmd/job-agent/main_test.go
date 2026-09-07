@@ -27,7 +27,8 @@ func (reader *profileReaderStub) ReadProfile(context.Context, core.ProfileID) (a
 }
 
 type profileAdapterStub struct {
-	reader adapter.ProfileReader
+	reader       adapter.ProfileReader
+	capabilities []core.Capability
 }
 
 type profileStateReaderStub func(context.Context, adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error)
@@ -68,7 +69,7 @@ func TestParseMainOptions(t *testing.T) {
 }
 
 func (stub *profileAdapterStub) Name() string                         { return "stub" }
-func (stub *profileAdapterStub) Capabilities() []core.Capability      { return nil }
+func (stub *profileAdapterStub) Capabilities() []core.Capability      { return stub.capabilities }
 func (stub *profileAdapterStub) ValidateSearch(json.RawMessage) error { return nil }
 func (stub *profileAdapterStub) Search(context.Context, core.ProfileID, json.RawMessage, string) (core.SearchPage, error) {
 	return core.SearchPage{}, errors.New("not implemented")
@@ -198,6 +199,45 @@ func TestProfileActivityDefinitionsRequireRegisteredObserver(t *testing.T) {
 	empty, err := profileActivityDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}}, taskworker.NewProfileActivityObserverRegistry())
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("definitions without observer=%#v err=%v", empty, err)
+	}
+}
+
+func TestConversationFollowUpSelectionDefinitions(t *testing.T) {
+	cfg := appconfig.Config{
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
+		Jobs: []appconfig.Job{{
+			Tag: "remind-oldest", Enabled: true,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "15 11 * * 1-5", Timezone: "Europe/Moscow"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionConversationFollowUpSelect, Profile: "primary",
+				FollowUp: &appconfig.ConversationFollowUpSelectionConfig{
+					Strategy: core.FollowUpSelectOldestUnanswered, MinimumSilence: core.Duration(72 * time.Hour),
+					RunAfter: core.Duration(time.Minute), DeadlineAfter: core.Duration(24 * time.Hour),
+					Content: core.MessageContent{Text: "Подскажите, вакансия ещё актуальна?"},
+					Policy: core.FollowUpPolicy{
+						CancelOnIncoming: true, RequireActiveConversation: true,
+						MaxFollowUps: 1, Cooldown: core.Duration(72 * time.Hour),
+					},
+				},
+			},
+		}},
+	}
+	definitions, err := conversationFollowUpSelectionDefinitions(cfg, map[string]adapter.Adapter{
+		"platform": &profileAdapterStub{capabilities: []core.Capability{core.CapabilityConversationWrite}},
+	})
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%#v err=%v", definitions, err)
+	}
+	if definitions[0].ActionType != core.TaskConversationFollowUpSelect || definitions[0].ProfileID != "primary" {
+		t.Fatalf("definition=%#v", definitions[0])
+	}
+	var payload core.ConversationFollowUpSelectPayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.Strategy != core.FollowUpSelectOldestUnanswered || payload.Content.Text == "" {
+		t.Fatalf("payload=%#v err=%v", payload, err)
+	}
+	empty, err := conversationFollowUpSelectionDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}})
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("definitions without conversation write capability=%#v err=%v", empty, err)
 	}
 }
 

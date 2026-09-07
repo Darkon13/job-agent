@@ -37,14 +37,15 @@ type ProfileStateResourceConfig struct {
 }
 
 const (
-	JobActionResumeTouch            = "resume.touch"
-	JobActionApplicationCampaign    = "application.campaign"
-	JobActionProfileStateReconcile  = "profile_state.reconcile"
-	JobActionProfileActivityObserve = "profile.activity.observe"
-	JobConcurrencyForbid            = "forbid"
-	ApplicationModeDryRun           = "dry_run"
-	ApplicationModeApproval         = "approval"
-	ApplicationModeSubmit           = "submit"
+	JobActionResumeTouch                = "resume.touch"
+	JobActionApplicationCampaign        = "application.campaign"
+	JobActionProfileStateReconcile      = "profile_state.reconcile"
+	JobActionProfileActivityObserve     = "profile.activity.observe"
+	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
+	JobConcurrencyForbid                = "forbid"
+	ApplicationModeDryRun               = "dry_run"
+	ApplicationModeApproval             = "approval"
+	ApplicationModeSubmit               = "submit"
 )
 
 type Job struct {
@@ -75,14 +76,32 @@ func (jitter JitterConfig) Durations() (time.Duration, time.Duration) {
 }
 
 type JobAction struct {
-	Type             string   `json:"type"`
-	Resource         string   `json:"resource,omitempty"`
-	Profile          string   `json:"profile,omitempty"`
-	Resume           string   `json:"resume,omitempty"`
-	Profiles         []string `json:"profiles,omitempty"`
-	Routes           []string `json:"routes,omitempty"`
-	TargetSuccessful int      `json:"target_successful,omitempty"`
-	MaxInFlight      int      `json:"max_in_flight,omitempty"`
+	Type             string                               `json:"type"`
+	Resource         string                               `json:"resource,omitempty"`
+	Profile          string                               `json:"profile,omitempty"`
+	Resume           string                               `json:"resume,omitempty"`
+	Profiles         []string                             `json:"profiles,omitempty"`
+	Routes           []string                             `json:"routes,omitempty"`
+	TargetSuccessful int                                  `json:"target_successful,omitempty"`
+	MaxInFlight      int                                  `json:"max_in_flight,omitempty"`
+	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
+}
+
+type ConversationFollowUpSelectionConfig struct {
+	Strategy       core.FollowUpSelectionStrategy `json:"strategy"`
+	MinimumSilence core.Duration                  `json:"minimum_silence"`
+	RunAfter       core.Duration                  `json:"run_after"`
+	DeadlineAfter  core.Duration                  `json:"deadline_after,omitempty"`
+	Content        core.MessageContent            `json:"content"`
+	Policy         core.FollowUpPolicy            `json:"policy"`
+}
+
+func (configured ConversationFollowUpSelectionConfig) Payload(profileID core.ProfileID) core.ConversationFollowUpSelectPayload {
+	return core.ConversationFollowUpSelectPayload{
+		ProfileID: profileID, Strategy: configured.Strategy, MinimumSilence: configured.MinimumSilence,
+		RunAfter: configured.RunAfter, DeadlineAfter: configured.DeadlineAfter,
+		Content: configured.Content, Policy: configured.Policy,
+	}
 }
 
 type ServerConfig struct {
@@ -445,6 +464,16 @@ func (c Config) Validate() error {
 			}
 			if resume == "" {
 				return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+			}
+		case JobActionConversationFollowUpSelect:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			if job.Action.FollowUp == nil {
+				return fmt.Errorf("job %q requires follow_up selection settings", job.Tag)
+			}
+			if err := job.Action.FollowUp.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
+				return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
 			}
 		case JobActionApplicationCampaign:
 			if err := validateApplicationCampaignAction(job, profiles, searches); err != nil {
