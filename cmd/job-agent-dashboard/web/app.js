@@ -1,11 +1,11 @@
 const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set() };
 const elements = Object.fromEntries([
-  "applications", "tasks", "stats", "conversations", "messages", "chat-title", "chat-meta",
+  "applications", "tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
   "connection-dot", "connection-state", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
-const statLabels = [["vacancies", "Вакансии"], ["applications", "Отклики"], ["application_campaigns", "Кампании"], ["tasks", "Задачи"], ["profile_state_proposals", "Планы профиля"], ["conversations", "Диалоги"], ["messages", "Сообщения"], ["follow_ups", "Follow-up"]];
+const statLabels = [["vacancies", "Вакансии"], ["applications", "Отклики"], ["application_campaigns", "Кампании"], ["tasks", "Задачи"], ["profile_activity", "Сигналы активности"], ["activity_snapshots", "Снимки HH"], ["profile_state_proposals", "Планы профиля"], ["conversations", "Диалоги"], ["messages", "Сообщения"], ["follow_ups", "Follow-up"]];
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
@@ -17,6 +17,31 @@ function renderStats(stats = {}) {
 function renderRows(target, items, fields) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Пока нет данных"); cell.colSpan = fields.length; row.append(cell); target.replaceChildren(row); return; }
   target.replaceChildren(...items.map((item) => { const row = document.createElement("tr"); fields.forEach((field, index) => { const cell = document.createElement("td"); const value = item[field] || (field === "decision_code" ? "—" : "0"); cell.append(index < fields.length - 1 ? text("span", String(value), "status") : document.createTextNode(String(value))); row.append(cell); }); return row; }));
+}
+function renderActivity(items = []) {
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
+  elements.activity.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    row.append(text("td", item.profile_id), text("td", item.platform), text("td", item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
+    return row;
+  }));
+}
+function counter(value) { return value === null || value === undefined ? "—" : String(value); }
+function renderActivityObservations(items = []) {
+  const latest = [];
+  const seen = new Set();
+  for (const item of items) {
+    const key = `${item.platform}\u0000${item.profile_id}\u0000${item.resume_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key); latest.push(item);
+  }
+  if (!latest.length) { const row = document.createElement("tr"); const cell = text("td", "Показатели ещё не снимались"); cell.colSpan = 8; row.append(cell); elements.activityObservations.replaceChildren(row); return; }
+  elements.activityObservations.replaceChildren(...latest.map((item) => {
+    const row = document.createElement("tr");
+    const responses = item.response_streak === undefined ? "—" : `${item.response_streak}/${counter(item.responses_required)}`;
+    row.append(text("td", `${item.platform} · ${item.profile_id}`), text("td", item.resume_id), text("td", item.period_days === undefined ? "—" : `${item.period_days} дн.`), text("td", counter(item.search_shows)), text("td", counter(item.views)), text("td", counter(item.invitations)), text("td", responses), text("td", `${formatDate(item.observed_at)}${item.score_hidden ? " · score скрыт" : ""}`));
+    return row;
+  }));
 }
 function renderConversations(items = []) {
   if (!items.length) { elements.conversations.replaceChildren(text("p", "Диалогов пока нет", "empty")); return; }
@@ -157,7 +182,7 @@ async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
     const summary = await request("/api/v1/dashboard/summary"); state.summary = summary;
-    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "count"]); renderConversations(summary.conversations || []);
+    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "count"]); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }

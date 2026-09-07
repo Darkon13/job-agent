@@ -70,17 +70,18 @@ func (StaticMessageResolver) Resolve(_ context.Context, _ core.Conversation, con
 
 type ConversationHandlers struct {
 	repository storage.ConversationRepository
+	activity   storage.ProfileActivityRepository
 	workflow   *workflow.ConversationWorkflow
 	transports *ConversationTransportRegistry
 	resolver   MessageResolver
 	clock      Clock
 }
 
-func NewConversationHandlers(repository storage.ConversationRepository, conversationWorkflow *workflow.ConversationWorkflow, transports *ConversationTransportRegistry, resolver MessageResolver, clock Clock) (*ConversationHandlers, error) {
-	if repository == nil || conversationWorkflow == nil || transports == nil || resolver == nil || clock == nil {
+func NewConversationHandlers(repository storage.ConversationRepository, activity storage.ProfileActivityRepository, conversationWorkflow *workflow.ConversationWorkflow, transports *ConversationTransportRegistry, resolver MessageResolver, clock Clock) (*ConversationHandlers, error) {
+	if repository == nil || activity == nil || conversationWorkflow == nil || transports == nil || resolver == nil || clock == nil {
 		return nil, errors.New("conversation handlers require all dependencies")
 	}
-	return &ConversationHandlers{repository: repository, workflow: conversationWorkflow, transports: transports, resolver: resolver, clock: clock}, nil
+	return &ConversationHandlers{repository: repository, activity: activity, workflow: conversationWorkflow, transports: transports, resolver: resolver, clock: clock}, nil
 }
 
 func (handlers *ConversationHandlers) Send(ctx context.Context, task core.Task) error {
@@ -193,6 +194,10 @@ func (handlers *ConversationHandlers) sendMessage(ctx context.Context, task core
 		return core.ConversationMessage{}, errors.New("conversation transport returned invalid outgoing message identity or state")
 	}
 	if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, handlers.clock.Now()); err != nil {
+		return core.ConversationMessage{}, err
+	}
+	if err := recordProfileActivity(ctx, handlers.activity, conversation.Platform, conversation.ProfileID, "",
+		core.ProfileActivityConversationMessageSent, string(message.ID), message.OccurredAt); err != nil {
 		return core.ConversationMessage{}, err
 	}
 	return message, nil

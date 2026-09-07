@@ -197,6 +197,39 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 				fmt.Fprintf(output, "OK job=%s resume=found can_touch=%t\n", job.Tag, probe.CanTouch)
 			}
 			runnableJobs++
+		case appconfig.JobActionProfileActivityObserve:
+			profile := configuredProfiles[job.Action.Profile]
+			if !readiness[job.Action.Profile].browserReady {
+				blocked = append(blocked, "job "+job.Tag+" has no valid browser state")
+				continue
+			}
+			if instances[profile.Adapter].Name() != hh.Name {
+				blocked = append(blocked, "job "+job.Tag+" has no profile activity observer")
+				continue
+			}
+			resumeID := job.Action.Resume
+			if resumeID == "" {
+				resumeID = profile.Resume
+			}
+			observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
+			if err != nil {
+				return fmt.Errorf("job %q browser observer: %w", job.Tag, err)
+			}
+			observeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			observation, err := observer.ObserveProfileActivity(observeCtx, core.ProfileID(profile.Tag), resumeID)
+			cancel()
+			if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
+				fmt.Fprintf(output, "WARN job=%s browser_session=auth_required\n", job.Tag)
+				blocked = append(blocked, "job "+job.Tag+" browser session requires authentication")
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("job %q activity probe: %w", job.Tag, err)
+			}
+			fmt.Fprintf(output, "OK job=%s score_hidden=%t period_days=%s search_shows=%s views=%s invitations=%s response_streak=%s/%s\n",
+				job.Tag, observation.ScoreHidden, optionalInt(observation.PeriodDays), optionalInt(observation.SearchShows),
+				optionalInt(observation.Views), optionalInt(observation.Invitations), optionalInt(observation.ResponseStreak), optionalInt(observation.ResponsesRequired))
+			runnableJobs++
 		case appconfig.JobActionApplicationCampaign:
 			runnable := true
 			for _, profile := range job.Action.Profiles {
@@ -223,6 +256,13 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		return fmt.Errorf("preflight blocked: %d configured operation(s) are not runnable", len(blocked))
 	}
 	return nil
+}
+
+func optionalInt(value *int) string {
+	if value == nil {
+		return "unknown"
+	}
+	return fmt.Sprint(*value)
 }
 
 func emptyAs(value, fallback string) string {

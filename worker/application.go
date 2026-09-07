@@ -163,16 +163,17 @@ type ApplicationHandler struct {
 	repository storage.ApplicationRepository
 	vacancies  storage.VacancyRepository
 	budgets    storage.ApplicationBudgetRepository
+	activity   storage.ProfileActivityRepository
 	transports *ApplicationTransportRegistry
 	plans      ApplicationPlanResolver
 	clock      Clock
 }
 
-func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
-	if repository == nil || vacancies == nil || budgets == nil || transports == nil || plans == nil || clock == nil {
+func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, activity storage.ProfileActivityRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
+	if repository == nil || vacancies == nil || budgets == nil || activity == nil || transports == nil || plans == nil || clock == nil {
 		return nil, errors.New("application handler requires all dependencies")
 	}
-	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, transports: transports, plans: plans, clock: clock}, nil
+	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, activity: activity, transports: transports, plans: plans, clock: clock}, nil
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -191,7 +192,10 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return errors.New("application task identity mismatch")
 	}
 	if application.Status == core.ApplicationSubmitted {
-		return handler.commitBudget(ctx, application, handler.clock.Now())
+		if err := handler.commitBudget(ctx, application, handler.clock.Now()); err != nil {
+			return err
+		}
+		return handler.recordSubmitted(ctx, application)
 	}
 	if application.Status == core.ApplicationPendingReconcile {
 		return handler.reconcile(ctx, application)
@@ -357,7 +361,10 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 		return err
 	}
-	return handler.commitBudget(ctx, application, handler.clock.Now())
+	if err := handler.commitBudget(ctx, application, handler.clock.Now()); err != nil {
+		return err
+	}
+	return handler.recordSubmitted(ctx, application)
 }
 
 func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, bool, error) {
@@ -426,6 +433,10 @@ func (handler *ApplicationHandler) loadFullVacancy(ctx context.Context, applicat
 	}
 	if _, err := handler.vacancies.UpsertVacancy(ctx, vacancy); err != nil {
 		return core.Vacancy{}, fmt.Errorf("store full vacancy %s: %w", vacancy.Key(), err)
+	}
+	if err := recordProfileActivity(ctx, handler.activity, vacancy.Platform, application.Key.ProfileID, "",
+		core.ProfileActivityVacancyInspected, string(application.ID), vacancy.ObservedAt); err != nil {
+		return core.Vacancy{}, err
 	}
 	return vacancy, nil
 }
@@ -571,7 +582,10 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
 			return err
 		}
-		return handler.commitBudget(ctx, application, now)
+		if err := handler.commitBudget(ctx, application, now); err != nil {
+			return err
+		}
+		return handler.recordSubmitted(ctx, application)
 	}
 	failure := &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: "applications.reconcile", Platform: application.Key.Vacancy.Platform,
@@ -605,6 +619,14 @@ func (handler *ApplicationHandler) reserveBudget(ctx context.Context, applicatio
 func (handler *ApplicationHandler) commitBudget(ctx context.Context, application core.Application, now time.Time) error {
 	err := handler.budgets.CommitApplicationBudget(ctx, application.ID, now)
 	return normalizeBudgetError("applications.budget.commit", application.Key.Vacancy.Platform, err)
+}
+
+func (handler *ApplicationHandler) recordSubmitted(ctx context.Context, application core.Application) error {
+	if application.SubmittedAt == nil {
+		return errors.New("submitted application has no submission time")
+	}
+	return recordProfileActivity(ctx, handler.activity, application.Key.Vacancy.Platform, application.Key.ProfileID,
+		application.PreparedResumeID, core.ProfileActivityApplicationSubmitted, string(application.ID), *application.SubmittedAt)
 }
 
 func (handler *ApplicationHandler) releaseBudget(ctx context.Context, application core.Application, now time.Time) error {

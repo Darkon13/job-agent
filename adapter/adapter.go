@@ -191,6 +191,26 @@ type ResumeToucher interface {
 	TouchResume(ctx context.Context, command ResumeTouchCommand) (ResumeTouchResult, error)
 }
 
+type ProfileActivityObservation struct {
+	Score             *int
+	ScoreHidden       bool
+	PeriodDays        *int
+	SearchShows       *int
+	Views             *int
+	NewViews          *int
+	Invitations       *int
+	NewInvitations    *int
+	ResponseStreak    *int
+	ResponsesRequired *int
+	ObservedAt        time.Time
+}
+
+// ProfileActivityObserver reads platform-owned counters without performing an
+// action. It must not synthesize vacancy views or messages while observing.
+type ProfileActivityObserver interface {
+	ObserveProfileActivity(ctx context.Context, profileID core.ProfileID, resumeID string) (ProfileActivityObservation, error)
+}
+
 // Adapter is a facade over all transports used by one platform. Workflows
 // depend on the smaller capability interfaces instead of this full facade.
 type Adapter interface {

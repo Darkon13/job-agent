@@ -1,0 +1,5 @@
+DROP INDEX profile_activity_snapshots_profile_time_idx;
+DROP TABLE profile_activity_snapshots;
+DROP INDEX profile_activity_kind_time_idx;
+DROP INDEX profile_activity_profile_time_idx;
+DROP TABLE profile_activity;

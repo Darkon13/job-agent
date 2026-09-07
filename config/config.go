@@ -37,13 +37,14 @@ type ProfileStateResourceConfig struct {
 }
 
 const (
-	JobActionResumeTouch           = "resume.touch"
-	JobActionApplicationCampaign   = "application.campaign"
-	JobActionProfileStateReconcile = "profile_state.reconcile"
-	JobConcurrencyForbid           = "forbid"
-	ApplicationModeDryRun          = "dry_run"
-	ApplicationModeApproval        = "approval"
-	ApplicationModeSubmit          = "submit"
+	JobActionResumeTouch            = "resume.touch"
+	JobActionApplicationCampaign    = "application.campaign"
+	JobActionProfileStateReconcile  = "profile_state.reconcile"
+	JobActionProfileActivityObserve = "profile.activity.observe"
+	JobConcurrencyForbid            = "forbid"
+	ApplicationModeDryRun           = "dry_run"
+	ApplicationModeApproval         = "approval"
+	ApplicationModeSubmit           = "submit"
 )
 
 type Job struct {
@@ -429,7 +430,7 @@ func (c Config) Validate() error {
 			}
 		}
 		switch job.Action.Type {
-		case JobActionResumeTouch:
+		case JobActionResumeTouch, JobActionProfileActivityObserve:
 			if _, exists := profiles[job.Action.Profile]; !exists {
 				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
 			}

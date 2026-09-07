@@ -100,6 +100,23 @@
       }
     },
     {
+      "tag": "observe-primary-activity",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/30 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "profile.activity.observe",
+        "profile": "primary"
+      }
+    },
+    {
       "tag": "daily-backend-applications",
       "enabled": true,
       "triggers": [

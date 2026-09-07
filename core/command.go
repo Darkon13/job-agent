@@ -64,6 +64,11 @@ type ResumeTouchPayload struct {
 	ResumeID  string    `json:"resume_id"`
 }
 
+type ProfileActivityObservePayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+	ResumeID  string    `json:"resume_id"`
+}
+
 type ProfileStateApplyPayload struct {
 	ProposalID ProfileStateProposalID `json:"proposal_id"`
 }
@@ -107,6 +112,13 @@ func ProfileStateApplyIdempotencyKey(proposal ProfileStateProposal) (string, err
 func (payload ResumeTouchPayload) Validate() error {
 	if strings.TrimSpace(string(payload.ProfileID)) == "" || strings.TrimSpace(payload.ResumeID) == "" {
 		return errors.New("resume touch payload requires profile and resume")
+	}
+	return nil
+}
+
+func (payload ProfileActivityObservePayload) Validate() error {
+	if strings.TrimSpace(string(payload.ProfileID)) == "" || strings.TrimSpace(payload.ResumeID) == "" {
+		return errors.New("profile activity observation payload requires profile and resume")
 	}
 	return nil
 }

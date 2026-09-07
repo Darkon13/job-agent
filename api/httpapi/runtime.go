@@ -14,6 +14,8 @@ type RuntimeReadRepository interface {
 	Stats(context.Context) (storage.RuntimeStats, error)
 	TaskCounts(context.Context) ([]storage.TaskCount, error)
 	ApplicationCounts(context.Context) ([]storage.ApplicationCount, error)
+	ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error)
+	ListProfileActivitySnapshots(context.Context, storage.ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 	ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error)
 }
 
@@ -23,11 +25,13 @@ type RuntimeAPI struct {
 }
 
 type DashboardSummary struct {
-	GeneratedAt   time.Time                  `json:"generated_at"`
-	Stats         storage.RuntimeStats       `json:"stats"`
-	Tasks         []storage.TaskCount        `json:"tasks"`
-	Applications  []storage.ApplicationCount `json:"applications"`
-	Conversations []ConversationSummary      `json:"conversations"`
+	GeneratedAt       time.Time                      `json:"generated_at"`
+	Stats             storage.RuntimeStats           `json:"stats"`
+	Tasks             []storage.TaskCount            `json:"tasks"`
+	Applications      []storage.ApplicationCount     `json:"applications"`
+	Activity          []storage.ProfileActivityCount `json:"activity"`
+	ActivitySnapshots []core.ProfileActivitySnapshot `json:"activity_snapshots"`
+	Conversations     []ConversationSummary          `json:"conversations"`
 }
 
 type ConversationSummary struct {
@@ -95,6 +99,16 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load application summary")
 		return
 	}
+	activity, err := api.repository.ProfileActivityCounts(request.Context(), storage.ProfileActivityFilter{})
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load profile activity summary")
+		return
+	}
+	activitySnapshots, err := api.repository.ListProfileActivitySnapshots(request.Context(), storage.ProfileActivitySnapshotFilter{Limit: 50})
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load profile activity observations")
+		return
+	}
 	conversations, err := api.repository.ListConversations(request.Context(), storage.ConversationFilter{})
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load conversations")
@@ -111,10 +125,12 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, DashboardSummary{
-		GeneratedAt:   api.now().UTC(),
-		Stats:         stats,
-		Tasks:         tasks,
-		Applications:  applications,
-		Conversations: conversationSummaries,
+		GeneratedAt:       api.now().UTC(),
+		Stats:             stats,
+		Tasks:             tasks,
+		Applications:      applications,
+		Activity:          activity,
+		ActivitySnapshots: activitySnapshots,
+		Conversations:     conversationSummaries,
 	})
 }

@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
+	taskworker "github.com/Darkon13/job-agent/worker"
 )
 
 type profileReaderStub struct {
@@ -33,6 +34,12 @@ type profileStateReaderStub func(context.Context, adapter.ProfileStateReadReques
 
 func (reader profileStateReaderStub) ReadProfileState(ctx context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
 	return reader(ctx, request)
+}
+
+type profileActivityObserverStub struct{}
+
+func (profileActivityObserverStub) ObserveProfileActivity(context.Context, core.ProfileID, string) (adapter.ProfileActivityObservation, error) {
+	return adapter.ProfileActivityObservation{ObservedAt: time.Now().UTC()}, nil
 }
 
 func TestParseMainOptions(t *testing.T) {
@@ -161,6 +168,36 @@ func TestProfileStateReconcileDefinitionsRequireReadAndWriteCapabilities(t *test
 	disabled, err := profileStateReconcileDefinitions(cfg, []core.ProfileStateResource{resource}, nil, map[core.ProfileID]core.Platform{"primary": "hh"})
 	if err != nil || len(disabled) != 0 {
 		t.Fatalf("definition without reader = %#v err=%v", disabled, err)
+	}
+}
+
+func TestProfileActivityDefinitionsRequireRegisteredObserver(t *testing.T) {
+	cfg := appconfig.Config{
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Resume: "resume-1", Enabled: true}},
+		Jobs: []appconfig.Job{{
+			Tag: "observe-primary", Enabled: true,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "*/30 * * * *", Timezone: "UTC"}},
+			Action:   appconfig.JobAction{Type: appconfig.JobActionProfileActivityObserve, Profile: "primary"},
+		}},
+	}
+	registry := taskworker.NewProfileActivityObserverRegistry()
+	if err := registry.Register("primary", profileActivityObserverStub{}); err != nil {
+		t.Fatalf("register observer: %v", err)
+	}
+	definitions, err := profileActivityDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}}, registry)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions=%#v err=%v", definitions, err)
+	}
+	if definitions[0].ActionType != core.TaskProfileActivityObserve || definitions[0].ProfileID != "primary" {
+		t.Fatalf("definition=%#v", definitions[0])
+	}
+	var payload core.ProfileActivityObservePayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.ProfileID != "primary" || payload.ResumeID != "resume-1" {
+		t.Fatalf("payload=%#v err=%v", payload, err)
+	}
+	empty, err := profileActivityDefinitions(cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{}}, taskworker.NewProfileActivityObserverRegistry())
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("definitions without observer=%#v err=%v", empty, err)
 	}
 }
 

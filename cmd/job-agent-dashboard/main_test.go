@@ -24,7 +24,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") || !strings.Contains(response.Body.String(), "Активность профилей") {
 		t.Fatalf("index response: %d %s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" {
@@ -32,7 +32,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") || !strings.Contains(response.Body.String(), "/reconcile") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") || !strings.Contains(response.Body.String(), "/reconcile") || !strings.Contains(response.Body.String(), "activity_snapshots") {
 		t.Fatalf("dashboard script response: %d %s", response.Code, response.Body.String())
 	}
 

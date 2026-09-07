@@ -118,6 +118,7 @@ func main() {
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
+	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile)
@@ -216,6 +217,21 @@ func main() {
 				}
 			}
 		}
+		if observer, ok := instance.(adapter.ProfileActivityObserver); ok {
+			if err := activityObservers.Register(profileID, observer); err != nil {
+				log.Fatalf("register profile activity observer for profile %q: %v", profile.Tag, err)
+			}
+		} else if instance.Name() == hh.Name && profile.StateFile != "" {
+			if _, err := os.Stat(profile.StateFile); err == nil {
+				observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
+				if err != nil {
+					log.Fatalf("create HH profile activity observer for profile %q: %v", profile.Tag, err)
+				}
+				if err := activityObservers.Register(profileID, observer); err != nil {
+					log.Fatalf("register HH profile activity observer for profile %q: %v", profile.Tag, err)
+				}
+			}
+		}
 	}
 	profileStateApplyWorkflow, err := workflow.NewProfileStateApplyWorkflow(
 		store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileStatePlatforms,
@@ -236,7 +252,7 @@ func main() {
 		log.Fatalf("create profile state API: %v", err)
 	}
 	conversationHandlers, err := taskworker.NewConversationHandlers(
-		store, conversationWorkflow, conversationTransports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
+		store, store, conversationWorkflow, conversationTransports, taskworker.StaticMessageResolver{}, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create conversation handlers: %v", err)
@@ -276,7 +292,7 @@ func main() {
 	}
 	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
-			store, store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
+			store, store, store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
 		)
 		if err != nil {
 			log.Fatalf("create application handler: %v", err)
@@ -288,7 +304,7 @@ func main() {
 		workers = append(workers, applicationWorker)
 	}
 	if resumeTouchers.Count() > 0 {
-		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers)
+		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers, store, taskworker.SystemClock{})
 		if err != nil {
 			log.Fatalf("create resume touch handler: %v", err)
 		}
@@ -299,6 +315,17 @@ func main() {
 			log.Fatalf("create resume touch worker: %v", err)
 		}
 		workers = append(workers, resumeWorker)
+	}
+	if activityObservers.Count() > 0 {
+		activityHandler, err := taskworker.NewProfileActivityObserveHandler(store, activityObservers)
+		if err != nil {
+			log.Fatalf("create profile activity observation handler: %v", err)
+		}
+		activityWorker, err := newTaskWorker(store, core.TaskProfileActivityObserve, activityHandler.Handle)
+		if err != nil {
+			log.Fatalf("create profile activity observation worker: %v", err)
+		}
+		workers = append(workers, activityWorker)
 	}
 	campaignHandler, campaignDefinitions, campaignRoutes, campaignJobs, err := configureApplicationCampaigns(
 		cfg, instances, profiles, store,
@@ -328,6 +355,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
+	activityDefinitions, err := profileActivityDefinitions(cfg, instances, activityObservers)
+	if err != nil {
+		log.Fatalf("build profile activity scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, activityDefinitions...)
 	profileStateDefinitions, err := profileStateReconcileDefinitions(
 		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 	)
@@ -664,6 +696,42 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, observers *taskworker.ProfileActivityObserverRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileActivityObserve {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled || !observers.Has(profileID) {
+			continue
+		}
+		resumeID := job.Action.Resume
+		if resumeID == "" {
+			resumeID = profile.Resume
+		}
+		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskProfileActivityObserve, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

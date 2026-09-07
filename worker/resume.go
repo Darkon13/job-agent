@@ -9,6 +9,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 )
 
 type ResumeToucherRegistry struct {
@@ -56,13 +57,17 @@ func (registry *ResumeToucherRegistry) Count() int {
 	return len(registry.touchers)
 }
 
-type ResumeTouchHandler struct{ touchers *ResumeToucherRegistry }
+type ResumeTouchHandler struct {
+	touchers *ResumeToucherRegistry
+	activity storage.ProfileActivityRepository
+	clock    Clock
+}
 
-func NewResumeTouchHandler(touchers *ResumeToucherRegistry) (*ResumeTouchHandler, error) {
-	if touchers == nil {
-		return nil, errors.New("resume touch handler requires toucher registry")
+func NewResumeTouchHandler(touchers *ResumeToucherRegistry, activity storage.ProfileActivityRepository, clock Clock) (*ResumeTouchHandler, error) {
+	if touchers == nil || activity == nil || clock == nil {
+		return nil, errors.New("resume touch handler requires toucher registry, activity repository and clock")
 	}
-	return &ResumeTouchHandler{touchers: touchers}, nil
+	return &ResumeTouchHandler{touchers: touchers, activity: activity, clock: clock}, nil
 }
 
 func (handler *ResumeTouchHandler) Handle(ctx context.Context, task core.Task) error {
@@ -83,5 +88,9 @@ func (handler *ResumeTouchHandler) Handle(ctx context.Context, task core.Task) e
 	_, err = toucher.TouchResume(ctx, adapter.ResumeTouchCommand{
 		ProfileID: payload.ProfileID, ResumeID: payload.ResumeID, IdempotencyKey: task.IdempotencyKey,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return recordProfileActivity(ctx, handler.activity, task.Platform, payload.ProfileID, payload.ResumeID,
+		core.ProfileActivityResumeTouched, task.IdempotencyKey, handler.clock.Now())
 }

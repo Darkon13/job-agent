@@ -77,6 +77,30 @@ func TestRunEnqueuesProfileStateReconcile(t *testing.T) {
 	}
 }
 
+func TestRunEnqueuesProfileActivityObservation(t *testing.T) {
+	directory := t.TempDir()
+	configPath, databasePath := triggerConfig(t, directory)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"-idempotency-key", "manual-observe-1", configPath, "observe-primary",
+	}, &output, time.Date(2026, 9, 7, 20, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("trigger activity observation: %v", err)
+	}
+	store, err := storesqlite.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	task, err := store.TaskByIdempotencyKey(context.Background(), "manual-observe-1")
+	if err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	var payload core.ProfileActivityObservePayload
+	if task.Type != core.TaskProfileActivityObserve || json.Unmarshal(task.Payload, &payload) != nil || payload.ResumeID != "resume-1" {
+		t.Fatalf("unexpected task: %#v payload=%#v", task, payload)
+	}
+}
+
 func triggerConfig(t *testing.T, directory string) (string, string) {
 	t.Helper()
 	databasePath := filepath.Join(directory, "job-agent.db")
@@ -97,6 +121,11 @@ func triggerConfig(t *testing.T, directory string) (string, string) {
 				Tag: "touch-primary", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
 				Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 * * * *", Timezone: "UTC", Misfire: "run_once"}},
 				Action:   appconfig.JobAction{Type: appconfig.JobActionResumeTouch, Profile: "primary"},
+			},
+			{
+				Tag: "observe-primary", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+				Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "*/30 * * * *", Timezone: "UTC", Misfire: "run_once"}},
+				Action:   appconfig.JobAction{Type: appconfig.JobActionProfileActivityObserve, Profile: "primary"},
 			},
 			{
 				Tag: "reconcile-about", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,

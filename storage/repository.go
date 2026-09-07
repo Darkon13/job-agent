@@ -28,6 +28,8 @@ type RuntimeStats struct {
 	Messages              int `json:"messages"`
 	FollowUps             int `json:"follow_ups"`
 	ProfileStateProposals int `json:"profile_state_proposals"`
+	ProfileActivity       int `json:"profile_activity"`
+	ActivitySnapshots     int `json:"activity_snapshots"`
 }
 
 type TaskCount struct {
@@ -40,6 +42,38 @@ type ApplicationCount struct {
 	Status       core.ApplicationStatus `json:"status"`
 	DecisionCode string                 `json:"decision_code,omitempty"`
 	Count        int                    `json:"count"`
+}
+
+type ProfileActivityFilter struct {
+	Platform  core.Platform
+	ProfileID core.ProfileID
+	Kind      core.ProfileActivityKind
+}
+
+type ProfileActivityCount struct {
+	Platform       core.Platform            `json:"platform"`
+	ProfileID      core.ProfileID           `json:"profile_id"`
+	Kind           core.ProfileActivityKind `json:"kind"`
+	Count          int                      `json:"count"`
+	LastOccurredAt time.Time                `json:"last_occurred_at"`
+}
+
+type ProfileActivityRepository interface {
+	RecordProfileActivity(ctx context.Context, candidate core.ProfileActivityRecord) (created bool, err error)
+	ListProfileActivity(ctx context.Context, filter ProfileActivityFilter) ([]core.ProfileActivityRecord, error)
+	ProfileActivityCounts(ctx context.Context, filter ProfileActivityFilter) ([]ProfileActivityCount, error)
+}
+
+type ProfileActivitySnapshotFilter struct {
+	Platform  core.Platform
+	ProfileID core.ProfileID
+	ResumeID  string
+	Limit     int
+}
+
+type ProfileActivitySnapshotRepository interface {
+	RecordProfileActivitySnapshot(ctx context.Context, candidate core.ProfileActivitySnapshot) (created bool, err error)
+	ListProfileActivitySnapshots(ctx context.Context, filter ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 }
 
 type SearchRunRepository interface {

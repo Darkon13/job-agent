@@ -26,6 +26,7 @@ const (
 	TaskResumePublish          TaskType = "resume.publish"
 	TaskResumeTouch            TaskType = "resume.touch"
 	TaskResumeUpdate           TaskType = "resume.update"
+	TaskProfileActivityObserve TaskType = "profile.activity.observe"
 	TaskProfileBootstrap       TaskType = "profile.bootstrap"
 	TaskProfileStateReconcile  TaskType = "profile_state.reconcile"
 	TaskProfileStateApply      TaskType = "profile_state.apply"

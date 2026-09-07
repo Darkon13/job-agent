@@ -13,15 +13,17 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository              = (*Repository)(nil)
-	_ storage.SearchRunRepository            = (*Repository)(nil)
-	_ storage.ApplicationCampaignRepository  = (*Repository)(nil)
-	_ storage.ApplicationRepository          = (*Repository)(nil)
-	_ storage.ApplicationBudgetRepository    = (*Repository)(nil)
-	_ storage.TestCatalogRepository          = (*Repository)(nil)
-	_ storage.ReviewRepository               = (*Repository)(nil)
-	_ storage.ConversationRepository         = (*Repository)(nil)
-	_ storage.ProfileStateProposalRepository = (*Repository)(nil)
+	_ storage.VacancyRepository                 = (*Repository)(nil)
+	_ storage.SearchRunRepository               = (*Repository)(nil)
+	_ storage.ApplicationCampaignRepository     = (*Repository)(nil)
+	_ storage.ApplicationRepository             = (*Repository)(nil)
+	_ storage.ApplicationBudgetRepository       = (*Repository)(nil)
+	_ storage.TestCatalogRepository             = (*Repository)(nil)
+	_ storage.ReviewRepository                  = (*Repository)(nil)
+	_ storage.ConversationRepository            = (*Repository)(nil)
+	_ storage.ProfileStateProposalRepository    = (*Repository)(nil)
+	_ storage.ProfileActivityRepository         = (*Repository)(nil)
+	_ storage.ProfileActivitySnapshotRepository = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -56,6 +58,8 @@ type Repository struct {
 	followUpKeys          map[string]core.FollowUpID
 	profileStateProposals map[core.ProfileStateProposalID]core.ProfileStateProposal
 	profileStateKeys      map[string]core.ProfileStateProposalID
+	profileActivity       map[core.ProfileActivityID]core.ProfileActivityRecord
+	activitySnapshots     map[core.ProfileActivitySnapshotID]core.ProfileActivitySnapshot
 }
 
 func NewRepository() *Repository {
@@ -78,6 +82,8 @@ func NewRepository() *Repository {
 		followUpKeys:          make(map[string]core.FollowUpID),
 		profileStateProposals: make(map[core.ProfileStateProposalID]core.ProfileStateProposal),
 		profileStateKeys:      make(map[string]core.ProfileStateProposalID),
+		profileActivity:       make(map[core.ProfileActivityID]core.ProfileActivityRecord),
+		activitySnapshots:     make(map[core.ProfileActivitySnapshotID]core.ProfileActivitySnapshot),
 	}
 }
 

@@ -182,15 +182,72 @@ type и platform resources; текстовая эвристика являетс
 
 ## Активность и просмотр вакансий
 
-На главной странице HH показывает `activity-card`, `activity-score` и progress.
-Наблюдаемый help dialog перечислял сигналы активности: просмотр вакансии,
-звонок/контакт и отклик. Значения и веса являются UI telemetry и могут меняться.
+На главной странице HH ранее показывал `activity-card`, `activity-score` и
+progress. Наблюдаемый help dialog перечислял сигналы активности: просмотр
+вакансии, звонок/контакт и отклик. Значения и веса являются UI telemetry и могут
+меняться.
+
+При повторной проверке 2026-09-07 авторизованный `GET /applicant/profile/me`
+вернул `200`, но `activity-card` и `activity-score` уже отсутствовали в HTML, а
+initial state содержал включённый эксперимент
+`experiments.enabled.web_hide_user_activity = "experiment"`. Это подтверждает
+скрытие UI feature-флагом, но не доказывает прекращение серверного расчёта. Сам
+числовой score в текущем payload не обнаружен.
+
+Тот же initial state по-прежнему отдаёт полезные read-only метрики в
+`applicantResumesStatistics`: окно `periodDays`, `searchShows`, `views`,
+`invitations`, включая новые просмотры/приглашения, и рекомендацию
+`responsesCount / responsesRequired`. Для исследованного профиля 2026-09-07
+окно составляло семь дней. Это platform counters, поэтому Job Agent сохраняет
+их как временные snapshots, а не пытается вывести из локальных событий.
+
+Наблюдение планируется обычным job:
+
+```json
+{
+  "tag": "observe-primary-activity",
+  "enabled": true,
+  "triggers": [{
+    "type": "cron",
+    "expression": "*/30 * * * *",
+    "timezone": "Europe/Moscow",
+    "misfire": "run_once"
+  }],
+  "concurrency": "forbid",
+  "action": {"type": "profile.activity.observe", "profile": "primary"}
+}
+```
+
+Один запуск делает только `GET /applicant/profile/me`. Он не открывает чаты или
+вакансии и не меняет платформенное состояние. Пропущенные интервалы, как и у
+остальных scheduled jobs, схлопываются в один запуск.
 
 `activity.observe` может собирать текущий score и объяснения для UI. Отдельный
 workflow искусственного повышения score через пустые открытия, ожидание и
 закрытие вакансий не создаётся. `vacancies.inspect` открывает страницу только
 как реальную часть qualification pipeline: получить описание, требования,
 работодателя, тест и принять решение об отклике.
+
+Job Agent ведёт собственный durable-журнал подтверждённых действий, чтобы
+сопоставлять их с наблюдаемой telemetry, не угадывая веса HH:
+
+- `vacancy.inspected` — полная карточка прочитана перед qualification;
+- `application.submitted` — адаптер подтвердил создание отклика;
+- `conversation.message_sent` — transport подтвердил исходящее сообщение;
+- `resume.touched` — web endpoint подтвердил поднятие резюме.
+
+Идентичность записи выводится из `(platform, profile, kind, source_id)`, поэтому
+retry или restart не увеличивает локальный счётчик повторно. Dashboard показывает
+число и время последнего сигнала отдельно по профилю и виду действия. Эти
+счётчики не называются score: факт действия не доказывает его текущий вес в
+закрытом алгоритме HH.
+
+`vacancy.inspected` также не переименовывается в `vacancy.viewed`. Текущий
+HTTP/browser-state transport загружает полный HTML, но не исполняет страницу в
+Chromium. Настоящий browser view можно фиксировать только после появления узкого
+browser RPC, который выполняет осмысленный review и возвращает подтверждённый
+результат навигации; произвольная задержка сама по себе таким результатом не
+является.
 
 Такое разделение пригодится, если HH введёт фильтр откликов без фактического
 просмотра: audit trail подтвердит обычный inspect перед submit без имитации

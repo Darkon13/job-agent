@@ -14,11 +14,13 @@ import (
 )
 
 type runtimeRepository struct {
-	stats         storage.RuntimeStats
-	tasks         []storage.TaskCount
-	applications  []storage.ApplicationCount
-	conversations []core.Conversation
-	err           error
+	stats             storage.RuntimeStats
+	tasks             []storage.TaskCount
+	applications      []storage.ApplicationCount
+	activity          []storage.ProfileActivityCount
+	activitySnapshots []core.ProfileActivitySnapshot
+	conversations     []core.Conversation
+	err               error
 }
 
 func (repository *runtimeRepository) Stats(context.Context) (storage.RuntimeStats, error) {
@@ -33,6 +35,14 @@ func (repository *runtimeRepository) ApplicationCounts(context.Context) ([]stora
 	return repository.applications, repository.err
 }
 
+func (repository *runtimeRepository) ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error) {
+	return repository.activity, repository.err
+}
+
+func (repository *runtimeRepository) ListProfileActivitySnapshots(context.Context, storage.ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error) {
+	return repository.activitySnapshots, repository.err
+}
+
 func (repository *runtimeRepository) ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error) {
 	return repository.conversations, repository.err
 }
@@ -40,9 +50,16 @@ func (repository *runtimeRepository) ListConversations(context.Context, storage.
 func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 	now := time.Date(2026, 9, 6, 16, 0, 0, 0, time.UTC)
 	repository := &runtimeRepository{
-		stats:         storage.RuntimeStats{Vacancies: 12, Applications: 4, Tasks: 3, Conversations: 1},
-		tasks:         []storage.TaskCount{{Type: core.TaskApplicationSubmit, Status: core.TaskNew, Count: 3}},
-		applications:  []storage.ApplicationCount{{Status: core.ApplicationSubmitted, Count: 4}},
+		stats:        storage.RuntimeStats{Vacancies: 12, Applications: 4, Tasks: 3, Conversations: 1},
+		tasks:        []storage.TaskCount{{Type: core.TaskApplicationSubmit, Status: core.TaskNew, Count: 3}},
+		applications: []storage.ApplicationCount{{Status: core.ApplicationSubmitted, Count: 4}},
+		activity: []storage.ProfileActivityCount{{
+			Platform: "hh", ProfileID: "primary", Kind: core.ProfileActivityApplicationSubmitted,
+			Count: 4, LastOccurredAt: now.Add(-time.Minute),
+		}},
+		activitySnapshots: []core.ProfileActivitySnapshot{{
+			ID: "snapshot-1", Platform: "hh", ProfileID: "primary", ResumeID: "resume-1", SearchShows: intPointer(35), Views: intPointer(1), ScoreHidden: true, ObservedAt: now,
+		}},
 		conversations: []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh"}},
 	}
 	api, err := NewRuntimeAPI(repository)
@@ -71,7 +88,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"id":"conversation-1"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`) {
 		t.Fatalf("unexpected summary: %s", body)
 	}
 
@@ -81,6 +98,8 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("fallback status: %d", response.Code)
 	}
 }
+
+func intPointer(value int) *int { return &value }
 
 func TestRuntimeAPIReadinessDoesNotLeakStorageError(t *testing.T) {
 	api, err := NewRuntimeAPI(&runtimeRepository{err: errors.New("database /secret/path failed")})

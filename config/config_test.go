@@ -239,6 +239,26 @@ func TestResumeTouchJobValidation(t *testing.T) {
 	}
 }
 
+func TestProfileActivityObserveJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true}},
+		Jobs: []Job{{
+			Tag: "observe-primary", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "*/30 * * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionProfileActivityObserve, Profile: "primary"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid profile activity observation job: %v", err)
+	}
+	config.Profiles[0].Resume = ""
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected missing activity observation resume to fail")
+	}
+}
+
 func TestApplicationCampaignJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

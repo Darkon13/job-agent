@@ -113,7 +113,7 @@ func run(ctx context.Context, args []string, output io.Writer, now time.Time) er
 
 func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core.ProfileID, json.RawMessage, error) {
 	switch job.Action.Type {
-	case appconfig.JobActionResumeTouch:
+	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
 			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
@@ -122,8 +122,12 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 		if resumeID == "" {
 			resumeID = profile.Resume
 		}
-		payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
-		return core.TaskResumeTouch, core.ProfileID(profile.Tag), payload, err
+		if job.Action.Type == appconfig.JobActionResumeTouch {
+			payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
+			return core.TaskResumeTouch, core.ProfileID(profile.Tag), payload, err
+		}
+		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
+		return core.TaskProfileActivityObserve, core.ProfileID(profile.Tag), payload, err
 	case appconfig.JobActionApplicationCampaign:
 		profiles := make([]core.ProfileID, 0, len(job.Action.Profiles))
 		for _, value := range job.Action.Profiles {
@@ -156,7 +160,7 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 
 func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {
 	switch job.Action.Type {
-	case appconfig.JobActionResumeTouch:
+	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
 			return "", fmt.Errorf("job %q references an unknown profile", job.Tag)

@@ -9,6 +9,7 @@ import (
 	"github.com/Darkon13/job-agent/adapter"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 	"github.com/Darkon13/job-agent/workflow"
 )
@@ -69,7 +70,7 @@ func newConversationHandlersFixture(t *testing.T) (*ConversationHandlers, *workf
 	if err := transports.Register("profile-1", transport); err != nil {
 		t.Fatalf("register transport: %v", err)
 	}
-	handlers, err := NewConversationHandlers(repository, conversationWorkflow, transports, StaticMessageResolver{}, clock)
+	handlers, err := NewConversationHandlers(repository, repository, conversationWorkflow, transports, StaticMessageResolver{}, clock)
 	if err != nil {
 		t.Fatalf("new handlers: %v", err)
 	}
@@ -92,6 +93,10 @@ func TestConversationSendHandlerCallsTransportAndStoresMessage(t *testing.T) {
 	}
 	if transport.commands[0].IdempotencyKey != task.IdempotencyKey {
 		t.Fatalf("transport did not receive idempotency key: %#v", transport.commands[0])
+	}
+	activity, err := repository.ListProfileActivity(ctx, storage.ProfileActivityFilter{ProfileID: "profile-1"})
+	if err != nil || len(activity) != 1 || activity[0].Kind != core.ProfileActivityConversationMessageSent || activity[0].SourceID != string(messages[0].ID) {
+		t.Fatalf("conversation activity=%#v err=%v", activity, err)
 	}
 }
 

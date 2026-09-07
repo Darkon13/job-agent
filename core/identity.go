@@ -23,6 +23,8 @@ type QualificationID string
 type ConversationID string
 type MessageID string
 type FollowUpID string
+type ProfileActivityID string
+type ProfileActivitySnapshotID string
 
 // VacancyKey is the stable cross-search identity of a platform vacancy.
 type VacancyKey struct {

@@ -19,15 +19,17 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository              = (*Store)(nil)
-	_ storage.SearchRunRepository            = (*Store)(nil)
-	_ storage.ApplicationCampaignRepository  = (*Store)(nil)
-	_ storage.ApplicationRepository          = (*Store)(nil)
-	_ storage.ApplicationBudgetRepository    = (*Store)(nil)
-	_ storage.ConversationRepository         = (*Store)(nil)
-	_ storage.ProfileStateProposalRepository = (*Store)(nil)
-	_ broker.TaskQueue                       = (*Store)(nil)
-	_ broker.TaskStore                       = (*Store)(nil)
+	_ storage.VacancyRepository                 = (*Store)(nil)
+	_ storage.SearchRunRepository               = (*Store)(nil)
+	_ storage.ApplicationCampaignRepository     = (*Store)(nil)
+	_ storage.ApplicationRepository             = (*Store)(nil)
+	_ storage.ApplicationBudgetRepository       = (*Store)(nil)
+	_ storage.ConversationRepository            = (*Store)(nil)
+	_ storage.ProfileStateProposalRepository    = (*Store)(nil)
+	_ storage.ProfileActivityRepository         = (*Store)(nil)
+	_ storage.ProfileActivitySnapshotRepository = (*Store)(nil)
+	_ broker.TaskQueue                          = (*Store)(nil)
+	_ broker.TaskStore                          = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")
@@ -318,6 +320,8 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		{"conversations", &stats.Conversations}, {"conversation_messages", &stats.Messages},
 		{"conversation_follow_ups", &stats.FollowUps},
 		{"profile_state_proposals", &stats.ProfileStateProposals},
+		{"profile_activity", &stats.ProfileActivity},
+		{"profile_activity_snapshots", &stats.ActivitySnapshots},
 	} {
 		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+item.table).Scan(item.value); err != nil {
 			return Stats{}, fmt.Errorf("count %s: %w", item.table, err)

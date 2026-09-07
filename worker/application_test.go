@@ -141,7 +141,7 @@ func applicationFixture(t *testing.T, plans StaticApplicationPlans, transport *f
 		t.Fatalf("register transport: %v", err)
 	}
 	clock := &conversationClock{now: now}
-	handler, err := NewApplicationHandler(repository, repository, repository, transports, plans, clock)
+	handler, err := NewApplicationHandler(repository, repository, repository, repository, transports, plans, clock)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -172,6 +172,14 @@ func TestApplicationHandlerSubmitsAndPersistsNegotiation(t *testing.T) {
 	reservation, exists := repository.ApplicationBudget(application.ID)
 	if !exists || reservation.State != core.ApplicationBudgetCommitted {
 		t.Fatalf("application budget was not committed: %#v exists=%v", reservation, exists)
+	}
+	activities, err := repository.ListProfileActivity(context.Background(), storage.ProfileActivityFilter{ProfileID: "profile-1"})
+	kinds := make(map[core.ProfileActivityKind]bool, len(activities))
+	for _, activity := range activities {
+		kinds[activity.Kind] = true
+	}
+	if err != nil || len(activities) != 2 || !kinds[core.ProfileActivityApplicationSubmitted] || !kinds[core.ProfileActivityVacancyInspected] {
+		t.Fatalf("application activity=%#v err=%v", activities, err)
 	}
 }
 
