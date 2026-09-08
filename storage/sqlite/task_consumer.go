@@ -50,6 +50,13 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 			)
 			AND (? = '' OR type = ?)
 			AND (deadline IS NULL OR deadline > ?)
+			AND (? = '' OR NOT EXISTS (
+				SELECT 1 FROM tasks AS blocker
+				WHERE blocker.type = ?
+					AND blocker.profile_id = tasks.profile_id
+					AND blocker.status IN (?, ?, ?, ?)
+					AND (blocker.deadline IS NULL OR blocker.deadline > ?)
+			))
 			ORDER BY
 				priority DESC,
 				CASE WHEN status = ? THEN COALESCE(lease_until, 0) ELSE available_at END,
@@ -60,6 +67,8 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		core.TaskProcessing, params.Now.UnixNano(), params.WorkerID, requestedUntil.UnixNano(), requestedUntil.UnixNano(),
 		core.TaskNew, core.TaskRetryScheduled, params.Now.UnixNano(),
 		core.TaskProcessing, params.Now.UnixNano(), params.TaskType, params.TaskType,
+		params.Now.UnixNano(), params.BlockedByTaskType, params.BlockedByTaskType,
+		core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled,
 		params.Now.UnixNano(), core.TaskProcessing)
 	lease, err := scanTaskLease(row)
 	if errors.Is(err, sql.ErrNoRows) {

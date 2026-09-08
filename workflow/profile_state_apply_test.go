@@ -50,7 +50,8 @@ func TestProfileStateApplyWorkflowEnqueuesProposalReferenceIdempotently(t *testi
 	if err != nil || created || second.ID != first.ID {
 		t.Fatalf("second enqueue: %#v created=%v err=%v", second, created, err)
 	}
-	if first.Type != core.TaskProfileStateApply || first.ProfileID != "primary" || first.Platform != "hh" || strings.Contains(string(first.Payload), "secret") {
+	if first.Type != core.TaskProfileStateApply || first.ProfileID != "primary" || first.Platform != "hh" ||
+		first.Priority != core.TaskPriorityProfileStateApply || strings.Contains(string(first.Payload), "secret") {
 		t.Fatalf("task = %#v", first)
 	}
 	var payload core.ProfileStateApplyPayload

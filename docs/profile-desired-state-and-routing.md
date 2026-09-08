@@ -186,6 +186,10 @@ sing-box final    -> Job Agent explicit fallback action
 ## Границы безопасности и конкурентности
 
 - На профиль действует одна mutation lane: ФИО, резюме, publish и touch не меняются конкурентно.
+- `profile_state.apply` имеет системный максимальный приоритет и является
+  барьером для `application.submit` того же профиля: ожидающий apply сначала
+  должен перейти в terminal state. Ожидание отклика не увеличивает attempts;
+  уже выполняющийся внешний запрос не прерывается.
 - Read-only операции могут идти параллельно, пока adapter не доказал конфликт с browser context.
 - `plan` не равен `apply`; UI может показать diff без внешнего действия.
 - Apply использует optimistic concurrency и прекращается, если remote state изменился после plan.
@@ -228,11 +232,14 @@ sing-box final    -> Job Agent explicit fallback action
 - cron, ручной CLI и API/dashboard trigger могут поставить durable
   `profile_state.reconcile`; payload содержит только tag ресурса, а worker
   выполняет read → plan → enqueue apply и ничего не меняет при `no_changes`;
-- `profile_state.apply` и `resume.touch` проходят через одну process-local
-  mutation lane на `profile_id`: один профиль изменяется последовательно, а
-  разные профили могут исполняться параллельно. Текущий Compose-контракт
-  допускает ровно один backend с mutating workers; перед горизонтальным
-  масштабированием lane нужно заменить общей lease/lock в durable storage.
+- `profile_state.apply`, `resume.touch` и `application.submit` проходят через
+  одну process-local mutation lane на `profile_id`: один профиль изменяется
+  последовательно, а разные профили могут исполняться параллельно. Claim
+  отклика дополнительно исключает профиль с активным `profile_state.apply`,
+  поэтому отдельные type-filtered workers не обходят приоритет apply. Текущий
+  Compose-контракт допускает ровно один backend с mutating workers; перед
+  горизонтальным масштабированием lane нужно заменить общей lease/lock в
+  durable storage.
 
 В текущем формате ключ `resumes` является внешним ID/hash резюме. Именованные
 локальные aliases появятся вместе с отдельным каталогом resume targets.

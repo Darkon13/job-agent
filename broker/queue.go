@@ -24,10 +24,13 @@ type TaskStore interface {
 }
 
 type ClaimParams struct {
-	WorkerID      string
-	TaskType      core.TaskType
-	Now           time.Time
-	LeaseDuration time.Duration
+	WorkerID          string
+	TaskType          core.TaskType
+	// BlockedByTaskType keeps a task unclaimed while a non-terminal task of
+	// this type exists for the same profile. Waiting does not consume attempts.
+	BlockedByTaskType core.TaskType
+	Now               time.Time
+	LeaseDuration     time.Duration
 }
 
 func (params ClaimParams) Validate() error {
@@ -39,6 +42,12 @@ func (params ClaimParams) Validate() error {
 	}
 	if params.LeaseDuration <= 0 {
 		return errors.New("task claim requires positive lease duration")
+	}
+	if params.BlockedByTaskType != "" && params.TaskType == "" {
+		return errors.New("task claim blocker requires task type")
+	}
+	if params.BlockedByTaskType != "" && params.BlockedByTaskType == params.TaskType {
+		return errors.New("task claim cannot be blocked by its own type")
 	}
 	return nil
 }

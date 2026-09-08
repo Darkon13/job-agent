@@ -110,6 +110,58 @@ func TestQueueClaimsHigherPriorityBeforeOlderTask(t *testing.T) {
 	}
 }
 
+func TestQueueBlocksApplicationWhileProfileStateApplyIsActive(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	queue := NewQueue()
+
+	apply := testTask(t, "profile-apply", "profile-apply", now, nil)
+	apply.Type = core.TaskProfileStateApply
+	apply.ProfileID = "primary"
+	sameProfile := testTask(t, "application-primary", "application-primary", now.Add(time.Second), nil)
+	sameProfile.ProfileID = "primary"
+	otherProfile := testTask(t, "application-secondary", "application-secondary", now.Add(2*time.Second), nil)
+	otherProfile.ProfileID = "secondary"
+	for _, task := range []core.Task{apply, sameProfile, otherProfile} {
+		if _, err := queue.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+
+	claim := broker.ClaimParams{
+		WorkerID: "application-worker", TaskType: core.TaskApplicationSubmit,
+		BlockedByTaskType: core.TaskProfileStateApply,
+		Now:               now.Add(2 * time.Second), LeaseDuration: time.Minute,
+	}
+	lease, found, err := queue.Claim(ctx, claim)
+	if err != nil || !found || lease.Task.ID != otherProfile.ID {
+		t.Fatalf("other profile claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+	if err := queue.Complete(ctx, lease, claim.Now.Add(time.Millisecond)); err != nil {
+		t.Fatalf("complete other profile: %v", err)
+	}
+	claim.Now = claim.Now.Add(time.Second)
+	if _, found, err := queue.Claim(ctx, claim); err != nil || found {
+		t.Fatalf("blocked profile was claimed: found=%t err=%v", found, err)
+	}
+
+	applyLease, found, err := queue.Claim(ctx, broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: claim.Now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || applyLease.Task.ID != apply.ID {
+		t.Fatalf("profile apply claim: found=%t lease=%#v err=%v", found, applyLease, err)
+	}
+	if err := queue.Complete(ctx, applyLease, claim.Now.Add(time.Millisecond)); err != nil {
+		t.Fatalf("complete profile apply: %v", err)
+	}
+	claim.Now = claim.Now.Add(2 * time.Millisecond)
+	lease, found, err = queue.Claim(ctx, claim)
+	if err != nil || !found || lease.Task.ID != sameProfile.ID || lease.Task.Attempts != 1 {
+		t.Fatalf("unblocked application claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
 func testTask(t *testing.T, id core.TaskID, key string, now time.Time, deadline *time.Time) core.Task {
 	t.Helper()
 	task, err := core.NewTask(core.NewTaskParams{

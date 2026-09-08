@@ -31,6 +31,7 @@ func (function HandlerFunc) Handle(ctx context.Context, task core.Task) error {
 type Config struct {
 	ID                string
 	TaskType          core.TaskType
+	BlockedByTaskType core.TaskType
 	LeaseDuration     time.Duration
 	HeartbeatInterval time.Duration
 	PollInterval      time.Duration
@@ -42,6 +43,9 @@ type Config struct {
 func (config Config) Validate() error {
 	if config.ID == "" || config.TaskType == "" {
 		return errors.New("worker requires id and task type")
+	}
+	if config.BlockedByTaskType == config.TaskType {
+		return errors.New("worker task type cannot block itself")
 	}
 	if config.LeaseDuration <= 0 || config.HeartbeatInterval <= 0 || config.HeartbeatInterval >= config.LeaseDuration {
 		return errors.New("worker requires heartbeat interval shorter than a positive lease duration")
@@ -95,7 +99,8 @@ func (worker *Worker) RunOnce(ctx context.Context) (bool, error) {
 	now := worker.clock.Now()
 	lease, found, err := worker.consumer.Claim(ctx, broker.ClaimParams{
 		WorkerID: worker.config.ID, TaskType: worker.config.TaskType,
-		Now: now, LeaseDuration: worker.config.LeaseDuration,
+		BlockedByTaskType: worker.config.BlockedByTaskType,
+		Now:               now, LeaseDuration: worker.config.LeaseDuration,
 	})
 	if err != nil || !found {
 		return found, err

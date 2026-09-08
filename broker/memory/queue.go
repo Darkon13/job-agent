@@ -107,6 +107,9 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		if params.TaskType != "" && task.Type != params.TaskType {
 			continue
 		}
+		if params.BlockedByTaskType != "" && queue.hasActiveTask(params.BlockedByTaskType, task.ProfileID, params.Now) {
+			continue
+		}
 		available, eligible := queue.eligibleAt(task, params.Now)
 		if eligible {
 			candidates = append(candidates, candidate{key: key, available: available, task: task})
@@ -144,6 +147,22 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 	state := leaseState{workerID: params.WorkerID, token: token, until: until}
 	queue.leases[selected.task.ID] = state
 	return leaseFrom(selected.task, state), true, nil
+}
+
+func (queue *Queue) hasActiveTask(taskType core.TaskType, profileID core.ProfileID, now time.Time) bool {
+	for _, task := range queue.tasks {
+		if task.Type != taskType || task.ProfileID != profileID {
+			continue
+		}
+		if task.Deadline != nil && !now.Before(*task.Deadline) {
+			continue
+		}
+		switch task.Status {
+		case core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled:
+			return true
+		}
+	}
+	return false
 }
 
 func (queue *Queue) Extend(ctx context.Context, lease broker.TaskLease, now, until time.Time) (broker.TaskLease, error) {

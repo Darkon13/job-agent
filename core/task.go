@@ -60,6 +60,10 @@ const (
 	TaskPriorityMin    TaskPriority = -1000
 	TaskPriorityNormal TaskPriority = 0
 	TaskPriorityMax    TaskPriority = 1000
+
+	// TaskPriorityProfileStateApply makes desired-state mutations visible as
+	// system work. Cross-type ordering is enforced separately during claim.
+	TaskPriorityProfileStateApply TaskPriority = TaskPriorityMax
 )
 
 func (priority TaskPriority) Validate() error {

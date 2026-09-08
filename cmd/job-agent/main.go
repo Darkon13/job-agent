@@ -346,7 +346,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("create application handler: %v", err)
 		}
-		applicationWorker, err := newTaskWorker(store, core.TaskApplicationSubmit, applicationHandler.Handle)
+		applicationWorker, err := newTaskWorkerBlockedBy(
+			store, core.TaskApplicationSubmit, core.TaskProfileStateApply,
+			profileMutationLane.Wrap(applicationHandler.Handle),
+		)
 		if err != nil {
 			log.Fatalf("create application worker: %v", err)
 		}
@@ -937,8 +940,12 @@ func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.Conv
 }
 
 func newTaskWorker(consumer broker.TaskConsumer, taskType core.TaskType, handler taskworker.HandlerFunc) (*taskworker.Worker, error) {
+	return newTaskWorkerBlockedBy(consumer, taskType, "", handler)
+}
+
+func newTaskWorkerBlockedBy(consumer broker.TaskConsumer, taskType, blockerType core.TaskType, handler taskworker.HandlerFunc) (*taskworker.Worker, error) {
 	return taskworker.New(consumer, handler, taskworker.SystemClock{}, taskworker.Config{
-		ID: "worker-" + string(taskType), TaskType: taskType,
+		ID: "worker-" + string(taskType), TaskType: taskType, BlockedByTaskType: blockerType,
 		LeaseDuration: 2 * time.Minute, HeartbeatInterval: 30 * time.Second,
 		PollInterval: time.Second, RetryBaseDelay: 5 * time.Second,
 		BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 5,

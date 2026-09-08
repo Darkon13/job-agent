@@ -215,6 +215,10 @@ job-agent profile bootstrap --api http://127.0.0.1:8081 --apply ./data/resume.js
 `startup` сразу ставит plan в durable queue; `profile bootstrap` без `--apply`
 только показывает операции и пути. Формат, пример с `experience`/`keySkills` и
 ограничения описаны в [`docs/profile-bootstrap.md`](docs/profile-bootstrap.md).
+Задача `profile_state.apply` получает системный максимальный приоритет. Пока
+она ожидает или выполняется, worker не забирает `application.submit` того же
+профиля: ожидание не расходует attempts отклика, а другие профили продолжают
+работать. Уже начатый внешний запрос не прерывается.
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;
@@ -385,10 +389,11 @@ browser-backed HH-профиля изменение чатов дополнит�
 политикой `conversations.allow_send`; `allow_mark_read` управляет независимой
 операцией чтения. Оба разрешения по умолчанию выключены.
 
-Изменяющие профиль `resume.touch` и `profile_state.apply` сериализуются общей
-process-local lane по `profile_id`: операции одного профиля не пересекаются, а
-разные профили продолжают работать параллельно. Текущий Compose запускает один
-backend; для нескольких mutating-реплик потребуется shared lease в хранилище.
+Изменяющие профиль `resume.touch`, `profile_state.apply` и фактическая отправка
+`application.submit` сериализуются общей process-local lane по `profile_id`:
+операции одного профиля не пересекаются, а разные профили продолжают работать
+параллельно. Текущий Compose запускает один backend; для нескольких
+mutating-реплик потребуется shared lease в хранилище.
 
 Dashboard позволяет открыть разрешённое поле `about`, подготовить одноразовый
 desired override и провести его через тот же plan/apply workflow. Форма не

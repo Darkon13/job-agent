@@ -81,6 +81,7 @@ func (workflow *ProfileStateApplyWorkflow) Enqueue(ctx context.Context, proposal
 		ID: core.TaskID(id), Type: core.TaskProfileStateApply, IdempotencyKey: idempotencyKey,
 		Source: strings.TrimSpace(source), Platform: platform, ProfileID: proposal.ProfileID,
 		CorrelationID: core.CorrelationID(proposal.ID), Payload: payload,
+		Priority: core.TaskPriorityProfileStateApply,
 	}, workflow.clock.Now())
 	if err != nil {
 		return core.Task{}, false, err

@@ -169,6 +169,62 @@ func TestTaskClaimOrdersByPriorityThenFIFO(t *testing.T) {
 	}
 }
 
+func TestTaskClaimBlocksApplicationWhileProfileStateApplyIsActive(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	apply := sqliteTask(t, "profile-apply", "profile-apply", now, nil)
+	apply.Type = core.TaskProfileStateApply
+	apply.ProfileID = "primary"
+	sameProfile := sqliteTask(t, "application-primary", "application-primary", now.Add(time.Second), nil)
+	sameProfile.ProfileID = "primary"
+	otherProfile := sqliteTask(t, "application-secondary", "application-secondary", now.Add(2*time.Second), nil)
+	otherProfile.ProfileID = "secondary"
+	for _, task := range []core.Task{apply, sameProfile, otherProfile} {
+		if _, err := store.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+
+	claim := broker.ClaimParams{
+		WorkerID: "application-worker", TaskType: core.TaskApplicationSubmit,
+		BlockedByTaskType: core.TaskProfileStateApply,
+		Now:               now.Add(2 * time.Second), LeaseDuration: time.Minute,
+	}
+	lease, found, err := store.Claim(ctx, claim)
+	if err != nil || !found || lease.Task.ID != otherProfile.ID {
+		t.Fatalf("other profile claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+	if err := store.Complete(ctx, lease, claim.Now.Add(time.Millisecond)); err != nil {
+		t.Fatalf("complete other profile: %v", err)
+	}
+	claim.Now = claim.Now.Add(time.Second)
+	if _, found, err := store.Claim(ctx, claim); err != nil || found {
+		t.Fatalf("blocked profile was claimed: found=%t err=%v", found, err)
+	}
+
+	applyLease, found, err := store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: claim.Now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || applyLease.Task.ID != apply.ID {
+		t.Fatalf("profile apply claim: found=%t lease=%#v err=%v", found, applyLease, err)
+	}
+	if err := store.Complete(ctx, applyLease, claim.Now.Add(time.Millisecond)); err != nil {
+		t.Fatalf("complete profile apply: %v", err)
+	}
+	claim.Now = claim.Now.Add(2 * time.Millisecond)
+	lease, found, err = store.Claim(ctx, claim)
+	if err != nil || !found || lease.Task.ID != sameProfile.ID || lease.Task.Attempts != 1 {
+		t.Fatalf("unblocked application claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
