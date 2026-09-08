@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/broker"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
@@ -80,5 +81,45 @@ func TestProfileStateApplyWorkflowRejectsNoChangesAndUnavailableWriter(t *testin
 	}
 	if _, _, err := workflow.Enqueue(context.Background(), changed.ID, "api"); !errors.Is(err, ErrProfileStateWriterUnavailable) {
 		t.Fatalf("unavailable error = %v", err)
+	}
+}
+
+func TestProfileStateApplyWorkflowControlsFailedTaskExplicitly(t *testing.T) {
+	ctx := context.Background()
+	repository := storagememory.NewRepository()
+	proposal := profileStateApplyProposal(t, repository, `"old"`, `"new"`)
+	queue := brokermemory.NewQueue()
+	clock := fixedClock{proposal.CreatedAt}
+	workflow, err := NewProfileStateApplyWorkflow(repository, queue, clock, &sequentialIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	task, created, err := workflow.Enqueue(ctx, proposal.ID, "api")
+	if err != nil || !created {
+		t.Fatalf("enqueue: task=%#v created=%t err=%v", task, created, err)
+	}
+	failTask := func() {
+		lease, found, err := queue.Claim(ctx, broker.ClaimParams{
+			WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+			Now: clock.now, LeaseDuration: time.Minute,
+		})
+		if err != nil || !found {
+			t.Fatalf("claim apply: found=%t err=%v", found, err)
+		}
+		if err := queue.Fail(ctx, lease, &core.OperationError{
+			Category: core.ErrorPermanentFailure, Operation: "profile_state.apply", Message: "invalid field",
+		}, clock.now); err != nil {
+			t.Fatalf("fail apply: %v", err)
+		}
+	}
+	failTask()
+	retried, err := workflow.Retry(ctx, proposal.ID)
+	if err != nil || retried.Status != core.TaskNew || retried.Attempts != 0 {
+		t.Fatalf("retry: task=%#v err=%v", retried, err)
+	}
+	failTask()
+	dismissed, err := workflow.Dismiss(ctx, proposal.ID)
+	if err != nil || dismissed.Status != core.TaskDismissed || dismissed.Failure == nil {
+		t.Fatalf("dismiss: task=%#v err=%v", dismissed, err)
 	}
 }

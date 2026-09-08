@@ -9,8 +9,11 @@ import (
 )
 
 var (
-	ErrLeaseLost    = errors.New("task lease is no longer active")
-	ErrTaskNotFound = errors.New("task not found")
+	ErrLeaseLost           = errors.New("task lease is no longer active")
+	ErrTaskNotFound        = errors.New("task not found")
+	ErrTaskNotFailed       = errors.New("task is not failed")
+	ErrTaskDeadlineExpired = errors.New("task deadline has expired")
+	ErrTaskControlConflict = errors.New("task changed during operator control")
 )
 
 type TaskQueue interface {
@@ -23,11 +26,20 @@ type TaskStore interface {
 	TaskByIdempotencyKey(ctx context.Context, key string) (core.Task, error)
 }
 
+// TaskControlStore exposes narrow operator recovery for durable failures.
+// Normal workers still mutate tasks only through an active lease.
+type TaskControlStore interface {
+	TaskStore
+	RestartFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
+	DismissFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
+}
+
 type ClaimParams struct {
-	WorkerID          string
-	TaskType          core.TaskType
-	// BlockedByTaskType keeps a task unclaimed while a non-terminal task of
-	// this type exists for the same profile. Waiting does not consume attempts.
+	WorkerID string
+	TaskType core.TaskType
+	// BlockedByTaskType keeps a task unclaimed while an active task of this
+	// type exists for the same profile or its latest terminal result is failed.
+	// Waiting does not consume attempts; retry or dismissal is explicit.
 	BlockedByTaskType core.TaskType
 	Now               time.Time
 	LeaseDuration     time.Duration

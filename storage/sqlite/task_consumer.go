@@ -54,8 +54,17 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 				SELECT 1 FROM tasks AS blocker
 				WHERE blocker.type = ?
 					AND blocker.profile_id = tasks.profile_id
-					AND blocker.status IN (?, ?, ?, ?)
-					AND (blocker.deadline IS NULL OR blocker.deadline > ?)
+					AND (
+						blocker.status IN (?, ?, ?, ?)
+						OR (blocker.status = ? AND NOT EXISTS (
+							SELECT 1 FROM tasks AS resolution
+							WHERE resolution.type = blocker.type
+								AND resolution.profile_id = blocker.profile_id
+								AND resolution.status IN (?, ?, ?)
+								AND (resolution.updated_at > blocker.updated_at
+									OR (resolution.updated_at = blocker.updated_at AND resolution.id > blocker.id))
+						))
+					)
 			))
 			ORDER BY
 				priority DESC,
@@ -69,7 +78,8 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		core.TaskProcessing, params.Now.UnixNano(), params.TaskType, params.TaskType,
 		params.Now.UnixNano(), params.BlockedByTaskType, params.BlockedByTaskType,
 		core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled,
-		params.Now.UnixNano(), core.TaskProcessing)
+		core.TaskFailed, core.TaskCompleted, core.TaskFailed, core.TaskDismissed,
+		core.TaskProcessing)
 	lease, err := scanTaskLease(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {

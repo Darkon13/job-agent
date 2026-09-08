@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	_ broker.TaskQueue    = (*Queue)(nil)
-	_ broker.TaskConsumer = (*Queue)(nil)
-	_ broker.TaskStore    = (*Queue)(nil)
+	_ broker.TaskQueue        = (*Queue)(nil)
+	_ broker.TaskConsumer     = (*Queue)(nil)
+	_ broker.TaskStore        = (*Queue)(nil)
+	_ broker.TaskControlStore = (*Queue)(nil)
 )
 
 type leaseState struct {
@@ -86,6 +87,45 @@ func (queue *Queue) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 	return cloneTask(task), nil
 }
 
+func (queue *Queue) RestartFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
+	return queue.controlFailedTask(ctx, key, now, func(task *core.Task) error {
+		if task.Deadline != nil && !now.Before(*task.Deadline) {
+			return broker.ErrTaskDeadlineExpired
+		}
+		return task.RestartFailed(now)
+	})
+}
+
+func (queue *Queue) DismissFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
+	return queue.controlFailedTask(ctx, key, now, func(task *core.Task) error {
+		return task.DismissFailure(now)
+	})
+}
+
+func (queue *Queue) controlFailedTask(ctx context.Context, key string, now time.Time, update func(*core.Task) error) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if key == "" || now.IsZero() || update == nil {
+		return core.Task{}, errors.New("failed task control requires idempotency key, current time and update")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	task, exists := queue.tasks[key]
+	if !exists {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	if task.Status != core.TaskFailed {
+		return core.Task{}, broker.ErrTaskNotFailed
+	}
+	if err := update(&task); err != nil {
+		return core.Task{}, err
+	}
+	queue.tasks[key] = task
+	delete(queue.leases, task.ID)
+	return cloneTask(task), nil
+}
+
 func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broker.TaskLease, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return broker.TaskLease{}, false, err
@@ -107,7 +147,7 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		if params.TaskType != "" && task.Type != params.TaskType {
 			continue
 		}
-		if params.BlockedByTaskType != "" && queue.hasActiveTask(params.BlockedByTaskType, task.ProfileID, params.Now) {
+		if params.BlockedByTaskType != "" && queue.hasBlockingTask(params.BlockedByTaskType, task.ProfileID) {
 			continue
 		}
 		available, eligible := queue.eligibleAt(task, params.Now)
@@ -149,20 +189,24 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 	return leaseFrom(selected.task, state), true, nil
 }
 
-func (queue *Queue) hasActiveTask(taskType core.TaskType, profileID core.ProfileID, now time.Time) bool {
+func (queue *Queue) hasBlockingTask(taskType core.TaskType, profileID core.ProfileID) bool {
+	var latestTerminal *core.Task
 	for _, task := range queue.tasks {
 		if task.Type != taskType || task.ProfileID != profileID {
-			continue
-		}
-		if task.Deadline != nil && !now.Before(*task.Deadline) {
 			continue
 		}
 		switch task.Status {
 		case core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled:
 			return true
+		case core.TaskCompleted, core.TaskFailed, core.TaskDismissed:
+			if latestTerminal == nil || task.UpdatedAt.After(latestTerminal.UpdatedAt) ||
+				task.UpdatedAt.Equal(latestTerminal.UpdatedAt) && task.ID > latestTerminal.ID {
+				candidate := task
+				latestTerminal = &candidate
+			}
 		}
 	}
-	return false
+	return latestTerminal != nil && latestTerminal.Status == core.TaskFailed
 }
 
 func (queue *Queue) Extend(ctx context.Context, lease broker.TaskLease, now, until time.Time) (broker.TaskLease, error) {

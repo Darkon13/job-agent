@@ -48,6 +48,7 @@ const (
 	TaskRetryScheduled      TaskStatus = "retry_scheduled"
 	TaskCompleted           TaskStatus = "completed"
 	TaskFailed              TaskStatus = "failed"
+	TaskDismissed           TaskStatus = "dismissed"
 )
 
 // TaskPriority controls dispatch order only among tasks claimed by the same
@@ -213,6 +214,46 @@ func (task *Task) Fail(operationError *OperationError, now time.Time) error {
 		return err
 	}
 	task.Failure = &TaskFailure{Category: operationError.Category, Message: operationError.Message}
+	return nil
+}
+
+// RestartFailed explicitly reopens a terminal failure. It resets the bounded
+// worker-attempt counter because the operator has started a new retry cycle.
+func (task *Task) RestartFailed(now time.Time) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	if task.Status != TaskFailed {
+		return errors.New("only a failed task can be restarted")
+	}
+	if now.IsZero() || now.Before(task.UpdatedAt) {
+		return errors.New("task restart time must not move backwards")
+	}
+	if task.Deadline != nil && !now.Before(*task.Deadline) {
+		return errors.New("task deadline has expired")
+	}
+	task.Status = TaskNew
+	task.Attempts = 0
+	task.AvailableAt = now
+	task.UpdatedAt = now
+	task.Failure = nil
+	return nil
+}
+
+// DismissFailure records an explicit operator decision to stop retrying a
+// failed task. The original failure is retained for diagnostics.
+func (task *Task) DismissFailure(now time.Time) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	if task.Status != TaskFailed {
+		return errors.New("only a failed task can be dismissed")
+	}
+	if now.IsZero() || now.Before(task.UpdatedAt) {
+		return errors.New("task dismissal time must not move backwards")
+	}
+	task.Status = TaskDismissed
+	task.UpdatedAt = now
 	return nil
 }
 

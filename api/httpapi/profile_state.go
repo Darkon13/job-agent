@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
 	"github.com/Darkon13/job-agent/workflow"
@@ -78,8 +80,36 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/apply", api.applyProposal)
+	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/retry", api.retryProposal)
+	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/dismiss", api.dismissProposal)
 	mux.Handle("/", next)
 	return mux
+}
+
+func (api *ProfileStateAPI) retryProposal(response http.ResponseWriter, request *http.Request) {
+	api.controlFailedProposal(response, request, api.apply.Retry)
+}
+
+func (api *ProfileStateAPI) dismissProposal(response http.ResponseWriter, request *http.Request) {
+	api.controlFailedProposal(response, request, api.apply.Dismiss)
+}
+
+func (api *ProfileStateAPI) controlFailedProposal(
+	response http.ResponseWriter,
+	request *http.Request,
+	control func(context.Context, core.ProfileStateProposalID) (core.Task, error),
+) {
+	if !emptyRequestBody(response, request) {
+		return
+	}
+	proposalID := core.ProfileStateProposalID(strings.TrimSpace(request.PathValue("proposal_id")))
+	task, err := control(request.Context(), proposalID)
+	if err != nil {
+		writeProfileStateError(response, err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, task)
 }
 
 func (api *ProfileStateAPI) planBootstrap(response http.ResponseWriter, request *http.Request) {
@@ -349,6 +379,8 @@ func emptyRequestBody(response http.ResponseWriter, request *http.Request) bool 
 
 func writeProfileStateError(response http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, broker.ErrTaskNotFailed), errors.Is(err, broker.ErrTaskDeadlineExpired), errors.Is(err, broker.ErrTaskControlConflict):
+		writeProblem(response, http.StatusConflict, err.Error())
 	case core.ErrorIsCategory(err, core.ErrorUnauthorized):
 		writeProblem(response, http.StatusUnauthorized, err.Error())
 	case core.ErrorIsCategory(err, core.ErrorUnsupported), core.ErrorIsCategory(err, core.ErrorValidationRequired):

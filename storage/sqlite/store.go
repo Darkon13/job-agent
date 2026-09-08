@@ -30,6 +30,7 @@ var (
 	_ storage.ProfileActivitySnapshotRepository = (*Store)(nil)
 	_ broker.TaskQueue                          = (*Store)(nil)
 	_ broker.TaskStore                          = (*Store)(nil)
+	_ broker.TaskControlStore                   = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")

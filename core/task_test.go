@@ -89,6 +89,43 @@ func TestTaskRejectsPriorityOutsideDispatchRange(t *testing.T) {
 	}
 }
 
+func TestFailedTaskCanBeExplicitlyRestartedOrDismissed(t *testing.T) {
+	now := time.Date(2026, 9, 8, 14, 0, 0, 0, time.UTC)
+	newFailedTask := func(t *testing.T) Task {
+		t.Helper()
+		task, err := NewTask(NewTaskParams{
+			ID: "task-control", Type: TaskProfileStateApply, IdempotencyKey: "profile-state-control",
+			Source: "test", ProfileID: "primary", CorrelationID: "proposal-1", Payload: json.RawMessage(`{}`),
+		}, now)
+		if err != nil {
+			t.Fatalf("new task: %v", err)
+		}
+		if err := task.Transition(TaskProcessing, now); err != nil {
+			t.Fatalf("process task: %v", err)
+		}
+		if err := task.Fail(&OperationError{Category: ErrorPermanentFailure, Operation: "profile_state.apply", Message: "invalid field"}, now.Add(time.Second)); err != nil {
+			t.Fatalf("fail task: %v", err)
+		}
+		return task
+	}
+
+	restarted := newFailedTask(t)
+	if err := restarted.RestartFailed(now.Add(2 * time.Second)); err != nil {
+		t.Fatalf("restart task: %v", err)
+	}
+	if restarted.Status != TaskNew || restarted.Attempts != 0 || restarted.Failure != nil || !restarted.AvailableAt.Equal(now.Add(2*time.Second)) {
+		t.Fatalf("restarted task = %#v", restarted)
+	}
+
+	dismissed := newFailedTask(t)
+	if err := dismissed.DismissFailure(now.Add(2 * time.Second)); err != nil {
+		t.Fatalf("dismiss task: %v", err)
+	}
+	if dismissed.Status != TaskDismissed || dismissed.Failure == nil || dismissed.Failure.Message != "invalid field" {
+		t.Fatalf("dismissed task = %#v", dismissed)
+	}
+}
+
 func TestTaskRejectsRetryOutsideDeadline(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(10 * time.Minute)

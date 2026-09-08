@@ -162,6 +162,51 @@ func TestQueueBlocksApplicationWhileProfileStateApplyIsActive(t *testing.T) {
 	}
 }
 
+func TestQueueFailedProfileStateApplyBlocksUntilDismissed(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 8, 13, 0, 0, 0, time.UTC)
+	queue := NewQueue()
+	apply := testTask(t, "profile-apply-failed", "profile-apply-failed", now, nil)
+	apply.Type = core.TaskProfileStateApply
+	apply.ProfileID = "primary"
+	application := testTask(t, "application-blocked", "application-blocked", now, nil)
+	application.ProfileID = "primary"
+	for _, task := range []core.Task{apply, application} {
+		if _, err := queue.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+	lease, found, err := queue.Claim(ctx, broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim apply: found=%t err=%v", found, err)
+	}
+	if err := queue.Fail(ctx, lease, &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "profile_state.apply", Message: "invalid field",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail apply: %v", err)
+	}
+	claim := broker.ClaimParams{
+		WorkerID: "application-worker", TaskType: core.TaskApplicationSubmit,
+		BlockedByTaskType: core.TaskProfileStateApply,
+		Now:               now.Add(2 * time.Second), LeaseDuration: time.Minute,
+	}
+	if _, found, err := queue.Claim(ctx, claim); err != nil || found {
+		t.Fatalf("application passed failed apply: found=%t err=%v", found, err)
+	}
+	dismissed, err := queue.DismissFailedTask(ctx, apply.IdempotencyKey, now.Add(3*time.Second))
+	if err != nil || dismissed.Status != core.TaskDismissed || dismissed.Failure == nil {
+		t.Fatalf("dismiss apply: task=%#v err=%v", dismissed, err)
+	}
+	claim.Now = now.Add(4 * time.Second)
+	lease, found, err = queue.Claim(ctx, claim)
+	if err != nil || !found || lease.Task.ID != application.ID || lease.Task.Attempts != 1 {
+		t.Fatalf("claim after dismissal: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
 func testTask(t *testing.T, id core.TaskID, key string, now time.Time, deadline *time.Time) core.Task {
 	t.Helper()
 	task, err := core.NewTask(core.NewTaskParams{

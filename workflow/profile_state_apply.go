@@ -19,13 +19,13 @@ var (
 
 type ProfileStateApplyWorkflow struct {
 	proposals storage.ProfileStateProposalRepository
-	tasks     broker.TaskStore
+	tasks     broker.TaskControlStore
 	clock     Clock
 	ids       IDGenerator
 	platforms map[core.ProfileID]core.Platform
 }
 
-func NewProfileStateApplyWorkflow(proposals storage.ProfileStateProposalRepository, tasks broker.TaskStore, clock Clock, ids IDGenerator, platforms map[core.ProfileID]core.Platform) (*ProfileStateApplyWorkflow, error) {
+func NewProfileStateApplyWorkflow(proposals storage.ProfileStateProposalRepository, tasks broker.TaskControlStore, clock Clock, ids IDGenerator, platforms map[core.ProfileID]core.Platform) (*ProfileStateApplyWorkflow, error) {
 	if proposals == nil || tasks == nil || clock == nil || ids == nil {
 		return nil, errors.New("profile state apply workflow requires proposals, task store, clock and id generator")
 	}
@@ -37,6 +37,54 @@ func NewProfileStateApplyWorkflow(proposals storage.ProfileStateProposalReposito
 		copiedPlatforms[profileID] = platform
 	}
 	return &ProfileStateApplyWorkflow{proposals: proposals, tasks: tasks, clock: clock, ids: ids, platforms: copiedPlatforms}, nil
+}
+
+func (workflow *ProfileStateApplyWorkflow) Retry(ctx context.Context, proposalID core.ProfileStateProposalID) (core.Task, error) {
+	proposal, key, err := workflow.controlTarget(ctx, proposalID)
+	if err != nil {
+		return core.Task{}, err
+	}
+	task, err := workflow.tasks.RestartFailedTask(ctx, key, workflow.clock.Now())
+	if err != nil {
+		return core.Task{}, err
+	}
+	if task.Type != core.TaskProfileStateApply || task.ProfileID != proposal.ProfileID {
+		return core.Task{}, errors.New("profile state retry resolved another task")
+	}
+	return task, nil
+}
+
+func (workflow *ProfileStateApplyWorkflow) Dismiss(ctx context.Context, proposalID core.ProfileStateProposalID) (core.Task, error) {
+	proposal, key, err := workflow.controlTarget(ctx, proposalID)
+	if err != nil {
+		return core.Task{}, err
+	}
+	task, err := workflow.tasks.DismissFailedTask(ctx, key, workflow.clock.Now())
+	if err != nil {
+		return core.Task{}, err
+	}
+	if task.Type != core.TaskProfileStateApply || task.ProfileID != proposal.ProfileID {
+		return core.Task{}, errors.New("profile state dismissal resolved another task")
+	}
+	return task, nil
+}
+
+func (workflow *ProfileStateApplyWorkflow) controlTarget(ctx context.Context, proposalID core.ProfileStateProposalID) (core.ProfileStateProposal, string, error) {
+	if workflow == nil || proposalID == "" {
+		return core.ProfileStateProposal{}, "", errors.New("profile state task control requires workflow and proposal")
+	}
+	proposal, err := workflow.proposals.ProfileStateProposal(ctx, proposalID)
+	if err != nil {
+		return core.ProfileStateProposal{}, "", err
+	}
+	if proposal.Status != core.ProfileStateProposalPlanned {
+		return core.ProfileStateProposal{}, "", ErrProfileStateNoChanges
+	}
+	key, err := core.ProfileStateApplyIdempotencyKey(proposal)
+	if err != nil {
+		return core.ProfileStateProposal{}, "", err
+	}
+	return proposal, key, nil
 }
 
 func (workflow *ProfileStateApplyWorkflow) Writable(profileID core.ProfileID) bool {

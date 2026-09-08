@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/broker"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage/memory"
@@ -93,6 +94,40 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/proposals/"+string(created.ID)+"/apply", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("idempotent apply response: %d %s", response.Code, response.Body.String())
+	}
+	lease, found, err := queue.Claim(context.Background(), broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim failed apply fixture: found=%t err=%v", found, err)
+	}
+	if err := queue.Fail(context.Background(), lease, &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "profile_state.apply", Message: "invalid field",
+	}, now); err != nil {
+		t.Fatalf("fail apply fixture: %v", err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/proposals/"+string(created.ID)+"/retry", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"new"`) || !strings.Contains(response.Body.String(), `"attempts":0`) {
+		t.Fatalf("retry response: %d %s", response.Code, response.Body.String())
+	}
+	lease, found, err = queue.Claim(context.Background(), broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim retried apply fixture: found=%t err=%v", found, err)
+	}
+	if err := queue.Fail(context.Background(), lease, &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "profile_state.apply", Message: "still invalid",
+	}, now); err != nil {
+		t.Fatalf("fail retried apply fixture: %v", err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/proposals/"+string(created.ID)+"/dismiss", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"dismissed"`) {
+		t.Fatalf("dismiss response: %d %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/proposals/"+string(created.ID), nil))

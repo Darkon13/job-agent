@@ -37,11 +37,28 @@ go run ./cmd/job-agent profile bootstrap \
 между plan и apply, compare-before-write остановит задачу конфликтом вместо
 перезаписи новых данных.
 
-Apply-задача имеет системный максимальный priority. Пока она находится в
-активном состоянии, `application.submit` этого профиля остаётся в очереди без
-увеличения attempts. После terminal state отклики снова доступны worker-у;
-операции других профилей не блокируются. Уже начавшуюся отправку новый apply не
-прерывает.
+Apply-задача имеет системный максимальный priority. Пока она активна либо её
+последний terminal result равен `failed`, `application.submit` этого профиля
+остаётся в очереди без увеличения attempts. Операции других профилей не
+блокируются, а уже начавшуюся отправку новый apply не прерывает.
+
+После исправления причины failure тот же proposal запускается новым bounded
+retry-cycle:
+
+```text
+POST /api/v1/profile-state/proposals/{proposal_id}/retry
+```
+
+Если изменение сознательно больше не требуется, барьер снимается отдельным
+аудитируемым решением:
+
+```text
+POST /api/v1/profile-state/proposals/{proposal_id}/dismiss
+```
+
+Обе команды принимают только пустое тело и только задачу в `failed`. `retry`
+переводит её в `new`, сбрасывает attempts и сохраняет исходный idempotency key;
+`dismiss` переводит её в terminal `dismissed`, сохраняя последнюю ошибку.
 
 ## Формат
 
