@@ -371,7 +371,7 @@ func emptyRequestBody(response http.ResponseWriter, request *http.Request) bool 
 		return false
 	}
 	if len(data) != 0 {
-		writeProblem(response, http.StatusBadRequest, "profile state command request body must be empty")
+		writeProblem(response, http.StatusBadRequest, "command request body must be empty")
 		return false
 	}
 	return true

@@ -87,6 +87,22 @@ func (queue *Queue) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 	return cloneTask(task), nil
 }
 
+func (queue *Queue) TaskByID(ctx context.Context, id core.TaskID) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if id == "" {
+		return core.Task{}, errors.New("task id is required")
+	}
+	queue.mu.RLock()
+	defer queue.mu.RUnlock()
+	key, exists := queue.taskKeys[id]
+	if !exists {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	return cloneTask(queue.tasks[key]), nil
+}
+
 func (queue *Queue) RestartFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
 	return queue.controlFailedTask(ctx, key, now, func(task *core.Task) error {
 		if task.Deadline != nil && !now.Before(*task.Deadline) {

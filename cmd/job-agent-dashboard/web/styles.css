@@ -13,6 +13,7 @@ button { border: 1px solid var(--cyan); border-radius: 10px; padding: .65rem 1re
 button:hover:not(:disabled) { filter: brightness(1.08); }
 button:disabled { cursor: not-allowed; opacity: .42; }
 button.secondary { background: transparent; color: var(--cyan); }
+button.compact { padding: .35rem .55rem; border-radius: 7px; font-size: .72rem; }
 .topbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem, 4vw, 4rem); border-bottom: 1px solid var(--line); background: rgb(23 27 36 / 90%); backdrop-filter: blur(18px); }
 h1, h2, p { margin: 0; }
 h1 { color: var(--cyan); font-size: 1.45rem; letter-spacing: -.03em; }
@@ -40,6 +41,9 @@ th, td { padding: .65rem .5rem; border-bottom: 1px solid var(--line); text-align
 th { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
 td:last-child, th:last-child { text-align: right; }
 .status { display: inline-flex; border-radius: 5px; padding: .15rem .4rem; background: var(--surface-2); color: var(--blue); font: .75rem ui-monospace, monospace; }
+.task-id { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; font: .72rem ui-monospace, monospace; }
+.task-error { min-width: 16rem; max-width: 34rem; white-space: normal; overflow-wrap: anywhere; color: var(--orange); }
+.task-actions { display: flex; justify-content: flex-end; gap: .4rem; }
 .resource-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
 .resource-card { display: flex; flex-direction: column; gap: .85rem; }
 .resource-card .panel-heading { margin: 0; }

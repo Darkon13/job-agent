@@ -41,6 +41,28 @@ func TestQueueReclaimsExpiredLeaseAndRejectsStaleWorker(t *testing.T) {
 	}
 }
 
+func TestQueueReadsTaskByIDWithoutExposingMutableState(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 8, 14, 0, 0, 0, time.UTC)
+	queue := NewQueue()
+	task := testTask(t, "task-by-id", "key-by-id", now, nil)
+	if _, err := queue.Enqueue(ctx, task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	stored, err := queue.TaskByID(ctx, task.ID)
+	if err != nil || stored.ID != task.ID {
+		t.Fatalf("task by id: %#v err=%v", stored, err)
+	}
+	stored.Payload[0] = '['
+	again, err := queue.TaskByID(ctx, task.ID)
+	if err != nil || string(again.Payload) != `{}` {
+		t.Fatalf("stored task was mutated: %#v err=%v", again, err)
+	}
+	if _, err := queue.TaskByID(ctx, "missing"); !errors.Is(err, broker.ErrTaskNotFound) {
+		t.Fatalf("missing task error = %v", err)
+	}
+}
+
 func TestQueueRetryExtendAndDeadlineSweep(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)

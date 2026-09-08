@@ -39,6 +39,21 @@ type TaskCount struct {
 	Count    int               `json:"count"`
 }
 
+// FailedTaskSummary is an operator-safe task view. It intentionally excludes
+// payload, source, idempotency key and correlation data.
+type FailedTaskSummary struct {
+	ID        core.TaskID      `json:"id"`
+	Type      core.TaskType    `json:"type"`
+	ProfileID core.ProfileID   `json:"profile_id,omitempty"`
+	Attempts  int              `json:"attempts"`
+	Failure   core.TaskFailure `json:"failure"`
+	UpdatedAt time.Time        `json:"updated_at"`
+}
+
+type FailedTaskRepository interface {
+	ListFailedTasks(ctx context.Context, limit int) ([]FailedTaskSummary, error)
+}
+
 type ApplicationCount struct {
 	Status       core.ApplicationStatus `json:"status"`
 	DecisionCode string                 `json:"decision_code,omitempty"`

@@ -428,6 +428,23 @@ POST. Тот же job можно вручную поставить через `j
 Worker runtime запускает отдельный type-filtered consumer для
 `conversation.send`, `conversation.follow_up`, `conversation.follow_up.select`,
 `conversation.discover`, `conversation.mark_read` и `conversation.sync`.
+
+Dashboard отдельно показывает terminal failed-задачи без command payload,
+source, idempotency key и correlation data. Для каждой доступны только явные
+операторские действия:
+
+```text
+GET  /api/v1/tasks/failed
+POST /api/v1/tasks/{task_id}/retry
+POST /api/v1/tasks/{task_id}/dismiss
+```
+
+`retry` начинает новый bounded attempt cycle и может повторить внешний side
+effect, поэтому UI требует отдельного подтверждения. `dismiss` не удаляет
+историю и причину failure, а переводит устаревшую задачу в terminal
+`dismissed`. `job-agent-check` выводит безопасные сведения о failure и помечает
+runtime как `degraded`; failed `profile_state.apply`, который блокирует
+отклики профиля, повышает результат до `blocked`.
 Плановый action `conversation.sync` сначала читает каталог HH, идемпотентно
 создаёт локальные диалоги, а затем ставит отдельную полную sync-задачу для
 каждого диалога. Handler передаёт transport-у task idempotency key,

@@ -27,7 +27,9 @@ curl http://127.0.0.1:8081/dashboard-healthz
 1. заменить `0.1.0-dev` в `buildinfo/VERSION` на `0.1.0` и синхронно передать
    `JOB_AGENT_VERSION=0.1.0` container build;
 2. выполнить `make release-check` и smoke основных read/write policy без
-   реальных нежелательных действий;
+   реальных нежелательных действий; отдельно запустить `job-agent-check` на
+   deployment config: `degraded` требует разбора failed-задач, а `blocked`
+   запрещает выпуск;
 3. собрать image с commit SHA и RFC3339 build time, проверить версии трёх
    бинарей и endpoints;
 4. создать annotated tag `v0.1.0`; публикация tag/image выполняется отдельно и

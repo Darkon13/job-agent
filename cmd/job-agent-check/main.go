@@ -61,12 +61,33 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	}
 	fmt.Fprintf(output, "OK database schema=%d vacancies=%d applications=%d campaigns=%d tasks=%d\n",
 		storesqlite.LatestSchemaVersion, stats.Vacancies, stats.Applications, stats.ApplicationCampaigns, stats.Tasks)
+	blocked := make([]string, 0)
 	taskCounts, err := store.TaskCounts(ctx)
 	if err != nil {
 		return fmt.Errorf("database task summary: %w", err)
 	}
+	failedTaskCount := 0
+	failedProfileApplyCount := 0
 	for _, item := range taskCounts {
 		fmt.Fprintf(output, "INFO queue type=%s status=%s count=%d\n", item.Type, item.Status, item.Count)
+		if item.Status == core.TaskFailed {
+			failedTaskCount += item.Count
+			if item.Type == core.TaskProfileStateApply {
+				failedProfileApplyCount += item.Count
+			}
+		}
+	}
+	failedTasks, err := store.ListFailedTasks(ctx, 50)
+	if err != nil {
+		return fmt.Errorf("database failed task summary: %w", err)
+	}
+	for _, item := range failedTasks {
+		fmt.Fprintf(output, "WARN failed_task=%s type=%s profile=%s attempts=%d category=%s updated=%s message=%q\n",
+			item.ID, item.Type, emptyAs(string(item.ProfileID), "none"), item.Attempts, item.Failure.Category,
+			item.UpdatedAt.Format(time.RFC3339), item.Failure.Message)
+	}
+	if failedProfileApplyCount > 0 {
+		blocked = append(blocked, fmt.Sprintf("%d failed profile state apply task(s) require retry or dismissal", failedProfileApplyCount))
 	}
 	applicationCounts, err := store.ApplicationCounts(ctx)
 	if err != nil {
@@ -145,7 +166,6 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		readiness[profile.Tag] = state
 	}
 
-	blocked := make([]string, 0)
 	runnableSearches := 0
 	for _, search := range cfg.Searches {
 		runnable := false
@@ -283,8 +303,15 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		}
 	}
 
-	fmt.Fprintf(output, "SUMMARY service=ready searches=%d/%d jobs=%d/%d persisted_due=%d\n",
-		runnableSearches, len(cfg.Searches), runnableJobs, enabledJobs, len(dueSchedules))
+	serviceStatus := "ready"
+	if failedTaskCount > 0 {
+		serviceStatus = "degraded"
+	}
+	if len(blocked) > 0 {
+		serviceStatus = "blocked"
+	}
+	fmt.Fprintf(output, "SUMMARY service=%s searches=%d/%d jobs=%d/%d persisted_due=%d failed_tasks=%d failed_tasks_shown=%d\n",
+		serviceStatus, runnableSearches, len(cfg.Searches), runnableJobs, enabledJobs, len(dueSchedules), failedTaskCount, len(failedTasks))
 	for _, reason := range blocked {
 		fmt.Fprintln(output, "BLOCKED "+reason)
 	}

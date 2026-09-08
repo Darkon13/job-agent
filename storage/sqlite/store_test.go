@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
@@ -295,6 +296,53 @@ func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {
 	}
 	if len(counts) != 3 || counts[0].Count+counts[1].Count+counts[2].Count != 3 {
 		t.Fatalf("counts = %#v", counts)
+	}
+}
+
+func TestStoreListsFailedTasksWithoutCommandPayload(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 8, 15, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "failed-1", Type: core.TaskConversationSend, IdempotencyKey: "secret-command-key",
+		Source: "test", Platform: "hh", ProfileID: "primary", CorrelationID: "correlation-1",
+		Payload: json.RawMessage(`{"text":"must not be returned"}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+	if _, err := store.Enqueue(ctx, task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "worker", TaskType: task.Type, Now: now, LeaseDuration: time.Minute})
+	if err != nil || !found {
+		t.Fatalf("claim: found=%t err=%v", found, err)
+	}
+	if err := store.Fail(ctx, lease, &core.OperationError{
+		Category: core.ErrorUnsupported, Operation: "conversation.send", Message: "transport unavailable",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	items, err := store.ListFailedTasks(ctx, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("failed tasks = %#v err=%v", items, err)
+	}
+	item := items[0]
+	if item.ID != task.ID || item.Type != task.Type || item.ProfileID != "primary" || item.Attempts != 1 ||
+		item.Failure.Category != core.ErrorUnsupported || item.Failure.Message != "transport unavailable" {
+		t.Fatalf("failed task summary = %#v", item)
+	}
+	stored, err := store.TaskByID(ctx, task.ID)
+	if err != nil || string(stored.Payload) != `{"text":"must not be returned"}` {
+		t.Fatalf("task by id = %#v err=%v", stored, err)
+	}
+	if _, err := store.ListFailedTasks(ctx, 0); err == nil {
+		t.Fatal("expected invalid limit to fail")
 	}
 }
 

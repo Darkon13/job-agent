@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/broker"
 	appconfig "github.com/Darkon13/job-agent/config"
+	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
@@ -132,6 +135,99 @@ func TestRunAllowsSubmitCampaignWithHHBrowserState(t *testing.T) {
 	}
 }
 
+func TestRunReportsHistoricalFailureAsDegradedWithoutExposingPayload(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "job-agent.db")
+	if err := storesqlite.MigrateUp(databasePath); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	store, err := storesqlite.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	now := time.Date(2026, 9, 8, 18, 0, 0, 0, time.UTC)
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "failed-task", Type: core.TaskConversationSend, IdempotencyKey: "hidden-key",
+		Source: "test", ProfileID: "primary", CorrelationID: "correlation-1",
+		Payload: json.RawMessage(`{"text":"hidden message"}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+	if _, err := store.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	lease, found, err := store.Claim(context.Background(), broker.ClaimParams{
+		WorkerID: "worker", TaskType: task.Type, Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim: found=%t err=%v", found, err)
+	}
+	if err := store.Fail(context.Background(), lease, &core.OperationError{
+		Category: core.ErrorUnsupported, Operation: "conversation.send", Message: "old transport unavailable",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	configPath := writeConfig(t, directory, appconfig.Config{
+		Database: databaseConfig(databasePath),
+	})
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{configPath}, &output); err != nil {
+		t.Fatalf("preflight: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "service=degraded") || !strings.Contains(output.String(), "failed_task=failed-task") ||
+		strings.Contains(output.String(), "hidden message") || strings.Contains(output.String(), "hidden-key") {
+		t.Fatalf("unexpected output:\n%s", output.String())
+	}
+}
+
+func TestRunBlocksOnFailedProfileStateApply(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "job-agent.db")
+	if err := storesqlite.MigrateUp(databasePath); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	store, err := storesqlite.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	now := time.Date(2026, 9, 8, 19, 0, 0, 0, time.UTC)
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "failed-apply", Type: core.TaskProfileStateApply, IdempotencyKey: "apply-key",
+		Source: "test", ProfileID: "primary", CorrelationID: "correlation-1", Payload: json.RawMessage(`{"proposal_id":"proposal-1"}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+	if _, err := store.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	lease, found, err := store.Claim(context.Background(), broker.ClaimParams{
+		WorkerID: "worker", TaskType: task.Type, Now: now, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found {
+		t.Fatalf("claim: found=%t err=%v", found, err)
+	}
+	if err := store.Fail(context.Background(), lease, &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "profile_state.apply", Message: "invalid field",
+	}, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	configPath := writeConfig(t, directory, appconfig.Config{Database: databaseConfig(databasePath)})
+	var output bytes.Buffer
+	err = run(context.Background(), []string{configPath}, &output)
+	if err == nil || !strings.Contains(err.Error(), "preflight blocked") || !strings.Contains(output.String(), "service=blocked") ||
+		!strings.Contains(output.String(), "failed profile state apply") {
+		t.Fatalf("error=%v output:\n%s", err, output.String())
+	}
+}
+
 func TestValidateBrowserStateRejectsBroadPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte(`{"cookies":[{"name":"session","value":"opaque","domain":".hh.ru"}]}`), 0o644); err != nil {
@@ -153,4 +249,8 @@ func writeConfig(t *testing.T, directory string, cfg appconfig.Config) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func databaseConfig(path string) appconfig.DatabaseConfig {
+	return appconfig.DatabaseConfig{Driver: "sqlite", Path: path}
 }

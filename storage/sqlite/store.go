@@ -28,6 +28,7 @@ var (
 	_ storage.ProfileStateProposalRepository    = (*Store)(nil)
 	_ storage.ProfileActivityRepository         = (*Store)(nil)
 	_ storage.ProfileActivitySnapshotRepository = (*Store)(nil)
+	_ storage.FailedTaskRepository              = (*Store)(nil)
 	_ broker.TaskQueue                          = (*Store)(nil)
 	_ broker.TaskStore                          = (*Store)(nil)
 	_ broker.TaskControlStore                   = (*Store)(nil)
@@ -305,6 +306,20 @@ func (store *Store) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 	return task, err
 }
 
+func (store *Store) TaskByID(ctx context.Context, id core.TaskID) (core.Task, error) {
+	if id == "" {
+		return core.Task{}, errors.New("task id is required")
+	}
+	row := store.db.QueryRowContext(ctx, `SELECT id, type, status, idempotency_key, source, platform,
+		profile_id, correlation_id, payload, priority, attempts, available_at, deadline, created_at, updated_at,
+		failure_category, failure_message FROM tasks WHERE id = ?`, id)
+	task, err := scanTask(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	return task, err
+}
+
 func (store *Store) Stats(ctx context.Context) (Stats, error) {
 	var stats Stats
 	for _, item := range []struct {
@@ -352,6 +367,35 @@ func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
 		return nil, fmt.Errorf("iterate task counts: %w", err)
 	}
 	return counts, nil
+}
+
+func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.FailedTaskSummary, error) {
+	if limit < 1 || limit > 200 {
+		return nil, errors.New("failed task limit must be between 1 and 200")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, type, profile_id, attempts,
+		failure_category, failure_message, updated_at
+		FROM tasks WHERE status = ? ORDER BY updated_at DESC, id LIMIT ?`, core.TaskFailed, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list failed tasks: %w", err)
+	}
+	defer rows.Close()
+	items := make([]storage.FailedTaskSummary, 0)
+	for rows.Next() {
+		var item storage.FailedTaskSummary
+		var category core.ErrorCategory
+		var updatedAt int64
+		if err := rows.Scan(&item.ID, &item.Type, &item.ProfileID, &item.Attempts, &category, &item.Failure.Message, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan failed task: %w", err)
+		}
+		item.Failure.Category = category
+		item.UpdatedAt = time.Unix(0, updatedAt).UTC()
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate failed tasks: %w", err)
+	}
+	return items, nil
 }
 
 // ApplicationCounts exposes lifecycle totals without profile, vacancy,

@@ -117,6 +117,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
 	}
+	taskControlWorkflow, err := workflow.NewTaskControlWorkflow(store, workflow.SystemClock{})
+	if err != nil {
+		log.Fatalf("create task control workflow: %v", err)
+	}
+	taskAPI, err := httpapi.NewTaskAPI(store, taskControlWorkflow)
+	if err != nil {
+		log.Fatalf("create task API: %v", err)
+	}
 	profileStateResources, err := cfg.BuildProfileStateResources()
 	if err != nil {
 		log.Fatalf("build profile state resources: %v", err)
@@ -449,7 +457,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, runtimeAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler())), conversationWorkflow, scheduler, workers); err != nil {
+	if err := serve(ctx, cfg, runtimeAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler()))), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
 }

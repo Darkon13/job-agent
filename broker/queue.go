@@ -30,6 +30,7 @@ type TaskStore interface {
 // Normal workers still mutate tasks only through an active lease.
 type TaskControlStore interface {
 	TaskStore
+	TaskByID(ctx context.Context, id core.TaskID) (core.Task, error)
 	RestartFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
 	DismissFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
 }
