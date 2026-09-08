@@ -504,7 +504,7 @@ func configureSearchRuns(
 		if err != nil {
 			return nil, 0, fmt.Errorf("build search run %q: %w", search.Tag, err)
 		}
-		if _, err := handler.EnsureRun(ctx, run); err != nil {
+		if _, err := handler.EnsureRun(ctx, run, search.Priority); err != nil {
 			return nil, 0, fmt.Errorf("ensure search run %q: %w", search.Tag, err)
 		}
 		configured++
@@ -601,7 +601,7 @@ func configureApplicationCampaigns(
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileIDs[0],
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 		configuredJobs++
@@ -736,7 +736,7 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 	}
@@ -772,7 +772,7 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskProfileActivityObserve, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 	}
@@ -804,7 +804,7 @@ func conversationDiscoveryDefinitions(cfg appconfig.Config, instances map[string
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskConversationDiscover, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 	}
@@ -846,7 +846,7 @@ func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances ma
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskConversationFollowUpSelect, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 	}
@@ -885,7 +885,7 @@ func profileStateReconcileDefinitions(
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskProfileStateReconcile, Platform: platform, ProfileID: resource.ProfileID,
-				Payload: payload, JitterMin: minimum, JitterMax: maximum,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}
 	}

@@ -140,6 +140,7 @@
     {
       "tag": "daily-backend-applications",
       "enabled": true,
+      "priority": 100,
       "triggers": [
         {
           "type": "cron",

@@ -87,6 +87,29 @@ func TestQueueRetryExtendAndDeadlineSweep(t *testing.T) {
 	}
 }
 
+func TestQueueClaimsHigherPriorityBeforeOlderTask(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	queue := NewQueue()
+	low := testTask(t, "task-low", "key-low", now, nil)
+	low.Priority = -100
+	high := testTask(t, "task-high", "key-high", now.Add(time.Second), nil)
+	high.Priority = 100
+	if _, err := queue.Enqueue(ctx, low); err != nil {
+		t.Fatalf("enqueue low priority: %v", err)
+	}
+	if _, err := queue.Enqueue(ctx, high); err != nil {
+		t.Fatalf("enqueue high priority: %v", err)
+	}
+	lease, found, err := queue.Claim(ctx, broker.ClaimParams{
+		WorkerID: "worker", TaskType: core.TaskApplicationSubmit,
+		Now: now.Add(time.Second), LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || lease.Task.ID != high.ID || lease.Task.Priority != high.Priority {
+		t.Fatalf("priority claim: found=%t lease=%#v err=%v", found, lease, err)
+	}
+}
+
 func testTask(t *testing.T, id core.TaskID, key string, now time.Time, deadline *time.Time) core.Task {
 	t.Helper()
 	task, err := core.NewTask(core.NewTaskParams{

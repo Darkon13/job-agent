@@ -52,7 +52,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 	now := time.Date(2026, 9, 6, 16, 0, 0, 0, time.UTC)
 	repository := &runtimeRepository{
 		stats:        storage.RuntimeStats{Vacancies: 12, Applications: 4, Tasks: 3, Conversations: 1},
-		tasks:        []storage.TaskCount{{Type: core.TaskApplicationSubmit, Status: core.TaskNew, Count: 3}},
+		tasks:        []storage.TaskCount{{Type: core.TaskApplicationSubmit, Status: core.TaskNew, Priority: 90, Count: 3}},
 		applications: []storage.ApplicationCount{{Status: core.ApplicationSubmitted, Count: 4}},
 		activity: []storage.ProfileActivityCount{{
 			Platform: "hh", ProfileID: "primary", Kind: core.ProfileActivityApplicationSubmitted,
@@ -94,7 +94,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`) {
 		t.Fatalf("unexpected summary: %s", body)
 	}
 

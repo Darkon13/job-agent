@@ -14,7 +14,7 @@ import (
 var _ broker.TaskConsumer = (*Store)(nil)
 
 const taskColumns = `id, type, status, idempotency_key, source, platform,
-	profile_id, correlation_id, payload, attempts, available_at, deadline, created_at, updated_at,
+	profile_id, correlation_id, payload, priority, attempts, available_at, deadline, created_at, updated_at,
 	failure_category, failure_message`
 
 func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broker.TaskLease, bool, error) {
@@ -51,6 +51,7 @@ func (store *Store) Claim(ctx context.Context, params broker.ClaimParams) (broke
 			AND (? = '' OR type = ?)
 			AND (deadline IS NULL OR deadline > ?)
 			ORDER BY
+				priority DESC,
 				CASE WHEN status = ? THEN COALESCE(lease_until, 0) ELSE available_at END,
 				created_at, id
 			LIMIT 1
@@ -175,7 +176,7 @@ func scanTaskLease(row rowScanner) (broker.TaskLease, error) {
 	if err := row.Scan(
 		&lease.Task.ID, &lease.Task.Type, &lease.Task.Status, &lease.Task.IdempotencyKey,
 		&lease.Task.Source, &lease.Task.Platform, &lease.Task.ProfileID, &lease.Task.CorrelationID,
-		&payload, &lease.Task.Attempts, &availableAt, &deadline, &createdAt, &updatedAt,
+		&payload, &lease.Task.Priority, &lease.Task.Attempts, &availableAt, &deadline, &createdAt, &updatedAt,
 		&failureCategory, &failureMessage, &lease.WorkerID, &lease.Token, &leaseUntil,
 	); err != nil {
 		return broker.TaskLease{}, err

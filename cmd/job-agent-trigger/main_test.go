@@ -40,7 +40,7 @@ func TestRunEnqueuesResumeTouchIdempotently(t *testing.T) {
 		t.Fatalf("load task: %v", err)
 	}
 	var payload core.ResumeTouchPayload
-	if task.Type != core.TaskResumeTouch || json.Unmarshal(task.Payload, &payload) != nil || payload.ResumeID != "resume-1" {
+	if task.Type != core.TaskResumeTouch || task.Priority != 140 || json.Unmarshal(task.Payload, &payload) != nil || payload.ResumeID != "resume-1" {
 		t.Fatalf("unexpected task: %#v payload=%#v", task, payload)
 	}
 }
@@ -174,7 +174,7 @@ func triggerConfig(t *testing.T, directory string) (string, string) {
 				Action:   appconfig.JobAction{Type: appconfig.JobActionConversationSync, Profile: "primary"},
 			},
 			{
-				Tag: "touch-primary", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+				Tag: "touch-primary", Enabled: true, Priority: 140, Concurrency: appconfig.JobConcurrencyForbid,
 				Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 * * * *", Timezone: "UTC", Misfire: "run_once"}},
 				Action:   appconfig.JobAction{Type: appconfig.JobActionResumeTouch, Profile: "primary"},
 			},

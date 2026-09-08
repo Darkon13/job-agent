@@ -189,10 +189,10 @@ func (store *Store) Enqueue(ctx context.Context, task core.Task) (bool, error) {
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO tasks
 		(id, type, status, idempotency_key, source, platform, profile_id, correlation_id, payload,
-		 attempts, available_at, deadline, created_at, updated_at, failure_category, failure_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 priority, attempts, available_at, deadline, created_at, updated_at, failure_category, failure_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Type, task.Status, task.IdempotencyKey, task.Source, task.Platform, task.ProfileID,
-		task.CorrelationID, []byte(task.Payload), task.Attempts, task.AvailableAt.UnixNano(), nullableTime(task.Deadline),
+		task.CorrelationID, []byte(task.Payload), task.Priority, task.Attempts, task.AvailableAt.UnixNano(), nullableTime(task.Deadline),
 		task.CreatedAt.UnixNano(), task.UpdatedAt.UnixNano(), failureCategory, failureMessage)
 	if err != nil {
 		return false, fmt.Errorf("enqueue task: %w", err)
@@ -295,7 +295,7 @@ func (store *Store) TaskByIdempotencyKey(ctx context.Context, key string) (core.
 		return core.Task{}, errors.New("task idempotency key is required")
 	}
 	row := store.db.QueryRowContext(ctx, `SELECT id, type, status, idempotency_key, source, platform,
-		profile_id, correlation_id, payload, attempts, available_at, deadline, created_at, updated_at,
+		profile_id, correlation_id, payload, priority, attempts, available_at, deadline, created_at, updated_at,
 		failure_category, failure_message FROM tasks WHERE idempotency_key = ?`, key)
 	task, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -333,8 +333,8 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 // TaskCounts exposes an operator-safe queue summary without task payloads,
 // profile identifiers or external vacancy identifiers.
 func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT type, status, COUNT(*)
-		FROM tasks GROUP BY type, status ORDER BY type, status`)
+	rows, err := store.db.QueryContext(ctx, `SELECT type, status, priority, COUNT(*)
+		FROM tasks GROUP BY type, status, priority ORDER BY type, status, priority DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("count tasks by type and status: %w", err)
 	}
@@ -342,7 +342,7 @@ func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
 	counts := make([]TaskCount, 0)
 	for rows.Next() {
 		var item TaskCount
-		if err := rows.Scan(&item.Type, &item.Status, &item.Count); err != nil {
+		if err := rows.Scan(&item.Type, &item.Status, &item.Priority, &item.Count); err != nil {
 			return nil, fmt.Errorf("scan task count: %w", err)
 		}
 		counts = append(counts, item)
@@ -387,7 +387,7 @@ func scanTask(row rowScanner) (core.Task, error) {
 	var deadline sql.NullInt64
 	var failureCategory, failureMessage sql.NullString
 	if err := row.Scan(&task.ID, &task.Type, &task.Status, &task.IdempotencyKey, &task.Source, &task.Platform,
-		&task.ProfileID, &task.CorrelationID, &payload, &task.Attempts, &availableAt, &deadline,
+		&task.ProfileID, &task.CorrelationID, &payload, &task.Priority, &task.Attempts, &availableAt, &deadline,
 		&createdAt, &updatedAt, &failureCategory, &failureMessage); err != nil {
 		return core.Task{}, err
 	}
@@ -408,6 +408,9 @@ func validateNewTask(task core.Task) error {
 	}
 	if task.Status != core.TaskNew || len(task.Payload) == 0 || !json.Valid(task.Payload) {
 		return errors.New("queue accepts only initialized new tasks with valid JSON payload")
+	}
+	if err := task.Priority.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -340,6 +340,15 @@ lease во время ожидания. Реальный HH transport читае
 Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
 transport, чтобы не копить заведомо невыполнимые действия.
 
+Job может задать числовой `priority` в диапазоне от `-1000` до `1000`; по
+умолчанию используется `0`. Worker сначала выбирает больший priority, затем
+сохраняет FIFO-порядок по `available_at`, `created_at` и ID. Приоритет сравним
+только внутри одного type-filtered consumer и не прерывает уже выполняемую
+задачу. Campaign tick, созданные им `application.submit`, а также цепочка
+страниц обычного search наследуют исходный priority. SQLite сохраняет это поле,
+поэтому retry и restart не меняют порядок. Dashboard группирует очередь в том
+числе по priority.
+
 Read-only action `profile.activity.observe` периодически сохраняет доступные в
 HH profile initial state показатели резюме: показы, просмотры, новые просмотры,
 приглашения и текущий response streak. Если HH скрывает activity UI

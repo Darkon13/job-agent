@@ -24,6 +24,7 @@ type Definition struct {
 	Platform     core.Platform
 	ProfileID    core.ProfileID
 	Payload      json.RawMessage
+	Priority     core.TaskPriority
 	JitterMin    time.Duration
 	JitterMax    time.Duration
 }
@@ -122,7 +123,8 @@ func (scheduler *Scheduler) enqueue(ctx context.Context, entry Entry, now time.T
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: core.TaskID(taskID), Type: entry.ActionType, IdempotencyKey: key,
 		Source: "cron:" + entry.JobTag, Platform: entry.Platform, ProfileID: entry.ProfileID,
-		CorrelationID: core.CorrelationID(correlationID), Payload: entry.Payload, AvailableAt: availableAt,
+		CorrelationID: core.CorrelationID(correlationID), Payload: entry.Payload,
+		Priority: entry.Priority, AvailableAt: availableAt,
 	}, now)
 	if err != nil {
 		return err
@@ -140,6 +142,9 @@ func (definition Definition) Validate() error {
 	}
 	if definition.JitterMin < 0 || definition.JitterMax < definition.JitterMin {
 		return errors.New("scheduled job has invalid jitter bounds")
+	}
+	if err := definition.Priority.Validate(); err != nil {
+		return fmt.Errorf("scheduled job %s: %w", definition.JobTag, err)
 	}
 	_, err := parseSchedule(definition)
 	return err

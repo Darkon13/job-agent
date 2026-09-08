@@ -51,6 +51,9 @@ func (queue *Queue) Enqueue(ctx context.Context, task core.Task) (bool, error) {
 	if task.Status != core.TaskNew || len(task.Payload) == 0 || !json.Valid(task.Payload) {
 		return false, errors.New("queue accepts only initialized new tasks with valid JSON payload")
 	}
+	if err := task.Priority.Validate(); err != nil {
+		return false, err
+	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	if existing, exists := queue.tasks[task.IdempotencyKey]; exists {
@@ -113,6 +116,9 @@ func (queue *Queue) Claim(ctx context.Context, params broker.ClaimParams) (broke
 		return broker.TaskLease{}, false, nil
 	}
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].task.Priority != candidates[j].task.Priority {
+			return candidates[i].task.Priority > candidates[j].task.Priority
+		}
 		if !candidates[i].available.Equal(candidates[j].available) {
 			return candidates[i].available.Before(candidates[j].available)
 		}

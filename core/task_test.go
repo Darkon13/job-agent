@@ -77,6 +77,18 @@ func TestTaskRejectsAvailabilityOutsideDeadline(t *testing.T) {
 	}
 }
 
+func TestTaskRejectsPriorityOutsideDispatchRange(t *testing.T) {
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	_, err := NewTask(NewTaskParams{
+		ID: "task-priority", Type: TaskApplicationSubmit, IdempotencyKey: "application-priority",
+		Source: "test", CorrelationID: "correlation-priority", Payload: json.RawMessage(`{}`),
+		Priority: TaskPriorityMax + 1,
+	}, now)
+	if err == nil {
+		t.Fatal("expected out-of-range priority to fail")
+	}
+}
+
 func TestTaskRejectsRetryOutsideDeadline(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(10 * time.Minute)

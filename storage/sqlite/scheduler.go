@@ -27,21 +27,24 @@ func (store *Store) SyncSchedules(ctx context.Context, entries []scheduler.Entry
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO scheduled_jobs
 			(job_tag, trigger_index, expression, timezone, action_type, platform, profile_id, payload,
-			 jitter_min_ns, jitter_max_ns, next_run_at, enabled, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+			 priority, jitter_min_ns, jitter_max_ns, next_run_at, enabled, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 			ON CONFLICT(job_tag, trigger_index) DO UPDATE SET
 			 next_run_at = CASE WHEN
 				scheduled_jobs.expression != excluded.expression OR scheduled_jobs.timezone != excluded.timezone OR
 				scheduled_jobs.action_type != excluded.action_type OR scheduled_jobs.platform != excluded.platform OR
 				scheduled_jobs.profile_id != excluded.profile_id OR scheduled_jobs.payload != excluded.payload OR
+				scheduled_jobs.priority != excluded.priority OR
 				scheduled_jobs.jitter_min_ns != excluded.jitter_min_ns OR scheduled_jobs.jitter_max_ns != excluded.jitter_max_ns
 			 THEN excluded.next_run_at ELSE scheduled_jobs.next_run_at END,
 			 expression = excluded.expression, timezone = excluded.timezone, action_type = excluded.action_type,
 			 platform = excluded.platform, profile_id = excluded.profile_id, payload = excluded.payload,
+			 priority = excluded.priority,
 			 jitter_min_ns = excluded.jitter_min_ns, jitter_max_ns = excluded.jitter_max_ns,
 			 enabled = 1, updated_at = excluded.updated_at`,
 			entry.JobTag, entry.TriggerIndex, entry.Expression, entry.Timezone, entry.ActionType,
-			entry.Platform, entry.ProfileID, []byte(entry.Payload), entry.JitterMin.Nanoseconds(), entry.JitterMax.Nanoseconds(),
+			entry.Platform, entry.ProfileID, []byte(entry.Payload), entry.Priority,
+			entry.JitterMin.Nanoseconds(), entry.JitterMax.Nanoseconds(),
 			entry.NextRunAt.UnixNano(), now.UnixNano())
 		if err != nil {
 			return fmt.Errorf("sync schedule %s/%d: %w", entry.JobTag, entry.TriggerIndex, err)
@@ -58,7 +61,7 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 		return nil, fmt.Errorf("due schedule limit must be positive")
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone,
-		action_type, platform, profile_id, payload, jitter_min_ns, jitter_max_ns, next_run_at
+		action_type, platform, profile_id, payload, priority, jitter_min_ns, jitter_max_ns, next_run_at
 		FROM scheduled_jobs WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at, job_tag, trigger_index LIMIT ?`,
 		now.UnixNano(), limit)
 	if err != nil {
@@ -71,7 +74,8 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 		var payload []byte
 		var jitterMin, jitterMax, nextRunAt int64
 		if err := rows.Scan(&entry.JobTag, &entry.TriggerIndex, &entry.Expression, &entry.Timezone,
-			&entry.ActionType, &entry.Platform, &entry.ProfileID, &payload, &jitterMin, &jitterMax, &nextRunAt); err != nil {
+			&entry.ActionType, &entry.Platform, &entry.ProfileID, &payload, &entry.Priority,
+			&jitterMin, &jitterMax, &nextRunAt); err != nil {
 			return nil, fmt.Errorf("scan due schedule: %w", err)
 		}
 		entry.Payload = bytes.Clone(payload)

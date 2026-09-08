@@ -33,9 +33,10 @@ type RuntimeStats struct {
 }
 
 type TaskCount struct {
-	Type   core.TaskType   `json:"type"`
-	Status core.TaskStatus `json:"status"`
-	Count  int             `json:"count"`
+	Type     core.TaskType     `json:"type"`
+	Status   core.TaskStatus   `json:"status"`
+	Priority core.TaskPriority `json:"priority"`
+	Count    int               `json:"count"`
 }
 
 type ApplicationCount struct {

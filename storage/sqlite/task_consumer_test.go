@@ -133,6 +133,42 @@ func TestTaskClaimFiltersByType(t *testing.T) {
 	}
 }
 
+func TestTaskClaimOrdersByPriorityThenFIFO(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	low := sqliteTask(t, "task-low", "key-low", now, nil)
+	low.Priority = -100
+	firstHigh := sqliteTask(t, "task-high-first", "key-high-first", now.Add(time.Second), nil)
+	firstHigh.Priority = 100
+	secondHigh := sqliteTask(t, "task-high-second", "key-high-second", now.Add(2*time.Second), nil)
+	secondHigh.Priority = 100
+	for _, task := range []core.Task{low, secondHigh, firstHigh} {
+		if _, err := store.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+
+	for index, expected := range []core.TaskID{firstHigh.ID, secondHigh.ID, low.ID} {
+		claimAt := now.Add(3*time.Second + time.Duration(index)*time.Second)
+		lease, found, err := store.Claim(ctx, broker.ClaimParams{
+			WorkerID: "worker", TaskType: core.TaskApplicationSubmit,
+			Now: claimAt, LeaseDuration: time.Minute,
+		})
+		if err != nil || !found || lease.Task.ID != expected {
+			t.Fatalf("claim %d: expected=%s found=%t lease=%#v err=%v", index, expected, found, lease, err)
+		}
+		if err := store.Complete(ctx, lease, claimAt.Add(time.Millisecond)); err != nil {
+			t.Fatalf("complete %s: %v", lease.Task.ID, err)
+		}
+	}
+}
+
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)

@@ -81,10 +81,15 @@ func TestSearchPageHandlerPersistsCursorAndResumesAfterPartialFailure(t *testing
 		failOnce: map[string]error{"1": errors.New("temporary network failure")},
 	}
 	handler, repository, queue, run := newSearchRunFixture(t, now, searcher)
-	if created, err := handler.EnsureRun(context.Background(), run); err != nil || !created {
+	const priority core.TaskPriority = 70
+	if created, err := handler.EnsureRun(context.Background(), run, priority); err != nil || !created {
 		t.Fatalf("ensure run: created=%v err=%v", created, err)
 	}
-	if err := handler.Handle(context.Background(), searchPageTask(t, queue, "golang", "")); err != nil {
+	firstTask := searchPageTask(t, queue, "golang", "")
+	if firstTask.Priority != priority {
+		t.Fatalf("first search priority=%d, want %d", firstTask.Priority, priority)
+	}
+	if err := handler.Handle(context.Background(), firstTask); err != nil {
 		t.Fatalf("first page: %v", err)
 	}
 	stored, err := repository.SearchRun(context.Background(), "golang")
@@ -92,6 +97,9 @@ func TestSearchPageHandlerPersistsCursorAndResumesAfterPartialFailure(t *testing
 		t.Fatalf("cursor after first page: %#v err=%v", stored, err)
 	}
 	secondTask := searchPageTask(t, queue, "golang", "1")
+	if secondTask.Priority != priority {
+		t.Fatalf("next search priority=%d, want %d", secondTask.Priority, priority)
+	}
 	if err := handler.Handle(context.Background(), secondTask); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
 		t.Fatalf("partial failure = %v, want temporary", err)
 	}
@@ -110,7 +118,7 @@ func TestSearchPageHandlerPersistsCursorAndResumesAfterPartialFailure(t *testing
 	if err := restarted.Register("golang", restartedWorkflow); err != nil {
 		t.Fatalf("register restarted workflow: %v", err)
 	}
-	if _, err := restarted.EnsureRun(context.Background(), run); err != nil {
+	if _, err := restarted.EnsureRun(context.Background(), run, priority); err != nil {
 		t.Fatalf("ensure restarted run: %v", err)
 	}
 	if err := restarted.Handle(context.Background(), secondTask); err != nil {

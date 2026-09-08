@@ -50,6 +50,25 @@ const (
 	TaskFailed              TaskStatus = "failed"
 )
 
+// TaskPriority controls dispatch order only among tasks claimed by the same
+// consumer. A higher value is claimed first; equal priorities preserve the
+// existing available_at/created_at FIFO order. Priority never preempts a task
+// that is already processing.
+type TaskPriority int
+
+const (
+	TaskPriorityMin    TaskPriority = -1000
+	TaskPriorityNormal TaskPriority = 0
+	TaskPriorityMax    TaskPriority = 1000
+)
+
+func (priority TaskPriority) Validate() error {
+	if priority < TaskPriorityMin || priority > TaskPriorityMax {
+		return fmt.Errorf("task priority must be between %d and %d", TaskPriorityMin, TaskPriorityMax)
+	}
+	return nil
+}
+
 type TaskFailure struct {
 	Category ErrorCategory `json:"category"`
 	Message  string        `json:"message,omitempty"`
@@ -65,6 +84,7 @@ type Task struct {
 	ProfileID      ProfileID       `json:"profile_id,omitempty"`
 	CorrelationID  CorrelationID   `json:"correlation_id"`
 	Payload        json.RawMessage `json:"payload"`
+	Priority       TaskPriority    `json:"priority"`
 	Attempts       int             `json:"attempts"`
 	AvailableAt    time.Time       `json:"available_at"`
 	Deadline       *time.Time      `json:"deadline,omitempty"`
@@ -82,6 +102,7 @@ type NewTaskParams struct {
 	ProfileID      ProfileID
 	CorrelationID  CorrelationID
 	Payload        json.RawMessage
+	Priority       TaskPriority
 	AvailableAt    time.Time
 	Deadline       *time.Time
 }
@@ -95,6 +116,9 @@ func NewTask(params NewTaskParams, now time.Time) (Task, error) {
 	}
 	if len(params.Payload) == 0 || !json.Valid(params.Payload) {
 		return Task{}, errors.New("task requires valid JSON payload")
+	}
+	if err := params.Priority.Validate(); err != nil {
+		return Task{}, err
 	}
 	availableAt := params.AvailableAt
 	if availableAt.IsZero() {
@@ -116,7 +140,7 @@ func NewTask(params NewTaskParams, now time.Time) (Task, error) {
 		IdempotencyKey: params.IdempotencyKey, Source: params.Source,
 		Platform: params.Platform, ProfileID: params.ProfileID,
 		CorrelationID: params.CorrelationID, Payload: append(json.RawMessage(nil), params.Payload...),
-		AvailableAt: availableAt, Deadline: deadline, CreatedAt: now, UpdatedAt: now,
+		Priority: params.Priority, AvailableAt: availableAt, Deadline: deadline, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 

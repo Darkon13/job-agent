@@ -50,11 +50,12 @@ const (
 )
 
 type Job struct {
-	Tag         string       `json:"tag"`
-	Enabled     bool         `json:"enabled"`
-	Triggers    []JobTrigger `json:"triggers"`
-	Concurrency string       `json:"concurrency"`
-	Action      JobAction    `json:"action"`
+	Tag         string            `json:"tag"`
+	Enabled     bool              `json:"enabled"`
+	Priority    core.TaskPriority `json:"priority,omitempty"`
+	Triggers    []JobTrigger      `json:"triggers"`
+	Concurrency string            `json:"concurrency"`
+	Action      JobAction         `json:"action"`
 }
 
 type JobTrigger struct {
@@ -223,13 +224,13 @@ type ProfileBootstrap struct {
 }
 
 type Search struct {
-	Tag                string          `json:"tag"`
-	Adapter            string          `json:"adapter"`
-	Profiles           []string        `json:"profiles"`
-	Priority           int             `json:"priority"`
-	TargetApplications int             `json:"target_applications"`
-	Fallback           string          `json:"fallback,omitempty"`
-	Query              json.RawMessage `json:"query"`
+	Tag                string            `json:"tag"`
+	Adapter            string            `json:"adapter"`
+	Profiles           []string          `json:"profiles"`
+	Priority           core.TaskPriority `json:"priority"`
+	TargetApplications int               `json:"target_applications"`
+	Fallback           string            `json:"fallback,omitempty"`
+	Query              json.RawMessage   `json:"query"`
 }
 
 func Load(path string) (Config, error) {
@@ -420,6 +421,9 @@ func (c Config) Validate() error {
 		if len(search.Profiles) == 0 {
 			return fmt.Errorf("search %q requires at least one profile", search.Tag)
 		}
+		if err := search.Priority.Validate(); err != nil {
+			return fmt.Errorf("search %q: %w", search.Tag, err)
+		}
 		for _, profile := range search.Profiles {
 			if _, exists := profiles[profile]; !exists {
 				return fmt.Errorf("search %q references unknown profile %q", search.Tag, profile)
@@ -443,6 +447,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate job tag %q", job.Tag)
 		}
 		jobs[job.Tag] = struct{}{}
+		if err := job.Priority.Validate(); err != nil {
+			return fmt.Errorf("job %q: %w", job.Tag, err)
+		}
 		if !job.Enabled {
 			continue
 		}

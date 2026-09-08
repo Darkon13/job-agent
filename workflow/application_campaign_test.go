@@ -20,7 +20,7 @@ func campaignStartTask(t *testing.T, now time.Time, profiles []core.ProfileID, r
 	}
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: "start-1", Type: core.TaskApplicationCampaign, IdempotencyKey: "cron-1",
-		Source: "cron:daily", CorrelationID: "correlation-1", Payload: payload,
+		Source: "cron:daily", CorrelationID: "correlation-1", Payload: payload, Priority: 125,
 	}, now)
 	if err != nil {
 		t.Fatalf("new campaign start task: %v", err)
@@ -99,6 +99,12 @@ func TestApplicationCampaignHandlerLimitsInFlightAndStopsAtTarget(t *testing.T) 
 	states, err := repository.ListCampaignApplicationStates(ctx, campaignID)
 	if err != nil || len(states) != 3 || len(applicationTasks(queue.Tasks())) != 1 {
 		t.Fatalf("first tick states=%d application_tasks=%d err=%v", len(states), len(applicationTasks(queue.Tasks())), err)
+	}
+	if applications := applicationTasks(queue.Tasks()); applications[0].Priority != start.Priority {
+		t.Fatalf("application priority=%d, want %d", applications[0].Priority, start.Priority)
+	}
+	if tick := campaignTickTask(t, queue, campaignID, 2); tick.Priority != start.Priority {
+		t.Fatalf("campaign tick priority=%d, want %d", tick.Priority, start.Priority)
 	}
 
 	submitCampaignApplication(t, repository, states[0].Application, now.Add(time.Second))

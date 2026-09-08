@@ -20,6 +20,7 @@ type SearchRequest struct {
 	Query           json.RawMessage
 	Cursor          string
 	CorrelationID   core.CorrelationID
+	Priority        core.TaskPriority
 }
 
 type SearchResult struct {
@@ -115,7 +116,7 @@ func (workflow *SearchWorkflow) RunPage(ctx context.Context, request SearchReque
 			continue
 		}
 		for _, profileID := range profiles {
-			applicationCreated, taskCreated, err := workflow.planApplication(ctx, correlationID, profileID, vacancy.Key())
+			applicationCreated, taskCreated, err := workflow.planApplication(ctx, correlationID, profileID, vacancy.Key(), request.Priority)
 			if err != nil {
 				return result, err
 			}
@@ -135,6 +136,7 @@ func (workflow *SearchWorkflow) planApplication(
 	correlationID core.CorrelationID,
 	profileID core.ProfileID,
 	vacancy core.VacancyKey,
+	priority core.TaskPriority,
 ) (bool, bool, error) {
 	now := workflow.clock.Now()
 	applicationID, err := workflow.ids.NewID("application")
@@ -171,7 +173,7 @@ func (workflow *SearchWorkflow) planApplication(
 		ID: core.TaskID(taskID), Type: core.TaskApplicationSubmit,
 		IdempotencyKey: idempotencyKey, Source: "search-discovery",
 		Platform: vacancy.Platform, ProfileID: profileID,
-		CorrelationID: correlationID, Payload: payloadJSON,
+		CorrelationID: correlationID, Payload: payloadJSON, Priority: priority,
 	}, now)
 	if err != nil {
 		return applicationCreated, false, err
@@ -192,6 +194,9 @@ func validateSearchRequest(request SearchRequest) error {
 	}
 	if len(request.TargetProfiles) == 0 {
 		return errors.New("search request requires target profiles")
+	}
+	if err := request.Priority.Validate(); err != nil {
+		return err
 	}
 	for _, profileID := range request.TargetProfiles {
 		if profileID == "" {

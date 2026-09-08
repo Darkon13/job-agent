@@ -5,9 +5,57 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
+
+func TestTaskPriorityMigrationPreservesExistingTasks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	migrator, err := storesqlite.OpenMigrator(path)
+	if err != nil {
+		t.Fatalf("open migrator: %v", err)
+	}
+	if err := migrator.Steps(int(storesqlite.LatestSchemaVersion) - 1); err != nil {
+		t.Fatalf("migrate to previous version: %v", err)
+	}
+	if err := migrator.Close(); err != nil {
+		t.Fatalf("close previous migrator: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open previous database: %v", err)
+	}
+	now := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC).UnixNano()
+	if _, err := db.Exec(`INSERT INTO tasks
+		(id, type, status, idempotency_key, source, platform, profile_id,
+		 correlation_id, payload, attempts, available_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"task-existing", "resume.touch", "new", "existing-key", "test", "hh", "primary",
+		"correlation-existing", []byte(`{}`), 0, now, now, now); err != nil {
+		t.Fatalf("insert pre-priority task: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close previous database: %v", err)
+	}
+
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("apply priority migration: %v", err)
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open migrated database: %v", err)
+	}
+	defer db.Close()
+	var priority int
+	if err := db.QueryRow(`SELECT priority FROM tasks WHERE id = ?`, "task-existing").Scan(&priority); err != nil {
+		t.Fatalf("read migrated priority: %v", err)
+	}
+	if priority != 0 {
+		t.Fatalf("migrated priority=%d, want 0", priority)
+	}
+}
 
 func TestStoreRequiresExplicitMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "job-agent.db")
@@ -76,10 +124,15 @@ func TestMigratorAdoptsValidatedLegacySchema(t *testing.T) {
 		CREATE TABLE applications(id TEXT);
 		CREATE TABLE tasks(
 			id TEXT,
+			type TEXT,
+			status TEXT,
+			available_at INTEGER,
+			created_at INTEGER,
 			lease_owner TEXT,
 			lease_token TEXT,
 			lease_until INTEGER
 		);
+		CREATE INDEX tasks_available_idx ON tasks(status, available_at);
 		PRAGMA user_version = 2;
 	`)
 	if err != nil {

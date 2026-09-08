@@ -95,7 +95,7 @@ func run(ctx context.Context, args []string, output io.Writer, now time.Time) er
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: core.TaskID(taskID), Type: taskType, IdempotencyKey: *idempotencyKey,
 		Source: "manual:" + job.Tag, Platform: platform, ProfileID: profileID,
-		CorrelationID: core.CorrelationID(correlationID), Payload: payload,
+		CorrelationID: core.CorrelationID(correlationID), Payload: payload, Priority: job.Priority,
 	}, now)
 	if err != nil {
 		return err

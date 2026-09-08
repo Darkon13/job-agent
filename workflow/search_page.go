@@ -46,7 +46,7 @@ func (handler *SearchPageHandler) Register(searchID core.SearchID, searchWorkflo
 // EnsureRun persists the initial state and makes the current cursor runnable.
 // Repeating it after a restart is safe because both run and task have stable
 // identities independent of generated task IDs.
-func (handler *SearchPageHandler) EnsureRun(ctx context.Context, candidate core.SearchRun) (bool, error) {
+func (handler *SearchPageHandler) EnsureRun(ctx context.Context, candidate core.SearchRun, priority core.TaskPriority) (bool, error) {
 	stored, created, err := handler.runs.CreateSearchRun(ctx, candidate)
 	if err != nil {
 		return false, err
@@ -57,7 +57,7 @@ func (handler *SearchPageHandler) EnsureRun(ctx context.Context, candidate core.
 	if _, err := handler.workflow(stored.SearchID); err != nil {
 		return false, err
 	}
-	_, err = handler.enqueue(ctx, stored)
+	_, err = handler.enqueue(ctx, stored, priority)
 	return created, err
 }
 
@@ -80,7 +80,7 @@ func (handler *SearchPageHandler) Handle(ctx context.Context, task core.Task) er
 		return nil
 	}
 	if payload.Cursor != run.Cursor {
-		_, err := handler.enqueue(ctx, run)
+		_, err := handler.enqueue(ctx, run, task.Priority)
 		return err
 	}
 	searchWorkflow, err := handler.workflow(run.SearchID)
@@ -90,6 +90,7 @@ func (handler *SearchPageHandler) Handle(ctx context.Context, task core.Task) er
 	result, err := searchWorkflow.RunPage(ctx, SearchRequest{
 		SearchID: run.SearchID, Platform: run.Platform, SearchProfileID: run.SearchProfileID,
 		TargetProfiles: run.TargetProfiles, Query: run.Query, Cursor: run.Cursor, CorrelationID: run.CorrelationID,
+		Priority: task.Priority,
 	})
 	if err != nil {
 		var operationError *core.OperationError
@@ -108,7 +109,7 @@ func (handler *SearchPageHandler) Handle(ctx context.Context, task core.Task) er
 	if run.Done {
 		return nil
 	}
-	_, err = handler.enqueue(ctx, run)
+	_, err = handler.enqueue(ctx, run, task.Priority)
 	return err
 }
 
@@ -125,7 +126,7 @@ func (handler *SearchPageHandler) workflow(searchID core.SearchID) (*SearchWorkf
 	return searchWorkflow, nil
 }
 
-func (handler *SearchPageHandler) enqueue(ctx context.Context, run core.SearchRun) (bool, error) {
+func (handler *SearchPageHandler) enqueue(ctx context.Context, run core.SearchRun, priority core.TaskPriority) (bool, error) {
 	payload, err := json.Marshal(core.SearchPagePayload{SearchID: run.SearchID, Cursor: run.Cursor})
 	if err != nil {
 		return false, err
@@ -141,7 +142,7 @@ func (handler *SearchPageHandler) enqueue(ctx context.Context, run core.SearchRu
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: core.TaskID(taskID), Type: core.TaskVacancySearchPage, IdempotencyKey: idempotencyKey,
 		Source: "search-run", Platform: run.Platform, ProfileID: run.SearchProfileID,
-		CorrelationID: run.CorrelationID, Payload: payload,
+		CorrelationID: run.CorrelationID, Payload: payload, Priority: priority,
 	}, handler.clock.Now())
 	if err != nil {
 		return false, err

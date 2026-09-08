@@ -101,12 +101,12 @@ func (handler *ApplicationCampaignHandler) Handle(ctx context.Context, task core
 		return err
 	}
 	if !current {
-		return handler.ensureTick(ctx, campaign, 0)
+		return handler.ensureTick(ctx, campaign, 0, task.Priority)
 	}
 	if campaign.Status != core.ApplicationCampaignRunning {
 		return nil
 	}
-	return handler.runTick(ctx, campaign)
+	return handler.runTick(ctx, campaign, task.Priority)
 }
 
 func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, task core.Task, payload core.ApplicationCampaignPayload) (core.ApplicationCampaign, bool, error) {
@@ -132,7 +132,7 @@ func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, 
 	return stored, stored.Revision == 1, nil
 }
 
-func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign core.ApplicationCampaign) error {
+func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign core.ApplicationCampaign, priority core.TaskPriority) error {
 	states, progress, nextCheckAt, err := handler.progress(ctx, campaign.ID)
 	if err != nil {
 		return err
@@ -141,7 +141,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 		return handler.stop(ctx, campaign, core.ApplicationCampaignTargetReached, "target successful applications reached")
 	}
 
-	scheduled, err := handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight)
+	scheduled, err := handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight, priority)
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 		nextCheckAt = earlierTime(nextCheckAt, handler.clock.Now().Add(handler.tickDelay))
 	}
 	if progress.Planned > 0 || progress.InFlight >= campaign.MaxInFlight || (campaign.RouteDone && progress.InFlight > 0) {
-		return handler.wait(ctx, campaign, nextCheckAt)
+		return handler.wait(ctx, campaign, nextCheckAt, priority)
 	}
 	if campaign.RouteDone {
 		if campaign.RouteIndex+1 >= len(campaign.Routes) {
@@ -161,7 +161,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 		if err := campaign.AdvanceRoute(handler.clock.Now()); err != nil {
 			return err
 		}
-		return handler.saveAndEnqueue(ctx, campaign, expectedRevision, 0)
+		return handler.saveAndEnqueue(ctx, campaign, expectedRevision, 0, priority)
 	}
 
 	route, err := handler.route(campaign.Routes[campaign.RouteIndex])
@@ -187,7 +187,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	if progress.Submitted >= campaign.TargetSuccessful {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignTargetReached, "target successful applications reached")
 	}
-	scheduled, err = handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight)
+	scheduled, err = handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight, priority)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	if progress.Planned > 0 || progress.InFlight > 0 {
 		delay = handler.delayUntil(nextCheckAt)
 	}
-	return handler.ensureTick(ctx, campaign, delay)
+	return handler.ensureTick(ctx, campaign, delay, priority)
 }
 
 func (handler *ApplicationCampaignHandler) runPage(ctx context.Context, campaign core.ApplicationCampaign, route ApplicationCampaignRoute) (core.SearchPage, error) {
@@ -323,7 +323,7 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 	return states, progress, nextCheckAt, nil
 }
 
-func (handler *ApplicationCampaignHandler) scheduleApplications(ctx context.Context, campaign core.ApplicationCampaign, states []core.CampaignApplicationState, slots int) (int, error) {
+func (handler *ApplicationCampaignHandler) scheduleApplications(ctx context.Context, campaign core.ApplicationCampaign, states []core.CampaignApplicationState, slots int, priority core.TaskPriority) (int, error) {
 	if slots <= 0 {
 		return 0, nil
 	}
@@ -345,7 +345,7 @@ func (handler *ApplicationCampaignHandler) scheduleApplications(ctx context.Cont
 		if !errors.Is(err, broker.ErrTaskNotFound) {
 			return scheduled, campaignError("load application task", err)
 		}
-		if err := handler.enqueueApplication(ctx, campaign, state.Application); err != nil {
+		if err := handler.enqueueApplication(ctx, campaign, state.Application, priority); err != nil {
 			return scheduled, err
 		}
 		scheduled++
@@ -361,7 +361,7 @@ func (handler *ApplicationCampaignHandler) applicationTask(ctx context.Context, 
 	return handler.tasks.TaskByIdempotencyKey(ctx, key)
 }
 
-func (handler *ApplicationCampaignHandler) enqueueApplication(ctx context.Context, campaign core.ApplicationCampaign, application core.Application) error {
+func (handler *ApplicationCampaignHandler) enqueueApplication(ctx context.Context, campaign core.ApplicationCampaign, application core.Application, priority core.TaskPriority) error {
 	payload, err := json.Marshal(core.ApplicationSubmitPayload{ApplicationID: application.ID, Key: application.Key})
 	if err != nil {
 		return err
@@ -378,6 +378,7 @@ func (handler *ApplicationCampaignHandler) enqueueApplication(ctx context.Contex
 		ID: core.TaskID(id), Type: core.TaskApplicationSubmit, IdempotencyKey: key,
 		Source: "application-campaign:" + string(campaign.ID), Platform: application.Key.Vacancy.Platform,
 		ProfileID: application.Key.ProfileID, CorrelationID: campaign.CorrelationID, Payload: payload,
+		Priority: priority,
 	}, handler.clock.Now())
 	if err != nil {
 		return err
@@ -388,12 +389,12 @@ func (handler *ApplicationCampaignHandler) enqueueApplication(ctx context.Contex
 	return nil
 }
 
-func (handler *ApplicationCampaignHandler) wait(ctx context.Context, campaign core.ApplicationCampaign, nextCheckAt time.Time) error {
+func (handler *ApplicationCampaignHandler) wait(ctx context.Context, campaign core.ApplicationCampaign, nextCheckAt time.Time, priority core.TaskPriority) error {
 	expectedRevision := campaign.Revision
 	if err := campaign.WaitForApplications(handler.clock.Now()); err != nil {
 		return err
 	}
-	return handler.saveAndEnqueue(ctx, campaign, expectedRevision, handler.delayUntil(nextCheckAt))
+	return handler.saveAndEnqueue(ctx, campaign, expectedRevision, handler.delayUntil(nextCheckAt), priority)
 }
 
 func (handler *ApplicationCampaignHandler) delayUntil(nextCheckAt time.Time) time.Duration {
@@ -422,14 +423,14 @@ func (handler *ApplicationCampaignHandler) stop(ctx context.Context, campaign co
 	return nil
 }
 
-func (handler *ApplicationCampaignHandler) saveAndEnqueue(ctx context.Context, campaign core.ApplicationCampaign, expectedRevision uint64, delay time.Duration) error {
+func (handler *ApplicationCampaignHandler) saveAndEnqueue(ctx context.Context, campaign core.ApplicationCampaign, expectedRevision uint64, delay time.Duration, priority core.TaskPriority) error {
 	if err := handler.campaigns.SaveApplicationCampaign(ctx, campaign, expectedRevision); err != nil {
 		return campaignError("save campaign", err)
 	}
-	return handler.ensureTick(ctx, campaign, delay)
+	return handler.ensureTick(ctx, campaign, delay, priority)
 }
 
-func (handler *ApplicationCampaignHandler) ensureTick(ctx context.Context, campaign core.ApplicationCampaign, delay time.Duration) error {
+func (handler *ApplicationCampaignHandler) ensureTick(ctx context.Context, campaign core.ApplicationCampaign, delay time.Duration, priority core.TaskPriority) error {
 	if campaign.Status != core.ApplicationCampaignRunning {
 		return nil
 	}
@@ -449,7 +450,7 @@ func (handler *ApplicationCampaignHandler) ensureTick(ctx context.Context, campa
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: core.TaskID(id), Type: core.TaskApplicationCampaign, IdempotencyKey: key,
 		Source: "cron:" + campaign.JobTag, CorrelationID: campaign.CorrelationID,
-		Payload: payload, AvailableAt: now.Add(delay),
+		Payload: payload, Priority: priority, AvailableAt: now.Add(delay),
 	}, now)
 	if err != nil {
 		return err

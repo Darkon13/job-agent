@@ -198,7 +198,7 @@ func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Ta
 		return err
 	}
 	for _, conversationID := range observed.ConversationIDs {
-		if _, err := handlers.workflow.EnqueueConversationSync(ctx, conversationID, task.IdempotencyKey); err != nil {
+		if _, err := handlers.workflow.EnqueueConversationSync(ctx, conversationID, task.IdempotencyKey, task.Priority); err != nil {
 			return err
 		}
 	}

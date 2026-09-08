@@ -233,6 +233,11 @@ func TestResumeTouchJobValidation(t *testing.T) {
 	if err := config.Validate(); err != nil {
 		t.Fatalf("valid resume publish job: %v", err)
 	}
+	config.Jobs[0].Priority = core.TaskPriorityMax + 1
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected out-of-range job priority to fail")
+	}
+	config.Jobs[0].Priority = core.TaskPriorityNormal
 	config.Jobs[0].Triggers[0].Jitter.Max = "30s"
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected inverted jitter bounds to fail")

@@ -273,10 +273,14 @@ func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	for index, taskType := range []core.TaskType{core.TaskResumeTouch, core.TaskResumeTouch, core.TaskApplicationSubmit} {
+		priority := core.TaskPriorityNormal
+		if index == 1 {
+			priority = 50
+		}
 		task, err := core.NewTask(core.NewTaskParams{
 			ID: core.TaskID(fmt.Sprintf("task-%d", index)), Type: taskType,
 			IdempotencyKey: fmt.Sprintf("key-%d", index), Source: "test", CorrelationID: "correlation-1",
-			Payload: json.RawMessage(`{"secret":"must-not-be-returned"}`),
+			Payload: json.RawMessage(`{"secret":"must-not-be-returned"}`), Priority: priority,
 		}, now)
 		if err != nil {
 			t.Fatalf("new task: %v", err)
@@ -289,7 +293,7 @@ func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task counts: %v", err)
 	}
-	if len(counts) != 2 || counts[0].Count+counts[1].Count != 3 {
+	if len(counts) != 3 || counts[0].Count+counts[1].Count+counts[2].Count != 3 {
 		t.Fatalf("counts = %#v", counts)
 	}
 }

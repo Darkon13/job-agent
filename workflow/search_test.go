@@ -73,7 +73,7 @@ func TestSearchWorkflowDistributesOneSearchAcrossProfilesIdempotently(t *testing
 	request := SearchRequest{
 		SearchID: "golang", Platform: "hh", SearchProfileID: "primary",
 		TargetProfiles: []core.ProfileID{"primary", "secondary", "primary"},
-		Query:          json.RawMessage(`{"source":"global"}`),
+		Query:          json.RawMessage(`{"source":"global"}`), Priority: 80,
 	}
 
 	first, err := workflow.RunPage(context.Background(), request)
@@ -118,6 +118,9 @@ func TestSearchWorkflowDistributesOneSearchAcrossProfilesIdempotently(t *testing
 		}
 		if payload.ApplicationID == "" || payload.Key.ProfileID != task.ProfileID || payload.Key.Vacancy.ExternalID != "42" {
 			t.Fatalf("unexpected task payload: %#v", payload)
+		}
+		if task.Priority != request.Priority {
+			t.Fatalf("application task priority=%d, want %d", task.Priority, request.Priority)
 		}
 	}
 }

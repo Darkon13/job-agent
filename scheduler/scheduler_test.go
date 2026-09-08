@@ -45,7 +45,7 @@ func TestSchedulerPersistsNextRunAppliesJitterAndCollapsesMisfires(t *testing.T)
 	definition := scheduler.Definition{
 		JobTag: "touch-primary", TriggerIndex: 0, Expression: "0 * * * *", Timezone: "UTC",
 		ActionType: core.TaskResumeTouch, Platform: "hh", ProfileID: "primary", Payload: payload,
-		JitterMin: 5 * time.Minute, JitterMax: 10 * time.Minute,
+		Priority: 125, JitterMin: 5 * time.Minute, JitterMax: 10 * time.Minute,
 	}
 	if err := service.Sync(ctx, []scheduler.Definition{definition}); err != nil {
 		t.Fatalf("sync: %v", err)
@@ -59,7 +59,7 @@ func TestSchedulerPersistsNextRunAppliesJitterAndCollapsesMisfires(t *testing.T)
 		t.Fatalf("task became available before jitter minimum: lease=%#v found=%t err=%v", lease, found, err)
 	}
 	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "resume-worker", TaskType: core.TaskResumeTouch, Now: clock.now.Add(11 * time.Minute), LeaseDuration: time.Minute})
-	if err != nil || !found || lease.Task.Type != core.TaskResumeTouch {
+	if err != nil || !found || lease.Task.Type != core.TaskResumeTouch || lease.Task.Priority != definition.Priority {
 		t.Fatalf("task unavailable after jitter maximum: lease=%#v found=%t err=%v", lease, found, err)
 	}
 	if err := store.Complete(ctx, lease, clock.now.Add(11*time.Minute+time.Second)); err != nil {

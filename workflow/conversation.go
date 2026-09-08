@@ -82,7 +82,7 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 	return result, nil
 }
 
-func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Context, conversationID core.ConversationID, requestKey string) (bool, error) {
+func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Context, conversationID core.ConversationID, requestKey string, priority core.TaskPriority) (bool, error) {
 	conversation, err := workflow.repository.Conversation(ctx, conversationID)
 	if err != nil {
 		return false, fmt.Errorf("load conversation for sync: %w", err)
@@ -108,7 +108,7 @@ func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Contex
 		IdempotencyKey: idempotencyKey, Source: "conversation-discovery",
 		Platform: conversation.Platform, ProfileID: conversation.ProfileID,
 		CorrelationID: core.CorrelationID(correlationID), Payload: payload,
-		AvailableAt: workflow.clock.Now(),
+		Priority: priority, AvailableAt: workflow.clock.Now(),
 	}, workflow.clock.Now())
 	if err != nil {
 		return false, err

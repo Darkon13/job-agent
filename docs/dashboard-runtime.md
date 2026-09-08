@@ -50,7 +50,23 @@ Go backend отправляет узкие операции (`application.submit
 - отдельный consumer/pool изолирует бюджет ресурса и не даёт тяжёлому типу задач занять весь runtime;
 - per-profile lock защищает одну внешнюю сессию от конфликтующих мутаций.
 
-В текущем срезе все задачи лежат в одной durable SQLite-таблице, а consumer’ы claim’ят только свой `TaskType`. Физически дробить очередь сейчас не требуется. `profile_state.apply` и `resume.touch` уже проходят через общую process-local mutation lane по профилю; разные профили не блокируют друг друга. Поскольку Compose запускает один backend, этого достаточно для текущего deployment. До запуска mutating workers в нескольких репликах lane должна стать распределённой lease/lock в durable storage. Следующий шаг — добавить priority в task schema и сортировку claim по `priority DESC, available_at, created_at`, сохранив отдельные consumer’ы для search, applications, resume и conversations. Для будущего browser service дополнительно нужен общий ограничитель страниц.
+Все задачи лежат в одной durable SQLite-таблице, а consumer’ы claim’ят только
+свой `TaskType`. Числовой `priority` хранится вместе с задачей и сортирует
+доступные элементы по `priority DESC`, затем по `available_at`, `created_at` и
+ID. Он задаётся у декларативного job, переживает retry/restart и передаётся
+дочерним campaign/application и search-page tasks. Равный priority сохраняет
+FIFO; уже взятая задача не вытесняется. Dashboard показывает priority отдельной
+колонкой.
+
+Физически дробить очередь сейчас не требуется. `profile_state.apply` и
+`resume.touch` уже проходят через общую process-local mutation lane по профилю;
+разные профили не блокируют друг друга. Поскольку Compose запускает один
+backend, этого достаточно для текущего deployment. До запуска mutating workers
+в нескольких репликах lane должна стать распределённой lease/lock в durable
+storage. Для будущего browser service дополнительно нужен общий ограничитель
+страниц. Если внутри одного task type появится постоянный поток одного профиля,
+следующим отдельным механизмом станет profile-aware round-robin/aging: priority
+сам по себе не гарантирует fairness и не должен притворяться отдельной очередью.
 
 ## Реализованный UI-срез
 
@@ -71,6 +87,6 @@ profile-policy `conversations.allow_send` и `allow_mark_read`.
 1. Единый auth control plane для CLI/dashboard, credential sinks и Kitty/Sixel
    challenges — [`next-auth-control-plane.md`](next-auth-control-plane.md).
 2. Фильтры и пагинация dashboard, подробности campaign/application и task retry/cancel.
-3. Priority в persistent task schema и fairness между профилями.
+3. Profile-aware fairness/aging внутри одного task type без нарушения priority.
 4. Узкий browser RPC, один Chromium, контексты профилей и bounded page pool.
 5. SSE для обновлений вместо периодического polling и для auth challenges.
