@@ -39,6 +39,18 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 3 && os.Args[1] == "profile" && os.Args[2] == "bootstrap" {
+		if err := runProfileBootstrap(context.Background(), os.Args[3:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "startup" {
+		if err := runProfileStartup(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	options, err := parseMainOptions(os.Args[1:])
 	if err != nil {
 		log.Fatalf("usage: %s [-migrate-up] <config.json>: %v", os.Args[0], err)
@@ -116,10 +128,6 @@ func main() {
 		log.Fatalf("create profile state planner: %v", err)
 	}
 	profileStateReaders := make(map[core.ProfileID]adapter.ProfileStateReader)
-	profileStateProfiles := make(map[core.ProfileID]struct{}, len(profileStateResources))
-	for _, resource := range profileStateResources {
-		profileStateProfiles[resource.ProfileID] = struct{}{}
-	}
 	profileStateWriters := taskworker.NewProfileStateWriterRegistry()
 	profileStatePlatforms := make(map[core.ProfileID]core.Platform)
 	conversationTransports := taskworker.NewConversationTransportRegistry()
@@ -141,6 +149,7 @@ func main() {
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
 		browserApplicationsReady := false
 		browserConversationsReady := false
+		var browserProfileStateWriter adapter.ProfileStateWriter
 		if profile.StateFile != "" {
 			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
 				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
@@ -154,17 +163,12 @@ func main() {
 					profileStateReaders[profileID] = profileStateReader
 				}
 			}
-			if _, needed := profileStateProfiles[profileID]; needed {
-				if binder, ok := instance.(adapter.BrowserProfileStateSessionBinder); ok {
-					writer, err := binder.BindBrowserProfileStateSession(profileID, profile.StateFile)
-					if err != nil {
-						log.Fatalf("bind browser profile state session for profile %q: %v", profile.Tag, err)
-					}
-					if err := profileStateWriters.Register(profileID, writer); err != nil {
-						log.Fatalf("register profile state writer for profile %q: %v", profile.Tag, err)
-					}
-					profileStatePlatforms[profileID] = core.Platform(instance.Name())
+			if binder, ok := instance.(adapter.BrowserProfileStateSessionBinder); ok {
+				writer, err := binder.BindBrowserProfileStateSession(profileID, profile.StateFile)
+				if err != nil {
+					log.Fatalf("bind browser profile state session for profile %q: %v", profile.Tag, err)
 				}
+				browserProfileStateWriter = writer
 			}
 			if binder, ok := instance.(adapter.BrowserConversationSessionBinder); ok {
 				transport, err := binder.BindBrowserConversationSession(profileID, profile.StateFile, adapter.BrowserConversationOptions{
@@ -194,6 +198,21 @@ func main() {
 					browserApplicationsReady = true
 					log.Printf("profile %q uses explicit browser-backed application transport", profile.Tag)
 				}
+			}
+		}
+		if apiReady || runtime.BrowserReader != nil {
+			if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
+				profileStateReaders[profileID] = profileStateReader
+			}
+			writer, ok := instance.(adapter.ProfileStateWriter)
+			if !ok {
+				writer = browserProfileStateWriter
+			}
+			if writer != nil {
+				if err := profileStateWriters.Register(profileID, writer); err != nil {
+					log.Fatalf("register profile state writer for profile %q: %v", profile.Tag, err)
+				}
+				profileStatePlatforms[profileID] = core.Platform(instance.Name())
 			}
 		}
 		if apiReady {

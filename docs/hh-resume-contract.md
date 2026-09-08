@@ -40,6 +40,19 @@ Update body разделяет:
 ошибками полей. Клиент не должен прибивать обязательность полей гвоздями: она
 зависит от schema/conditions, локали и состояния профиля.
 
+Реализованный declarative transport принимает native-секции в state по путям
+`/resumes/<id>/{profile,resume,creds,additional_properties}/...`. Он читает
+свежий `resume_profile`, рекурсивно накладывает только объявленные object fields,
+атомарно заменяет объявленные массивы, отправляет полный update body и проверяет
+результат повторным GET. Командный envelope и пример описаны в
+[`profile-bootstrap.md`](profile-bootstrap.md).
+
+Для browser-only профиля проверен отдельный web-контракт: чтение
+`GET /applicant/resume?resume=<id>` возвращает объект `resume`, а частичный
+`POST /applicant/resume/edit?resume=<id>` принимает поля редактора. В desired
+state они находятся под `/resumes/<id>/web/...`; writer использует allowlist,
+не отправляет status/telemetry из GET и подтверждает результат повторным чтением.
+
 ## Profile fields
 
 Отдельная часть `profile` включает:

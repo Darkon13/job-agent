@@ -96,6 +96,7 @@ var _ adapter.BrowserConversationSessionBinder = (*Adapter)(nil)
 var _ adapter.BrowserProfileStateSessionBinder = (*Adapter)(nil)
 var _ adapter.VacancyReader = (*Adapter)(nil)
 var _ adapter.ProfileStateReader = (*Adapter)(nil)
+var _ adapter.ProfileStateWriter = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
@@ -233,6 +234,8 @@ func (a *Adapter) Capabilities() []core.Capability {
 		core.CapabilityConversationRead,
 		core.CapabilityConversationWrite,
 		core.CapabilityConversationMarkRead,
+		core.CapabilityResumeRead,
+		core.CapabilityResumeUpdate,
 	}
 }
 
@@ -390,12 +393,52 @@ func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key
 
 func (a *Adapter) ReadProfileState(ctx context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
 	a.mu.RLock()
+	apiClient := a.clients[request.ProfileID]
 	browserClient := a.browserClients[request.ProfileID]
 	a.mu.RUnlock()
+	if resumeProfilePaths(request.Paths) && apiClient != nil {
+		return apiClient.ReadProfileState(ctx, request)
+	}
 	if browserClient != nil {
 		return browserClient.ReadProfileState(ctx, request)
 	}
-	return core.ProfileStateObservation{}, operationError(core.ErrorUnauthorized, "profile_state.read", "HH profile has no bound browser read session", nil)
+	if apiClient != nil {
+		return apiClient.ReadProfileState(ctx, request)
+	}
+	return core.ProfileStateObservation{}, operationError(core.ErrorUnauthorized, "profile_state.read", "HH profile has no compatible profile state session", nil)
+}
+
+func (a *Adapter) ApplyProfileState(ctx context.Context, proposal core.ProfileStateProposal) (adapter.ProfileStateApplyResult, error) {
+	paths, err := proposal.DeclaredPaths()
+	if err != nil {
+		return adapter.ProfileStateApplyResult{}, err
+	}
+	a.mu.RLock()
+	apiClient := a.clients[proposal.ProfileID]
+	browserClient := a.browserProfileStateClients[proposal.ProfileID]
+	a.mu.RUnlock()
+	if resumeProfilePaths(paths) && apiClient != nil {
+		return apiClient.ApplyProfileState(ctx, proposal)
+	}
+	if browserClient != nil {
+		return browserClient.ApplyProfileState(ctx, proposal)
+	}
+	if apiClient != nil {
+		return apiClient.ApplyProfileState(ctx, proposal)
+	}
+	return adapter.ProfileStateApplyResult{}, operationError(core.ErrorUnauthorized, "profile_state.apply", "HH profile has no bound profile state session", nil)
+}
+
+func resumeProfilePaths(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if _, ok := parseResumeProfilePath(path); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) ([]adapter.SuitableResume, error) {

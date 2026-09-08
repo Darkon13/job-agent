@@ -195,24 +195,94 @@ func (client *BrowserReadClient) ReadProfileState(ctx context.Context, request a
 	if request.ProfileID == "" || request.ProfileID != client.profileID {
 		return core.ProfileStateObservation{}, errors.New("HH browser profile state reader profile does not match")
 	}
-	resumeIDs := make([]string, 0, len(request.Paths))
-	seen := make(map[string]struct{}, len(request.Paths))
+	aboutIDs := make(map[string]struct{}, len(request.Paths))
+	webPaths := make(map[string][]browserResumePath)
+	profilePaths := make(map[string][]browserProfilePath)
 	for _, pointer := range request.Paths {
-		resumeID, supported := hhAboutResumeID(pointer)
-		if !supported {
-			return core.ProfileStateObservation{}, operationError(core.ErrorUnsupported, operation, "HH browser reader does not support one or more declared profile state paths", nil)
+		if path, supported := parseBrowserResumePath(pointer); supported {
+			webPaths[path.resumeID] = append(webPaths[path.resumeID], path)
+			continue
 		}
-		if _, exists := seen[resumeID]; !exists {
-			seen[resumeID] = struct{}{}
-			resumeIDs = append(resumeIDs, resumeID)
+		if path, supported := parseBrowserProfilePath(pointer); supported {
+			profilePaths[path.resumeID] = append(profilePaths[path.resumeID], path)
+			continue
 		}
+		if resumeID, supported := hhAboutResumeID(pointer); supported {
+			aboutIDs[resumeID] = struct{}{}
+			continue
+		}
+		return core.ProfileStateObservation{}, operationError(core.ErrorUnsupported, operation, "HH browser reader does not support one or more declared profile state paths", nil)
 	}
-	if len(resumeIDs) == 0 {
+	if len(webPaths) == 0 && len(profilePaths) == 0 && len(aboutIDs) == 0 {
 		return core.ProfileStateObservation{}, errors.New("HH browser profile state reader requires declared paths")
 	}
-	sort.Strings(resumeIDs)
-	resumes := make(map[string]any, len(resumeIDs))
-	for _, resumeID := range resumeIDs {
+	resumes := make(map[string]any, len(webPaths)+len(aboutIDs))
+	if len(webPaths) != 0 {
+		documents, err := client.readBrowserResumeDocuments(ctx, browserResumeIDs(webPaths))
+		if err != nil {
+			return core.ProfileStateObservation{}, err
+		}
+		for _, resumeID := range browserResumeIDs(webPaths) {
+			observed := make(map[string]any)
+			for _, path := range webPaths[resumeID] {
+				value, exists := documents[resumeID][browserResumeReadField(path.field)]
+				if !exists {
+					continue
+				}
+				value, err = normalizeBrowserResumeField(path.field, value)
+				if err != nil {
+					return core.ProfileStateObservation{}, err
+				}
+				if len(path.fields) != 0 {
+					object, ok := value.(map[string]any)
+					if !ok {
+						continue
+					}
+					value, exists = lookupObjectPath(object, path.fields)
+					if !exists {
+						continue
+					}
+				}
+				setObjectPath(observed, append([]string{"web", path.field}, path.fields...), value)
+			}
+			resumes[resumeID] = observed
+		}
+	}
+	for _, resumeID := range browserProfileResumeIDs(profilePaths) {
+		document, err := client.getBrowserProfileDocument(ctx, resumeID)
+		if err != nil {
+			return core.ProfileStateObservation{}, err
+		}
+		observed, _ := resumes[resumeID].(map[string]any)
+		if observed == nil {
+			observed = make(map[string]any)
+		}
+		for _, path := range profilePaths[resumeID] {
+			value, exists := document[path.field]
+			if !exists {
+				continue
+			}
+			value = normalizeBrowserProfileField(value)
+			if len(path.fields) != 0 {
+				object, ok := value.(map[string]any)
+				if !ok {
+					continue
+				}
+				value, exists = lookupObjectPath(object, path.fields)
+				if !exists {
+					continue
+				}
+			}
+			setObjectPath(observed, append([]string{"web_profile", path.field}, path.fields...), value)
+		}
+		resumes[resumeID] = observed
+	}
+	aboutResumeIDs := make([]string, 0, len(aboutIDs))
+	for resumeID := range aboutIDs {
+		aboutResumeIDs = append(aboutResumeIDs, resumeID)
+	}
+	sort.Strings(aboutResumeIDs)
+	for _, resumeID := range aboutResumeIDs {
 		endpoint := strings.TrimRight(client.webBaseURL, "/") + "/resume/edit/" + url.PathEscape(resumeID) + "/about"
 		document, finalURL, err := client.getHTML(ctx, endpoint, operation)
 		if err != nil {
@@ -230,7 +300,12 @@ func (client *BrowserReadClient) ReadProfileState(ctx context.Context, request a
 		if about == "" {
 			normalized = nil
 		}
-		resumes[resumeID] = map[string]any{"about": normalized}
+		observed, _ := resumes[resumeID].(map[string]any)
+		if observed == nil {
+			observed = make(map[string]any)
+		}
+		observed["about"] = normalized
+		resumes[resumeID] = observed
 	}
 	state, err := json.Marshal(map[string]any{"resumes": resumes})
 	if err != nil {

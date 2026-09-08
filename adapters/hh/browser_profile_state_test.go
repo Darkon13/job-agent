@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -149,5 +150,164 @@ func TestBrowserProfileStateClearsAboutWithNull(t *testing.T) {
 	}))
 	if _, err := client.ApplyProfileState(context.Background(), browserProfileStateProposal(t, `"old"`, `null`)); err != nil {
 		t.Fatalf("clear about: %v", err)
+	}
+}
+
+func TestBrowserProfileStateAppliesResumeEditorDocumentAndDeduplicatesRetry(t *testing.T) {
+	current := map[string]any{
+		"title":      []any{"Old"},
+		"keySkills":  []any{"Go"},
+		"experience": []any{},
+	}
+	gets, posts := 0, 0
+	client := newBrowserProfileStateClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodGet:
+			gets++
+			if request.URL.Path != "/applicant/resume" || request.URL.Query().Get("resume") != "resume-42" {
+				t.Errorf("GET URL = %s", request.URL.String())
+			}
+			native := make(map[string]any, len(current)+1)
+			for field, value := range current {
+				if _, wrapped := browserResumeWrappedFields[field]; wrapped {
+					items := value.([]any)
+					converted := make([]any, 0, len(items))
+					for _, item := range items {
+						converted = append(converted, map[string]any{"string": item})
+					}
+					native[field] = converted
+					continue
+				}
+				native[field] = value
+			}
+			native["lastActivityTime"] = "must-not-leak"
+			_ = json.NewEncoder(response).Encode(map[string]any{"resume": native})
+		case http.MethodPost:
+			posts++
+			if request.URL.Path != "/applicant/resume/edit" || request.URL.Query().Get("resume") != "resume-42" {
+				t.Errorf("POST URL = %s", request.URL.String())
+			}
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode update: %v", err)
+			}
+			if len(body) != 3 || body["lastActivityTime"] != nil {
+				t.Fatalf("POST leaked undeclared fields: %#v", body)
+			}
+			current = body
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"resume":{}}`))
+		default:
+			t.Errorf("unexpected method %s", request.Method)
+		}
+	}))
+	desired := json.RawMessage(`{"resumes":{"resume-42":{"web":{
+		"title":["Backend developer"],
+		"keySkills":["Go","PostgreSQL"],
+		"experience":[{"companyName":"Example","position":"Developer","startDate":"2024-01-01","endDate":null,"description":"APIs"}]
+	}}}}`)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, desired)
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	paths := mustProfileStatePaths(t, resource)
+	before, err := client.reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{ProfileID: "primary", Paths: paths})
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+	proposal, err := core.NewProfileStateProposal("proposal-web", resource, before, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	result, err := client.ApplyProfileState(context.Background(), proposal)
+	if err != nil || result.AlreadyApplied || gets != 3 || posts != 1 {
+		t.Fatalf("apply result=%#v gets=%d posts=%d err=%v", result, gets, posts, err)
+	}
+	result, err = client.ApplyProfileState(context.Background(), proposal)
+	if err != nil || !result.AlreadyApplied || gets != 4 || posts != 1 {
+		t.Fatalf("retry result=%#v gets=%d posts=%d err=%v", result, gets, posts, err)
+	}
+}
+
+func TestBrowserProfileStateRejectsScalarWrappedFieldWithoutPOST(t *testing.T) {
+	posts := 0
+	client := newBrowserProfileStateClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			posts++
+		}
+		_ = json.NewEncoder(response).Encode(map[string]any{"resume": map[string]any{"title": []any{map[string]any{"string": "Old"}}}})
+	}))
+	desired := json.RawMessage(`{"resumes":{"resume-42":{"web":{"title":"Backend"}}}}`)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, desired)
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	before, err := client.reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{ProfileID: "primary", Paths: mustProfileStatePaths(t, resource)})
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+	proposal, err := core.NewProfileStateProposal("proposal-invalid", resource, before, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	_, err = client.ApplyProfileState(context.Background(), proposal)
+	if !core.ErrorIsCategory(err, core.ErrorValidationRequired) || posts != 0 {
+		t.Fatalf("error=%v posts=%d", err, posts)
+	}
+}
+
+func TestBrowserProfileStateAppliesApplicantProfileFields(t *testing.T) {
+	current := []any{"Old"}
+	posts := 0
+	client := newBrowserProfileStateClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodGet:
+			if request.URL.Path != "/shards/applicant/profile/get_full_data" || request.URL.Query().Get("resumeHash") != "resume-42" {
+				t.Errorf("GET URL = %s", request.URL.String())
+			}
+			wrapped := make([]any, 0, len(current))
+			for _, item := range current {
+				wrapped = append(wrapped, map[string]any{"string": item})
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"profile": map[string]any{"fields": map[string]any{"firstName": wrapped}}})
+		case http.MethodPost:
+			posts++
+			if request.URL.Path != "/shards/applicant/profile/update" {
+				t.Errorf("POST URL = %s", request.URL.String())
+			}
+			var body struct {
+				Profile map[string][]any `json:"profile"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode update: %v", err)
+			}
+			if len(body.Profile) != 1 {
+				t.Fatalf("profile body = %#v", body.Profile)
+			}
+			current = body.Profile["firstName"]
+			_, _ = response.Write([]byte(`{"profile":{}}`))
+		}
+	}))
+	desired := json.RawMessage(`{"resumes":{"resume-42":{"web_profile":{"firstName":["Ivan"]}}}}`)
+	resource, err := core.NewProfileStateResource("profile", "primary", core.ProfileStateOwnershipDeclaredFields, desired)
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	paths := mustProfileStatePaths(t, resource)
+	before, err := client.reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{ProfileID: "primary", Paths: paths})
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+	proposal, err := core.NewProfileStateProposal("proposal-profile", resource, before, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	result, err := client.ApplyProfileState(context.Background(), proposal)
+	if err != nil || result.AlreadyApplied || posts != 1 {
+		t.Fatalf("apply result=%#v posts=%d err=%v", result, posts, err)
+	}
+	result, err = client.ApplyProfileState(context.Background(), proposal)
+	if err != nil || !result.AlreadyApplied || posts != 1 {
+		t.Fatalf("retry result=%#v posts=%d err=%v", result, posts, err)
 	}
 }

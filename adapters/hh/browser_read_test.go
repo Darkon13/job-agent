@@ -160,6 +160,69 @@ func TestBrowserReadLoadsResumeAboutAsProfileStateWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestBrowserReadLoadsDeclaredResumeEditorFields(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/applicant/resume" || request.URL.Query().Get("resume") != "resume-42" {
+			t.Errorf("request = %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("X-Requested-With") != "XMLHttpRequest" || request.Header.Get("Cookie") != "session=ready" {
+			t.Errorf("browser headers = %#v", request.Header)
+		}
+		_, _ = response.Write([]byte(`{"resume":{
+			"title":[{"string":"Backend"}],
+			"keySkills":[{"string":"Go"},{"string":"PostgreSQL"}],
+			"experience":[{"companyName":"Example","position":"Developer","startDate":"2024-01-01","endDate":null,"description":"APIs"}],
+			"lastActivityTime":"must-not-leak"
+		}}`))
+	}))
+
+	observation, err := client.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: "primary",
+		Paths: []string{
+			"/resumes/resume-42/web/title",
+			"/resumes/resume-42/web/keySkills",
+			"/resumes/resume-42/web/experience",
+		},
+	})
+	if err != nil {
+		t.Fatalf("read resume editor state: %v", err)
+	}
+	want := `{"resumes":{"resume-42":{"web":{"experience":[{"companyName":"Example","description":"APIs","endDate":null,"position":"Developer","startDate":"2024-01-01"}],"keySkills":["Go","PostgreSQL"],"title":["Backend"]}}}}`
+	if string(observation.State) != want {
+		t.Fatalf("state = %s, want %s", observation.State, want)
+	}
+}
+
+func TestBrowserReadLoadsDeclaredApplicantProfileFields(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/shards/applicant/profile/get_full_data" || request.URL.Query().Get("resumeHash") != "resume-42" {
+			t.Errorf("request = %s %s", request.Method, request.URL.String())
+		}
+		_, _ = response.Write([]byte(`{"profile":{"status":"READY","fields":{
+			"firstName":[{"string":"Ivan"}],
+			"area":[{"string":1}],
+			"preferredWorkAreas":[{"area":1,"districts":[],"metroLines":[],"metroStations":[]}],
+			"userId":[{"string":"must-not-leak"}]
+		}}}`))
+	}))
+
+	observation, err := client.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: "primary",
+		Paths: []string{
+			"/resumes/resume-42/web_profile/firstName",
+			"/resumes/resume-42/web_profile/area",
+			"/resumes/resume-42/web_profile/preferredWorkAreas",
+		},
+	})
+	if err != nil {
+		t.Fatalf("read applicant profile state: %v", err)
+	}
+	want := `{"resumes":{"resume-42":{"web_profile":{"area":[1],"firstName":["Ivan"],"preferredWorkAreas":[{"area":1,"districts":[],"metroLines":[],"metroStations":[]}]}}}}`
+	if string(observation.State) != want {
+		t.Fatalf("state = %s, want %s", observation.State, want)
+	}
+}
+
 func TestBrowserReadRejectsUnsupportedProfileStateBeforeRequest(t *testing.T) {
 	requests := 0
 	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))

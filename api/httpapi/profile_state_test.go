@@ -253,3 +253,55 @@ func assertProfileStateSecretsAbsent(t *testing.T, value string) {
 		}
 	}
 }
+
+func TestProfileStateAPICreatesOneShotBootstrapPlan(t *testing.T) {
+	now := time.Date(2026, 9, 8, 9, 30, 0, 0, time.UTC)
+	repository := memory.NewRepository()
+	queue := brokermemory.NewQueue()
+	planner, _ := workflow.NewProfileStatePlanner(nil, repository, profileStateAPIClock{now}, &profileStateAPIIDs{})
+	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, queue, profileStateAPIClock{now}, &profileStateAPIIDs{next: 10}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{next: 20}, nil)
+	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		if request.ProfileID != "primary" || len(request.Paths) != 2 {
+			t.Fatalf("read request = %#v", request)
+		}
+		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"experience":[],"skill_set":["Go"]}}}`), "revision-1", now)
+	})
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	body := `{
+		"api_version":"job-agent/v1",
+		"kind":"ProfileBootstrap",
+		"metadata":{"name":"primary-resume"},
+		"spec":{"profile_id":"primary","state":{"resumes":{"resume-1":{
+			"experience":[{"company":"Example","position":"Developer"}],
+			"skill_set":["Go","PostgreSQL"]
+		}}}}
+	}`
+	response := httptest.NewRecorder()
+	api.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/bootstrap/plans", strings.NewReader(body)))
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"status":"planned"`) || !strings.Contains(response.Body.String(), `"resource_tag":"primary-resume"`) {
+		t.Fatalf("bootstrap plan response: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "Example") || strings.Contains(response.Body.String(), "PostgreSQL") {
+		t.Fatalf("bootstrap response leaked desired values: %s", response.Body.String())
+	}
+}
+
+func TestProfileStateAPIRejectsUnknownBootstrapProfileAndControlField(t *testing.T) {
+	repository := memory.NewRepository()
+	queue := brokermemory.NewQueue()
+	planner, _ := workflow.NewProfileStatePlanner(nil, repository, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, nil)
+	for _, body := range []string{
+		`{"api_version":"job-agent/v1","kind":"ProfileBootstrap","metadata":{"name":"resume"},"spec":{"profile_id":"missing","state":{"profile":{"area":"1"}}}}`,
+		`{"api_version":"job-agent/v1","kind":"ProfileBootstrap","metadata":{"name":"resume"},"spec":{"profile_id":"missing","state":{"profile":{"area":"1"}}},"typo":true}`,
+	} {
+		response := httptest.NewRecorder()
+		api.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/bootstrap/plans", strings.NewReader(body)))
+		if response.Code < 400 {
+			t.Fatalf("bootstrap should fail: %d %s", response.Code, response.Body.String())
+		}
+	}
+}

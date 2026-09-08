@@ -98,6 +98,19 @@ func (planner *ProfileStatePlanner) ReadAndPlan(ctx context.Context, resourceTag
 	return planner.readAndPlanResource(ctx, resource, reader)
 }
 
+// ReadAndPlanResource plans an explicitly supplied one-shot manifest. Unlike
+// scheduled resources, it is not added to the planner registry; the immutable
+// proposal stored by planResource is the complete source of truth for apply.
+func (planner *ProfileStatePlanner) ReadAndPlanResource(ctx context.Context, resource core.ProfileStateResource, reader adapter.ProfileStateReader) (core.ProfileStateProposal, bool, error) {
+	if planner == nil {
+		return core.ProfileStateProposal{}, false, errors.New("profile state planner is nil")
+	}
+	if err := resource.Validate(); err != nil {
+		return core.ProfileStateProposal{}, false, err
+	}
+	return planner.readAndPlanResource(ctx, resource, reader)
+}
+
 // ReadAndPlanWithOverrides creates an immutable one-shot proposal without
 // changing the registered resource that remains the persistent source of
 // truth. The derived resource retains exactly the same declared ownership.

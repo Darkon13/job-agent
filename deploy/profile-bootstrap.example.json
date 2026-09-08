@@ -1,0 +1,41 @@
+{
+  "api_version": "job-agent/v1",
+  "kind": "ProfileBootstrap",
+  "metadata": {
+    "name": "primary-backend-resume"
+  },
+  "spec": {
+    "profile_id": "primary",
+    "ownership": "declared_fields",
+    "state": {
+      "resumes": {
+        "replace-with-hh-resume-id": {
+          "web_profile": {
+            "firstName": ["Иван"],
+            "lastName": ["Иванов"],
+            "area": [1]
+          },
+          "web": {
+            "title": ["Backend-разработчик"],
+            "professionalRole": [96],
+            "experience": [
+              {
+                "companyName": "Компания",
+                "position": "Backend-разработчик",
+                "startDate": "2024-01-01",
+                "endDate": null,
+                "description": "Разрабатывал backend-сервисы."
+              }
+            ],
+            "keySkills": [
+              "Go",
+              "PostgreSQL",
+              "Docker"
+            ],
+            "skills": ["Краткий итоговый текст раздела «О себе». Такой элемент должен быть один."]
+          }
+        }
+      }
+    }
+  }
+}

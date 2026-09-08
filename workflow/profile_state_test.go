@@ -121,3 +121,33 @@ func TestProfileStatePlannerUsesOneShotOverrideWithoutMutatingSource(t *testing.
 		t.Fatalf("registered resource changed: %#v", storedResource)
 	}
 }
+
+func TestProfileStatePlannerPlansUnregisteredBootstrapResource(t *testing.T) {
+	now := time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC)
+	resource, err := core.NewProfileStateResource("bootstrap", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"skill_set":["Go","PostgreSQL"]}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	repository := memory.NewRepository()
+	planner, err := NewProfileStatePlanner(nil, repository, fixedClock{now}, &sequentialIDs{})
+	if err != nil {
+		t.Fatalf("new planner: %v", err)
+	}
+	reader := profileStateReaderFunc(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		if request.ProfileID != "primary" || len(request.Paths) != 1 || request.Paths[0] != "/resumes/resume-1/skill_set" {
+			t.Fatalf("read request = %#v", request)
+		}
+		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"skill_set":["Go"]}}}`), "revision-1", now)
+	})
+	proposal, created, err := planner.ReadAndPlanResource(context.Background(), resource, reader)
+	if err != nil || !created || proposal.Status != core.ProfileStateProposalPlanned {
+		t.Fatalf("bootstrap plan: %#v created=%v err=%v", proposal, created, err)
+	}
+	if _, exists := planner.Resource(resource.Tag); exists {
+		t.Fatal("one-shot resource was registered")
+	}
+	stored, err := repository.ProfileStateProposal(context.Background(), proposal.ID)
+	if err != nil || string(stored.DesiredState) != string(resource.State) {
+		t.Fatalf("stored proposal = %#v err=%v", stored, err)
+	}
+}

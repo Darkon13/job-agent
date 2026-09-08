@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,19 +59,35 @@ func (client *BrowserProfileStateClient) ApplyProfileState(ctx context.Context, 
 	if len(pending) == 0 {
 		return adapter.ProfileStateApplyResult{Observation: observation, AlreadyApplied: true}, nil
 	}
-	values, err := desiredHHAboutValues(proposal.DesiredState, pending)
+	values, err := desiredHHBrowserResumeValues(proposal.DesiredState, pending)
 	if err != nil {
 		return adapter.ProfileStateApplyResult{}, err
 	}
-	for _, change := range pending {
-		resumeID, _ := hhAboutResumeID(change.Path)
-		if err := client.postAbout(ctx, resumeID, values[resumeID]); err != nil {
-			if core.ErrorIsCategory(err, core.ErrorAmbiguousResult) {
-				if reconciled, reconcileErr := client.readBack(ctx, proposal, paths); reconcileErr == nil && len(reconciled.pending) == 0 {
-					return adapter.ProfileStateApplyResult{Observation: reconciled.observation}, nil
-				}
+	resumeIDs := make([]string, 0, len(values))
+	for resumeID := range values {
+		resumeIDs = append(resumeIDs, resumeID)
+	}
+	sort.Strings(resumeIDs)
+	for _, resumeID := range resumeIDs {
+		writes := []struct {
+			fields map[string]any
+			apply  func(context.Context, string, map[string]any) error
+		}{
+			{fields: values[resumeID].profile, apply: client.postProfileFields},
+			{fields: values[resumeID].resume, apply: client.postResumeFields},
+		}
+		for _, write := range writes {
+			if len(write.fields) == 0 {
+				continue
 			}
-			return adapter.ProfileStateApplyResult{}, err
+			if err := write.apply(ctx, resumeID, write.fields); err != nil {
+				if core.ErrorIsCategory(err, core.ErrorAmbiguousResult) {
+					if reconciled, reconcileErr := client.readBack(ctx, proposal, paths); reconcileErr == nil && len(reconciled.pending) == 0 {
+						return adapter.ProfileStateApplyResult{Observation: reconciled.observation}, nil
+					}
+				}
+				return adapter.ProfileStateApplyResult{}, err
+			}
 		}
 	}
 	result, err := client.readBack(ctx, proposal, paths)
@@ -100,20 +117,16 @@ func (client *BrowserProfileStateClient) readBack(ctx context.Context, proposal 
 	return profileStateReadBack{observation: observation, pending: pending}, nil
 }
 
-func (client *BrowserProfileStateClient) postAbout(ctx context.Context, resumeID string, about *string) error {
+func (client *BrowserProfileStateClient) postResumeFields(ctx context.Context, resumeID string, fields map[string]any) error {
 	const operation = "profile_state.apply.browser"
 	endpoint, _ := url.Parse(strings.TrimRight(client.webBaseURL, "/") + "/applicant/resume/edit")
 	query := endpoint.Query()
 	query.Set("resume", resumeID)
 	query.Set("hhtmSource", "profile-state")
 	endpoint.RawQuery = query.Encode()
-	skills := make([]string, 0, 1)
-	if about != nil {
-		skills = append(skills, *about)
-	}
-	body, err := json.Marshal(map[string]any{"skills": skills})
+	body, err := json.Marshal(fields)
 	if err != nil {
-		return fmt.Errorf("encode HH about update: %w", err)
+		return fmt.Errorf("encode HH resume update: %w", err)
 	}
 	httpClient, err := client.authenticatedClient(endpoint.String())
 	if err != nil {
@@ -149,6 +162,47 @@ func (client *BrowserProfileStateClient) postAbout(ctx context.Context, resumeID
 	return classifyBrowserProfileStatePOST(response, data)
 }
 
+func (client *BrowserProfileStateClient) postProfileFields(ctx context.Context, resumeID string, fields map[string]any) error {
+	const operation = "profile_state.apply.browser"
+	endpoint, _ := url.Parse(strings.TrimRight(client.webBaseURL, "/") + "/shards/applicant/profile/update")
+	body, err := json.Marshal(map[string]any{"profile": fields})
+	if err != nil {
+		return fmt.Errorf("encode HH profile update: %w", err)
+	}
+	httpClient, err := client.authenticatedClient(endpoint.String())
+	if err != nil {
+		return err
+	}
+	copy := *httpClient
+	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create HH profile update request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", client.reader.userAgent)
+	request.Header.Set("X-Requested-With", "XMLHttpRequest")
+	request.Header.Set("Referer", strings.TrimRight(client.webBaseURL, "/")+"/resume/edit/"+url.PathEscape(resumeID))
+	if xsrf := cookieValue(httpClient, endpoint, "_xsrf"); xsrf != "" {
+		request.Header.Set("X-Xsrftoken", xsrf)
+	}
+	response, err := copy.Do(request)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return operationError(core.ErrorAmbiguousResult, operation, "HH profile update outcome is unknown after transport failure", err)
+	}
+	defer response.Body.Close()
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxBrowserProfileStateResponse))
+	if readErr != nil {
+		return operationError(core.ErrorAmbiguousResult, operation, "HH profile update outcome is unknown after reading the response", readErr)
+	}
+	return classifyBrowserProfileStatePOST(response, data)
+}
+
 func (client *BrowserProfileStateClient) authenticatedClient(endpoint string) (*http.Client, error) {
 	transport, err := NewResumeTouchTransport(client.reader.stateFile, client.reader.httpClient)
 	if err != nil {
@@ -159,38 +213,102 @@ func (client *BrowserProfileStateClient) authenticatedClient(endpoint string) (*
 	return transport.authenticatedClient()
 }
 
-func desiredHHAboutValues(state json.RawMessage, pending []core.ProfileStateChange) (map[string]*string, error) {
-	var desired struct {
-		Resumes map[string]map[string]json.RawMessage `json:"resumes"`
-	}
-	if err := json.Unmarshal(state, &desired); err != nil {
+type desiredHHBrowserResumeState struct {
+	resume  map[string]any
+	profile map[string]any
+}
+
+func desiredHHBrowserResumeValues(state json.RawMessage, pending []core.ProfileStateChange) (map[string]*desiredHHBrowserResumeState, error) {
+	desired, err := decodeJSONObject(state)
+	if err != nil {
 		return nil, fmt.Errorf("decode HH desired profile state: %w", err)
 	}
-	values := make(map[string]*string, len(pending))
+	desiredResumes, ok := desired["resumes"].(map[string]any)
+	if !ok {
+		return nil, errors.New("HH desired profile state has no resumes object")
+	}
+	values := make(map[string]*desiredHHBrowserResumeState, len(pending))
 	for _, change := range pending {
+		if path, supported := parseBrowserResumePath(change.Path); supported {
+			desiredResume, ok := desiredResumes[path.resumeID].(map[string]any)
+			if !ok {
+				return nil, errors.New("HH desired profile state has no browser resume document")
+			}
+			web, ok := desiredResume["web"].(map[string]any)
+			if !ok {
+				return nil, errors.New("HH desired profile state has no web resume fields")
+			}
+			value, exists := web[path.field]
+			if !exists {
+				return nil, errors.New("HH desired profile state has no declared browser resume field")
+			}
+			if _, wrapped := browserResumeWrappedFields[path.field]; wrapped && value != nil {
+				if _, ok := value.([]any); !ok {
+					return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "HH wrapped browser resume fields must be arrays", nil)
+				}
+			}
+			entry := browserDesiredEntry(values, path.resumeID)
+			entry.resume[path.field] = value
+			continue
+		}
+		if path, supported := parseBrowserProfilePath(change.Path); supported {
+			desiredResume, ok := desiredResumes[path.resumeID].(map[string]any)
+			if !ok {
+				return nil, errors.New("HH desired profile state has no browser profile document")
+			}
+			profile, ok := desiredResume["web_profile"].(map[string]any)
+			if !ok {
+				return nil, errors.New("HH desired profile state has no web_profile fields")
+			}
+			value, exists := profile[path.field]
+			if !exists {
+				return nil, errors.New("HH desired profile state has no declared browser profile field")
+			}
+			if _, ok := value.([]any); !ok {
+				return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "HH browser profile fields must be arrays", nil)
+			}
+			browserDesiredEntry(values, path.resumeID).profile[path.field] = value
+			continue
+		}
 		resumeID, supported := hhAboutResumeID(change.Path)
 		if !supported {
-			return nil, operationError(core.ErrorUnsupported, "profile_state.apply.browser", "HH browser writer supports only resume about fields", nil)
+			return nil, operationError(core.ErrorUnsupported, "profile_state.apply.browser", "HH browser writer does not support one or more declared fields", nil)
 		}
-		raw, exists := desired.Resumes[resumeID]["about"]
+		desiredResume, ok := desiredResumes[resumeID].(map[string]any)
+		if !ok {
+			return nil, errors.New("HH desired profile state has no resume document")
+		}
+		value, exists := desiredResume["about"]
 		if !exists {
 			return nil, errors.New("HH desired profile state has no declared about value")
 		}
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			values[resumeID] = nil
+		entry := browserDesiredEntry(values, resumeID)
+		if _, collision := entry.resume["skills"]; collision {
+			return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "do not declare both legacy about and web.skills", nil)
+		}
+		if value == nil {
+			entry.resume["skills"] = []any{}
 			continue
 		}
-		var value string
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "HH resume about must be a string or null", err)
+		text, ok := value.(string)
+		if !ok {
+			return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "HH resume about must be a string or null", nil)
 		}
-		if value == "" {
+		if text == "" {
 			return nil, operationError(core.ErrorValidationRequired, "profile_state.apply.browser", "use null to clear HH resume about", nil)
 		}
-		copy := value
-		values[resumeID] = &copy
+		entry.resume["skills"] = []any{text}
 	}
 	return values, nil
+}
+
+func browserDesiredEntry(values map[string]*desiredHHBrowserResumeState, resumeID string) *desiredHHBrowserResumeState {
+	entry := values[resumeID]
+	if entry == nil {
+		entry = &desiredHHBrowserResumeState{resume: make(map[string]any), profile: make(map[string]any)}
+		values[resumeID] = entry
+	}
+	return entry
 }
 
 func classifyBrowserProfileStatePOST(response *http.Response, data []byte) error {

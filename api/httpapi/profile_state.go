@@ -74,11 +74,48 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/profile-state/resources/{resource_tag}/editor", api.getResourceEditor)
 	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/plans", api.plan)
 	mux.HandleFunc("POST /api/v1/profile-state/resources/{resource_tag}/reconcile", api.reconcileResource)
+	mux.HandleFunc("POST /api/v1/profile-state/bootstrap/plans", api.planBootstrap)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/apply", api.applyProposal)
 	mux.Handle("/", next)
 	return mux
+}
+
+func (api *ProfileStateAPI) planBootstrap(response http.ResponseWriter, request *http.Request) {
+	var manifest core.ProfileBootstrapManifest
+	if !decodeJSON(response, request, &manifest) {
+		return
+	}
+	if err := manifest.Validate(); err != nil {
+		writeProblem(response, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	resource, err := manifest.Resource()
+	if err != nil {
+		writeProblem(response, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	reader := api.readers[resource.ProfileID]
+	if reader == nil {
+		writeProblem(response, http.StatusConflict, "profile bootstrap has no trusted reader")
+		return
+	}
+	if !api.apply.Writable(resource.ProfileID) {
+		writeProblem(response, http.StatusConflict, workflow.ErrProfileStateWriterUnavailable.Error())
+		return
+	}
+	proposal, created, err := api.planner.ReadAndPlanResource(request.Context(), resource, reader)
+	if err != nil {
+		writeProfileStateError(response, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, proposal)
 }
 
 func (api *ProfileStateAPI) listResources(response http.ResponseWriter, _ *http.Request) {

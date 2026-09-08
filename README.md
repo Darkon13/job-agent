@@ -86,7 +86,8 @@ Core уже содержит:
   для REST/TG/CLI;
 - нормализованные диалоги и сообщения, а также отменяемые одноразовые follow-up
   таймеры с idempotency, deadline и проверкой входящего ответа перед отправкой;
-- одноразовый idempotent bootstrap чистого профиля из mounted JSON.
+- versioned one-shot bootstrap профиля/резюме из JSON с redacted plan,
+  compare-before-write, read-back и повторным `no_changes`.
 
 Global HH search выполняется отдельными задачами по одной странице. У обычного
 discovery-поиска durable `search_runs` владеет текущим cursor и revision. Route,
@@ -181,6 +182,9 @@ Read/plan API не принимает observation от клиента:
 - `POST /api/v1/profile-state/resources/{tag}/plans` сам читает актуальный HH
   state и сохраняет immutable proposal; опциональный one-shot override требует
   digest базового manifest;
+- `POST /api/v1/profile-state/bootstrap/plans` принимает versioned one-shot
+  `ProfileBootstrap`, проверяет profile-scoped reader/writer и строит такой же
+  immutable redacted plan без регистрации временного runtime resource;
 - `POST /api/v1/profile-state/resources/{tag}/reconcile` с `Idempotency-Key`
   ставит durable read-plan-apply task и подходит для dashboard/API trigger;
 - `GET /api/v1/profile-state/proposals` и
@@ -193,10 +197,24 @@ Read/plan API не принимает observation от клиента:
 Dashboard показывает ресурсы, объявленные пути и redacted diff и разделяет
 кнопки «Построить план» и «Применить». Команда «Сверить и применить» ставит
 асинхронный reconcile, не выполняя HH-запрос внутри HTTP request. Сейчас HH
-browser writer поддерживает только `about`: строка обновляет поле, `null`
-очищает его. При стороннем изменении после plan POST не выполняется, а задача
+Browser writer через текущую cookie-сессию поддерживает allowlisted поля
+web-редактора: личные данные, позицию, опыт, key skills, «О себе», форматы и
+образование. OAuth writer дополнительно поддерживает native `resume_profile`
+секции. При стороннем изменении после plan PUT/POST не выполняется, а задача
 завершается конфликтом; повтор после потерянного ответа сначала проверяет
 фактическое состояние.
+
+Для заполнения профиля и резюме из одного файла используется CLI-клиент:
+
+```bash
+job-agent startup --api http://127.0.0.1:8081 ./data/resume.json
+job-agent profile bootstrap --api http://127.0.0.1:8081 ./data/resume.json
+job-agent profile bootstrap --api http://127.0.0.1:8081 --apply ./data/resume.json
+```
+
+`startup` сразу ставит plan в durable queue; `profile bootstrap` без `--apply`
+только показывает операции и пути. Формат, пример с `experience`/`keySkills` и
+ограничения описаны в [`docs/profile-bootstrap.md`](docs/profile-bootstrap.md).
 
 SQLite и memory stores также реализуют progressive test catalog и human review
 history. Каталог создаётся до начала попытки и пополняется вопросами независимо;
