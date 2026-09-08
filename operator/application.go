@@ -62,6 +62,8 @@ type RuleTemplateConfig struct {
 	StaticMessage   string
 	MessageTemplate string
 	MessagePool     *MessagePoolConfig
+	EmployerMatcher *EmployerGroupMatcher
+	EmployerRules   []EmployerRuleConfig
 }
 
 const (
@@ -80,6 +82,18 @@ type MessagePoolConfig struct {
 	Templates []MessageTemplateConfig
 }
 
+const (
+	EmployerRuleMessagePool = "message_pool"
+	EmployerRuleSkip        = "skip"
+	EmployerRuleReview      = "review"
+)
+
+type EmployerRuleConfig struct {
+	EmployerGroups []string
+	Action         string
+	MessagePool    *MessagePoolConfig
+}
+
 type compiledMessageTemplate struct {
 	tag      string
 	template *template.Template
@@ -91,12 +105,20 @@ type RuleTemplatePreparer struct {
 	staticMessage string
 	template      *template.Template
 	messagePool   *compiledMessagePool
+	employerMatch *EmployerGroupMatcher
+	employerRules []compiledEmployerRule
 }
 
 type compiledMessagePool struct {
 	tag       string
 	strategy  string
 	templates []compiledMessageTemplate
+}
+
+type compiledEmployerRule struct {
+	groups      []string
+	action      string
+	messagePool *compiledMessagePool
 }
 
 type ApplicationTemplateData struct {
@@ -160,9 +182,14 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if err != nil {
 		return nil, err
 	}
+	employerRules, err := compileEmployerRules(config.EmployerMatcher, config.EmployerRules)
+	if err != nil {
+		return nil, err
+	}
 	preparer := &RuleTemplatePreparer{
 		includeAny: includeAny, excludeAny: excludeAny,
 		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool,
+		employerMatch: config.EmployerMatcher, employerRules: employerRules,
 	}
 	probe := ApplicationPreparation{Outcome: ApplicationApply, Code: "qualified", Reason: "vacancy passed deterministic rules", Message: preparer.staticMessage}
 	if err := probe.Validate(); err != nil {
@@ -205,11 +232,32 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			}, nil
 		}
 	}
-	message, selection, err := preparer.renderMessage(application, vacancy)
+	selectedPool := preparer.messagePool
+	employerReason := ""
+	for _, rule := range preparer.employerRules {
+		match, matched := preparer.employerMatch.MatchAny(vacancy, rule.groups)
+		if !matched {
+			continue
+		}
+		employerReason = employerMatchReason(match)
+		switch rule.action {
+		case EmployerRuleSkip:
+			return ApplicationPreparation{Outcome: ApplicationSkip, Code: "employer_rule_skip", Reason: employerReason}, nil
+		case EmployerRuleReview:
+			return ApplicationPreparation{Outcome: ApplicationReview, Code: "employer_rule_review", Reason: employerReason}, nil
+		case EmployerRuleMessagePool:
+			selectedPool = rule.messagePool
+		}
+		break
+	}
+	message, selection, err := preparer.renderMessage(application, vacancy, selectedPool)
 	if err != nil {
 		return ApplicationPreparation{}, err
 	}
 	reason := "vacancy passed deterministic rules"
+	if employerReason != "" {
+		reason += "; " + employerReason
+	}
 	if selection != "" {
 		reason += "; " + selection
 	}
@@ -223,20 +271,75 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 	return result, nil
 }
 
-func (preparer *RuleTemplatePreparer) renderMessage(application core.Application, vacancy core.Vacancy) (string, string, error) {
-	if preparer.messagePool != nil {
-		selected := preparer.messagePool.templates[preparer.messagePool.index(application)]
+func (preparer *RuleTemplatePreparer) renderMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (string, string, error) {
+	if messagePool != nil {
+		selected := messagePool.templates[messagePool.index(application)]
 		message, err := executeApplicationTemplate(selected.template, application, vacancy)
 		if err != nil {
 			return "", "", err
 		}
-		return message, fmt.Sprintf("message pool %q selected template %q", preparer.messagePool.tag, selected.tag), nil
+		return message, fmt.Sprintf("message pool %q selected template %q", messagePool.tag, selected.tag), nil
 	}
 	if preparer.template == nil {
 		return preparer.staticMessage, "", nil
 	}
 	message, err := executeApplicationTemplate(preparer.template, application, vacancy)
 	return message, "", err
+}
+
+func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleConfig) ([]compiledEmployerRule, error) {
+	if len(configs) == 0 {
+		return nil, nil
+	}
+	if matcher == nil {
+		return nil, errors.New("employer rules require employer group matcher")
+	}
+	result := make([]compiledEmployerRule, 0, len(configs))
+	for index, config := range configs {
+		if len(config.EmployerGroups) == 0 {
+			return nil, fmt.Errorf("employer rule %d requires at least one group", index)
+		}
+		groups := make([]string, 0, len(config.EmployerGroups))
+		seen := make(map[string]struct{}, len(config.EmployerGroups))
+		for _, value := range config.EmployerGroups {
+			tag := strings.TrimSpace(value)
+			if !matcher.HasGroup(tag) {
+				return nil, fmt.Errorf("employer rule %d references unknown group %q", index, tag)
+			}
+			if _, exists := seen[tag]; exists {
+				return nil, fmt.Errorf("employer rule %d contains duplicate group %q", index, tag)
+			}
+			seen[tag] = struct{}{}
+			groups = append(groups, tag)
+		}
+		action := strings.TrimSpace(config.Action)
+		switch action {
+		case EmployerRuleSkip, EmployerRuleReview:
+			if config.MessagePool != nil {
+				return nil, fmt.Errorf("employer rule %d action %q cannot use a message pool", index, action)
+			}
+		case EmployerRuleMessagePool:
+			if config.MessagePool == nil {
+				return nil, fmt.Errorf("employer rule %d action %q requires a message pool", index, action)
+			}
+		default:
+			return nil, fmt.Errorf("employer rule %d has unsupported action %q", index, action)
+		}
+		pool, err := compileMessagePool(config.MessagePool)
+		if err != nil {
+			return nil, fmt.Errorf("employer rule %d: %w", index, err)
+		}
+		result = append(result, compiledEmployerRule{groups: groups, action: action, messagePool: pool})
+	}
+	return result, nil
+}
+
+func employerMatchReason(match EmployerGroupMatch) string {
+	reason := fmt.Sprintf("employer rule matched group %q by %s", match.GroupTag, match.Evidence.Kind)
+	if match.Evidence.Via != "" {
+		reason += fmt.Sprintf(" via %q", match.Evidence.Via)
+	}
+	return reason
 }
 
 func executeApplicationTemplate(compiled *template.Template, application core.Application, vacancy core.Vacancy) (string, error) {

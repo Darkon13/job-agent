@@ -157,6 +157,81 @@ func TestLoadResolvesStableMessagePool(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesEmployerRuleMessagePool(t *testing.T) {
+	directory := t.TempDir()
+	messageDirectory := filepath.Join(directory, "messages")
+	if err := os.Mkdir(messageDirectory, 0o700); err != nil {
+		t.Fatalf("create messages directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(messageDirectory, "marketplace.json"), []byte(`{
+		"strategy":"first",
+		"templates":[{"tag":"focused","template":"Здравствуйте, {{.Vacancy.Employer}}!"}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write employer message pool: %v", err)
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"employer_groups":[{"tag":"marketplaces","rules":[{"name":"Ozon Tech"}]}],
+		"profiles":[{
+			"tag":"primary","adapter":"hh-main","enabled":true,
+			"applications":{"employer_rules":[{
+				"employer_groups":["marketplaces"],
+				"action":"message_pool",
+				"message_template_file":"messages/marketplace.json"
+			}]}
+		}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	rules := loaded.Profiles[0].Applications.ResolvedEmployerRules()
+	if len(rules) != 1 || rules[0].Action != "message_pool" || rules[0].MessagePool == nil ||
+		rules[0].MessagePool.Tag != "marketplace" || rules[0].MessagePool.Templates[0].Tag != "focused" {
+		t.Fatalf("resolved employer rules = %#v", rules)
+	}
+	rules[0].EmployerGroups[0] = "changed"
+	rules[0].MessagePool.Templates[0].Template = "changed"
+	again := loaded.Profiles[0].Applications.ResolvedEmployerRules()
+	if again[0].EmployerGroups[0] != "marketplaces" || again[0].MessagePool.Templates[0].Template == "changed" {
+		t.Fatal("resolved employer rules leaked mutable state")
+	}
+}
+
+func TestApplicationPolicyValidatesEmployerRules(t *testing.T) {
+	base := Config{
+		Database:       DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters:       []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		EmployerGroups: []EmployerGroupConfig{{Tag: "known", Rules: []EmployerGroupRuleConfig{{Name: "Example"}}}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Applications: ApplicationPolicy{
+			EmployerRules: []ApplicationEmployerRule{{EmployerGroups: []string{"known"}, Action: "skip"}},
+		}}},
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid skip rule: %v", err)
+	}
+
+	base.Profiles[0].Applications.EmployerRules[0].EmployerGroups = []string{"missing"}
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected unknown employer group to fail")
+	}
+	base.Profiles[0].Applications.EmployerRules[0].EmployerGroups = []string{"known"}
+	base.Profiles[0].Applications.EmployerRules[0].Action = "message_pool"
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected unresolved rule message pool to fail")
+	}
+	base.Profiles[0].Applications.EmployerRules[0].Action = "skip"
+	base.Profiles[0].Applications.EmployerRules[0].MessageTemplateFile = "messages/forbidden.json"
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected message pool on skip rule to fail")
+	}
+}
+
 func TestApplicationPolicyRejectsMultipleMessageSources(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
@@ -293,6 +368,28 @@ func TestProfileStateResourcesRejectUnknownReferencesAndDuplicates(t *testing.T)
 	config.Resources = append(config.Resources, config.Resources[0])
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected duplicate resource tag to fail")
+	}
+}
+
+func TestConfigBuildsEmployerGroupsAndRejectsCycles(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		EmployerGroups: []EmployerGroupConfig{
+			{Tag: "ozon", Rules: []EmployerGroupRuleConfig{{Platform: "hh", EmployerID: "2180"}, {Name: "Ozon Tech"}}},
+			{Tag: "marketplaces", Include: []string{"ozon"}},
+		},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid employer groups: %v", err)
+	}
+	matcher, err := config.BuildEmployerGroupMatcher()
+	if err != nil || !matcher.HasGroup("ozon") || !matcher.HasGroup("marketplaces") {
+		t.Fatalf("matcher=%#v err=%v", matcher, err)
+	}
+
+	config.EmployerGroups[0].Include = []string{"marketplaces"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected employer group include cycle to fail")
 	}
 }
 

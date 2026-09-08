@@ -18,6 +18,15 @@
       }
     }
   ],
+  "employer_groups": [
+    {
+      "tag": "example-marketplaces",
+      "rules": [
+        {"platform": "hh", "employer_id": "example-id"},
+        {"name": "Example Marketplace"}
+      ]
+    }
+  ],
   "profiles": [
     {
       "tag": "primary",
@@ -27,6 +36,13 @@
       "applications": {
         "mode": "dry_run",
         "message_template_file": "messages/backend.json",
+        "employer_rules": [
+          {
+            "employer_groups": ["example-marketplaces"],
+            "action": "message_pool",
+            "message_template_file": "messages/marketplace.json"
+          }
+        ],
         "allow_visibility_change": false,
         "qualification": {
           "include_any": ["Go", "Golang", "Backend"],

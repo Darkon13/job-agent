@@ -305,9 +305,14 @@ platform, состоянием, датой публикации, описани�
 и повторно используется после retry вместе с выбранным резюме. Поэтому
 изменение порядка или содержимого пула не меняет уже подготовленный отклик.
 
-Следующий срез этого контура — переиспользуемые группы работодателей,
-маршрутизация к именованному пулу и model operator с fallback. План и критерий
-готовности описаны в
+Переиспользуемые `employer_groups` сопоставляют вакансию по точному
+platform-specific `employer_id`, точному нормализованному имени-алиасу либо
+через вложенную группу. Нечёткое и substring-сопоставление намеренно не
+используются. Упорядоченные `applications.employer_rules` применяют первое
+совпавшее правило и могут выбрать отдельный `message_pool`, пропустить вакансию
+(`skip`) или отправить её на ручную проверку (`review`). Причина решения
+содержит группу и тип доказательства совпадения. Следующий срез этого контура —
+model operator с fallback. План и критерий готовности описаны в
 [`docs/next-cover-letter-routing.md`](docs/next-cover-letter-routing.md).
 
 Формат пула:
@@ -325,9 +330,25 @@ platform, состоянием, датой публикации, описани�
 Пример безопасной настройки:
 
 ```json
+"employer_groups": [
+  {
+    "tag": "marketplaces",
+    "rules": [
+      {"platform": "hh", "employer_id": "2180"},
+      {"name": "Ozon Tech"}
+    ]
+  }
+],
 "applications": {
   "mode": "dry_run",
   "message_template_file": "messages/backend.json",
+  "employer_rules": [
+    {
+      "employer_groups": ["marketplaces"],
+      "action": "message_pool",
+      "message_template_file": "messages/marketplace.json"
+    }
+  ],
   "allow_visibility_change": false,
   "qualification": {
     "include_any": ["Go", "Golang", "Backend"],

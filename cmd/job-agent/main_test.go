@@ -150,7 +150,7 @@ func TestProbeProfileAuthorizationsReturnsTransportFailure(t *testing.T) {
 func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
 	_, err := applicationPreparer(appconfig.Profile{Applications: appconfig.ApplicationPolicy{
 		MessageTemplate: "{{.Missing}}",
-	}})
+	}}, nil)
 	if err == nil {
 		t.Fatal("expected invalid application message template")
 	}

@@ -65,6 +65,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	employerMatcher, err := cfg.BuildEmployerGroupMatcher()
+	if err != nil {
+		log.Fatalf("build employer groups: %v", err)
+	}
 	if options.migrateUp {
 		if err := storesqlite.MigrateUp(cfg.Database.Path); err != nil {
 			log.Fatalf("migrate database: %v", err)
@@ -144,7 +148,7 @@ func main() {
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
-		preparer, err := applicationPreparer(profile)
+		preparer, err := applicationPreparer(profile, employerMatcher)
 		if err != nil {
 			log.Fatalf("build application operator for profile %q: %v", profile.Tag, err)
 		}
@@ -524,17 +528,23 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
 }
 
-func applicationPreparer(profile appconfig.Profile) (applicationoperator.ApplicationPreparer, error) {
+func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher) (applicationoperator.ApplicationPreparer, error) {
 	var messagePool *applicationoperator.MessagePoolConfig
 	messageTemplate := profile.Applications.ResolvedMessageTemplate()
 	if configured, exists := profile.Applications.ResolvedMessagePool(); exists {
 		messageTemplate = ""
-		messagePool = &applicationoperator.MessagePoolConfig{Tag: configured.Tag, Strategy: configured.Strategy}
-		for _, candidate := range configured.Templates {
-			messagePool.Templates = append(messagePool.Templates, applicationoperator.MessageTemplateConfig{
-				Tag: candidate.Tag, Template: candidate.Template,
-			})
+		messagePool = applicationMessagePool(configured)
+	}
+	employerRules := make([]applicationoperator.EmployerRuleConfig, 0, len(profile.Applications.EmployerRules))
+	for _, configured := range profile.Applications.ResolvedEmployerRules() {
+		rule := applicationoperator.EmployerRuleConfig{
+			EmployerGroups: configured.EmployerGroups,
+			Action:         configured.Action,
 		}
+		if configured.MessagePool != nil {
+			rule.MessagePool = applicationMessagePool(*configured.MessagePool)
+		}
+		employerRules = append(employerRules, rule)
 	}
 	preparer, err := applicationoperator.NewRuleTemplatePreparer(applicationoperator.RuleTemplateConfig{
 		IncludeAny:      profile.Applications.Qualification.IncludeAny,
@@ -542,11 +552,23 @@ func applicationPreparer(profile appconfig.Profile) (applicationoperator.Applica
 		StaticMessage:   profile.Applications.Message,
 		MessageTemplate: messageTemplate,
 		MessagePool:     messagePool,
+		EmployerMatcher: employerMatcher,
+		EmployerRules:   employerRules,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return preparer, nil
+}
+
+func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applicationoperator.MessagePoolConfig {
+	pool := &applicationoperator.MessagePoolConfig{Tag: configured.Tag, Strategy: configured.Strategy}
+	for _, candidate := range configured.Templates {
+		pool.Templates = append(pool.Templates, applicationoperator.MessageTemplateConfig{
+			Tag: candidate.Tag, Template: candidate.Template,
+		})
+	}
+	return pool
 }
 
 func configureSearchRuns(

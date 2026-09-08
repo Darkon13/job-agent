@@ -145,3 +145,98 @@ func TestRuleTemplatePreparerValidatesMessagePool(t *testing.T) {
 		t.Fatal("expected duplicate pool template tag to fail")
 	}
 }
+
+func TestRuleTemplatePreparerRoutesMessagePoolByEmployerGroup(t *testing.T) {
+	application, vacancy := operatorFixture()
+	vacancy.Employer = "Ozon Tech"
+	vacancy.Attributes["employer_id"] = "2180"
+	matcher, err := NewEmployerGroupMatcher([]EmployerGroupConfig{
+		{Tag: "ozon", Rules: []EmployerGroupRuleConfig{{Platform: "hh", EmployerID: "2180"}}},
+		{Tag: "marketplaces", Include: []string{"ozon"}},
+	})
+	if err != nil {
+		t.Fatalf("new employer matcher: %v", err)
+	}
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		MessagePool:     &MessagePoolConfig{Tag: "default", Templates: []MessageTemplateConfig{{Tag: "default", Template: "Обычное письмо"}}},
+		EmployerMatcher: matcher,
+		EmployerRules: []EmployerRuleConfig{{
+			EmployerGroups: []string{"marketplaces"}, Action: EmployerRuleMessagePool,
+			MessagePool: &MessagePoolConfig{Tag: "marketplace", Templates: []MessageTemplateConfig{{Tag: "focused", Template: "Письмо для {{.Vacancy.Employer}}"}}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if result.Message != "Письмо для Ozon Tech" ||
+		!strings.Contains(result.Reason, `matched group "marketplaces" by included_group via "ozon"`) ||
+		!strings.Contains(result.Reason, `message pool "marketplace" selected template "focused"`) {
+		t.Fatalf("preparation = %#v", result)
+	}
+}
+
+func TestRuleTemplatePreparerEmployerRulesAreOrderedAndCanStopApplication(t *testing.T) {
+	application, vacancy := operatorFixture()
+	matcher, err := NewEmployerGroupMatcher([]EmployerGroupConfig{
+		{Tag: "example", Rules: []EmployerGroupRuleConfig{{Name: "Example"}}},
+	})
+	if err != nil {
+		t.Fatalf("new employer matcher: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		action  string
+		outcome ApplicationOutcome
+		code    string
+	}{
+		{name: "skip", action: EmployerRuleSkip, outcome: ApplicationSkip, code: "employer_rule_skip"},
+		{name: "review", action: EmployerRuleReview, outcome: ApplicationReview, code: "employer_rule_review"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+				EmployerMatcher: matcher,
+				EmployerRules: []EmployerRuleConfig{
+					{EmployerGroups: []string{"example"}, Action: test.action},
+					{EmployerGroups: []string{"example"}, Action: EmployerRuleMessagePool, MessagePool: &MessagePoolConfig{
+						Tag: "must-not-win", Templates: []MessageTemplateConfig{{Tag: "one", Template: "unexpected"}},
+					}},
+				},
+			})
+			if err != nil {
+				t.Fatalf("new preparer: %v", err)
+			}
+			result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+			if err != nil || result.Outcome != test.outcome || result.Code != test.code || result.Message != "" {
+				t.Fatalf("preparation = %#v, err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestRuleTemplatePreparerValidatesEmployerRules(t *testing.T) {
+	matcher, err := NewEmployerGroupMatcher([]EmployerGroupConfig{{Tag: "known", Rules: []EmployerGroupRuleConfig{{Name: "Example"}}}})
+	if err != nil {
+		t.Fatalf("new employer matcher: %v", err)
+	}
+	tests := []struct {
+		name   string
+		config RuleTemplateConfig
+	}{
+		{name: "missing matcher", config: RuleTemplateConfig{EmployerRules: []EmployerRuleConfig{{EmployerGroups: []string{"known"}, Action: EmployerRuleSkip}}}},
+		{name: "unknown group", config: RuleTemplateConfig{EmployerMatcher: matcher, EmployerRules: []EmployerRuleConfig{{EmployerGroups: []string{"missing"}, Action: EmployerRuleSkip}}}},
+		{name: "missing pool", config: RuleTemplateConfig{EmployerMatcher: matcher, EmployerRules: []EmployerRuleConfig{{EmployerGroups: []string{"known"}, Action: EmployerRuleMessagePool}}}},
+		{name: "pool on skip", config: RuleTemplateConfig{EmployerMatcher: matcher, EmployerRules: []EmployerRuleConfig{{EmployerGroups: []string{"known"}, Action: EmployerRuleSkip, MessagePool: &MessagePoolConfig{Tag: "pool", Templates: []MessageTemplateConfig{{Tag: "one", Template: "text"}}}}}}},
+		{name: "unknown action", config: RuleTemplateConfig{EmployerMatcher: matcher, EmployerRules: []EmployerRuleConfig{{EmployerGroups: []string{"known"}, Action: "route"}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewRuleTemplatePreparer(test.config); err == nil {
+				t.Fatal("expected invalid employer rule to fail")
+			}
+		})
+	}
+}

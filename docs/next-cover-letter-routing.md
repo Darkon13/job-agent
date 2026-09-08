@@ -1,7 +1,7 @@
 # Следующая задача: пулы сопроводительных и группы работодателей
 
-Статус: `in progress`. Файловые message pools и воспроизводимый выбор уже
-реализованы; employer groups, policy routing и model operator ещё не начаты.
+Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
+groups и profile-level policy routing реализованы; model operator ещё не начат.
 
 Общий контракт `rule_sets → policy rules → named action`, а также processors,
 которые разделяют детерминированные преобразования и LLM, зафиксирован в
@@ -106,21 +106,26 @@ full vacancy + employer
 
 ## Порядок реализации
 
-1. **Частично выполнено:** файловые именованные message pools загружаются с
-   проверкой схемы; `employer_groups` и ссылки из rules ещё отсутствуют.
-2. Реализовать matcher с приоритетом ID, поддержкой aliases/вложенных групп и
-   диагностикой причины совпадения.
+1. **Выполнено:** файловые именованные message pools загружаются с проверкой
+   схемы; top-level `employer_groups` доступны из profile rules.
+2. **Выполнено:** matcher предпочитает точный platform ID, поддерживает точные
+   нормализованные aliases и вложенные группы, отклоняет циклы и возвращает
+   доказательство совпадения. Fuzzy/substring matching отсутствует намеренно.
 3. **Выполнено для profile-level selector:** одиночный
    `message_template_file` теперь принимает pool, старый `{ "template": ... }`
    остаётся совместимым.
 4. **Выполнено:** `first`/`stable_hash` выбирают вариант воспроизводимо, а
    подготовленный текст сохраняется до submit/retry.
-5. Добавить общий model-operator port, один компактный provider adapter,
+5. **Выполнено:** упорядоченные profile-level rules выбирают отдельный pool,
+   `skip` либо `review`; первое совпавшее правило побеждает, а причина решения
+   содержит группу и evidence.
+6. Добавить общий model-operator port, один компактный provider adapter,
    timeout/rate-limit policy и fallback на готовый пул.
-6. Добавить validator фактической опоры, placeholders и длины; неизвестные
+7. Добавить validator фактической опоры, placeholders и длины; неизвестные
    факты отправлять в approval, а не исправлять догадкой.
-7. Покрыть config, matcher, retry stability, fallback и application integration
-   тестами; затем проверить один `approval`-отклик без массового запуска.
+8. Покрыть model fallback и groundedness тестами; config, matcher и application
+   routing уже покрыты. Затем проверить один `approval`-отклик без массового
+   запуска.
 
 ## Критерий готовности
 

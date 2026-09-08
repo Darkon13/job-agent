@@ -13,17 +13,45 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
+	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/robfig/cron/v3"
 )
 
 type Config struct {
-	Database  DatabaseConfig               `json:"database"`
-	Adapters  []AdapterConfig              `json:"adapters"`
-	Profiles  []Profile                    `json:"profiles"`
-	Searches  []Search                     `json:"searches"`
-	Resources []ProfileStateResourceConfig `json:"resources,omitempty"`
-	Jobs      []Job                        `json:"jobs,omitempty"`
-	Server    ServerConfig                 `json:"server,omitempty"`
+	Database       DatabaseConfig               `json:"database"`
+	Adapters       []AdapterConfig              `json:"adapters"`
+	Profiles       []Profile                    `json:"profiles"`
+	Searches       []Search                     `json:"searches"`
+	Resources      []ProfileStateResourceConfig `json:"resources,omitempty"`
+	EmployerGroups []EmployerGroupConfig        `json:"employer_groups,omitempty"`
+	Jobs           []Job                        `json:"jobs,omitempty"`
+	Server         ServerConfig                 `json:"server,omitempty"`
+}
+
+type EmployerGroupConfig struct {
+	Tag     string                    `json:"tag"`
+	Rules   []EmployerGroupRuleConfig `json:"rules,omitempty"`
+	Include []string                  `json:"include,omitempty"`
+}
+
+type EmployerGroupRuleConfig struct {
+	Platform   core.Platform `json:"platform,omitempty"`
+	EmployerID string        `json:"employer_id,omitempty"`
+	Name       string        `json:"name,omitempty"`
+}
+
+func (c Config) BuildEmployerGroupMatcher() (*applicationoperator.EmployerGroupMatcher, error) {
+	groups := make([]applicationoperator.EmployerGroupConfig, 0, len(c.EmployerGroups))
+	for _, configured := range c.EmployerGroups {
+		group := applicationoperator.EmployerGroupConfig{Tag: configured.Tag, Include: append([]string(nil), configured.Include...)}
+		for _, rule := range configured.Rules {
+			group.Rules = append(group.Rules, applicationoperator.EmployerGroupRuleConfig{
+				Platform: rule.Platform, EmployerID: rule.EmployerID, Name: rule.Name,
+			})
+		}
+		groups = append(groups, group)
+	}
+	return applicationoperator.NewEmployerGroupMatcher(groups)
 }
 
 const ResourceTypeProfileState = "profile_state"
@@ -177,16 +205,30 @@ type ConversationPolicy struct {
 }
 
 type ApplicationPolicy struct {
-	Mode                  string                   `json:"mode,omitempty"`
-	Message               string                   `json:"message,omitempty"`
-	MessageTemplate       string                   `json:"message_template,omitempty"`
-	MessageTemplateFile   string                   `json:"message_template_file,omitempty"`
-	Qualification         ApplicationQualification `json:"qualification,omitempty"`
-	DailyLimit            int                      `json:"daily_limit,omitempty"`
-	Timezone              string                   `json:"timezone,omitempty"`
-	AllowVisibilityChange bool                     `json:"allow_visibility_change,omitempty"`
+	Mode                  string                    `json:"mode,omitempty"`
+	Message               string                    `json:"message,omitempty"`
+	MessageTemplate       string                    `json:"message_template,omitempty"`
+	MessageTemplateFile   string                    `json:"message_template_file,omitempty"`
+	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
+	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
+	DailyLimit            int                       `json:"daily_limit,omitempty"`
+	Timezone              string                    `json:"timezone,omitempty"`
+	AllowVisibilityChange bool                      `json:"allow_visibility_change,omitempty"`
 	resolvedTemplate      string
 	resolvedMessagePool   *ApplicationMessagePool
+}
+
+type ApplicationEmployerRule struct {
+	EmployerGroups      []string `json:"employer_groups"`
+	Action              string   `json:"action"`
+	MessageTemplateFile string   `json:"message_template_file,omitempty"`
+	resolvedMessagePool *ApplicationMessagePool
+}
+
+type ResolvedApplicationEmployerRule struct {
+	EmployerGroups []string
+	Action         string
+	MessagePool    *ApplicationMessagePool
 }
 
 type ApplicationMessageTemplate struct {
@@ -230,9 +272,29 @@ func (policy ApplicationPolicy) ResolvedMessagePool() (ApplicationMessagePool, b
 	if policy.resolvedMessagePool == nil {
 		return ApplicationMessagePool{}, false
 	}
-	result := *policy.resolvedMessagePool
-	result.Templates = append([]ApplicationMessageTemplate(nil), policy.resolvedMessagePool.Templates...)
-	return result, true
+	return cloneApplicationMessagePool(*policy.resolvedMessagePool), true
+}
+
+func (policy ApplicationPolicy) ResolvedEmployerRules() []ResolvedApplicationEmployerRule {
+	result := make([]ResolvedApplicationEmployerRule, 0, len(policy.EmployerRules))
+	for _, configured := range policy.EmployerRules {
+		resolved := ResolvedApplicationEmployerRule{
+			EmployerGroups: append([]string(nil), configured.EmployerGroups...),
+			Action:         configured.Action,
+		}
+		if configured.resolvedMessagePool != nil {
+			pool := cloneApplicationMessagePool(*configured.resolvedMessagePool)
+			resolved.MessagePool = &pool
+		}
+		result = append(result, resolved)
+	}
+	return result
+}
+
+func cloneApplicationMessagePool(pool ApplicationMessagePool) ApplicationMessagePool {
+	result := pool
+	result.Templates = append([]ApplicationMessageTemplate(nil), pool.Templates...)
+	return result
 }
 
 // ProfileBootstrap schedules one idempotent initial profile fill after auth.
@@ -318,46 +380,95 @@ func (c *Config) resolveProfileBootstrapFiles(baseDirectory string) error {
 func (c *Config) resolveApplicationMessageFiles(baseDirectory string) error {
 	for index := range c.Profiles {
 		policy := &c.Profiles[index].Applications
-		if strings.TrimSpace(policy.MessageTemplateFile) == "" {
-			continue
+		if strings.TrimSpace(policy.MessageTemplateFile) != "" {
+			pool, template, err := resolveApplicationMessageFile(
+				baseDirectory,
+				policy.MessageTemplateFile,
+				fmt.Sprintf("profile %q message_template_file", c.Profiles[index].Tag),
+			)
+			if err != nil {
+				return err
+			}
+			policy.resolvedTemplate = template
+			policy.resolvedMessagePool = &pool
 		}
-		path := policy.MessageTemplateFile
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(baseDirectory, path)
+		for ruleIndex := range policy.EmployerRules {
+			rule := &policy.EmployerRules[ruleIndex]
+			if strings.TrimSpace(rule.MessageTemplateFile) == "" {
+				continue
+			}
+			pool, _, err := resolveApplicationMessageFile(
+				baseDirectory,
+				rule.MessageTemplateFile,
+				fmt.Sprintf("profile %q employer rule %d message_template_file", c.Profiles[index].Tag, ruleIndex),
+			)
+			if err != nil {
+				return err
+			}
+			rule.resolvedMessagePool = &pool
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("profile %q message_template_file: %w", c.Profiles[index].Tag, err)
+	}
+	return nil
+}
+
+func resolveApplicationMessageFile(baseDirectory, reference, label string) (ApplicationMessagePool, string, error) {
+	path := reference
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDirectory, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ApplicationMessagePool{}, "", fmt.Errorf("%s: %w", label, err)
+	}
+	var file struct {
+		Template  string                       `json:"template,omitempty"`
+		Strategy  string                       `json:"strategy,omitempty"`
+		Templates []ApplicationMessageTemplate `json:"templates,omitempty"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		return ApplicationMessagePool{}, "", fmt.Errorf("%s: decode: %w", label, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return ApplicationMessagePool{}, "", fmt.Errorf("%s contains trailing JSON", label)
+	}
+	if strings.TrimSpace(file.Template) != "" && len(file.Templates) != 0 {
+		return ApplicationMessagePool{}, "", fmt.Errorf("%s cannot mix template and templates", label)
+	}
+	legacyTemplate := ""
+	if strings.TrimSpace(file.Template) != "" {
+		legacyTemplate = file.Template
+		file.Strategy = applicationoperator.MessagePoolFirst
+		file.Templates = []ApplicationMessageTemplate{{Tag: "default", Template: file.Template}}
+	}
+	if len(file.Templates) == 0 {
+		return ApplicationMessagePool{}, "", fmt.Errorf("%s requires template or templates", label)
+	}
+	if strings.TrimSpace(file.Strategy) == "" {
+		file.Strategy = applicationoperator.MessagePoolFirst
+	}
+	poolTag := strings.TrimSuffix(filepath.Base(reference), filepath.Ext(reference))
+	return ApplicationMessagePool{Tag: poolTag, Strategy: file.Strategy, Templates: file.Templates}, legacyTemplate, nil
+}
+
+func validateApplicationMessagePool(pool ApplicationMessagePool) error {
+	if strings.TrimSpace(pool.Tag) == "" || len(pool.Templates) == 0 {
+		return errors.New("message pool requires tag and templates")
+	}
+	if pool.Strategy != applicationoperator.MessagePoolFirst && pool.Strategy != applicationoperator.MessagePoolStableHash {
+		return fmt.Errorf("message pool has unsupported strategy %q", pool.Strategy)
+	}
+	seenTemplates := make(map[string]struct{}, len(pool.Templates))
+	for _, candidate := range pool.Templates {
+		tag := strings.TrimSpace(candidate.Tag)
+		if tag == "" || strings.TrimSpace(candidate.Template) == "" {
+			return errors.New("message pool contains an empty tag or template")
 		}
-		var file struct {
-			Template  string                       `json:"template,omitempty"`
-			Strategy  string                       `json:"strategy,omitempty"`
-			Templates []ApplicationMessageTemplate `json:"templates,omitempty"`
+		if _, exists := seenTemplates[tag]; exists {
+			return fmt.Errorf("message pool contains duplicate template tag %q", tag)
 		}
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&file); err != nil {
-			return fmt.Errorf("profile %q message_template_file: decode: %w", c.Profiles[index].Tag, err)
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return fmt.Errorf("profile %q message_template_file contains trailing JSON", c.Profiles[index].Tag)
-		}
-		if strings.TrimSpace(file.Template) != "" && len(file.Templates) != 0 {
-			return fmt.Errorf("profile %q message_template_file cannot mix template and templates", c.Profiles[index].Tag)
-		}
-		if strings.TrimSpace(file.Template) != "" {
-			policy.resolvedTemplate = file.Template
-			file.Strategy = "first"
-			file.Templates = []ApplicationMessageTemplate{{Tag: "default", Template: file.Template}}
-		}
-		if len(file.Templates) == 0 {
-			return fmt.Errorf("profile %q message_template_file requires template or templates", c.Profiles[index].Tag)
-		}
-		poolTag := strings.TrimSuffix(filepath.Base(policy.MessageTemplateFile), filepath.Ext(policy.MessageTemplateFile))
-		if strings.TrimSpace(file.Strategy) == "" {
-			file.Strategy = "first"
-		}
-		policy.resolvedMessagePool = &ApplicationMessagePool{Tag: poolTag, Strategy: file.Strategy, Templates: file.Templates}
+		seenTemplates[tag] = struct{}{}
 	}
 	return nil
 }
@@ -410,6 +521,10 @@ func (c Config) Validate() error {
 		}
 		adapters[item.Tag] = struct{}{}
 	}
+	employerMatcher, err := c.BuildEmployerGroupMatcher()
+	if err != nil {
+		return err
+	}
 
 	profiles := make(map[string]struct{}, len(c.Profiles))
 	profileConfigs := make(map[string]Profile, len(c.Profiles))
@@ -461,22 +576,39 @@ func (c Config) Validate() error {
 			return fmt.Errorf("profile %q message_template_file must be resolved by config loader", profile.Tag)
 		}
 		if pool := profile.Applications.resolvedMessagePool; pool != nil {
-			if strings.TrimSpace(pool.Tag) == "" || len(pool.Templates) == 0 {
-				return fmt.Errorf("profile %q message pool requires tag and templates", profile.Tag)
+			if err := validateApplicationMessagePool(*pool); err != nil {
+				return fmt.Errorf("profile %q: %w", profile.Tag, err)
 			}
-			if pool.Strategy != "first" && pool.Strategy != "stable_hash" {
-				return fmt.Errorf("profile %q message pool has unsupported strategy %q", profile.Tag, pool.Strategy)
+		}
+		for ruleIndex, rule := range profile.Applications.EmployerRules {
+			if len(rule.EmployerGroups) == 0 {
+				return fmt.Errorf("profile %q employer rule %d requires at least one employer group", profile.Tag, ruleIndex)
 			}
-			seenTemplates := make(map[string]struct{}, len(pool.Templates))
-			for _, candidate := range pool.Templates {
-				tag := strings.TrimSpace(candidate.Tag)
-				if tag == "" || strings.TrimSpace(candidate.Template) == "" {
-					return fmt.Errorf("profile %q message pool contains an empty tag or template", profile.Tag)
+			seenGroups := make(map[string]struct{}, len(rule.EmployerGroups))
+			for _, value := range rule.EmployerGroups {
+				tag := strings.TrimSpace(value)
+				if !employerMatcher.HasGroup(tag) {
+					return fmt.Errorf("profile %q employer rule %d references unknown employer group %q", profile.Tag, ruleIndex, tag)
 				}
-				if _, exists := seenTemplates[tag]; exists {
-					return fmt.Errorf("profile %q message pool contains duplicate template tag %q", profile.Tag, tag)
+				if _, exists := seenGroups[tag]; exists {
+					return fmt.Errorf("profile %q employer rule %d contains duplicate employer group %q", profile.Tag, ruleIndex, tag)
 				}
-				seenTemplates[tag] = struct{}{}
+				seenGroups[tag] = struct{}{}
+			}
+			switch rule.Action {
+			case applicationoperator.EmployerRuleSkip, applicationoperator.EmployerRuleReview:
+				if strings.TrimSpace(rule.MessageTemplateFile) != "" || rule.resolvedMessagePool != nil {
+					return fmt.Errorf("profile %q employer rule %d action %q cannot use message_template_file", profile.Tag, ruleIndex, rule.Action)
+				}
+			case applicationoperator.EmployerRuleMessagePool:
+				if strings.TrimSpace(rule.MessageTemplateFile) == "" || rule.resolvedMessagePool == nil {
+					return fmt.Errorf("profile %q employer rule %d action %q requires a resolved message_template_file", profile.Tag, ruleIndex, rule.Action)
+				}
+				if err := validateApplicationMessagePool(*rule.resolvedMessagePool); err != nil {
+					return fmt.Errorf("profile %q employer rule %d: %w", profile.Tag, ruleIndex, err)
+				}
+			default:
+				return fmt.Errorf("profile %q employer rule %d has unsupported action %q", profile.Tag, ruleIndex, rule.Action)
 			}
 		}
 		for field, terms := range map[string][]string{
@@ -506,7 +638,6 @@ func (c Config) Validate() error {
 	for _, resource := range profileStateResources {
 		resources[resource.Tag] = resource.ProfileID
 	}
-
 	searches := make(map[string]Search, len(c.Searches))
 	for _, search := range c.Searches {
 		if search.Tag == "" || search.Adapter == "" {
