@@ -140,13 +140,73 @@ func TestProfileBootstrapRequiresSourceAndKnownCondition(t *testing.T) {
 		t.Fatalf("valid bootstrap: %v", err)
 	}
 
-	base.Profiles[0].Bootstrap.When = "always"
+	base.Profiles[0].Bootstrap.When = "missing_resume"
 	if err := base.Validate(); err == nil {
-		t.Fatal("expected unconditional bootstrap to be rejected")
+		t.Fatal("expected unsupported missing-resume bootstrap to be rejected")
+	}
+	base.Profiles[0].Bootstrap = &ProfileBootstrap{Source: "/config/profile.json", When: "empty", Publish: true}
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected unsupported bootstrap publication to be rejected")
 	}
 	base.Profiles[0].Bootstrap = &ProfileBootstrap{When: "empty"}
 	if err := base.Validate(); err == nil {
 		t.Fatal("expected missing bootstrap source to be rejected")
+	}
+}
+
+func TestLoadResolvesRelativeProfileBootstrapManifest(t *testing.T) {
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "profile.json")
+	if err := os.WriteFile(manifestPath, []byte(`{
+		"api_version":"job-agent/v1",
+		"kind":"ProfileBootstrap",
+		"metadata":{"name":"primary-bootstrap"},
+		"spec":{"profile_id":"primary","state":{"profile":{"area":[1]}}}
+	}`), 0o600); err != nil {
+		t.Fatalf("write bootstrap manifest: %v", err)
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[{"tag":"primary","adapter":"hh-main","enabled":true,"bootstrap":{"source":"profile.json","when":"empty"}}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	resource, exists := loaded.Profiles[0].Bootstrap.ResolvedResource()
+	if !exists || resource.Tag != "primary-bootstrap" || resource.ProfileID != "primary" || string(resource.State) != `{"profile":{"area":[1]}}` {
+		t.Fatalf("resolved bootstrap resource = %#v, exists=%t", resource, exists)
+	}
+	resource.State[0] = '['
+	again, _ := loaded.Profiles[0].Bootstrap.ResolvedResource()
+	if string(again.State) != `{"profile":{"area":[1]}}` {
+		t.Fatalf("resolved resource was mutated: %s", again.State)
+	}
+}
+
+func TestLoadRejectsProfileBootstrapForAnotherProfile(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "profile.json"), []byte(`{
+		"api_version":"job-agent/v1","kind":"ProfileBootstrap","metadata":{"name":"other"},
+		"spec":{"profile_id":"secondary","state":{"profile":{"area":[1]}}}
+	}`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[{"tag":"primary","adapter":"hh-main","bootstrap":{"source":"profile.json","when":"empty"}}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("expected cross-profile bootstrap manifest to fail")
 	}
 }
 

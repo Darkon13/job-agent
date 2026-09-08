@@ -237,6 +237,48 @@ func (observation ProfileStateObservation) Validate() error {
 	return nil
 }
 
+// PathsEmpty reports whether every requested field is safe for an initial
+// bootstrap. Missing fields, nulls, empty strings and empty containers count as
+// empty. Scalar zero values are deliberately treated as populated because they
+// may be meaningful platform values.
+func (observation ProfileStateObservation) PathsEmpty(paths []string) (bool, error) {
+	if err := observation.Validate(); err != nil {
+		return false, err
+	}
+	if len(paths) == 0 {
+		return false, errors.New("profile state empty check requires at least one path")
+	}
+	state, err := decodeJSONValue(observation.State)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range paths {
+		if !strings.HasPrefix(path, "/") {
+			return false, fmt.Errorf("profile state path %q is not a JSON Pointer", path)
+		}
+		value, exists := jsonPointerValue(state, path)
+		if exists && !profileStateValueEmpty(value) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func profileStateValueEmpty(value any) bool {
+	switch value := value.(type) {
+	case nil:
+		return true
+	case string:
+		return value == ""
+	case []any:
+		return len(value) == 0
+	case map[string]any:
+		return len(value) == 0
+	default:
+		return false
+	}
+}
+
 type ProfileStateChange struct {
 	Path          string `json:"path"`
 	Operation     string `json:"operation"`

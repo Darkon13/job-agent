@@ -215,6 +215,21 @@ job-agent profile bootstrap --api http://127.0.0.1:8081 --apply ./data/resume.js
 `startup` сразу ставит plan в durable queue; `profile bootstrap` без `--apply`
 только показывает операции и пути. Формат, пример с `experience`/`keySkills` и
 ограничения описаны в [`docs/profile-bootstrap.md`](docs/profile-bootstrap.md).
+Тот же manifest можно подключить к долгоживущему сервису в записи профиля:
+
+```json
+"bootstrap": {
+  "source": "../../data/primary-resume.json",
+  "when": "empty"
+}
+```
+
+Относительный `source` разрешается от каталога основного config. После
+авторизации startup читает только объявленные поля. Bootstrap ставится в
+durable apply-очередь, лишь когда все они отсутствуют либо пусты; частично
+заполненный профиль целиком пропускается без перезаписи. `missing_resume` и
+`publish: true` пока отклоняются конфигом: создание и публикация резюме ещё не
+реализованы как отдельные adapter actions.
 Задача `profile_state.apply` получает системный максимальный приоритет. Пока
 она ожидает, выполняется или остаётся в `failed`, worker не забирает
 `application.submit` того же профиля: ожидание не расходует attempts отклика,

@@ -279,6 +279,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile state apply workflow: %v", err)
 	}
+	profileBootstrapWorkflow, err := workflow.NewProfileBootstrapWorkflow(profileStatePlanner, profileStateApplyWorkflow)
+	if err != nil {
+		log.Fatalf("create profile bootstrap workflow: %v", err)
+	}
+	if err := reconcileConfiguredProfileBootstraps(
+		context.Background(), cfg, profiles, profileStateReaders, profileBootstrapWorkflow,
+	); err != nil {
+		log.Fatalf("reconcile profile bootstrap: %v", err)
+	}
 	profileStateReconcileWorkflow, err := workflow.NewProfileStateReconcileWorkflow(
 		profileStatePlanner, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileStatePlatforms,
 	)
@@ -443,6 +452,56 @@ func main() {
 	if err := serve(ctx, cfg, runtimeAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler())), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func reconcileConfiguredProfileBootstraps(
+	ctx context.Context,
+	cfg appconfig.Config,
+	profiles map[core.ProfileID]profileRuntime,
+	readers map[core.ProfileID]adapter.ProfileStateReader,
+	bootstrap *workflow.ProfileBootstrapWorkflow,
+) error {
+	for _, profile := range cfg.Profiles {
+		if profile.Bootstrap == nil {
+			continue
+		}
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled {
+			log.Printf("profile bootstrap for %q is disabled with the profile", profile.Tag)
+			continue
+		}
+		if profiles[profileID].Status == core.ProfileAuthRequired {
+			log.Printf("profile bootstrap for %q is waiting for authentication", profile.Tag)
+			continue
+		}
+		resource, resolved := profile.Bootstrap.ResolvedResource()
+		if !resolved {
+			return fmt.Errorf("profile %q bootstrap source was not resolved by config loader", profile.Tag)
+		}
+		reader := readers[profileID]
+		if reader == nil {
+			return fmt.Errorf("profile %q bootstrap requires an authorized profile state reader", profile.Tag)
+		}
+		bootstrapCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		result, err := bootstrap.RunWhenEmpty(
+			bootstrapCtx, resource, reader, "config:profile-bootstrap:"+resource.Tag,
+		)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("profile %q: %w", profile.Tag, err)
+		}
+		switch {
+		case !result.ConditionMatched:
+			log.Printf("profile bootstrap for %q skipped: at least one declared field is already populated", profile.Tag)
+		case result.Proposal.Status == core.ProfileStateProposalNoChanges:
+			log.Printf("profile bootstrap for %q has no changes", profile.Tag)
+		case result.TaskCreated:
+			log.Printf("profile bootstrap for %q queued apply task %q", profile.Tag, result.Task.ID)
+		default:
+			log.Printf("profile bootstrap for %q reused apply task %q in status %q", profile.Tag, result.Task.ID, result.Task.Status)
+		}
+	}
+	return nil
 }
 
 func parseMainOptions(arguments []string) (mainOptions, error) {

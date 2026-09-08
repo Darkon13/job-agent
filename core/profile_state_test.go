@@ -144,6 +144,46 @@ func TestProfileStateResourceRejectsOwnershipChangingOverrides(t *testing.T) {
 	}
 }
 
+func TestProfileStateObservationChecksBootstrapPathsConservatively(t *testing.T) {
+	now := time.Now().UTC()
+	empty, err := NewProfileStateObservation("primary", json.RawMessage(`{
+		"profile":{"name":"","middle_name":null,"areas":[],"extra":{}},
+		"resumes":{}
+	}`), "", now)
+	if err != nil {
+		t.Fatalf("new empty observation: %v", err)
+	}
+	paths := []string{"/profile/name", "/profile/middle_name", "/profile/areas", "/profile/extra", "/resumes/missing/about"}
+	if result, err := empty.PathsEmpty(paths); err != nil || !result {
+		t.Fatalf("empty paths = %t, err=%v", result, err)
+	}
+
+	for name, state := range map[string]string{
+		"text":    `{"profile":{"value":"set"}}`,
+		"number":  `{"profile":{"value":0}}`,
+		"boolean": `{"profile":{"value":false}}`,
+		"array":   `{"profile":{"value":["Go"]}}`,
+		"object":  `{"profile":{"value":{"id":"1"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			observation, err := NewProfileStateObservation("primary", json.RawMessage(state), "", now)
+			if err != nil {
+				t.Fatalf("new observation: %v", err)
+			}
+			if result, err := observation.PathsEmpty([]string{"/profile/value"}); err != nil || result {
+				t.Fatalf("populated path = %t, err=%v", result, err)
+			}
+		})
+	}
+
+	if _, err := empty.PathsEmpty(nil); err == nil {
+		t.Fatal("expected empty path list to fail")
+	}
+	if _, err := empty.PathsEmpty([]string{"profile/name"}); err == nil {
+		t.Fatal("expected invalid JSON Pointer to fail")
+	}
+}
+
 func TestProfileStateChangeEscapesJSONPointer(t *testing.T) {
 	now := time.Now().UTC()
 	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"profile":{"a/b~c":true}}`))

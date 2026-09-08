@@ -233,6 +233,11 @@ sing-box final    -> Job Agent explicit fallback action
 - cron, ручной CLI и API/dashboard trigger могут поставить durable
   `profile_state.reconcile`; payload содержит только tag ресурса, а worker
   выполняет read → plan → enqueue apply и ничего не меняет при `no_changes`;
+- profile-level `bootstrap.source` разрешается относительно config, проверяется
+  как versioned `ProfileBootstrap` и после авторизации проходит trusted read →
+  условие `empty` → immutable plan → durable apply до запуска workers. Если
+  заполнен хотя бы один объявленный путь, manifest целиком пропускается;
+  `missing_resume` и автоматический publish пока fail-fast отклоняются;
 - `profile_state.apply`, `resume.touch` и `application.submit` проходят через
   одну process-local mutation lane на `profile_id`: один профиль изменяется
   последовательно, а разные профили могут исполняться параллельно. Claim
@@ -264,8 +269,10 @@ resource в конфиге не вызывает side effect.
 7. ✅ Объединить apply и touch в общую per-profile mutation lane; подключить к
    ней publish при появлении этого worker.
 8. ✅ Добавить редактирование desired «О себе» в dashboard без подмены source of truth.
-9. Обобщить update на остальные profile/resume fields по живой HH schema.
+9. ✅ Обобщить update на остальные profile/resume fields по живой HH schema.
 10. Частично: cron, ручной CLI и API/dashboard reconcile готовы; вынести inline
     actions в переиспользуемый registry и добавить event triggers.
-11. Реализовать employer rule sets, policy routing и explain evidence.
-12. Подключить external/model processors с limits и fallback.
+11. Частично: подключить config-declared bootstrap для `when: empty`; добавить
+    `missing_resume` только вместе с create-resume action и отдельный publish.
+12. Реализовать employer rule sets, policy routing и explain evidence.
+13. Подключить external/model processors с limits и fallback.

@@ -218,9 +218,19 @@ func (policy ApplicationPolicy) ResolvedMessageTemplate() string {
 // Source is resolved by the config builder and should normally be a mounted
 // read-only JSON file.
 type ProfileBootstrap struct {
-	Source  string `json:"source"`
-	When    string `json:"when"`
-	Publish bool   `json:"publish,omitempty"`
+	Source           string `json:"source"`
+	When             string `json:"when"`
+	Publish          bool   `json:"publish,omitempty"`
+	resolvedResource *core.ProfileStateResource
+}
+
+func (bootstrap ProfileBootstrap) ResolvedResource() (core.ProfileStateResource, bool) {
+	if bootstrap.resolvedResource == nil {
+		return core.ProfileStateResource{}, false
+	}
+	resource := *bootstrap.resolvedResource
+	resource.State = append(json.RawMessage(nil), resource.State...)
+	return resource, true
 }
 
 type Search struct {
@@ -245,10 +255,43 @@ func Load(path string) (Config, error) {
 	if err := cfg.resolveApplicationMessageFiles(filepath.Dir(path)); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.resolveProfileBootstrapFiles(filepath.Dir(path)); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func (c *Config) resolveProfileBootstrapFiles(baseDirectory string) error {
+	for index := range c.Profiles {
+		bootstrap := c.Profiles[index].Bootstrap
+		if bootstrap == nil || strings.TrimSpace(bootstrap.Source) == "" {
+			continue
+		}
+		path := bootstrap.Source
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("profile %q bootstrap source: %w", c.Profiles[index].Tag, err)
+		}
+		manifest, err := core.DecodeProfileBootstrapManifest(data)
+		if err != nil {
+			return fmt.Errorf("profile %q bootstrap source: %w", c.Profiles[index].Tag, err)
+		}
+		if manifest.Spec.ProfileID != core.ProfileID(c.Profiles[index].Tag) {
+			return fmt.Errorf("profile %q bootstrap source belongs to profile %q", c.Profiles[index].Tag, manifest.Spec.ProfileID)
+		}
+		resource, err := manifest.Resource()
+		if err != nil {
+			return fmt.Errorf("profile %q bootstrap source: %w", c.Profiles[index].Tag, err)
+		}
+		bootstrap.resolvedResource = &resource
+	}
+	return nil
 }
 
 func (c *Config) resolveApplicationMessageFiles(baseDirectory string) error {
@@ -346,11 +389,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate profile tag %q", profile.Tag)
 		}
 		if profile.Bootstrap != nil {
-			if profile.Bootstrap.Source == "" {
+			if strings.TrimSpace(profile.Bootstrap.Source) == "" {
 				return fmt.Errorf("profile %q bootstrap requires source", profile.Tag)
 			}
-			if profile.Bootstrap.When != "empty" && profile.Bootstrap.When != "missing_resume" {
-				return fmt.Errorf("profile %q bootstrap when must be empty or missing_resume", profile.Tag)
+			if profile.Bootstrap.When != "empty" {
+				return fmt.Errorf("profile %q bootstrap currently supports only when=empty; missing_resume requires resume creation", profile.Tag)
+			}
+			if profile.Bootstrap.Publish {
+				return fmt.Errorf("profile %q bootstrap publish requires resume publication support", profile.Tag)
 			}
 		}
 		switch profile.Applications.ExecutionMode() {

@@ -20,6 +20,45 @@ job-agent startup --api http://127.0.0.1:8081 ./data/primary-resume.json
 Это удобный alias режима `profile bootstrap --apply`; apply всё равно не пишет
 в HH внутри CLI-запроса, а ставит идемпотентную background-задачу.
 
+## Автоматический bootstrap при запуске сервиса
+
+Manifest можно связать с runtime-профилем в основном config:
+
+```json
+{
+  "tag": "primary",
+  "adapter": "hh-main",
+  "state_file": "./data/profiles/primary.json",
+  "bootstrap": {
+    "source": "../../data/primary-resume.json",
+    "when": "empty"
+  },
+  "enabled": true
+}
+```
+
+Относительный `source` считается от каталога config, а не от текущего рабочего
+каталога процесса. Loader заранее декодирует versioned manifest и требует,
+чтобы `spec.profile_id` совпадал с `profile.tag`.
+
+После привязки авторизованного reader/writer startup выполняет один bounded
+read только объявленных путей. Для `when: empty` условие выполняется, когда
+каждый путь отсутствует либо содержит `null`, пустую строку, пустой массив или
+пустой объект. Числа и boolean, включая `0` и `false`, считаются заполненными.
+Если заполнен хотя бы один объявленный путь, весь bootstrap пропускается: это
+защищает частично заполненный профиль от неявной перезаписи.
+
+При выполненном условии используется обычный trusted read → immutable plan →
+durable `profile_state.apply`. Поэтому desired-значения не копируются в task,
+повторный запуск дедуплицируется, а task уже находится в БД до запуска workers
+и служит барьером для старых и новых `application.submit` того же профиля.
+Профиль в `auth_required` не блокирует запуск всего сервиса: bootstrap ожидает
+авторизации и будет проверен при следующем запуске.
+
+Сейчас runtime намеренно принимает только `when: empty`. `missing_resume` и
+`publish: true` отклоняются при загрузке config, пока adapter не умеет отдельно
+создавать и публиковать резюме. Эти значения не игнорируются молча.
+
 Порт `8081` — dashboard/reverse proxy из Compose. При локальном запуске backend
 напрямую используется `http://127.0.0.1:8080`. Чтобы поставить созданный plan в
 durable queue, нужен явный флаг:
