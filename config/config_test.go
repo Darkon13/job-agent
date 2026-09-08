@@ -112,6 +112,49 @@ func TestLoadResolvesExternalApplicationMessageTemplate(t *testing.T) {
 	if actual := config.Profiles[0].Applications.ResolvedMessageTemplate(); actual != "Здравствуйте, {{.Employer}}!" {
 		t.Fatalf("resolved template = %q", actual)
 	}
+	pool, exists := config.Profiles[0].Applications.ResolvedMessagePool()
+	if !exists || pool.Tag != "backend" || pool.Strategy != "first" || len(pool.Templates) != 1 || pool.Templates[0].Tag != "default" {
+		t.Fatalf("resolved legacy message pool = %#v, exists=%t", pool, exists)
+	}
+}
+
+func TestLoadResolvesStableMessagePool(t *testing.T) {
+	directory := t.TempDir()
+	messageDirectory := filepath.Join(directory, "messages")
+	if err := os.Mkdir(messageDirectory, 0o700); err != nil {
+		t.Fatalf("create messages directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(messageDirectory, "backend.json"), []byte(`{
+		"strategy":"stable_hash",
+		"templates":[
+			{"tag":"concise","template":"Здравствуйте! {{.Vacancy.Title}}"},
+			{"tag":"detailed","template":"Здравствуйте, {{.Vacancy.Employer}}!"}
+		]
+	}`), 0o600); err != nil {
+		t.Fatalf("write message pool: %v", err)
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[{"tag":"primary","adapter":"hh-main","enabled":true,"applications":{"message_template_file":"messages/backend.json"}}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	pool, exists := loaded.Profiles[0].Applications.ResolvedMessagePool()
+	if !exists || pool.Tag != "backend" || pool.Strategy != "stable_hash" || len(pool.Templates) != 2 || pool.Templates[1].Tag != "detailed" {
+		t.Fatalf("resolved message pool = %#v, exists=%t", pool, exists)
+	}
+	pool.Templates[0].Template = "mutated"
+	again, _ := loaded.Profiles[0].Applications.ResolvedMessagePool()
+	if again.Templates[0].Template == "mutated" {
+		t.Fatal("resolved message pool leaked mutable templates")
+	}
 }
 
 func TestApplicationPolicyRejectsMultipleMessageSources(t *testing.T) {

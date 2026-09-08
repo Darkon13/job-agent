@@ -1,3 +1,13 @@
 {
-  "template": "Здравствуйте! Меня заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Мой основной фокус — backend-разработка: Go, Python, REST API, PostgreSQL, Docker и автоматизированное тестирование. Буду рад обсудить задачи команды и подробнее рассказать о проектах."
+  "strategy": "stable_hash",
+  "templates": [
+    {
+      "tag": "concise",
+      "template": "Здравствуйте! Меня заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Мой основной фокус — backend-разработка: Go, Python, REST API, PostgreSQL, Docker и автоматизированное тестирование. Буду рад обсудить задачи команды и подробнее рассказать о проектах."
+    },
+    {
+      "tag": "project-focus",
+      "template": "Здравствуйте! Откликаюсь на {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Разрабатываю backend-сервисы на Go и Python, работаю с PostgreSQL, Docker, REST API и автоматизированными тестами. Готов подробнее обсудить релевантные проекты и задачи команды."
+    }
+  ]
 }

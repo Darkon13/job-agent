@@ -3,6 +3,8 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"html"
@@ -59,6 +61,28 @@ type RuleTemplateConfig struct {
 	ExcludeAny      []string
 	StaticMessage   string
 	MessageTemplate string
+	MessagePool     *MessagePoolConfig
+}
+
+const (
+	MessagePoolFirst      = "first"
+	MessagePoolStableHash = "stable_hash"
+)
+
+type MessageTemplateConfig struct {
+	Tag      string
+	Template string
+}
+
+type MessagePoolConfig struct {
+	Tag       string
+	Strategy  string
+	Templates []MessageTemplateConfig
+}
+
+type compiledMessageTemplate struct {
+	tag      string
+	template *template.Template
 }
 
 type RuleTemplatePreparer struct {
@@ -66,6 +90,13 @@ type RuleTemplatePreparer struct {
 	excludeAny    []string
 	staticMessage string
 	template      *template.Template
+	messagePool   *compiledMessagePool
+}
+
+type compiledMessagePool struct {
+	tag       string
+	strategy  string
+	templates []compiledMessageTemplate
 }
 
 type ApplicationTemplateData struct {
@@ -105,26 +136,33 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(config.StaticMessage) != "" && strings.TrimSpace(config.MessageTemplate) != "" {
-		return nil, errors.New("application operator accepts either static message or message template")
+	messageSources := 0
+	if strings.TrimSpace(config.StaticMessage) != "" {
+		messageSources++
+	}
+	if strings.TrimSpace(config.MessageTemplate) != "" {
+		messageSources++
+	}
+	if config.MessagePool != nil {
+		messageSources++
+	}
+	if messageSources > 1 {
+		return nil, errors.New("application operator accepts one static message, message template or message pool")
 	}
 	var compiled *template.Template
 	if strings.TrimSpace(config.MessageTemplate) != "" {
-		compiled, err = template.New("cover-letter").Option("missingkey=error").Parse(config.MessageTemplate)
+		compiled, err = compileApplicationTemplate("cover-letter", config.MessageTemplate)
 		if err != nil {
-			return nil, fmt.Errorf("parse cover letter template: %w", err)
+			return nil, err
 		}
-		var probe bytes.Buffer
-		if err := compiled.Execute(&probe, ApplicationTemplateData{Vacancy: ApplicationVacancyContext{Attributes: map[string]any{}}}); err != nil {
-			return nil, fmt.Errorf("validate cover letter template: %w", err)
-		}
-		if !utf8.ValidString(probe.String()) || utf8.RuneCountInString(probe.String()) > maximumApplicationMessageRunes {
-			return nil, errors.New("cover letter template output must be valid UTF-8 and at most 10000 characters")
-		}
+	}
+	messagePool, err := compileMessagePool(config.MessagePool)
+	if err != nil {
+		return nil, err
 	}
 	preparer := &RuleTemplatePreparer{
 		includeAny: includeAny, excludeAny: excludeAny,
-		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled,
+		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool,
 	}
 	probe := ApplicationPreparation{Outcome: ApplicationApply, Code: "qualified", Reason: "vacancy passed deterministic rules", Message: preparer.staticMessage}
 	if err := probe.Validate(); err != nil {
@@ -167,13 +205,17 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			}, nil
 		}
 	}
-	message, err := preparer.renderMessage(application, vacancy)
+	message, selection, err := preparer.renderMessage(application, vacancy)
 	if err != nil {
 		return ApplicationPreparation{}, err
 	}
+	reason := "vacancy passed deterministic rules"
+	if selection != "" {
+		reason += "; " + selection
+	}
 	result := ApplicationPreparation{
 		Outcome: ApplicationApply, Code: "qualified",
-		Reason: "vacancy passed deterministic rules", Message: message,
+		Reason: reason, Message: message,
 	}
 	if err := result.Validate(); err != nil {
 		return ApplicationPreparation{}, err
@@ -181,16 +223,93 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 	return result, nil
 }
 
-func (preparer *RuleTemplatePreparer) renderMessage(application core.Application, vacancy core.Vacancy) (string, error) {
-	if preparer.template == nil {
-		return preparer.staticMessage, nil
+func (preparer *RuleTemplatePreparer) renderMessage(application core.Application, vacancy core.Vacancy) (string, string, error) {
+	if preparer.messagePool != nil {
+		selected := preparer.messagePool.templates[preparer.messagePool.index(application)]
+		message, err := executeApplicationTemplate(selected.template, application, vacancy)
+		if err != nil {
+			return "", "", err
+		}
+		return message, fmt.Sprintf("message pool %q selected template %q", preparer.messagePool.tag, selected.tag), nil
 	}
+	if preparer.template == nil {
+		return preparer.staticMessage, "", nil
+	}
+	message, err := executeApplicationTemplate(preparer.template, application, vacancy)
+	return message, "", err
+}
+
+func executeApplicationTemplate(compiled *template.Template, application core.Application, vacancy core.Vacancy) (string, error) {
 	data := NewApplicationTemplateData(application, vacancy)
 	var output bytes.Buffer
-	if err := preparer.template.Execute(&output, data); err != nil {
+	if err := compiled.Execute(&output, data); err != nil {
 		return "", fmt.Errorf("render cover letter template: %w", err)
 	}
 	return strings.TrimSpace(output.String()), nil
+}
+
+func compileApplicationTemplate(name, source string) (*template.Template, error) {
+	compiled, err := template.New(name).Option("missingkey=error").Parse(source)
+	if err != nil {
+		return nil, fmt.Errorf("parse cover letter template %q: %w", name, err)
+	}
+	var probe bytes.Buffer
+	if err := compiled.Execute(&probe, ApplicationTemplateData{Vacancy: ApplicationVacancyContext{Attributes: map[string]any{}}}); err != nil {
+		return nil, fmt.Errorf("validate cover letter template %q: %w", name, err)
+	}
+	if !utf8.ValidString(probe.String()) || utf8.RuneCountInString(probe.String()) > maximumApplicationMessageRunes {
+		return nil, fmt.Errorf("cover letter template %q output must be valid UTF-8 and at most 10000 characters", name)
+	}
+	return compiled, nil
+}
+
+func compileMessagePool(config *MessagePoolConfig) (*compiledMessagePool, error) {
+	if config == nil {
+		return nil, nil
+	}
+	tag := strings.TrimSpace(config.Tag)
+	if tag == "" {
+		return nil, errors.New("message pool requires tag")
+	}
+	strategy := strings.TrimSpace(config.Strategy)
+	if strategy == "" {
+		strategy = MessagePoolFirst
+	}
+	if strategy != MessagePoolFirst && strategy != MessagePoolStableHash {
+		return nil, fmt.Errorf("message pool %q has unsupported strategy %q", tag, strategy)
+	}
+	if len(config.Templates) == 0 {
+		return nil, fmt.Errorf("message pool %q requires at least one template", tag)
+	}
+	result := &compiledMessagePool{tag: tag, strategy: strategy, templates: make([]compiledMessageTemplate, 0, len(config.Templates))}
+	seen := make(map[string]struct{}, len(config.Templates))
+	for _, candidate := range config.Templates {
+		candidateTag := strings.TrimSpace(candidate.Tag)
+		if candidateTag == "" {
+			return nil, fmt.Errorf("message pool %q contains a template without tag", tag)
+		}
+		if _, exists := seen[candidateTag]; exists {
+			return nil, fmt.Errorf("message pool %q contains duplicate template tag %q", tag, candidateTag)
+		}
+		seen[candidateTag] = struct{}{}
+		if strings.TrimSpace(candidate.Template) == "" {
+			return nil, fmt.Errorf("message pool %q template %q is empty", tag, candidateTag)
+		}
+		compiled, err := compileApplicationTemplate(tag+"/"+candidateTag, candidate.Template)
+		if err != nil {
+			return nil, err
+		}
+		result.templates = append(result.templates, compiledMessageTemplate{tag: candidateTag, template: compiled})
+	}
+	return result, nil
+}
+
+func (pool *compiledMessagePool) index(application core.Application) int {
+	if pool.strategy == MessagePoolFirst || len(pool.templates) == 1 {
+		return 0
+	}
+	digest := sha256.Sum256([]byte(string(application.Key.ProfileID) + "\x00" + string(application.Key.Vacancy.Platform) + "\x00" + application.Key.Vacancy.ExternalID))
+	return int(binary.BigEndian.Uint64(digest[:8]) % uint64(len(pool.templates)))
 }
 
 func NewApplicationTemplateData(application core.Application, vacancy core.Vacancy) ApplicationTemplateData {

@@ -186,6 +186,18 @@ type ApplicationPolicy struct {
 	Timezone              string                   `json:"timezone,omitempty"`
 	AllowVisibilityChange bool                     `json:"allow_visibility_change,omitempty"`
 	resolvedTemplate      string
+	resolvedMessagePool   *ApplicationMessagePool
+}
+
+type ApplicationMessageTemplate struct {
+	Tag      string `json:"tag"`
+	Template string `json:"template"`
+}
+
+type ApplicationMessagePool struct {
+	Tag       string                       `json:"tag"`
+	Strategy  string                       `json:"strategy"`
+	Templates []ApplicationMessageTemplate `json:"templates"`
 }
 
 type ApplicationQualification struct {
@@ -212,6 +224,15 @@ func (policy ApplicationPolicy) ResolvedMessageTemplate() string {
 		return policy.resolvedTemplate
 	}
 	return policy.MessageTemplate
+}
+
+func (policy ApplicationPolicy) ResolvedMessagePool() (ApplicationMessagePool, bool) {
+	if policy.resolvedMessagePool == nil {
+		return ApplicationMessagePool{}, false
+	}
+	result := *policy.resolvedMessagePool
+	result.Templates = append([]ApplicationMessageTemplate(nil), policy.resolvedMessagePool.Templates...)
+	return result, true
 }
 
 // ProfileBootstrap schedules one idempotent initial profile fill after auth.
@@ -309,7 +330,9 @@ func (c *Config) resolveApplicationMessageFiles(baseDirectory string) error {
 			return fmt.Errorf("profile %q message_template_file: %w", c.Profiles[index].Tag, err)
 		}
 		var file struct {
-			Template string `json:"template"`
+			Template  string                       `json:"template,omitempty"`
+			Strategy  string                       `json:"strategy,omitempty"`
+			Templates []ApplicationMessageTemplate `json:"templates,omitempty"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()
@@ -319,10 +342,22 @@ func (c *Config) resolveApplicationMessageFiles(baseDirectory string) error {
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 			return fmt.Errorf("profile %q message_template_file contains trailing JSON", c.Profiles[index].Tag)
 		}
-		if strings.TrimSpace(file.Template) == "" {
-			return fmt.Errorf("profile %q message_template_file requires template", c.Profiles[index].Tag)
+		if strings.TrimSpace(file.Template) != "" && len(file.Templates) != 0 {
+			return fmt.Errorf("profile %q message_template_file cannot mix template and templates", c.Profiles[index].Tag)
 		}
-		policy.resolvedTemplate = file.Template
+		if strings.TrimSpace(file.Template) != "" {
+			policy.resolvedTemplate = file.Template
+			file.Strategy = "first"
+			file.Templates = []ApplicationMessageTemplate{{Tag: "default", Template: file.Template}}
+		}
+		if len(file.Templates) == 0 {
+			return fmt.Errorf("profile %q message_template_file requires template or templates", c.Profiles[index].Tag)
+		}
+		poolTag := strings.TrimSuffix(filepath.Base(policy.MessageTemplateFile), filepath.Ext(policy.MessageTemplateFile))
+		if strings.TrimSpace(file.Strategy) == "" {
+			file.Strategy = "first"
+		}
+		policy.resolvedMessagePool = &ApplicationMessagePool{Tag: poolTag, Strategy: file.Strategy, Templates: file.Templates}
 	}
 	return nil
 }
@@ -422,8 +457,27 @@ func (c Config) Validate() error {
 		if messageSources > 1 {
 			return fmt.Errorf("profile %q applications must choose message, message_template or message_template_file", profile.Tag)
 		}
-		if profile.Applications.MessageTemplateFile != "" && profile.Applications.resolvedTemplate == "" {
+		if profile.Applications.MessageTemplateFile != "" && profile.Applications.resolvedMessagePool == nil {
 			return fmt.Errorf("profile %q message_template_file must be resolved by config loader", profile.Tag)
+		}
+		if pool := profile.Applications.resolvedMessagePool; pool != nil {
+			if strings.TrimSpace(pool.Tag) == "" || len(pool.Templates) == 0 {
+				return fmt.Errorf("profile %q message pool requires tag and templates", profile.Tag)
+			}
+			if pool.Strategy != "first" && pool.Strategy != "stable_hash" {
+				return fmt.Errorf("profile %q message pool has unsupported strategy %q", profile.Tag, pool.Strategy)
+			}
+			seenTemplates := make(map[string]struct{}, len(pool.Templates))
+			for _, candidate := range pool.Templates {
+				tag := strings.TrimSpace(candidate.Tag)
+				if tag == "" || strings.TrimSpace(candidate.Template) == "" {
+					return fmt.Errorf("profile %q message pool contains an empty tag or template", profile.Tag)
+				}
+				if _, exists := seenTemplates[tag]; exists {
+					return fmt.Errorf("profile %q message pool contains duplicate template tag %q", profile.Tag, tag)
+				}
+				seenTemplates[tag] = struct{}{}
+			}
 		}
 		for field, terms := range map[string][]string{
 			"include_any": profile.Applications.Qualification.IncludeAny,

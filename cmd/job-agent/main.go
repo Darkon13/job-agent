@@ -525,11 +525,23 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 }
 
 func applicationPreparer(profile appconfig.Profile) (applicationoperator.ApplicationPreparer, error) {
+	var messagePool *applicationoperator.MessagePoolConfig
+	messageTemplate := profile.Applications.ResolvedMessageTemplate()
+	if configured, exists := profile.Applications.ResolvedMessagePool(); exists {
+		messageTemplate = ""
+		messagePool = &applicationoperator.MessagePoolConfig{Tag: configured.Tag, Strategy: configured.Strategy}
+		for _, candidate := range configured.Templates {
+			messagePool.Templates = append(messagePool.Templates, applicationoperator.MessageTemplateConfig{
+				Tag: candidate.Tag, Template: candidate.Template,
+			})
+		}
+	}
 	preparer, err := applicationoperator.NewRuleTemplatePreparer(applicationoperator.RuleTemplateConfig{
 		IncludeAny:      profile.Applications.Qualification.IncludeAny,
 		ExcludeAny:      profile.Applications.Qualification.ExcludeAny,
 		StaticMessage:   profile.Applications.Message,
-		MessageTemplate: profile.Applications.ResolvedMessageTemplate(),
+		MessageTemplate: messageTemplate,
+		MessagePool:     messagePool,
 	})
 	if err != nil {
 		return nil, err

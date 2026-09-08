@@ -105,3 +105,43 @@ func TestRuleTemplatePreparerRejectsAmbiguousOrOversizedMessage(t *testing.T) {
 		t.Fatal("expected unknown template field to fail during parsing")
 	}
 }
+
+func TestRuleTemplatePreparerSelectsStableMessagePoolVariant(t *testing.T) {
+	application, vacancy := operatorFixture()
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{MessagePool: &MessagePoolConfig{
+		Tag: "backend", Strategy: MessagePoolStableHash,
+		Templates: []MessageTemplateConfig{
+			{Tag: "concise", Template: "Коротко: {{.Vacancy.Title}}"},
+			{Tag: "detailed", Template: "Подробно: {{.Vacancy.Title}} в {{.Vacancy.Employer}}"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("new pool preparer: %v", err)
+	}
+	first, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	second, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+	if first.Message != second.Message || !strings.Contains(first.Reason, `message pool "backend" selected template`) {
+		t.Fatalf("unstable pool result: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestRuleTemplatePreparerValidatesMessagePool(t *testing.T) {
+	_, err := NewRuleTemplatePreparer(RuleTemplateConfig{MessagePool: &MessagePoolConfig{
+		Tag: "backend", Strategy: "random", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello"}},
+	}})
+	if err == nil {
+		t.Fatal("expected unsupported pool strategy to fail")
+	}
+	_, err = NewRuleTemplatePreparer(RuleTemplateConfig{MessagePool: &MessagePoolConfig{
+		Tag: "backend", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello"}, {Tag: "one", Template: "Again"}},
+	}})
+	if err == nil {
+		t.Fatal("expected duplicate pool template tag to fail")
+	}
+}
