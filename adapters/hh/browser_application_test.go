@@ -160,6 +160,31 @@ func TestBrowserApplicationSuitableResumesExposeIDAndHash(t *testing.T) {
 	}
 }
 
+func TestBrowserApplicationSuitableResumesReadWrappedResponseStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeBrowserPreflight(t, writer, `{
+			"type":"modal",
+			"body":{"responseStatus":{"resumes":{
+				"17":{"id":17,"hash":"resume-hash","title":[{"string":"Backend"}]}
+			}}}
+		}`)
+	}))
+	defer server.Close()
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+
+	resumes, err := client.ListSuitableResumes(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
+	if err != nil {
+		t.Fatalf("list resumes: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, resume := range resumes {
+		seen[resume.ID] = true
+	}
+	if !seen["17"] || !seen["resume-hash"] {
+		t.Fatalf("resumes = %#v", resumes)
+	}
+}
+
 func TestBrowserApplicationReconcilesUsedResumeWithoutPosting(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {

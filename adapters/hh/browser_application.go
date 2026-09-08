@@ -41,7 +41,12 @@ type browserApplicationPreflight struct {
 	RedirectURI                         string                           `json:"redirectUri"`
 	RedirectURISnake                    string                           `json:"redirect_uri"`
 	ResponseStatus                      browserApplicationResponseStatus `json:"responseStatus"`
+	Body                                *browserApplicationPreflightBody `json:"body"`
 	CountriesProfileVisibilityAgreement browserVisibilityAgreement       `json:"countriesProfileVisibilityAgreement"`
+}
+
+type browserApplicationPreflightBody struct {
+	ResponseStatus browserApplicationResponseStatus `json:"responseStatus"`
 }
 
 type browserApplicationResponseStatus struct {
@@ -325,6 +330,14 @@ func (client *BrowserApplicationClient) preflight(ctx context.Context, key core.
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxBrowserApplicationResponse))
 	if err := decoder.Decode(&payload); err != nil {
 		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH returned an invalid application preflight", err)
+	}
+	// HH currently wraps the vacancy response state in body.responseStatus,
+	// while older responses and fixtures expose responseStatus at the top
+	// level. Normalize both shapes at the adapter boundary so the application
+	// workflow never interprets a successfully decoded wrapper as an empty
+	// suitable-resume list.
+	if payload.Body != nil {
+		payload.ResponseStatus = payload.Body.ResponseStatus
 	}
 	return payload, nil
 }
