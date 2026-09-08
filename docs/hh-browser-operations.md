@@ -64,6 +64,13 @@ GET  /applicant/vacancy_response/popup?...vacancyId=...
 POST /applicant/vacancy_response/popup
 ```
 
+Актуальный GET-ответ (проверен 2026-09-08) оборачивает данные формы в
+`body.responseStatus`; более ранняя форма отдавала `responseStatus` на верхнем
+уровне. Adapter нормализует обе формы до одного внутреннего контракта. Простое
+успешное декодирование внешней оболочки недостаточно: пустой верхнеуровневый
+`responseStatus` нельзя трактовать как отсутствие подходящих резюме, если
+присутствует `body.responseStatus`.
+
 POST использовал multipart поля:
 
 - `resume_hash`;
