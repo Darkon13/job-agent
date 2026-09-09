@@ -49,6 +49,14 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		return fmt.Errorf("config: %w", err)
 	}
 	fmt.Fprintln(output, "OK config")
+	for _, model := range cfg.Models {
+		environment := model.APIKeyEnvironment()
+		value, exists := os.LookupEnv(environment)
+		if !exists || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("model provider %q requires non-empty environment variable %s", model.Tag, environment)
+		}
+		fmt.Fprintf(output, "OK model_provider=%s type=%s credentials=present\n", model.Tag, model.Type)
+	}
 
 	store, err := storesqlite.Open(cfg.Database.Path)
 	if err != nil {

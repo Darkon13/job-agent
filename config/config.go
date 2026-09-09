@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ type Config struct {
 	Searches       []Search                     `json:"searches"`
 	Resources      []ProfileStateResourceConfig `json:"resources,omitempty"`
 	EmployerGroups []EmployerGroupConfig        `json:"employer_groups,omitempty"`
+	Models         []ModelProviderConfig        `json:"models,omitempty"`
 	Jobs           []Job                        `json:"jobs,omitempty"`
 	Server         ServerConfig                 `json:"server,omitempty"`
 }
@@ -38,6 +40,24 @@ type EmployerGroupRuleConfig struct {
 	Platform   core.Platform `json:"platform,omitempty"`
 	EmployerID string        `json:"employer_id,omitempty"`
 	Name       string        `json:"name,omitempty"`
+}
+
+const ModelProviderOpenAIResponses = "openai_responses"
+
+type ModelProviderConfig struct {
+	Tag             string `json:"tag"`
+	Type            string `json:"type"`
+	Model           string `json:"model"`
+	BaseURL         string `json:"base_url,omitempty"`
+	APIKeyEnv       string `json:"api_key_env,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+}
+
+func (config ModelProviderConfig) APIKeyEnvironment() string {
+	if strings.TrimSpace(config.APIKeyEnv) == "" {
+		return "OPENAI_API_KEY"
+	}
+	return strings.TrimSpace(config.APIKeyEnv)
 }
 
 func (c Config) BuildEmployerGroupMatcher() (*applicationoperator.EmployerGroupMatcher, error) {
@@ -209,6 +229,7 @@ type ApplicationPolicy struct {
 	Message               string                    `json:"message,omitempty"`
 	MessageTemplate       string                    `json:"message_template,omitempty"`
 	MessageTemplateFile   string                    `json:"message_template_file,omitempty"`
+	Model                 *ApplicationModelPolicy   `json:"model,omitempty"`
 	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
 	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
 	DailyLimit            int                       `json:"daily_limit,omitempty"`
@@ -219,16 +240,25 @@ type ApplicationPolicy struct {
 }
 
 type ApplicationEmployerRule struct {
-	EmployerGroups      []string `json:"employer_groups"`
-	Action              string   `json:"action"`
-	MessageTemplateFile string   `json:"message_template_file,omitempty"`
+	EmployerGroups      []string                `json:"employer_groups"`
+	Action              string                  `json:"action"`
+	MessageTemplateFile string                  `json:"message_template_file,omitempty"`
+	Model               *ApplicationModelPolicy `json:"model,omitempty"`
 	resolvedMessagePool *ApplicationMessagePool
+}
+
+type ApplicationModelPolicy struct {
+	Provider      string `json:"provider"`
+	PromptVersion string `json:"prompt_version"`
+	Instruction   string `json:"instruction"`
+	Timeout       string `json:"timeout"`
 }
 
 type ResolvedApplicationEmployerRule struct {
 	EmployerGroups []string
 	Action         string
 	MessagePool    *ApplicationMessagePool
+	Model          *ApplicationModelPolicy
 }
 
 type ApplicationMessageTemplate struct {
@@ -281,6 +311,10 @@ func (policy ApplicationPolicy) ResolvedEmployerRules() []ResolvedApplicationEmp
 		resolved := ResolvedApplicationEmployerRule{
 			EmployerGroups: append([]string(nil), configured.EmployerGroups...),
 			Action:         configured.Action,
+		}
+		if configured.Model != nil {
+			model := *configured.Model
+			resolved.Model = &model
 		}
 		if configured.resolvedMessagePool != nil {
 			pool := cloneApplicationMessagePool(*configured.resolvedMessagePool)
@@ -473,6 +507,51 @@ func validateApplicationMessagePool(pool ApplicationMessagePool) error {
 	return nil
 }
 
+func validateModelProvider(config ModelProviderConfig) error {
+	if strings.TrimSpace(config.Tag) == "" || strings.TrimSpace(config.Model) == "" {
+		return errors.New("model provider requires tag and model")
+	}
+	if config.Type != ModelProviderOpenAIResponses {
+		return fmt.Errorf("model provider %q has unsupported type %q", config.Tag, config.Type)
+	}
+	if environment := config.APIKeyEnvironment(); strings.Contains(environment, "=") || strings.ContainsAny(environment, " \t\r\n") {
+		return fmt.Errorf("model provider %q has invalid api_key_env", config.Tag)
+	}
+	if config.MaxOutputTokens < 0 || config.MaxOutputTokens > 32768 {
+		return fmt.Errorf("model provider %q max_output_tokens must be between 1 and 32768 when set", config.Tag)
+	}
+	if strings.TrimSpace(config.BaseURL) != "" {
+		parsed, err := url.Parse(config.BaseURL)
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("model provider %q base_url must be an absolute URL without credentials, query or fragment", config.Tag)
+		}
+		if parsed.Scheme != "https" {
+			ip := net.ParseIP(parsed.Hostname())
+			if parsed.Scheme != "http" || (!strings.EqualFold(parsed.Hostname(), "localhost") && (ip == nil || !ip.IsLoopback())) {
+				return fmt.Errorf("model provider %q base_url must use HTTPS or loopback HTTP", config.Tag)
+			}
+		}
+	}
+	return nil
+}
+
+func validateApplicationModelPolicy(label string, policy *ApplicationModelPolicy, providers map[string]struct{}) error {
+	if policy == nil {
+		return nil
+	}
+	if _, exists := providers[strings.TrimSpace(policy.Provider)]; !exists {
+		return fmt.Errorf("%s references unknown model provider %q", label, policy.Provider)
+	}
+	if strings.TrimSpace(policy.PromptVersion) == "" || strings.TrimSpace(policy.Instruction) == "" {
+		return fmt.Errorf("%s model requires prompt_version and instruction", label)
+	}
+	timeout, err := time.ParseDuration(policy.Timeout)
+	if err != nil || timeout <= 0 || timeout > 5*time.Minute {
+		return fmt.Errorf("%s model timeout must be a positive duration no greater than 5m", label)
+	}
+	return nil
+}
+
 func (c Config) Validate() error {
 	if c.Database.Driver != "sqlite" {
 		return fmt.Errorf("database driver must be %q", "sqlite")
@@ -520,6 +599,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate adapter tag %q", item.Tag)
 		}
 		adapters[item.Tag] = struct{}{}
+	}
+	modelProviders := make(map[string]struct{}, len(c.Models))
+	for _, model := range c.Models {
+		if err := validateModelProvider(model); err != nil {
+			return err
+		}
+		tag := strings.TrimSpace(model.Tag)
+		if _, exists := modelProviders[tag]; exists {
+			return fmt.Errorf("duplicate model provider tag %q", tag)
+		}
+		modelProviders[tag] = struct{}{}
 	}
 	employerMatcher, err := c.BuildEmployerGroupMatcher()
 	if err != nil {
@@ -572,6 +662,14 @@ func (c Config) Validate() error {
 		if messageSources > 1 {
 			return fmt.Errorf("profile %q applications must choose message, message_template or message_template_file", profile.Tag)
 		}
+		if profile.Applications.Model != nil {
+			if messageSources != 1 {
+				return fmt.Errorf("profile %q application model requires exactly one message fallback", profile.Tag)
+			}
+			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q applications", profile.Tag), profile.Applications.Model, modelProviders); err != nil {
+				return err
+			}
+		}
 		if profile.Applications.MessageTemplateFile != "" && profile.Applications.resolvedMessagePool == nil {
 			return fmt.Errorf("profile %q message_template_file must be resolved by config loader", profile.Tag)
 		}
@@ -595,17 +693,28 @@ func (c Config) Validate() error {
 				}
 				seenGroups[tag] = struct{}{}
 			}
+			ruleLabel := fmt.Sprintf("profile %q employer rule %d", profile.Tag, ruleIndex)
 			switch rule.Action {
 			case applicationoperator.EmployerRuleSkip, applicationoperator.EmployerRuleReview:
-				if strings.TrimSpace(rule.MessageTemplateFile) != "" || rule.resolvedMessagePool != nil {
-					return fmt.Errorf("profile %q employer rule %d action %q cannot use message_template_file", profile.Tag, ruleIndex, rule.Action)
+				if strings.TrimSpace(rule.MessageTemplateFile) != "" || rule.resolvedMessagePool != nil || rule.Model != nil {
+					return fmt.Errorf("%s action %q cannot use message_template_file or model", ruleLabel, rule.Action)
 				}
 			case applicationoperator.EmployerRuleMessagePool:
-				if strings.TrimSpace(rule.MessageTemplateFile) == "" || rule.resolvedMessagePool == nil {
-					return fmt.Errorf("profile %q employer rule %d action %q requires a resolved message_template_file", profile.Tag, ruleIndex, rule.Action)
+				if strings.TrimSpace(rule.MessageTemplateFile) == "" || rule.resolvedMessagePool == nil || rule.Model != nil {
+					return fmt.Errorf("%s action %q requires a resolved message_template_file and no model", ruleLabel, rule.Action)
 				}
 				if err := validateApplicationMessagePool(*rule.resolvedMessagePool); err != nil {
-					return fmt.Errorf("profile %q employer rule %d: %w", profile.Tag, ruleIndex, err)
+					return fmt.Errorf("%s: %w", ruleLabel, err)
+				}
+			case applicationoperator.EmployerRuleModel:
+				if strings.TrimSpace(rule.MessageTemplateFile) == "" || rule.resolvedMessagePool == nil || rule.Model == nil {
+					return fmt.Errorf("%s action %q requires model and resolved message_template_file fallback", ruleLabel, rule.Action)
+				}
+				if err := validateApplicationMessagePool(*rule.resolvedMessagePool); err != nil {
+					return fmt.Errorf("%s: %w", ruleLabel, err)
+				}
+				if err := validateApplicationModelPolicy(ruleLabel, rule.Model, modelProviders); err != nil {
+					return err
 				}
 			default:
 				return fmt.Errorf("profile %q employer rule %d has unsupported action %q", profile.Tag, ruleIndex, rule.Action)

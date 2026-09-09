@@ -62,6 +62,7 @@ type RuleTemplateConfig struct {
 	StaticMessage   string
 	MessageTemplate string
 	MessagePool     *MessagePoolConfig
+	Model           *ApplicationModelConfig
 	EmployerMatcher *EmployerGroupMatcher
 	EmployerRules   []EmployerRuleConfig
 }
@@ -84,6 +85,7 @@ type MessagePoolConfig struct {
 
 const (
 	EmployerRuleMessagePool = "message_pool"
+	EmployerRuleModel       = "model"
 	EmployerRuleSkip        = "skip"
 	EmployerRuleReview      = "review"
 )
@@ -92,6 +94,7 @@ type EmployerRuleConfig struct {
 	EmployerGroups []string
 	Action         string
 	MessagePool    *MessagePoolConfig
+	Model          *ApplicationModelConfig
 }
 
 type compiledMessageTemplate struct {
@@ -105,6 +108,7 @@ type RuleTemplatePreparer struct {
 	staticMessage string
 	template      *template.Template
 	messagePool   *compiledMessagePool
+	model         *compiledApplicationModel
 	employerMatch *EmployerGroupMatcher
 	employerRules []compiledEmployerRule
 }
@@ -119,6 +123,7 @@ type compiledEmployerRule struct {
 	groups      []string
 	action      string
 	messagePool *compiledMessagePool
+	model       *compiledApplicationModel
 }
 
 type ApplicationTemplateData struct {
@@ -182,13 +187,20 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if err != nil {
 		return nil, err
 	}
+	model, err := compileApplicationModel(config.Model)
+	if err != nil {
+		return nil, err
+	}
+	if model != nil && messageSources != 1 {
+		return nil, errors.New("application model requires exactly one configured message fallback")
+	}
 	employerRules, err := compileEmployerRules(config.EmployerMatcher, config.EmployerRules)
 	if err != nil {
 		return nil, err
 	}
 	preparer := &RuleTemplatePreparer{
 		includeAny: includeAny, excludeAny: excludeAny,
-		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool,
+		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model,
 		employerMatch: config.EmployerMatcher, employerRules: employerRules,
 	}
 	probe := ApplicationPreparation{Outcome: ApplicationApply, Code: "qualified", Reason: "vacancy passed deterministic rules", Message: preparer.staticMessage}
@@ -233,6 +245,7 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 		}
 	}
 	selectedPool := preparer.messagePool
+	selectedModel := preparer.model
 	employerReason := ""
 	for _, rule := range preparer.employerRules {
 		match, matched := preparer.employerMatch.MatchAny(vacancy, rule.groups)
@@ -247,10 +260,14 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			return ApplicationPreparation{Outcome: ApplicationReview, Code: "employer_rule_review", Reason: employerReason}, nil
 		case EmployerRuleMessagePool:
 			selectedPool = rule.messagePool
+			selectedModel = nil
+		case EmployerRuleModel:
+			selectedPool = rule.messagePool
+			selectedModel = rule.model
 		}
 		break
 	}
-	message, selection, err := preparer.renderMessage(application, vacancy, selectedPool)
+	message, selection, err := preparer.renderMessage(ctx, application, vacancy, selectedPool, selectedModel)
 	if err != nil {
 		return ApplicationPreparation{}, err
 	}
@@ -271,7 +288,32 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 	return result, nil
 }
 
-func (preparer *RuleTemplatePreparer) renderMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (string, string, error) {
+func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool, model *compiledApplicationModel) (string, string, error) {
+	if model != nil {
+		response, err := model.generate(ctx, application, vacancy)
+		if err == nil {
+			name := strings.TrimSpace(response.Model)
+			if name == "" {
+				name = "provider-selected"
+			}
+			return response.Text, fmt.Sprintf("model %q generated with %q prompt %q", model.tag, name, model.promptVersion), nil
+		}
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		fallback, selection, fallbackErr := preparer.renderConfiguredMessage(application, vacancy, messagePool)
+		if fallbackErr != nil {
+			return "", "", fallbackErr
+		}
+		if selection == "" {
+			selection = "configured message fallback"
+		}
+		return fallback, fmt.Sprintf("model %q fallback after %s; %s", model.tag, ModelFailureKindOf(err), selection), nil
+	}
+	return preparer.renderConfiguredMessage(application, vacancy, messagePool)
+}
+
+func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (string, string, error) {
 	if messagePool != nil {
 		selected := messagePool.templates[messagePool.index(application)]
 		message, err := executeApplicationTemplate(selected.template, application, vacancy)
@@ -315,12 +357,16 @@ func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleC
 		action := strings.TrimSpace(config.Action)
 		switch action {
 		case EmployerRuleSkip, EmployerRuleReview:
-			if config.MessagePool != nil {
-				return nil, fmt.Errorf("employer rule %d action %q cannot use a message pool", index, action)
+			if config.MessagePool != nil || config.Model != nil {
+				return nil, fmt.Errorf("employer rule %d action %q cannot use a message pool or model", index, action)
 			}
 		case EmployerRuleMessagePool:
-			if config.MessagePool == nil {
+			if config.MessagePool == nil || config.Model != nil {
 				return nil, fmt.Errorf("employer rule %d action %q requires a message pool", index, action)
+			}
+		case EmployerRuleModel:
+			if config.MessagePool == nil || config.Model == nil {
+				return nil, fmt.Errorf("employer rule %d action %q requires a model and message pool fallback", index, action)
 			}
 		default:
 			return nil, fmt.Errorf("employer rule %d has unsupported action %q", index, action)
@@ -329,7 +375,11 @@ func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleC
 		if err != nil {
 			return nil, fmt.Errorf("employer rule %d: %w", index, err)
 		}
-		result = append(result, compiledEmployerRule{groups: groups, action: action, messagePool: pool})
+		model, err := compileApplicationModel(config.Model)
+		if err != nil {
+			return nil, fmt.Errorf("employer rule %d: %w", index, err)
+		}
+		result = append(result, compiledEmployerRule{groups: groups, action: action, messagePool: pool, model: model})
 	}
 	return result, nil
 }

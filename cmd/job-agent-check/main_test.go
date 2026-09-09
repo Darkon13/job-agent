@@ -43,6 +43,32 @@ func TestRunReportsBrowserOnlyProfileWithoutConfiguredOperationsAsLaunchable(t *
 	}
 }
 
+func TestRunChecksModelProviderCredentialWithoutPrintingIt(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "job-agent.db")
+	if err := storesqlite.MigrateUp(databasePath); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	configPath := writeConfig(t, directory, appconfig.Config{
+		Database: appconfig.DatabaseConfig{Driver: "sqlite", Path: databasePath},
+		Models: []appconfig.ModelProviderConfig{{
+			Tag: "mini", Type: appconfig.ModelProviderOpenAIResponses, Model: "gpt-test", APIKeyEnv: "JOB_AGENT_TEST_MODEL_KEY",
+		}},
+	})
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{configPath}, &output); err == nil || !strings.Contains(err.Error(), "JOB_AGENT_TEST_MODEL_KEY") {
+		t.Fatalf("missing key error=%v output=%s", err, output.String())
+	}
+	t.Setenv("JOB_AGENT_TEST_MODEL_KEY", "secret-value")
+	output.Reset()
+	if err := run(context.Background(), []string{configPath}, &output); err != nil {
+		t.Fatalf("preflight: %v\n%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "model_provider=mini") || strings.Contains(output.String(), "secret-value") {
+		t.Fatalf("unexpected output:\n%s", output.String())
+	}
+}
+
 func TestRunBlocksSearchWithoutAPIAuthorization(t *testing.T) {
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "job-agent.db")

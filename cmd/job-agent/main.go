@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
+	"github.com/Darkon13/job-agent/operator/openairesponses"
 	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
@@ -68,6 +70,10 @@ func main() {
 	employerMatcher, err := cfg.BuildEmployerGroupMatcher()
 	if err != nil {
 		log.Fatalf("build employer groups: %v", err)
+	}
+	applicationModels, err := buildApplicationModels(cfg.Models, os.LookupEnv)
+	if err != nil {
+		log.Fatalf("build application models: %v", err)
 	}
 	if options.migrateUp {
 		if err := storesqlite.MigrateUp(cfg.Database.Path); err != nil {
@@ -148,7 +154,7 @@ func main() {
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	for _, profile := range cfg.Profiles {
-		preparer, err := applicationPreparer(profile, employerMatcher)
+		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels)
 		if err != nil {
 			log.Fatalf("build application operator for profile %q: %v", profile.Tag, err)
 		}
@@ -528,12 +534,16 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
 }
 
-func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher) (applicationoperator.ApplicationPreparer, error) {
+func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ApplicationPreparer, error) {
 	var messagePool *applicationoperator.MessagePoolConfig
 	messageTemplate := profile.Applications.ResolvedMessageTemplate()
 	if configured, exists := profile.Applications.ResolvedMessagePool(); exists {
 		messageTemplate = ""
 		messagePool = applicationMessagePool(configured)
+	}
+	model, err := applicationModel(profile.Applications.Model, models)
+	if err != nil {
+		return nil, err
 	}
 	employerRules := make([]applicationoperator.EmployerRuleConfig, 0, len(profile.Applications.EmployerRules))
 	for _, configured := range profile.Applications.ResolvedEmployerRules() {
@@ -544,6 +554,10 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		if configured.MessagePool != nil {
 			rule.MessagePool = applicationMessagePool(*configured.MessagePool)
 		}
+		rule.Model, err = applicationModel(configured.Model, models)
+		if err != nil {
+			return nil, err
+		}
 		employerRules = append(employerRules, rule)
 	}
 	preparer, err := applicationoperator.NewRuleTemplatePreparer(applicationoperator.RuleTemplateConfig{
@@ -552,6 +566,7 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		StaticMessage:   profile.Applications.Message,
 		MessageTemplate: messageTemplate,
 		MessagePool:     messagePool,
+		Model:           model,
 		EmployerMatcher: employerMatcher,
 		EmployerRules:   employerRules,
 	})
@@ -559,6 +574,55 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		return nil, err
 	}
 	return preparer, nil
+}
+
+func buildApplicationModels(configs []appconfig.ModelProviderConfig, lookupEnv func(string) (string, bool)) (map[string]applicationoperator.ApplicationMessageModel, error) {
+	if lookupEnv == nil {
+		return nil, errors.New("application model environment lookup is nil")
+	}
+	result := make(map[string]applicationoperator.ApplicationMessageModel, len(configs))
+	for _, configured := range configs {
+		environment := configured.APIKeyEnvironment()
+		apiKey, exists := lookupEnv(environment)
+		if !exists || strings.TrimSpace(apiKey) == "" {
+			return nil, fmt.Errorf("model provider %q requires non-empty environment variable %s", configured.Tag, environment)
+		}
+		var model applicationoperator.ApplicationMessageModel
+		var err error
+		switch configured.Type {
+		case appconfig.ModelProviderOpenAIResponses:
+			model, err = openairesponses.New(openairesponses.Config{
+				BaseURL: configured.BaseURL, APIKey: apiKey, Model: configured.Model,
+				MaxOutputTokens: configured.MaxOutputTokens,
+			})
+		default:
+			err = fmt.Errorf("unsupported model provider type %q", configured.Type)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("model provider %q: %w", configured.Tag, err)
+		}
+		result[strings.TrimSpace(configured.Tag)] = model
+	}
+	return result, nil
+}
+
+func applicationModel(configured *appconfig.ApplicationModelPolicy, models map[string]applicationoperator.ApplicationMessageModel) (*applicationoperator.ApplicationModelConfig, error) {
+	if configured == nil {
+		return nil, nil
+	}
+	provider := strings.TrimSpace(configured.Provider)
+	generator := models[provider]
+	if generator == nil {
+		return nil, fmt.Errorf("application model references unavailable provider %q", provider)
+	}
+	timeout, err := time.ParseDuration(configured.Timeout)
+	if err != nil || timeout <= 0 {
+		return nil, fmt.Errorf("application model provider %q has invalid timeout %q", provider, configured.Timeout)
+	}
+	return &applicationoperator.ApplicationModelConfig{
+		Tag: provider, PromptVersion: configured.PromptVersion,
+		Instruction: configured.Instruction, Timeout: timeout, Generator: generator,
+	}, nil
 }
 
 func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applicationoperator.MessagePoolConfig {

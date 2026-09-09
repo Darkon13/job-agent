@@ -203,6 +203,100 @@ func TestLoadResolvesEmployerRuleMessagePool(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesApplicationModelsWithFallbackPools(t *testing.T) {
+	directory := t.TempDir()
+	messageDirectory := filepath.Join(directory, "messages")
+	if err := os.Mkdir(messageDirectory, 0o700); err != nil {
+		t.Fatalf("create messages directory: %v", err)
+	}
+	for _, name := range []string{"default.json", "employer.json"} {
+		if err := os.WriteFile(filepath.Join(messageDirectory, name), []byte(`{
+			"strategy":"first","templates":[{"tag":"safe","template":"Safe fallback"}]
+		}`), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	configPath := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"models":[{"tag":"cover-letter-mini","type":"openai_responses","model":"gpt-test","api_key_env":"TEST_OPENAI_KEY","max_output_tokens":700}],
+		"employer_groups":[{"tag":"marketplaces","rules":[{"name":"Ozon Tech"}]}],
+		"profiles":[{
+			"tag":"primary","adapter":"hh-main","enabled":true,
+			"applications":{
+				"message_template_file":"messages/default.json",
+				"model":{"provider":"cover-letter-mini","prompt_version":"v1","instruction":"Кратко","timeout":"15s"},
+				"employer_rules":[{
+					"employer_groups":["marketplaces"],"action":"model",
+					"message_template_file":"messages/employer.json",
+					"model":{"provider":"cover-letter-mini","prompt_version":"marketplace-v1","instruction":"Учитывай профиль компании","timeout":"10s"}
+				}]
+			}
+		}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if len(loaded.Models) != 1 || loaded.Models[0].APIKeyEnvironment() != "TEST_OPENAI_KEY" || loaded.Profiles[0].Applications.Model.Provider != "cover-letter-mini" {
+		t.Fatalf("loaded model config = %#v", loaded)
+	}
+	rules := loaded.Profiles[0].Applications.ResolvedEmployerRules()
+	if len(rules) != 1 || rules[0].Model == nil || rules[0].Model.PromptVersion != "marketplace-v1" || rules[0].MessagePool == nil || rules[0].MessagePool.Tag != "employer" {
+		t.Fatalf("resolved rules = %#v", rules)
+	}
+	rules[0].Model.Instruction = "changed"
+	if loaded.Profiles[0].Applications.ResolvedEmployerRules()[0].Model.Instruction == "changed" {
+		t.Fatal("resolved employer model leaked mutable state")
+	}
+}
+
+func TestConfigValidatesModelProvidersAndFallbacks(t *testing.T) {
+	validModel := ModelProviderConfig{Tag: "mini", Type: ModelProviderOpenAIResponses, Model: "gpt-test"}
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Models:   []ModelProviderConfig{validModel},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Applications: ApplicationPolicy{
+			Message: "fallback",
+			Model:   &ApplicationModelPolicy{Provider: "mini", PromptVersion: "v1", Instruction: "Concise", Timeout: "10s"},
+		}}},
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid model config: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "duplicate provider", mutate: func(config *Config) { config.Models = append(config.Models, validModel) }},
+		{name: "unsafe base URL", mutate: func(config *Config) { config.Models[0].BaseURL = "http://models.example.test/v1" }},
+		{name: "unknown provider", mutate: func(config *Config) { config.Profiles[0].Applications.Model.Provider = "missing" }},
+		{name: "missing fallback", mutate: func(config *Config) { config.Profiles[0].Applications.Message = "" }},
+		{name: "invalid timeout", mutate: func(config *Config) { config.Profiles[0].Applications.Model.Timeout = "0s" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := base
+			candidate.Models = append([]ModelProviderConfig(nil), base.Models...)
+			candidate.Profiles = append([]Profile(nil), base.Profiles...)
+			applications := base.Profiles[0].Applications
+			model := *applications.Model
+			applications.Model = &model
+			candidate.Profiles[0].Applications = applications
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("expected invalid model config to fail")
+			}
+		})
+	}
+}
+
 func TestApplicationPolicyValidatesEmployerRules(t *testing.T) {
 	base := Config{
 		Database:       DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

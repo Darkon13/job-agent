@@ -1,7 +1,8 @@
 # Следующая задача: пулы сопроводительных и группы работодателей
 
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
-groups и profile-level policy routing реализованы; model operator ещё не начат.
+groups, policy routing и первый model provider с fallback реализованы. Остался
+groundedness validator и отдельное хранение расширенной model provenance.
 
 Общий контракт `rule_sets → policy rules → named action`, а также processors,
 которые разделяют детерминированные преобразования и LLM, зафиксирован в
@@ -119,13 +120,14 @@ full vacancy + employer
 5. **Выполнено:** упорядоченные profile-level rules выбирают отдельный pool,
    `skip` либо `review`; первое совпавшее правило побеждает, а причина решения
    содержит группу и evidence.
-6. Добавить общий model-operator port, один компактный provider adapter,
-   timeout/rate-limit policy и fallback на готовый пул.
+6. **Выполнено:** общий model-operator port, OpenAI Responses adapter,
+   timeout/error classification и fallback на готовый пул. API key приходит из
+   environment, запрос использует `store:false`, а модель выбирается конфигом.
 7. Добавить validator фактической опоры, placeholders и длины; неизвестные
    факты отправлять в approval, а не исправлять догадкой.
-8. Покрыть model fallback и groundedness тестами; config, matcher и application
-   routing уже покрыты. Затем проверить один `approval`-отклик без массового
-   запуска.
+8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
+   parent cancellation, provider HTTP contract, config и routing покрыты.
+   Groundedness и один `approval` smoke ещё нужны.
 
 ## Критерий готовности
 

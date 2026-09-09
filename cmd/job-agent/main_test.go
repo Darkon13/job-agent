@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,9 +151,27 @@ func TestProbeProfileAuthorizationsReturnsTransportFailure(t *testing.T) {
 func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
 	_, err := applicationPreparer(appconfig.Profile{Applications: appconfig.ApplicationPolicy{
 		MessageTemplate: "{{.Missing}}",
-	}}, nil)
+	}}, nil, nil)
 	if err == nil {
 		t.Fatal("expected invalid application message template")
+	}
+}
+
+func TestBuildApplicationModelsReadsOnlyConfiguredEnvironment(t *testing.T) {
+	configured := []appconfig.ModelProviderConfig{{
+		Tag: "mini", Type: appconfig.ModelProviderOpenAIResponses, Model: "gpt-test", APIKeyEnv: "JOB_AGENT_TEST_MODEL_KEY",
+	}}
+	lookedUp := ""
+	models, err := buildApplicationModels(configured, func(name string) (string, bool) {
+		lookedUp = name
+		return "secret-value", true
+	})
+	if err != nil || lookedUp != "JOB_AGENT_TEST_MODEL_KEY" || models["mini"] == nil {
+		t.Fatalf("models=%#v lookup=%q err=%v", models, lookedUp, err)
+	}
+	_, err = buildApplicationModels(configured, func(string) (string, bool) { return "", false })
+	if err == nil || !strings.Contains(err.Error(), "JOB_AGENT_TEST_MODEL_KEY") || strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("missing secret error = %v", err)
 	}
 }
 

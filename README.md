@@ -311,8 +311,21 @@ platform-specific `employer_id`, точному нормализованному
 используются. Упорядоченные `applications.employer_rules` применяют первое
 совпавшее правило и могут выбрать отдельный `message_pool`, пропустить вакансию
 (`skip`) или отправить её на ручную проверку (`review`). Причина решения
-содержит группу и тип доказательства совпадения. Следующий срез этого контура —
-model operator с fallback. План и критерий готовности описаны в
+содержит группу и тип доказательства совпадения.
+
+Application model подключается как именованный top-level provider и остаётся
+сменяемым относительно operator pipeline. Реализован `openai_responses` через
+`POST /responses`: API key читается только из указанной переменной окружения,
+структурированный vacancy context передаётся как данные, а запрос всегда задаёт
+`store:false`. Profile-level `model` либо employer rule с action `model`
+обязательно имеют готовое письмо или файловый пул как fallback. Timeout,
+rate-limit, временная ошибка, пустой или слишком длинный ответ не блокируют
+campaign: operator выбирает fallback и сохраняет в причине provider tag,
+категорию ошибки и выбранный вариант. Отмена родительской task не маскируется
+fallback. Успешный сгенерированный текст сохраняется в `Application`, поэтому
+retry не вызывает модель повторно.
+
+План и оставшиеся критерии готовности описаны в
 [`docs/next-cover-letter-routing.md`](docs/next-cover-letter-routing.md).
 
 Формат пула:
@@ -326,6 +339,34 @@ model operator с fallback. План и критерий готовности о
   ]
 }
 ```
+
+Минимальная модель с обязательным fallback:
+
+```json
+"models": [
+  {
+    "tag": "cover-letter-mini",
+    "type": "openai_responses",
+    "model": "gpt-5.4-mini",
+    "api_key_env": "OPENAI_API_KEY",
+    "max_output_tokens": 1024
+  }
+],
+"applications": {
+  "message_template_file": "messages/backend.json",
+  "model": {
+    "provider": "cover-letter-mini",
+    "prompt_version": "backend-v1",
+    "instruction": "Напиши краткое предметное сопроводительное без общих фраз.",
+    "timeout": "20s"
+  }
+}
+```
+
+При Compose-запуске `OPENAI_API_KEY` передаётся только backend-сервису. Для
+другого `api_key_env` переменную нужно явно добавить в deployment override.
+`job-agent-check` проверяет наличие секрета, но не печатает значение и не делает
+платный model request.
 
 Пример безопасной настройки:
 
