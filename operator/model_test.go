@@ -152,3 +152,61 @@ func TestRuleTemplatePreparerRequiresModelFallbackAndCompleteConfig(t *testing.T
 		t.Fatal("expected incomplete model config to fail")
 	}
 }
+
+func TestRuleTemplatePreparerRejectsUnsafeOrUngroundedModelText(t *testing.T) {
+	application, vacancy := operatorFixture()
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "unresolved placeholder", text: "Здравствуйте, {{.Resume.Name}}"},
+		{name: "fenced response", text: "```text\nЗдравствуйте\n```"},
+		{name: "structured response", text: `{"text":"Здравствуйте"}`},
+		{name: "invented experience", text: "У меня 7 лет коммерческого опыта."},
+		{name: "structural id is not evidence", text: "У меня 42 года коммерческого опыта."},
+		{name: "invented contact", text: "Портфолио: https://example.invalid/portfolio"},
+		{name: "control character", text: "Здравствуйте\x00"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+				StaticMessage: "safe fallback",
+				Model: &ApplicationModelConfig{
+					Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
+					Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
+						return ApplicationModelResponse{Text: test.text}, nil
+					}),
+				},
+			})
+			if err != nil {
+				t.Fatalf("new preparer: %v", err)
+			}
+			result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+			if err != nil || result.Message != "safe fallback" || !strings.Contains(result.Reason, "fallback after invalid_output") {
+				t.Fatalf("preparation = %#v, err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
+	application, vacancy := operatorFixture()
+	vacancy.Attributes["experience"] = "От 1 года до 3 лет"
+	message := "Подхожу под требование опыта от 1 года до 3 лет: https://hh.ru/vacancy/42"
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		StaticMessage: "fallback",
+		Model: &ApplicationModelConfig{
+			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
+			Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
+				return ApplicationModelResponse{Text: message}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Message != message || strings.Contains(result.Reason, "fallback") {
+		t.Fatalf("preparation = %#v, err=%v", result, err)
+	}
+}

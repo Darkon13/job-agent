@@ -2,7 +2,10 @@
 
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
 groups, policy routing и первый model provider с fallback реализованы. Остался
-groundedness validator и отдельное хранение расширенной model provenance.
+семантический groundedness по полным resume facts и отдельное хранение
+расширенной model provenance. Детерминированный output safety validator уже
+отсекает служебную обёртку, placeholders и не подтверждённые контекстом числа и
+контакты.
 
 Общий контракт `rule_sets → policy rules → named action`, а также processors,
 которые разделяют детерминированные преобразования и LLM, зафиксирован в
@@ -123,8 +126,10 @@ full vacancy + employer
 6. **Выполнено:** общий model-operator port, OpenAI Responses adapter,
    timeout/error classification и fallback на готовый пул. API key приходит из
    environment, запрос использует `store:false`, а модель выбирается конфигом.
-7. Добавить validator фактической опоры, placeholders и длины; неизвестные
-   факты отправлять в approval, а не исправлять догадкой.
+7. **Частично выполнено:** длина, управляющие символы, JSON/code fence,
+   placeholders, новые числа, URL и e-mail приводят к безопасному fallback.
+   Полная семантическая сверка требует добавить явные resume facts в контекст;
+   её сомнения должны отправляться в approval, а не исправляться догадкой.
 8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
    parent cancellation, provider HTTP contract, config и routing покрыты.
    Groundedness и один `approval` smoke ещё нужны.
