@@ -82,6 +82,10 @@ func TestStorePersistsApplicationCampaignAndLinks(t *testing.T) {
 	if err != nil || persisted.Cursor != "page-2" || persisted.Revision != 2 || persisted.MaxInFlight != 2 {
 		t.Fatalf("persisted campaign=%#v err=%v", persisted, err)
 	}
+	campaigns, err := reopened.ListApplicationCampaigns(ctx, 20)
+	if err != nil || len(campaigns) != 1 || campaigns[0].ID != campaign.ID || campaigns[0].Revision != 2 {
+		t.Fatalf("persisted campaign list=%#v err=%v", campaigns, err)
+	}
 	items, err := reopened.ListCampaignApplications(ctx, campaign.ID)
 	if err != nil || len(items) != 1 || items[0].ApplicationID != application.ID {
 		t.Fatalf("persisted items=%#v err=%v", items, err)

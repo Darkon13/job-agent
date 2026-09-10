@@ -76,6 +76,9 @@ profile-aware round-robin/aging: priority сам по себе не гарант
 - идемпотентная сводка подтверждённых действий профиля и последние read-only
   снимки показов/просмотров/приглашений HH без выдуманного activity-score;
 - состояния очереди и откликов;
+- последние 20 application campaigns с job/status/target и сгруппированными
+  исходами откликов конкретного запуска; письмо, vacancy external ID и task
+  payload в эту сводку не входят;
 - список terminal failed-задач без payload/idempotency data с явными
   `retry`/`dismiss`; retry предупреждает о возможном повторе внешнего действия;
 - список диалогов и загрузка сообщений;
@@ -90,8 +93,9 @@ profile-policy `conversations.allow_send` и `allow_mark_read`.
 
 1. Единый auth control plane для CLI/dashboard, credential sinks и Kitty/Sixel
    challenges — [`next-auth-control-plane.md`](next-auth-control-plane.md).
-2. Фильтры и пагинация dashboard, подробности campaign/application и cancel
-   для ещё не начатых задач; recovery failed-задач через retry/dismiss готов.
+2. Фильтры и пагинация dashboard, безопасные подробности отдельного application
+   и cancel для ещё не начатых задач; сводка последних campaigns и recovery
+   failed-задач через retry/dismiss готовы.
 3. Profile-aware fairness/aging внутри одного task type без нарушения priority.
 4. Узкий browser RPC, один Chromium, контексты профилей и bounded page pool.
 5. SSE для обновлений вместо периодического polling и для auth challenges.

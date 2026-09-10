@@ -486,6 +486,11 @@ fallback routes. Сбой после сохранения cursor, но до enqu
 следующую проверку на её `available_at`, а не создаёт revision каждые несколько
 секунд до сброса квоты.
 
+Dashboard API возвращает последние 20 campaigns отдельно от глобальных
+счётчиков: job tag, terminal/running status, цель, текущий route и
+сгруппированные application outcomes конкретного запуска. Содержимое вакансий,
+сопроводительных, task payload и внешние vacancy ID в эту сводку не попадают.
+
 Пример action внутри cron job:
 
 ```json

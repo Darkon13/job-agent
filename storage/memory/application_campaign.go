@@ -50,6 +50,31 @@ func (repository *Repository) ApplicationCampaign(ctx context.Context, id core.A
 	return cloneApplicationCampaign(campaign), nil
 }
 
+func (repository *Repository) ListApplicationCampaigns(ctx context.Context, limit int) ([]core.ApplicationCampaign, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("application campaign list limit must be between 1 and 100")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	campaigns := make([]core.ApplicationCampaign, 0, len(repository.applicationCampaigns))
+	for _, campaign := range repository.applicationCampaigns {
+		campaigns = append(campaigns, cloneApplicationCampaign(campaign))
+	}
+	sort.Slice(campaigns, func(i, j int) bool {
+		if !campaigns[i].UpdatedAt.Equal(campaigns[j].UpdatedAt) {
+			return campaigns[i].UpdatedAt.After(campaigns[j].UpdatedAt)
+		}
+		return campaigns[i].ID > campaigns[j].ID
+	})
+	if len(campaigns) > limit {
+		campaigns = campaigns[:limit]
+	}
+	return campaigns, nil
+}
+
 func (repository *Repository) SaveApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign, expectedRevision uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err

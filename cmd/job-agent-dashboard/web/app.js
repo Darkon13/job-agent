@@ -1,6 +1,6 @@
 const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set() };
 const elements = Object.fromEntries([
-  "applications", "tasks", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
+  "applications", "tasks", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
@@ -30,6 +30,16 @@ function renderFailedTasks(items = []) {
     dismiss.addEventListener("click", () => controlFailedTask(item, "dismiss"));
     actions.append(retry, dismiss);
     row.append(text("td", item.id, "task-id"), text("td", item.type), text("td", item.profile_id || "—"), text("td", String(item.attempts)), text("td", error, "task-error"), text("td", formatDate(item.updated_at)), actions);
+    return row;
+  }));
+}
+function renderCampaigns(items = []) {
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
+  elements.campaigns.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    const outcomes = (item.applications || []).map((entry) => `${entry.status}${entry.decision_code ? `/${entry.decision_code}` : ""}: ${entry.count}`).join(" · ") || "нет откликов";
+    const status = item.stop_reason ? `${item.status}: ${item.stop_reason}` : item.status;
+    row.append(text("td", item.id, "task-id"), text("td", item.job_tag), text("td", status), text("td", String(item.target_successful)), text("td", outcomes), text("td", formatDate(item.updated_at)));
     return row;
   }));
 }
@@ -210,7 +220,7 @@ async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
     const [summary, failures] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed")]); state.summary = summary; state.failedTasks = failures.items || [];
-    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "priority", "count"]); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "priority", "count"]); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }

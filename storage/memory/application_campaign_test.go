@@ -38,6 +38,13 @@ func TestApplicationCampaignRepositoryLifecycle(t *testing.T) {
 	if err := repository.SaveApplicationCampaign(ctx, stored, 1); err != nil {
 		t.Fatalf("save campaign: %v", err)
 	}
+	campaigns, err := repository.ListApplicationCampaigns(ctx, 1)
+	if err != nil || len(campaigns) != 1 || campaigns[0].ID != campaign.ID || campaigns[0].Revision != 2 {
+		t.Fatalf("campaign list=%#v err=%v", campaigns, err)
+	}
+	if _, err := repository.ListApplicationCampaigns(ctx, 0); err == nil {
+		t.Fatal("expected invalid campaign list limit to fail")
+	}
 	if err := repository.SaveApplicationCampaign(ctx, stored, 1); !errors.Is(err, storage.ErrRevisionConflict) {
 		t.Fatalf("stale save error = %v", err)
 	}

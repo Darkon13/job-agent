@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/Darkon13/job-agent/buildinfo"
@@ -15,6 +16,8 @@ type RuntimeReadRepository interface {
 	Stats(context.Context) (storage.RuntimeStats, error)
 	TaskCounts(context.Context) ([]storage.TaskCount, error)
 	ApplicationCounts(context.Context) ([]storage.ApplicationCount, error)
+	ListApplicationCampaigns(context.Context, int) ([]core.ApplicationCampaign, error)
+	ListCampaignApplicationStates(context.Context, core.ApplicationCampaignID) ([]core.CampaignApplicationState, error)
 	ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error)
 	ListProfileActivitySnapshots(context.Context, storage.ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 	ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error)
@@ -30,9 +33,23 @@ type DashboardSummary struct {
 	Stats             storage.RuntimeStats           `json:"stats"`
 	Tasks             []storage.TaskCount            `json:"tasks"`
 	Applications      []storage.ApplicationCount     `json:"applications"`
+	Campaigns         []ApplicationCampaignSummary   `json:"campaigns"`
 	Activity          []storage.ProfileActivityCount `json:"activity"`
 	ActivitySnapshots []core.ProfileActivitySnapshot `json:"activity_snapshots"`
 	Conversations     []ConversationSummary          `json:"conversations"`
+}
+
+type ApplicationCampaignSummary struct {
+	ID               core.ApplicationCampaignID     `json:"id"`
+	JobTag           string                         `json:"job_tag"`
+	Status           core.ApplicationCampaignStatus `json:"status"`
+	StopReason       string                         `json:"stop_reason,omitempty"`
+	TargetSuccessful int                            `json:"target_successful"`
+	RouteIndex       int                            `json:"route_index"`
+	RouteCount       int                            `json:"route_count"`
+	Applications     []storage.ApplicationCount     `json:"applications"`
+	CreatedAt        time.Time                      `json:"created_at"`
+	UpdatedAt        time.Time                      `json:"updated_at"`
 }
 
 type ConversationSummary struct {
@@ -106,6 +123,20 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load application summary")
 		return
 	}
+	campaigns, err := api.repository.ListApplicationCampaigns(request.Context(), 20)
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load application campaigns")
+		return
+	}
+	campaignSummaries := make([]ApplicationCampaignSummary, 0, len(campaigns))
+	for _, campaign := range campaigns {
+		states, err := api.repository.ListCampaignApplicationStates(request.Context(), campaign.ID)
+		if err != nil {
+			writeProblem(response, http.StatusInternalServerError, "load application campaign outcomes")
+			return
+		}
+		campaignSummaries = append(campaignSummaries, applicationCampaignSummary(campaign, states))
+	}
 	activity, err := api.repository.ProfileActivityCounts(request.Context(), storage.ProfileActivityFilter{})
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load profile activity summary")
@@ -136,8 +167,38 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		Stats:             stats,
 		Tasks:             tasks,
 		Applications:      applications,
+		Campaigns:         campaignSummaries,
 		Activity:          activity,
 		ActivitySnapshots: activitySnapshots,
 		Conversations:     conversationSummaries,
 	})
+}
+
+func applicationCampaignSummary(campaign core.ApplicationCampaign, states []core.CampaignApplicationState) ApplicationCampaignSummary {
+	type countKey struct {
+		status       core.ApplicationStatus
+		decisionCode string
+	}
+	counts := make(map[countKey]int)
+	for _, state := range states {
+		key := countKey{status: state.Application.Status, decisionCode: state.Application.DecisionCode}
+		counts[key]++
+	}
+	applications := make([]storage.ApplicationCount, 0, len(counts))
+	for key, count := range counts {
+		applications = append(applications, storage.ApplicationCount{
+			Status: key.status, DecisionCode: key.decisionCode, Count: count,
+		})
+	}
+	sort.Slice(applications, func(i, j int) bool {
+		if applications[i].Status != applications[j].Status {
+			return applications[i].Status < applications[j].Status
+		}
+		return applications[i].DecisionCode < applications[j].DecisionCode
+	})
+	return ApplicationCampaignSummary{
+		ID: campaign.ID, JobTag: campaign.JobTag, Status: campaign.Status, StopReason: campaign.StopReason,
+		TargetSuccessful: campaign.TargetSuccessful, RouteIndex: campaign.RouteIndex, RouteCount: len(campaign.Routes),
+		Applications: applications, CreatedAt: campaign.CreatedAt, UpdatedAt: campaign.UpdatedAt,
+	}
 }

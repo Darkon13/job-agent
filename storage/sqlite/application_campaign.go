@@ -78,6 +78,48 @@ func (store *Store) ApplicationCampaign(ctx context.Context, id core.Application
 	return campaign, nil
 }
 
+func (store *Store) ListApplicationCampaigns(ctx context.Context, limit int) ([]core.ApplicationCampaign, error) {
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("application campaign list limit must be between 1 and 100")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT campaign_id, job_tag, profiles, routes, target_successful,
+		max_in_flight, route_index, cursor, route_done, status, stop_reason,
+		correlation_id, revision, created_at, updated_at
+		FROM application_campaigns ORDER BY updated_at DESC, campaign_id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list application campaigns: %w", err)
+	}
+	defer rows.Close()
+	campaigns := make([]core.ApplicationCampaign, 0, limit)
+	for rows.Next() {
+		var campaign core.ApplicationCampaign
+		var profiles, routes []byte
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&campaign.ID, &campaign.JobTag, &profiles, &routes, &campaign.TargetSuccessful,
+			&campaign.MaxInFlight, &campaign.RouteIndex, &campaign.Cursor, &campaign.RouteDone,
+			&campaign.Status, &campaign.StopReason, &campaign.CorrelationID, &campaign.Revision,
+			&createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(profiles, &campaign.Profiles); err != nil {
+			return nil, fmt.Errorf("decode application campaign %s profiles: %w", campaign.ID, err)
+		}
+		if err := json.Unmarshal(routes, &campaign.Routes); err != nil {
+			return nil, fmt.Errorf("decode application campaign %s routes: %w", campaign.ID, err)
+		}
+		campaign.CreatedAt = time.Unix(0, createdAt).UTC()
+		campaign.UpdatedAt = time.Unix(0, updatedAt).UTC()
+		if err := campaign.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid stored application campaign %s: %w", campaign.ID, err)
+		}
+		campaigns = append(campaigns, campaign)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return campaigns, nil
+}
+
 func (store *Store) SaveApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign, expectedRevision uint64) error {
 	if err := candidate.Validate(); err != nil {
 		return err

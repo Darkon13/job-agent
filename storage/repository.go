@@ -101,6 +101,7 @@ type SearchRunRepository interface {
 type ApplicationCampaignRepository interface {
 	CreateApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign) (stored core.ApplicationCampaign, created bool, err error)
 	ApplicationCampaign(ctx context.Context, id core.ApplicationCampaignID) (core.ApplicationCampaign, error)
+	ListApplicationCampaigns(ctx context.Context, limit int) ([]core.ApplicationCampaign, error)
 	SaveApplicationCampaign(ctx context.Context, candidate core.ApplicationCampaign, expectedRevision uint64) error
 	LinkCampaignApplication(ctx context.Context, item core.CampaignApplication) (created bool, err error)
 	ListCampaignApplications(ctx context.Context, id core.ApplicationCampaignID) ([]core.CampaignApplication, error)
