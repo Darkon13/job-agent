@@ -20,6 +20,7 @@ FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 ARG VERSION=0.1.0-dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
+WORKDIR /
 LABEL org.opencontainers.image.title="Job Agent" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \

@@ -67,6 +67,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := applyServerEnvironment(&cfg, os.LookupEnv); err != nil {
+		log.Fatalf("apply server environment: %v", err)
+	}
 	employerMatcher, err := cfg.BuildEmployerGroupMatcher()
 	if err != nil {
 		log.Fatalf("build employer groups: %v", err)
@@ -532,6 +535,41 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 		return mainOptions{}, errors.New("exactly one config path is required")
 	}
 	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
+}
+
+func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (string, bool)) error {
+	if cfg == nil {
+		return errors.New("server environment requires config")
+	}
+	if lookupEnv == nil {
+		return errors.New("server environment requires lookup function")
+	}
+	overridden := false
+	for _, item := range []struct {
+		name   string
+		target *string
+	}{
+		{name: "JOB_AGENT_SERVER_LISTEN", target: &cfg.Server.Listen},
+		{name: "JOB_AGENT_SERVER_EXPOSURE", target: &cfg.Server.Exposure},
+	} {
+		value, exists := lookupEnv(item.name)
+		if !exists {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return fmt.Errorf("%s must not be empty when set", item.name)
+		}
+		*item.target = value
+		overridden = true
+	}
+	if !overridden {
+		return nil
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate overridden config: %w", err)
+	}
+	return nil
 }
 
 func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ApplicationPreparer, error) {

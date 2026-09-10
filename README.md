@@ -35,11 +35,32 @@ docker compose up -d --build job-agent
 docker compose up -d --build
 ```
 
-Для реального профиля скопируйте `deploy/config.example.json` вне Git,
-настройте profiles/searches/jobs и передайте путь через
-`JOB_AGENT_CONFIG_FILE`. Backend и migrator по умолчанию запускаются как
-`1000:100`; при другом владельце каталога данных задайте `JOB_AGENT_UID` и
-`JOB_AGENT_GID`. Root для нормального запуска не требуется.
+Для реального профиля создайте отдельный каталог конфигурации вне Git,
+положите туда основной JSON и все файлы, на которые он ссылается относительными
+путями (`messages/`, resume facts и bootstrap manifests). Передайте каталог
+через `JOB_AGENT_CONFIG_DIR`, а имя основного файла — через
+`JOB_AGENT_CONFIG_NAME`. В контейнере весь bundle доступен read-only в
+`/config`, тогда как SQLite и browser state остаются в writable `/data`.
+Runtime image имеет фиксированный рабочий каталог `/`, поэтому существующие
+пути `./data/...` однозначно попадают в этот volume и не зависят от домашнего
+каталога пользователя базового image.
+Compose ограниченно переопределяет только listener backend через
+`JOB_AGENT_SERVER_LISTEN=0.0.0.0:8080` и
+`JOB_AGENT_SERVER_EXPOSURE=private`: это позволяет dashboard обращаться к API
+по внутренней сети, не публикуя backend-порт на хост. Остальная конфигурация
+остаётся декларативной и читается из bundle.
+Backend по умолчанию запускается как `1000:100`; при другом владельце каталога
+данных задайте `JOB_AGENT_UID` и `JOB_AGENT_GID`. Root для нормального запуска
+не требуется.
+
+Например, локальный bundle в `./data` с файлом `config.local.json` запускается
+так:
+
+```sh
+JOB_AGENT_CONFIG_DIR=./data \
+JOB_AGENT_CONFIG_NAME=config.local.json \
+  docker compose up -d --build
+```
 
 Dashboard по умолчанию доступен только на `127.0.0.1:8081`. Для доступа через
 WireGuard/WireGuard укажите точный адрес tunnel-интерфейса хоста, например:

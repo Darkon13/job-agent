@@ -87,6 +87,41 @@ func TestParseMainOptions(t *testing.T) {
 	}
 }
 
+func TestApplyServerEnvironmentOverridesContainerListener(t *testing.T) {
+	cfg := appconfig.Config{
+		Database: appconfig.DatabaseConfig{Driver: "sqlite", Path: "/data/job-agent.db"},
+		Server:   appconfig.ServerConfig{Listen: "127.0.0.1:8080"},
+	}
+	values := map[string]string{
+		"JOB_AGENT_SERVER_LISTEN":   "0.0.0.0:8080",
+		"JOB_AGENT_SERVER_EXPOSURE": appconfig.ServerExposurePrivate,
+	}
+	if err := applyServerEnvironment(&cfg, func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err != nil {
+		t.Fatalf("apply server environment: %v", err)
+	}
+	if cfg.Server.Listen != "0.0.0.0:8080" || cfg.Server.Exposure != appconfig.ServerExposurePrivate {
+		t.Fatalf("unexpected server config: %#v", cfg.Server)
+	}
+}
+
+func TestApplyServerEnvironmentRejectsUnsafeListener(t *testing.T) {
+	cfg := appconfig.Config{
+		Database: appconfig.DatabaseConfig{Driver: "sqlite", Path: "/data/job-agent.db"},
+		Server:   appconfig.ServerConfig{Listen: "127.0.0.1:8080"},
+	}
+	if err := applyServerEnvironment(&cfg, func(name string) (string, bool) {
+		if name == "JOB_AGENT_SERVER_LISTEN" {
+			return "0.0.0.0:8080", true
+		}
+		return "", false
+	}); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("expected unsafe listener error, got %v", err)
+	}
+}
+
 func (stub *profileAdapterStub) Name() string                         { return "stub" }
 func (stub *profileAdapterStub) Capabilities() []core.Capability      { return stub.capabilities }
 func (stub *profileAdapterStub) ValidateSearch(json.RawMessage) error { return nil }

@@ -4,7 +4,7 @@ x-runtime: &runtime
   image: ${JOB_AGENT_IMAGE:-job-agent:0.1.0-dev}
 
 x-runtime-volumes: &runtime-volumes
-  - ${JOB_AGENT_CONFIG_FILE:-./deploy/config.example.json}:/config/config.json:ro
+  - ${JOB_AGENT_CONFIG_DIR:-./deploy}:/config:ro
   - ${JOB_AGENT_DATA_DIR:-./data}:/data
 
 services:
@@ -18,8 +18,10 @@ services:
         COMMIT: ${JOB_AGENT_COMMIT:-unknown}
         BUILD_TIME: ${JOB_AGENT_BUILD_TIME:-unknown}
         MODIFIED: ${JOB_AGENT_MODIFIED:-unknown}
-    command: ["/usr/local/bin/job-agent", "-migrate-up", "/config/config.json"]
+    command: ["/usr/local/bin/job-agent", "-migrate-up", "/config/${JOB_AGENT_CONFIG_NAME:-config.example.json}"]
     environment:
+      JOB_AGENT_SERVER_LISTEN: 0.0.0.0:8080
+      JOB_AGENT_SERVER_EXPOSURE: private
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
     volumes: *runtime-volumes

@@ -20,6 +20,21 @@ job-agent API -> workflows -> durable task table -> typed consumers
 
 В одном `compose.yaml` описаны ровно два сервиса: `job-agent` и `dashboard`. Они запускаются разными командами из одного runtime image с тремя статическими Go-бинарниками; `job-agent -migrate-up` применяет ожидающие миграции перед открытием хранилища, а отдельный `job-agent-migrate` остаётся в image для ручного управления схемой. Полный `docker compose up` включает UI; запуск только `job-agent` оставляет dashboard выключенным без дополнительного Compose profile или override-файла. Backend имеет только `expose`, но не `ports`: с хоста и внешней сети он напрямую не публикуется. В контейнерном конфиге используется `server.exposure: private`; обычное значение по умолчанию `loopback` продолжает запрещать non-loopback bind.
 
+Compose монтирует не одиночный JSON, а весь `JOB_AGENT_CONFIG_DIR` read-only в
+`/config` и запускает `JOB_AGENT_CONFIG_NAME` из этого каталога. Это часть
+контракта: относительные ссылки на `messages/`, resume facts и bootstrap
+manifests разрешаются относительно основного файла и должны попадать в тот же
+bundle. Writable runtime data монтируется независимо в `/data`, поэтому
+конфиг и его вспомогательные файлы не смешиваются с SQLite и browser state.
+Рабочий каталог runtime image зафиксирован как `/`: относительный путь
+`./data/...` тем самым указывает на mounted `/data`, а не на implementation
+specific home непривилегированного пользователя distroless.
+Compose также задаёт узкие runtime overrides
+`JOB_AGENT_SERVER_LISTEN=0.0.0.0:8080` и
+`JOB_AGENT_SERVER_EXPOSURE=private`. Они повторно проходят полную config
+validation и нужны только для связи dashboard с backend по закрытой Compose
+network; backend port по-прежнему не публикуется на host.
+
 ## Доступ через WireGuard/WireGuard
 
 Docker публикует порт на IP хоста, а не на имени интерфейса. Поэтому стабильный контракт deployment — `JOB_AGENT_DASHBOARD_BIND_IP=<адрес wg-интерфейса>`. Например, если у `wg0` адрес `10.66.66.1`, dashboard публикуется только как `10.66.66.1:8081:8081`.
