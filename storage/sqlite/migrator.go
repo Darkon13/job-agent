@@ -11,7 +11,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-const LatestSchemaVersion uint = 16
+const LatestSchemaVersion uint = 17
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -134,6 +134,9 @@ func validateLegacySchema(db *sql.DB, version uint) error {
 	}
 	if version >= 10 {
 		requiredTables = append(requiredTables, "application_campaigns", "application_campaign_items")
+	}
+	if version >= 17 {
+		requiredTables = append(requiredTables, "application_pacing_reservations")
 	}
 	for _, table := range requiredTables {
 		var exists bool

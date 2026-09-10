@@ -48,7 +48,6 @@
           "include_any": ["Go", "Golang", "Backend"],
           "exclude_any": ["директор", "руководитель направления"]
         },
-        "daily_limit": 20,
         "timezone": "Europe/Moscow"
       },
       "conversations": {

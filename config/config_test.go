@@ -56,14 +56,32 @@ func TestApplicationPolicyDefaultsToDryRunAndGuardsLiveMode(t *testing.T) {
 		t.Fatalf("safe default: mode=%q err=%v", config.Profiles[0].Applications.ExecutionMode(), err)
 	}
 	config.Profiles[0].Applications.Mode = ApplicationModeSubmit
-	if err := config.Validate(); err == nil {
-		t.Fatal("expected live mode without daily limit to fail")
+	config.Profiles[0].Applications.Timezone = "Europe/Moscow"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("HH live defaults: %v", err)
+	}
+	policy := config.Profiles[0].Applications
+	if limit := policy.EffectiveDailyLimit("hh"); limit != 200 {
+		t.Fatalf("default HH daily limit = %d", limit)
+	}
+	minimum, maximum, err := policy.SubmitJitterDurations("hh")
+	if err != nil || minimum != 15*time.Second || maximum != 25*time.Second {
+		t.Fatalf("default HH submit jitter = %s..%s err=%v", minimum, maximum, err)
 	}
 	config.Profiles[0].Applications.DailyLimit = 7
-	config.Profiles[0].Applications.Timezone = "Europe/Moscow"
 	if err := config.Validate(); err != nil {
 		t.Fatalf("valid live application policy: %v", err)
 	}
+	config.Profiles[0].Applications.DailyLimit = 201
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected HH limit above platform ceiling to fail")
+	}
+	config.Profiles[0].Applications.DailyLimit = 7
+	config.Profiles[0].Applications.SubmitJitter = JitterConfig{Min: "25s", Max: "15s"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected inverted submit jitter to fail")
+	}
+	config.Profiles[0].Applications.SubmitJitter = JitterConfig{}
 	config.Profiles[0].Applications.Timezone = "Mars/Olympus"
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected invalid application timezone to fail")

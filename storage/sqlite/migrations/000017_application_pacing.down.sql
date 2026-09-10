@@ -1,0 +1,2 @@
+DROP INDEX application_pacing_scope_idx;
+DROP TABLE application_pacing_reservations;

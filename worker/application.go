@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -16,12 +17,14 @@ import (
 )
 
 type ApplicationPlan struct {
-	ResumeID   string
-	Message    string
-	Preparer   applicationoperator.ApplicationPreparer
-	Mode       core.ApplicationExecutionMode
-	DailyLimit int
-	Timezone   string
+	ResumeID        string
+	Message         string
+	Preparer        applicationoperator.ApplicationPreparer
+	Mode            core.ApplicationExecutionMode
+	DailyLimit      int
+	SubmitJitterMin time.Duration
+	SubmitJitterMax time.Duration
+	Timezone        string
 }
 
 func (plan ApplicationPlan) Validate() error {
@@ -34,11 +37,27 @@ func (plan ApplicationPlan) Validate() error {
 	if plan.Mode == core.ApplicationExecutionSubmit && plan.DailyLimit < 1 {
 		return errors.New("live application plan requires a positive daily limit")
 	}
+	if plan.Mode == core.ApplicationExecutionSubmit && (plan.SubmitJitterMin <= 0 || plan.SubmitJitterMax < plan.SubmitJitterMin) {
+		return errors.New("live application plan requires 0 < submit jitter min <= max")
+	}
 	if plan.Timezone == "" {
 		return errors.New("application plan requires a timezone")
 	}
 	_, err := time.LoadLocation(plan.Timezone)
 	return err
+}
+
+type ApplicationJitterSource interface {
+	Between(minimum, maximum time.Duration) time.Duration
+}
+
+type UniformApplicationJitter struct{}
+
+func (UniformApplicationJitter) Between(minimum, maximum time.Duration) time.Duration {
+	if maximum <= minimum {
+		return minimum
+	}
+	return minimum + time.Duration(rand.Int64N(int64(maximum-minimum)))
 }
 
 type ApplicationPlanResolver interface {
@@ -163,17 +182,19 @@ type ApplicationHandler struct {
 	repository storage.ApplicationRepository
 	vacancies  storage.VacancyRepository
 	budgets    storage.ApplicationBudgetRepository
+	pacing     storage.ApplicationPaceRepository
 	activity   storage.ProfileActivityRepository
 	transports *ApplicationTransportRegistry
 	plans      ApplicationPlanResolver
+	jitter     ApplicationJitterSource
 	clock      Clock
 }
 
-func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, activity storage.ProfileActivityRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, clock Clock) (*ApplicationHandler, error) {
-	if repository == nil || vacancies == nil || budgets == nil || activity == nil || transports == nil || plans == nil || clock == nil {
+func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, pacing storage.ApplicationPaceRepository, activity storage.ProfileActivityRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, jitter ApplicationJitterSource, clock Clock) (*ApplicationHandler, error) {
+	if repository == nil || vacancies == nil || budgets == nil || pacing == nil || activity == nil || transports == nil || plans == nil || jitter == nil || clock == nil {
 		return nil, errors.New("application handler requires all dependencies")
 	}
-	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, activity: activity, transports: transports, plans: plans, clock: clock}, nil
+	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, pacing: pacing, activity: activity, transports: transports, plans: plans, jitter: jitter, clock: clock}, nil
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -333,6 +354,15 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		return err
 	}
+	if err := handler.acquirePacing(ctx, application, plan, now); err != nil {
+		if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+			return saveErr
+		}
+		if releaseErr := handler.releaseBudget(ctx, application, now); releaseErr != nil {
+			return releaseErr
+		}
+		return err
+	}
 	if err := application.Transition(core.ApplicationSubmitting, now); err != nil {
 		return err
 	}
@@ -364,6 +394,28 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return err
 	}
 	return handler.recordSubmitted(ctx, application)
+}
+
+func (handler *ApplicationHandler) acquirePacing(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
+	interval := handler.jitter.Between(plan.SubmitJitterMin, plan.SubmitJitterMax)
+	reservation, allowed, err := handler.pacing.AcquireApplicationPace(ctx, core.AcquireApplicationPaceParams{
+		ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
+		Interval: interval, Now: now,
+	})
+	if err != nil {
+		return &core.OperationError{
+			Category: core.ErrorTemporaryFailure, Operation: "applications.pacing.acquire", Platform: application.Key.Vacancy.Platform,
+			Message: "application pacing storage is temporarily unavailable", Cause: err,
+		}
+	}
+	if allowed {
+		return nil
+	}
+	retryAt := reservation.ScheduledAt
+	return &core.OperationError{
+		Category: core.ErrorRateLimited, Operation: "applications.pacing.wait", Platform: application.Key.Vacancy.Platform,
+		RetryAfter: &retryAt, Message: "application submit is waiting for its pacing slot",
+	}
 }
 
 func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, string, bool, error) {

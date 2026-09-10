@@ -141,6 +141,12 @@ type ApplicationBudgetRepository interface {
 	ReleaseApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
 }
 
+type ApplicationPaceRepository interface {
+	// AcquireApplicationPace returns allowed=false with a future ScheduledAt
+	// when the task must be released and retried without performing a submit.
+	AcquireApplicationPace(ctx context.Context, params core.AcquireApplicationPaceParams) (reservation core.ApplicationPaceReservation, allowed bool, err error)
+}
+
 type ProfileStateProposalFilter struct {
 	ResourceTag string
 	ProfileID   core.ProfileID

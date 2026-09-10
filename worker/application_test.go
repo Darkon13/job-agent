@@ -44,6 +44,17 @@ type fakeApplicationPreparer struct {
 	calls  int
 }
 
+type fixedApplicationJitter struct {
+	value time.Duration
+}
+
+func (source fixedApplicationJitter) Between(minimum, maximum time.Duration) time.Duration {
+	if source.value != 0 {
+		return source.value
+	}
+	return minimum
+}
+
 func (preparer *fakeApplicationPreparer) PrepareApplication(_ context.Context, _ core.Application, _ core.Vacancy) (applicationoperator.ApplicationPreparation, error) {
 	preparer.calls++
 	return preparer.result, preparer.err
@@ -141,7 +152,7 @@ func applicationFixture(t *testing.T, plans StaticApplicationPlans, transport *f
 		t.Fatalf("register transport: %v", err)
 	}
 	clock := &conversationClock{now: now}
-	handler, err := NewApplicationHandler(repository, repository, repository, repository, transports, plans, clock)
+	handler, err := NewApplicationHandler(repository, repository, repository, repository, repository, transports, plans, fixedApplicationJitter{}, clock)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -149,13 +160,19 @@ func applicationFixture(t *testing.T, plans StaticApplicationPlans, transport *f
 }
 
 func liveApplicationPlan(resumeID string) ApplicationPlan {
-	return ApplicationPlan{ResumeID: resumeID, Mode: core.ApplicationExecutionSubmit, DailyLimit: 10, Timezone: "Europe/Moscow"}
+	return ApplicationPlan{
+		ResumeID: resumeID, Mode: core.ApplicationExecutionSubmit, DailyLimit: 10,
+		SubmitJitterMin: 15 * time.Second, SubmitJitterMax: 25 * time.Second, Timezone: "Europe/Moscow",
+	}
 }
 
 func TestApplicationHandlerSubmitsAndPersistsNegotiation(t *testing.T) {
 	transport := &fakeApplicationTransport{}
 	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{
-		"profile-1": {ResumeID: "resume-1", Message: "Добрый день", Mode: core.ApplicationExecutionSubmit, DailyLimit: 10, Timezone: "Europe/Moscow"},
+		"profile-1": {
+			ResumeID: "resume-1", Message: "Добрый день", Mode: core.ApplicationExecutionSubmit, DailyLimit: 10,
+			SubmitJitterMin: 15 * time.Second, SubmitJitterMax: 25 * time.Second, Timezone: "Europe/Moscow",
+		},
 	}, transport)
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("handle application: %v", err)
@@ -269,7 +286,7 @@ func TestApplicationHandlerReusesPreparedMessageOnSubmitRetry(t *testing.T) {
 	plan := liveApplicationPlan("resume-1")
 	plan.Preparer = preparer
 	plans := StaticApplicationPlans{"profile-1": plan}
-	handler, _, task, _ := applicationFixture(t, plans, transport)
+	handler, _, task, clock := applicationFixture(t, plans, transport)
 	if err := handler.Handle(context.Background(), task); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
 		t.Fatalf("first handle: %v", err)
 	}
@@ -277,6 +294,7 @@ func TestApplicationHandlerReusesPreparedMessageOnSubmitRetry(t *testing.T) {
 	plan.ResumeID = "resume-2"
 	plans["profile-1"] = plan
 	transport.err = nil
+	clock.now = clock.now.Add(15 * time.Second)
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("retry handle: %v", err)
 	}

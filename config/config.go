@@ -97,6 +97,12 @@ const (
 	ApplicationModeDryRun               = "dry_run"
 	ApplicationModeApproval             = "approval"
 	ApplicationModeSubmit               = "submit"
+	DefaultHHDailyApplicationLimit      = 200
+)
+
+const (
+	defaultHHApplicationJitterMin = 15 * time.Second
+	defaultHHApplicationJitterMax = 25 * time.Second
 )
 
 type Job struct {
@@ -251,6 +257,7 @@ type ApplicationPolicy struct {
 	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
 	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
 	DailyLimit            int                       `json:"daily_limit,omitempty"`
+	SubmitJitter          JitterConfig              `json:"submit_jitter,omitempty"`
 	Timezone              string                    `json:"timezone,omitempty"`
 	AllowVisibilityChange bool                      `json:"allow_visibility_change,omitempty"`
 	resolvedTemplate      string
@@ -307,6 +314,42 @@ func (policy ApplicationPolicy) LocationName() string {
 		return "UTC"
 	}
 	return policy.Timezone
+}
+
+func (policy ApplicationPolicy) EffectiveDailyLimit(adapterType string) int {
+	if policy.DailyLimit != 0 {
+		return policy.DailyLimit
+	}
+	if adapterType == "hh" {
+		return DefaultHHDailyApplicationLimit
+	}
+	return 0
+}
+
+func (policy ApplicationPolicy) SubmitJitterDurations(adapterType string) (time.Duration, time.Duration, error) {
+	minimumText := strings.TrimSpace(policy.SubmitJitter.Min)
+	maximumText := strings.TrimSpace(policy.SubmitJitter.Max)
+	if minimumText == "" && maximumText == "" {
+		if adapterType == "hh" {
+			return defaultHHApplicationJitterMin, defaultHHApplicationJitterMax, nil
+		}
+		return 0, 0, nil
+	}
+	if minimumText == "" || maximumText == "" {
+		return 0, 0, errors.New("submit_jitter requires both min and max")
+	}
+	minimum, err := time.ParseDuration(minimumText)
+	if err != nil {
+		return 0, 0, fmt.Errorf("submit_jitter min: %w", err)
+	}
+	maximum, err := time.ParseDuration(maximumText)
+	if err != nil {
+		return 0, 0, fmt.Errorf("submit_jitter max: %w", err)
+	}
+	if minimum <= 0 || maximum < minimum {
+		return 0, 0, errors.New("submit_jitter requires 0 < min <= max")
+	}
+	return minimum, maximum, nil
 }
 
 func (policy ApplicationPolicy) ResolvedMessageTemplate() string {
@@ -745,7 +788,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("server scheduler_reconcile_interval must be a positive duration")
 		}
 	}
-	adapters := make(map[string]struct{}, len(c.Adapters))
+	adapters := make(map[string]string, len(c.Adapters))
 	for _, item := range c.Adapters {
 		if item.Tag == "" || item.Type == "" {
 			return fmt.Errorf("every adapter requires tag and type")
@@ -753,7 +796,7 @@ func (c Config) Validate() error {
 		if _, exists := adapters[item.Tag]; exists {
 			return fmt.Errorf("duplicate adapter tag %q", item.Tag)
 		}
-		adapters[item.Tag] = struct{}{}
+		adapters[item.Tag] = item.Type
 	}
 	modelProviders := make(map[string]struct{}, len(c.Models))
 	for _, model := range c.Models {
@@ -777,7 +820,8 @@ func (c Config) Validate() error {
 		if profile.Tag == "" || profile.Adapter == "" {
 			return fmt.Errorf("every profile requires tag and adapter")
 		}
-		if _, exists := adapters[profile.Adapter]; !exists {
+		adapterType, exists := adapters[profile.Adapter]
+		if !exists {
 			return fmt.Errorf("profile %q references unknown adapter %q", profile.Tag, profile.Adapter)
 		}
 		if _, exists := profiles[profile.Tag]; exists {
@@ -813,11 +857,25 @@ func (c Config) Validate() error {
 		switch profile.Applications.ExecutionMode() {
 		case ApplicationModeDryRun, ApplicationModeApproval:
 		case ApplicationModeSubmit:
-			if profile.Applications.DailyLimit < 1 {
+			limit := profile.Applications.EffectiveDailyLimit(adapterType)
+			if limit < 1 {
 				return fmt.Errorf("profile %q live applications require a positive daily_limit", profile.Tag)
+			}
+			if adapterType == "hh" && limit > DefaultHHDailyApplicationLimit {
+				return fmt.Errorf("profile %q HH daily_limit must not exceed %d", profile.Tag, DefaultHHDailyApplicationLimit)
 			}
 		default:
 			return fmt.Errorf("profile %q has unknown application mode %q", profile.Tag, profile.Applications.Mode)
+		}
+		if profile.Applications.DailyLimit < 0 {
+			return fmt.Errorf("profile %q application daily_limit must not be negative", profile.Tag)
+		}
+		jitterMin, jitterMax, err := profile.Applications.SubmitJitterDurations(adapterType)
+		if err != nil {
+			return fmt.Errorf("profile %q applications: %w", profile.Tag, err)
+		}
+		if profile.Applications.ExecutionMode() == ApplicationModeSubmit && (jitterMin <= 0 || jitterMax < jitterMin) {
+			return fmt.Errorf("profile %q live applications require positive submit_jitter", profile.Tag)
 		}
 		if profile.Applications.Timezone != "" {
 			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {

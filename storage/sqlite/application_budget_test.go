@@ -88,6 +88,7 @@ func applicationBudgetStore(t *testing.T, now time.Time, count int) (interface {
 	ReserveApplicationBudget(context.Context, core.ReserveApplicationBudgetParams) (core.ApplicationBudgetReservation, error)
 	CommitApplicationBudget(context.Context, core.ApplicationID, time.Time) error
 	ReleaseApplicationBudget(context.Context, core.ApplicationID, time.Time) error
+	AcquireApplicationPace(context.Context, core.AcquireApplicationPaceParams) (core.ApplicationPaceReservation, bool, error)
 }, []core.ApplicationID) {
 	t.Helper()
 	store, err := openStore(t.TempDir() + "/job-agent.db")

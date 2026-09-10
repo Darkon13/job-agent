@@ -19,6 +19,7 @@ var (
 	_ storage.ApplicationRepository             = (*Repository)(nil)
 	_ storage.ApplicationReadRepository         = (*Repository)(nil)
 	_ storage.ApplicationBudgetRepository       = (*Repository)(nil)
+	_ storage.ApplicationPaceRepository         = (*Repository)(nil)
 	_ storage.TestCatalogRepository             = (*Repository)(nil)
 	_ storage.ReviewRepository                  = (*Repository)(nil)
 	_ storage.ConversationRepository            = (*Repository)(nil)
@@ -48,6 +49,7 @@ type Repository struct {
 	discoveries           map[discoveryKey]core.VacancyDiscovery
 	applications          map[core.ApplicationKey]core.Application
 	applicationBudgets    map[core.ApplicationID]core.ApplicationBudgetReservation
+	applicationPacing     map[core.ApplicationID]core.ApplicationPaceReservation
 	tests                 map[core.TestDefinitionID]core.TestDefinition
 	reviews               map[core.ReviewSessionID]core.ReviewSession
 	prompts               map[core.ReviewPromptID]core.ReviewPrompt
@@ -72,6 +74,7 @@ func NewRepository() *Repository {
 		discoveries:           make(map[discoveryKey]core.VacancyDiscovery),
 		applications:          make(map[core.ApplicationKey]core.Application),
 		applicationBudgets:    make(map[core.ApplicationID]core.ApplicationBudgetReservation),
+		applicationPacing:     make(map[core.ApplicationID]core.ApplicationPaceReservation),
 		tests:                 make(map[core.TestDefinitionID]core.TestDefinition),
 		reviews:               make(map[core.ReviewSessionID]core.ReviewSession),
 		prompts:               make(map[core.ReviewPromptID]core.ReviewPrompt),

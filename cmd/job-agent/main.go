@@ -257,9 +257,15 @@ func main() {
 					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
 				}
 			}
+			jitterMin, jitterMax, err := profile.Applications.SubmitJitterDurations(instance.Name())
+			if err != nil {
+				log.Fatalf("resolve application pacing for profile %q: %v", profile.Tag, err)
+			}
 			applicationPlans[profileID] = taskworker.ApplicationPlan{
 				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-				Message: profile.Applications.Message, Preparer: preparer, DailyLimit: profile.Applications.DailyLimit,
+				Message: profile.Applications.Message, Preparer: preparer,
+				DailyLimit:      profile.Applications.EffectiveDailyLimit(instance.Name()),
+				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
 				Timezone: profile.Applications.LocationName(),
 			}
 		}
@@ -371,7 +377,8 @@ func main() {
 	}
 	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
-			store, store, store, store, applicationTransports, applicationPlans, taskworker.SystemClock{},
+			store, store, store, store, store, applicationTransports, applicationPlans,
+			taskworker.UniformApplicationJitter{}, taskworker.SystemClock{},
 		)
 		if err != nil {
 			log.Fatalf("create application handler: %v", err)

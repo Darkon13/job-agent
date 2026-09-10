@@ -304,8 +304,20 @@ browser GET и обновляет её в repository: краткой поиск�
 
 Политика выполнения задаётся в `profile.applications`. Без явной настройки
 используется безопасный `dry_run`; `approval` останавливает отклик в
-`waiting_approval`; `submit` требует положительный `daily_limit`. Граница суток
-считается в заданной `timezone`.
+`waiting_approval`. Для HH режим `submit` по умолчанию получает дневной budget
+`200` откликов на профиль и равномерный `submit_jitter` от `15s` до `25s`.
+Явный `daily_limit` может только уменьшить этот ceiling; значения выше `200`
+отклоняются конфигом. Граница суток считается в заданной `timezone`.
+
+Pacing применяется только непосредственно перед внешним submit. Каждый отклик
+получает постоянный слот в SQLite; ожидающая задача освобождает worker lease и
+возвращается в очередь до `scheduled_at`. После перезапуска просроченные слоты
+перестраиваются, поэтому накопившиеся отклики не отправляются burst-пакетом.
+При необходимости диапазон можно сузить явно:
+
+```json
+"submit_jitter": {"min": "18s", "max": "22s"}
+```
 
 Детерминированный application operator проверяет `include_any`/`exclude_any`
 по названию, работодателю, описанию и ключевым навыкам полной вакансии. Границы
@@ -473,7 +485,6 @@ provider response ID, tag/digest resume facts, input/output/evidence digests,
     "include_any": ["Go", "Golang", "Backend"],
     "exclude_any": ["директор", "руководитель направления"]
   },
-  "daily_limit": 20,
   "timezone": "Europe/Moscow"
 }
 ```
