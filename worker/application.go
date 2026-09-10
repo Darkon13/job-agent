@@ -295,7 +295,9 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 				Platform: application.Key.Vacancy.Platform, Message: err.Error(), Cause: err,
 			}
 		}
-		if err := application.RecordPreparation(preparation.Code, preparation.Reason, preparedResumeID, preparation.Message, now); err != nil {
+		if err := application.RecordPreparationWithProvenance(
+			preparation.Code, preparation.Reason, preparedResumeID, preparation.Message, preparation.Provenance, now,
+		); err != nil {
 			return err
 		}
 		switch preparation.Outcome {

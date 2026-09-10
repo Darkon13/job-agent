@@ -177,7 +177,7 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 		a.profile_id, a.platform, a.external_id, a.status, a.attempts,
 		a.external_negotiation_id, a.failure_category, a.failure_message,
 		a.decision_code, a.decision_reason, a.prepared_resume_id, a.prepared_message,
-		a.created_at, a.updated_at, a.prepared_at, a.submitted_at
+		a.preparation_provenance, a.created_at, a.updated_at, a.prepared_at, a.submitted_at
 		FROM application_campaign_items i
 		JOIN applications a ON a.id = i.application_id
 		WHERE i.campaign_id = ?
@@ -191,6 +191,7 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 		var state core.CampaignApplicationState
 		var discoveredAt, createdAt, updatedAt int64
 		var preparedAt, submittedAt sql.NullInt64
+		var preparationProvenance []byte
 		state.Link.CampaignID = id
 		if err := rows.Scan(
 			&state.Link.RouteIndex, &state.Link.ApplicationID, &discoveredAt,
@@ -198,9 +199,12 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 			&state.Application.Key.Vacancy.ExternalID, &state.Application.Status, &state.Application.Attempts,
 			&state.Application.ExternalNegotiationID, &state.Application.FailureCategory, &state.Application.FailureMessage,
 			&state.Application.DecisionCode, &state.Application.DecisionReason, &state.Application.PreparedResumeID,
-			&state.Application.PreparedMessage, &createdAt, &updatedAt, &preparedAt, &submittedAt,
+			&state.Application.PreparedMessage, &preparationProvenance, &createdAt, &updatedAt, &preparedAt, &submittedAt,
 		); err != nil {
 			return nil, err
+		}
+		if err := unmarshalApplicationPreparationProvenance(preparationProvenance, &state.Application.PreparationProvenance); err != nil {
+			return nil, fmt.Errorf("decode campaign application preparation provenance: %w", err)
 		}
 		state.Link.DiscoveredAt = time.Unix(0, discoveredAt).UTC()
 		state.Application.ID = state.Link.ApplicationID

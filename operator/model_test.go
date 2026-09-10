@@ -45,6 +45,12 @@ func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 	if result.Message != "Generated for Example" || !strings.Contains(result.Reason, `model "cover-letter-mini" generated with "mini-model" prompt "v1"`) {
 		t.Fatalf("preparation = %#v", result)
 	}
+	if result.Provenance.Source != "model" || result.Provenance.OperatorTag != "cover-letter-mini" ||
+		result.Provenance.OperatorVersion != "v1" || result.Provenance.Model != "mini-model" ||
+		result.Provenance.ProviderResponseID != "response-1" || result.Provenance.ResumeFactsTag != "backend" ||
+		!strings.HasPrefix(result.Provenance.InputDigest, "sha256:") || !strings.HasPrefix(result.Provenance.OutputDigest, "sha256:") {
+		t.Fatalf("provenance = %#v", result.Provenance)
+	}
 	if received.Context.Vacancy.ExternalID != vacancy.ExternalID || received.Context.Resume == nil ||
 		received.Context.Resume.ResumeID != "resume-1" || received.PromptVersion != "v1" ||
 		!strings.Contains(received.Instruction, "untrusted data") || !strings.Contains(received.Instruction, "Keep it concise") {
@@ -90,6 +96,11 @@ func TestRuleTemplatePreparerFallsBackAfterModelTimeoutOrInvalidOutput(t *testin
 				!strings.Contains(result.Reason, "fallback after "+string(test.wantKind)) ||
 				!strings.Contains(result.Reason, `message pool "fallback" selected template "safe"`) {
 				t.Fatalf("preparation = %#v, err=%v", result, err)
+			}
+			if result.Provenance.Source != "model_fallback" || result.Provenance.FailureKind != string(test.wantKind) ||
+				result.Provenance.FallbackSource != "message_pool" || result.Provenance.MessagePoolTag != "fallback" ||
+				result.Provenance.TemplateTag != "safe" || !strings.HasPrefix(result.Provenance.OutputDigest, "sha256:") {
+				t.Fatalf("fallback provenance = %#v", result.Provenance)
 			}
 		})
 	}

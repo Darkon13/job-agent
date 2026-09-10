@@ -29,10 +29,11 @@ const (
 )
 
 type ApplicationPreparation struct {
-	Outcome ApplicationOutcome
-	Code    string
-	Reason  string
-	Message string
+	Outcome    ApplicationOutcome
+	Code       string
+	Reason     string
+	Message    string
+	Provenance core.ApplicationPreparationProvenance
 }
 
 func (preparation ApplicationPreparation) Validate() error {
@@ -49,6 +50,15 @@ func (preparation ApplicationPreparation) Validate() error {
 	}
 	if preparation.Outcome != ApplicationApply && strings.TrimSpace(preparation.Message) != "" {
 		return errors.New("skipped or reviewed application must not contain a message")
+	}
+	if preparation.Outcome != ApplicationApply && !preparation.Provenance.IsZero() {
+		return errors.New("skipped or reviewed application must not contain preparation provenance")
+	}
+	if err := preparation.Provenance.Validate(); err != nil {
+		return err
+	}
+	if !preparation.Provenance.IsZero() && preparation.Provenance.OutputDigest != applicationTextDigest(strings.TrimSpace(preparation.Message)) {
+		return errors.New("application preparation provenance output digest does not match message")
 	}
 	return nil
 }
@@ -127,6 +137,12 @@ type compiledEmployerRule struct {
 	action      string
 	messagePool *compiledMessagePool
 	model       *compiledApplicationModel
+}
+
+type renderedApplicationMessage struct {
+	text       string
+	selection  string
+	provenance core.ApplicationPreparationProvenance
 }
 
 type ApplicationTemplateData struct {
@@ -297,7 +313,7 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 		}
 		break
 	}
-	message, selection, err := preparer.renderMessage(ctx, application, vacancy, selectedPool, selectedModel)
+	rendered, err := preparer.renderMessage(ctx, application, vacancy, selectedPool, selectedModel)
 	if err != nil {
 		return ApplicationPreparation{}, err
 	}
@@ -305,12 +321,12 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 	if employerReason != "" {
 		reason += "; " + employerReason
 	}
-	if selection != "" {
-		reason += "; " + selection
+	if rendered.selection != "" {
+		reason += "; " + rendered.selection
 	}
 	result := ApplicationPreparation{
 		Outcome: ApplicationApply, Code: "qualified",
-		Reason: reason, Message: message,
+		Reason: reason, Message: rendered.text, Provenance: rendered.provenance,
 	}
 	if err := result.Validate(); err != nil {
 		return ApplicationPreparation{}, err
@@ -318,45 +334,83 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 	return result, nil
 }
 
-func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool, model *compiledApplicationModel) (string, string, error) {
+func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool, model *compiledApplicationModel) (renderedApplicationMessage, error) {
 	if model != nil {
-		response, err := model.generate(ctx, application, vacancy, preparer.resume)
+		response, inputDigest, err := model.generate(ctx, application, vacancy, preparer.resume)
 		if err == nil {
 			name := strings.TrimSpace(response.Model)
 			if name == "" {
 				name = "provider-selected"
 			}
-			return response.Text, fmt.Sprintf("model %q generated with %q prompt %q", model.tag, name, model.promptVersion), nil
+			return renderedApplicationMessage{
+				text: response.Text, selection: fmt.Sprintf("model %q generated with %q prompt %q", model.tag, name, model.promptVersion),
+				provenance: core.ApplicationPreparationProvenance{
+					Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceModel,
+					OperatorTag: model.tag, OperatorVersion: model.promptVersion, Model: name, ProviderResponseID: strings.TrimSpace(response.ResponseID),
+					ResumeFactsTag: preparer.resume.FactsTag, ResumeFactsDigest: preparer.resume.Digest,
+					InputDigest: inputDigest, OutputDigest: applicationTextDigest(response.Text),
+				},
+			}, nil
 		}
 		if ctx.Err() != nil {
-			return "", "", ctx.Err()
+			return renderedApplicationMessage{}, ctx.Err()
 		}
-		fallback, selection, fallbackErr := preparer.renderConfiguredMessage(application, vacancy, messagePool)
+		fallback, fallbackErr := preparer.renderConfiguredMessage(application, vacancy, messagePool)
 		if fallbackErr != nil {
-			return "", "", fallbackErr
+			return renderedApplicationMessage{}, fallbackErr
 		}
+		selection := fallback.selection
 		if selection == "" {
 			selection = "configured message fallback"
 		}
-		return fallback, fmt.Sprintf("model %q fallback after %s; %s", model.tag, ModelFailureKindOf(err), selection), nil
+		fallback.provenance = core.ApplicationPreparationProvenance{
+			Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceModelFallback,
+			OperatorTag: model.tag, OperatorVersion: model.promptVersion, FailureKind: string(ModelFailureKindOf(err)),
+			FallbackSource: fallback.provenance.Source, MessagePoolTag: fallback.provenance.MessagePoolTag, TemplateTag: fallback.provenance.TemplateTag,
+			ResumeFactsTag: preparer.resume.FactsTag, ResumeFactsDigest: preparer.resume.Digest,
+			InputDigest: inputDigest, OutputDigest: applicationTextDigest(fallback.text),
+		}
+		fallback.selection = fmt.Sprintf("model %q fallback after %s; %s", model.tag, ModelFailureKindOf(err), selection)
+		return fallback, nil
 	}
 	return preparer.renderConfiguredMessage(application, vacancy, messagePool)
 }
 
-func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (string, string, error) {
+func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (renderedApplicationMessage, error) {
 	if messagePool != nil {
 		selected := messagePool.templates[messagePool.index(application)]
 		message, err := executeApplicationTemplate(selected.template, application, vacancy, preparer.resume)
 		if err != nil {
-			return "", "", err
+			return renderedApplicationMessage{}, err
 		}
-		return message, fmt.Sprintf("message pool %q selected template %q", messagePool.tag, selected.tag), nil
+		return renderedApplicationMessage{
+			text: message, selection: fmt.Sprintf("message pool %q selected template %q", messagePool.tag, selected.tag),
+			provenance: core.ApplicationPreparationProvenance{
+				Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceMessagePool,
+				MessagePoolTag: messagePool.tag, TemplateTag: selected.tag, OutputDigest: applicationTextDigest(message),
+			},
+		}, nil
 	}
 	if preparer.template == nil {
-		return preparer.staticMessage, "", nil
+		return renderedApplicationMessage{
+			text: preparer.staticMessage,
+			provenance: core.ApplicationPreparationProvenance{
+				Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceStatic,
+				OutputDigest: applicationTextDigest(preparer.staticMessage),
+			},
+		}, nil
 	}
 	message, err := executeApplicationTemplate(preparer.template, application, vacancy, preparer.resume)
-	return message, "", err
+	if err != nil {
+		return renderedApplicationMessage{}, err
+	}
+	return renderedApplicationMessage{
+		text: message,
+		provenance: core.ApplicationPreparationProvenance{
+			Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceTemplate,
+			TemplateTag: "inline", OutputDigest: applicationTextDigest(message),
+		},
+	}, nil
 }
 
 func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleConfig, resume *ApplicationResumeContext) ([]compiledEmployerRule, error) {
@@ -539,6 +593,15 @@ func copyApplicationResumeContext(source *ApplicationResumeContext) *Application
 	result := *source
 	result.Facts = cloneVacancyAttributes(source.Facts)
 	return &result
+}
+
+func applicationBytesDigest(value []byte) string {
+	digest := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func applicationTextDigest(value string) string {
+	return applicationBytesDigest([]byte(value))
 }
 
 func cloneVacancyAttributes(attributes map[string]any) map[string]any {

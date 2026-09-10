@@ -1,8 +1,8 @@
 # Следующая задача: пулы сопроводительных и группы работодателей
 
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
-groups, policy routing и первый model provider с fallback реализованы. Остался
-семантический groundedness и отдельное хранение расширенной model provenance.
+groups, policy routing, первый model provider с fallback и durable model
+provenance реализованы. Остался evidence-based семантический groundedness.
 Явные resume facts уже загружаются из ограниченного файла, связываются с
 конкретным resume ID и входят в единый model/template context. Детерминированный
 output safety validator отсекает служебную обёртку, placeholders и не
@@ -90,9 +90,11 @@ model adapter используют один объект, не читают plat
 Timeout, rate limit, пустой или невалидный ответ переходят к указанному
 именованному пулу, а не блокируют всю campaign.
 
-Сохраняются итоговый текст, tag оператора, модель, версия prompt/template,
-warnings и причина fallback. Внутреннее reasoning модели не сохраняется и не
-отправляется работодателю.
+Сохраняются итоговый текст и отдельная versioned provenance: источник, tag
+оператора, модель, версия prompt/template, provider response ID, input/output
+digests, resume facts tag/digest и безопасная категория fallback. Полные prompt,
+facts, provider error и внутреннее reasoning модели не сохраняются и не
+отправляются работодателю.
 
 ## Целевая цепочка
 
@@ -134,8 +136,9 @@ full vacancy + employer
    нужен evidence contract модели. Его сомнения должны отправляться в approval,
    а не исправляться догадкой.
 8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
-   parent cancellation, provider HTTP contract, config и routing покрыты.
-   Groundedness и один `approval` smoke ещё нужны.
+   parent cancellation, provider HTTP contract, config, routing, provenance
+   round-trip и миграция старых rows покрыты. Evidence groundedness и один
+   `approval` smoke ещё нужны.
 
 ## Критерий готовности
 

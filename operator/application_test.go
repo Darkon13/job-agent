@@ -39,7 +39,8 @@ func TestRuleTemplatePreparerFiltersAndRenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if result.Outcome != ApplicationApply || result.Code != "qualified" || !strings.Contains(result.Message, "Example") || !strings.Contains(result.Message, "Go SQL") {
+	if result.Outcome != ApplicationApply || result.Code != "qualified" || !strings.Contains(result.Message, "Example") || !strings.Contains(result.Message, "Go SQL") ||
+		result.Provenance.Source != core.ApplicationPreparationSourceTemplate || result.Provenance.TemplateTag != "inline" {
 		t.Fatalf("preparation = %#v", result)
 	}
 

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,21 +26,120 @@ const (
 )
 
 type Application struct {
-	ID                    ApplicationID     `json:"id"`
-	Key                   ApplicationKey    `json:"key"`
-	Status                ApplicationStatus `json:"status"`
-	Attempts              int               `json:"attempts"`
-	ExternalNegotiationID string            `json:"external_negotiation_id,omitempty"`
-	FailureCategory       ErrorCategory     `json:"failure_category,omitempty"`
-	FailureMessage        string            `json:"failure_message,omitempty"`
-	DecisionCode          string            `json:"decision_code,omitempty"`
-	DecisionReason        string            `json:"decision_reason,omitempty"`
-	PreparedResumeID      string            `json:"prepared_resume_id,omitempty"`
-	PreparedMessage       string            `json:"prepared_message,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
-	PreparedAt            *time.Time        `json:"prepared_at,omitempty"`
-	SubmittedAt           *time.Time        `json:"submitted_at,omitempty"`
+	ID                    ApplicationID                    `json:"id"`
+	Key                   ApplicationKey                   `json:"key"`
+	Status                ApplicationStatus                `json:"status"`
+	Attempts              int                              `json:"attempts"`
+	ExternalNegotiationID string                           `json:"external_negotiation_id,omitempty"`
+	FailureCategory       ErrorCategory                    `json:"failure_category,omitempty"`
+	FailureMessage        string                           `json:"failure_message,omitempty"`
+	DecisionCode          string                           `json:"decision_code,omitempty"`
+	DecisionReason        string                           `json:"decision_reason,omitempty"`
+	PreparedResumeID      string                           `json:"prepared_resume_id,omitempty"`
+	PreparedMessage       string                           `json:"prepared_message,omitempty"`
+	PreparationProvenance ApplicationPreparationProvenance `json:"preparation_provenance,omitempty"`
+	CreatedAt             time.Time                        `json:"created_at"`
+	UpdatedAt             time.Time                        `json:"updated_at"`
+	PreparedAt            *time.Time                       `json:"prepared_at,omitempty"`
+	SubmittedAt           *time.Time                       `json:"submitted_at,omitempty"`
+}
+
+const ApplicationPreparationProvenanceVersion = 1
+
+const (
+	ApplicationPreparationSourceStatic        = "static"
+	ApplicationPreparationSourceTemplate      = "template"
+	ApplicationPreparationSourceMessagePool   = "message_pool"
+	ApplicationPreparationSourceModel         = "model"
+	ApplicationPreparationSourceModelFallback = "model_fallback"
+)
+
+type ApplicationPreparationProvenance struct {
+	Version            int    `json:"version,omitempty"`
+	Source             string `json:"source,omitempty"`
+	OperatorTag        string `json:"operator_tag,omitempty"`
+	OperatorVersion    string `json:"operator_version,omitempty"`
+	Model              string `json:"model,omitempty"`
+	ProviderResponseID string `json:"provider_response_id,omitempty"`
+	FailureKind        string `json:"failure_kind,omitempty"`
+	FallbackSource     string `json:"fallback_source,omitempty"`
+	MessagePoolTag     string `json:"message_pool_tag,omitempty"`
+	TemplateTag        string `json:"template_tag,omitempty"`
+	ResumeFactsTag     string `json:"resume_facts_tag,omitempty"`
+	ResumeFactsDigest  string `json:"resume_facts_digest,omitempty"`
+	InputDigest        string `json:"input_digest,omitempty"`
+	OutputDigest       string `json:"output_digest,omitempty"`
+}
+
+func (provenance ApplicationPreparationProvenance) IsZero() bool {
+	return provenance == (ApplicationPreparationProvenance{})
+}
+
+func (provenance ApplicationPreparationProvenance) Validate() error {
+	if provenance.IsZero() {
+		return nil
+	}
+	if provenance.Version != ApplicationPreparationProvenanceVersion {
+		return fmt.Errorf("application preparation provenance has unsupported version %d", provenance.Version)
+	}
+	switch provenance.Source {
+	case ApplicationPreparationSourceStatic, ApplicationPreparationSourceTemplate:
+	case ApplicationPreparationSourceMessagePool:
+		if strings.TrimSpace(provenance.MessagePoolTag) == "" || strings.TrimSpace(provenance.TemplateTag) == "" {
+			return errors.New("message pool provenance requires pool and template tags")
+		}
+	case ApplicationPreparationSourceModel:
+		if err := provenance.validateModelFields(true); err != nil {
+			return err
+		}
+	case ApplicationPreparationSourceModelFallback:
+		if err := provenance.validateModelFields(false); err != nil {
+			return err
+		}
+		if strings.TrimSpace(provenance.FailureKind) == "" {
+			return errors.New("model fallback provenance requires failure kind")
+		}
+		switch provenance.FallbackSource {
+		case ApplicationPreparationSourceStatic, ApplicationPreparationSourceTemplate:
+		case ApplicationPreparationSourceMessagePool:
+			if strings.TrimSpace(provenance.MessagePoolTag) == "" || strings.TrimSpace(provenance.TemplateTag) == "" {
+				return errors.New("model fallback message pool provenance requires pool and template tags")
+			}
+		default:
+			return fmt.Errorf("model fallback provenance has unsupported source %q", provenance.FallbackSource)
+		}
+	default:
+		return fmt.Errorf("application preparation provenance has unsupported source %q", provenance.Source)
+	}
+	if !validApplicationDigest(provenance.OutputDigest) {
+		return errors.New("application preparation provenance requires output digest")
+	}
+	return nil
+}
+
+func (provenance ApplicationPreparationProvenance) validateModelFields(requireInput bool) error {
+	if strings.TrimSpace(provenance.OperatorTag) == "" || strings.TrimSpace(provenance.OperatorVersion) == "" ||
+		strings.TrimSpace(provenance.ResumeFactsTag) == "" || !validApplicationDigest(provenance.ResumeFactsDigest) {
+		return errors.New("model provenance requires operator, version and resume facts")
+	}
+	if requireInput && !validApplicationDigest(provenance.InputDigest) {
+		return errors.New("model provenance requires input digest")
+	}
+	if provenance.InputDigest != "" && !validApplicationDigest(provenance.InputDigest) {
+		return errors.New("model provenance contains invalid input digest")
+	}
+	if provenance.Source == ApplicationPreparationSourceModel && strings.TrimSpace(provenance.Model) == "" {
+		return errors.New("model provenance requires resolved model")
+	}
+	return nil
+}
+
+func validApplicationDigest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(decoded) == 32
 }
 
 func NewApplication(id ApplicationID, key ApplicationKey, now time.Time) (Application, error) {
@@ -97,6 +198,10 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 // action. A retry reuses PreparedResumeID and PreparedMessage instead of
 // consulting mutable configuration or invoking an operator again.
 func (application *Application) RecordPreparation(code, reason, resumeID, message string, now time.Time) error {
+	return application.RecordPreparationWithProvenance(code, reason, resumeID, message, ApplicationPreparationProvenance{}, now)
+}
+
+func (application *Application) RecordPreparationWithProvenance(code, reason, resumeID, message string, provenance ApplicationPreparationProvenance, now time.Time) error {
 	if application == nil {
 		return errors.New("application is nil")
 	}
@@ -108,6 +213,13 @@ func (application *Application) RecordPreparation(code, reason, resumeID, messag
 	if code == "" || reason == "" {
 		return errors.New("application preparation requires decision code and reason")
 	}
+	if err := provenance.Validate(); err != nil {
+		return err
+	}
+	message = strings.TrimSpace(message)
+	if !provenance.IsZero() && provenance.OutputDigest != applicationPreparationTextDigest(message) {
+		return errors.New("application preparation provenance output digest does not match message")
+	}
 	if now.IsZero() || now.Before(application.UpdatedAt) {
 		return errors.New("application preparation time must not move backwards")
 	}
@@ -115,10 +227,16 @@ func (application *Application) RecordPreparation(code, reason, resumeID, messag
 	application.DecisionCode = code
 	application.DecisionReason = reason
 	application.PreparedResumeID = strings.TrimSpace(resumeID)
-	application.PreparedMessage = strings.TrimSpace(message)
+	application.PreparedMessage = message
+	application.PreparationProvenance = provenance
 	application.PreparedAt = &preparedAt
 	application.UpdatedAt = now
 	return nil
+}
+
+func applicationPreparationTextDigest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func applicationTransitionAllowed(from, to ApplicationStatus) bool {

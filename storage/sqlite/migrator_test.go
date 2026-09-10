@@ -1,12 +1,14 @@
 package sqlite_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Darkon13/job-agent/core"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 )
 
@@ -54,6 +56,56 @@ func TestTaskPriorityMigrationPreservesExistingTasks(t *testing.T) {
 	}
 	if priority != 0 {
 		t.Fatalf("migrated priority=%d, want 0", priority)
+	}
+}
+
+func TestPreparationProvenanceMigrationPreservesExistingApplications(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	migrator, err := storesqlite.OpenMigrator(path)
+	if err != nil {
+		t.Fatalf("open migrator: %v", err)
+	}
+	if err := migrator.Steps(int(storesqlite.LatestSchemaVersion) - 1); err != nil {
+		t.Fatalf("migrate to previous version: %v", err)
+	}
+	if err := migrator.Close(); err != nil {
+		t.Fatalf("close previous migrator: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open previous database: %v", err)
+	}
+	now := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC).UnixNano()
+	if _, err := db.Exec(`INSERT INTO vacancies
+		(platform, external_id, url, title, employer, state, observed_at)
+		VALUES ('hh', '42', '', 'Backend', '', 'open', ?)`, now); err != nil {
+		t.Fatalf("insert existing vacancy: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO applications
+		(id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+		 failure_category, failure_message, decision_code, decision_reason, prepared_resume_id,
+		 prepared_message, created_at, updated_at)
+		VALUES ('application-existing', 'primary', 'hh', '42', 'new', 0, '', '', '', '', '', '', '', ?, ?)`, now, now); err != nil {
+		t.Fatalf("insert existing application: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close previous database: %v", err)
+	}
+
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("apply provenance migration: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer store.Close()
+	application, err := store.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "primary", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || !application.PreparationProvenance.IsZero() {
+		t.Fatalf("migrated application=%#v err=%v", application, err)
 	}
 }
 

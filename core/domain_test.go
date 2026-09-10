@@ -98,11 +98,23 @@ func TestApplicationPreparationIsRecordedBeforeExternalAction(t *testing.T) {
 		t.Fatalf("prepare transition: %v", err)
 	}
 	preparedAt := now.Add(2 * time.Minute)
-	if err := application.RecordPreparation("qualified", "rules passed", "  resume-1  ", "  Hello  ", preparedAt); err != nil {
+	provenance := ApplicationPreparationProvenance{
+		Version: ApplicationPreparationProvenanceVersion, Source: ApplicationPreparationSourceModel,
+		OperatorTag: "cover-letter-mini", OperatorVersion: "v1", Model: "gpt-test", ProviderResponseID: "response-1",
+		ResumeFactsTag: "backend", ResumeFactsDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		InputDigest:  "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		OutputDigest: "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+	}
+	if err := application.RecordPreparationWithProvenance("qualified", "rules passed", "  resume-1  ", "  Hello  ", provenance, preparedAt); err != nil {
 		t.Fatalf("record preparation: %v", err)
 	}
-	if application.DecisionCode != "qualified" || application.DecisionReason != "rules passed" || application.PreparedResumeID != "resume-1" || application.PreparedMessage != "Hello" || application.PreparedAt == nil || !application.PreparedAt.Equal(preparedAt) {
+	if application.DecisionCode != "qualified" || application.DecisionReason != "rules passed" || application.PreparedResumeID != "resume-1" || application.PreparedMessage != "Hello" || application.PreparationProvenance != provenance || application.PreparedAt == nil || !application.PreparedAt.Equal(preparedAt) {
 		t.Fatalf("application = %#v", application)
+	}
+	invalid := provenance
+	invalid.OutputDigest = ""
+	if err := application.RecordPreparationWithProvenance("qualified", "rules passed", "resume-1", "Hello", invalid, preparedAt.Add(time.Second)); err == nil {
+		t.Fatal("expected invalid provenance to fail")
 	}
 }
 

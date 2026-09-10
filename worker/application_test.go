@@ -235,8 +235,12 @@ func TestApplicationHandlerStopsBeforeSubmitForVacancyPreflight(t *testing.T) {
 
 func TestApplicationHandlerPersistsOperatorDecisionAndMessage(t *testing.T) {
 	transport := &fakeApplicationTransport{}
+	provenance := core.ApplicationPreparationProvenance{
+		Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceStatic,
+		OutputDigest: "sha256:27f79a25bf354e459443043d8b86aeae7c0f713e0b0832c51c8a0fd6bf4d59eb",
+	}
 	preparer := &fakeApplicationPreparer{result: applicationoperator.ApplicationPreparation{
-		Outcome: applicationoperator.ApplicationApply, Code: "qualified", Reason: "required skill matched", Message: "Generated letter",
+		Outcome: applicationoperator.ApplicationApply, Code: "qualified", Reason: "required skill matched", Message: "Generated letter", Provenance: provenance,
 	}}
 	plan := liveApplicationPlan("resume-1")
 	plan.Preparer = preparer
@@ -247,7 +251,7 @@ func TestApplicationHandlerPersistsOperatorDecisionAndMessage(t *testing.T) {
 	application, err := repository.Application(context.Background(), core.ApplicationKey{
 		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
 	})
-	if err != nil || application.DecisionCode != "qualified" || application.DecisionReason != "required skill matched" || application.PreparedMessage != "Generated letter" || application.PreparedAt == nil {
+	if err != nil || application.DecisionCode != "qualified" || application.DecisionReason != "required skill matched" || application.PreparedMessage != "Generated letter" || application.PreparationProvenance != provenance || application.PreparedAt == nil {
 		t.Fatalf("application=%#v err=%v", application, err)
 	}
 	if transport.command.Message != "Generated letter" || preparer.calls != 1 {

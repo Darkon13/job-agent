@@ -329,6 +329,14 @@ retry не вызывает модель повторно. Перед сохра
 в структурированном контексте. Это строгий детерминированный барьер, но не
 замена будущей семантической сверке с полными фактами резюме.
 
+SQLite отдельно сохраняет versioned `preparation_provenance`: фактический
+источник текста, provider/operator tag, prompt version, выбранную модель,
+provider response ID, tag/digest resume facts, input/output digests и, для
+fallback, безопасную категорию ошибки и выбранный pool/template. Полный prompt,
+исходные facts, ответ с reasoning и текст ошибки провайдера в provenance не
+копируются. Миграция 14 добавляет поле старым applications как пустой объект,
+не меняя уже сохранённые решения.
+
 План и оставшиеся критерии готовности описаны в
 [`docs/next-cover-letter-routing.md`](docs/next-cover-letter-routing.md).
 

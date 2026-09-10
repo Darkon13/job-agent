@@ -31,6 +31,19 @@ func TestStorePersistsApplicationCampaignAndLinks(t *testing.T) {
 	if _, _, err := store.CreateApplication(ctx, application); err != nil {
 		t.Fatalf("create application: %v", err)
 	}
+	if err := application.Transition(core.ApplicationPreparing, now.Add(time.Second)); err != nil {
+		t.Fatalf("prepare application: %v", err)
+	}
+	provenance := core.ApplicationPreparationProvenance{
+		Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceStatic,
+		OutputDigest: "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+	}
+	if err := application.RecordPreparationWithProvenance("qualified", "rules passed", "resume-1", "Hello", provenance, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("record application preparation: %v", err)
+	}
+	if err := store.SaveApplication(ctx, application, core.ApplicationNew); err != nil {
+		t.Fatalf("save prepared application: %v", err)
+	}
 	campaign, err := core.NewApplicationCampaign(core.NewApplicationCampaignParams{
 		ID: "campaign-1", JobTag: "daily", Profiles: []core.ProfileID{"primary"},
 		Routes: []core.SearchID{"golang", "fallback"}, TargetSuccessful: 10,
@@ -74,7 +87,7 @@ func TestStorePersistsApplicationCampaignAndLinks(t *testing.T) {
 		t.Fatalf("persisted items=%#v err=%v", items, err)
 	}
 	states, err := reopened.ListCampaignApplicationStates(ctx, campaign.ID)
-	if err != nil || len(states) != 1 || states[0].Application.ID != application.ID || states[0].Application.Key != application.Key {
+	if err != nil || len(states) != 1 || states[0].Application.ID != application.ID || states[0].Application.Key != application.Key || states[0].Application.PreparationProvenance != provenance {
 		t.Fatalf("persisted application states=%#v err=%v", states, err)
 	}
 	stats, err := reopened.Stats(ctx)

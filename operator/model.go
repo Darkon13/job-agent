@@ -144,7 +144,7 @@ func compileApplicationModel(config *ApplicationModelConfig) (*compiledApplicati
 	return result, nil
 }
 
-func (model *compiledApplicationModel) generate(ctx context.Context, application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) (ApplicationModelResponse, error) {
+func (model *compiledApplicationModel) generate(ctx context.Context, application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) (ApplicationModelResponse, string, error) {
 	modelCtx, cancel := context.WithTimeout(ctx, model.timeout)
 	defer cancel()
 	request := ApplicationModelRequest{
@@ -152,21 +152,26 @@ func (model *compiledApplicationModel) generate(ctx context.Context, application
 		PromptVersion: model.promptVersion,
 		Context:       newApplicationTemplateData(application, vacancy, resume),
 	}
+	encodedRequest, err := json.Marshal(request)
+	if err != nil {
+		return ApplicationModelResponse{}, "", &ModelError{Kind: ModelFailurePermanent, Operation: "applications.model", Message: "encode model request", Cause: err}
+	}
+	inputDigest := applicationBytesDigest(encodedRequest)
 	response, err := model.generator.Generate(modelCtx, request)
 	if err != nil {
-		return ApplicationModelResponse{}, err
+		return ApplicationModelResponse{}, inputDigest, err
 	}
 	response.Text = strings.TrimSpace(response.Text)
 	if response.Text == "" {
-		return ApplicationModelResponse{}, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: "model returned empty text"}
+		return ApplicationModelResponse{}, inputDigest, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: "model returned empty text"}
 	}
 	if !utf8.ValidString(response.Text) || utf8.RuneCountInString(response.Text) > maximumApplicationMessageRunes {
-		return ApplicationModelResponse{}, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: "model returned invalid or oversized text"}
+		return ApplicationModelResponse{}, inputDigest, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: "model returned invalid or oversized text"}
 	}
 	if err := validateApplicationModelText(response.Text, request.Context); err != nil {
-		return ApplicationModelResponse{}, err
+		return ApplicationModelResponse{}, inputDigest, err
 	}
-	return response, nil
+	return response, inputDigest, nil
 }
 
 func validateApplicationModelText(text string, data ApplicationTemplateData) error {

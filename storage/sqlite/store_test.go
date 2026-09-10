@@ -241,7 +241,11 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 	if err := candidate.Transition(core.ApplicationPreparing, candidate.UpdatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("transition to preparing: %v", err)
 	}
-	if err := candidate.RecordPreparation("qualified", "rules passed", "resume-1", "Hello", candidate.UpdatedAt.Add(time.Second)); err != nil {
+	provenance := core.ApplicationPreparationProvenance{
+		Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceStatic,
+		OutputDigest: "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+	}
+	if err := candidate.RecordPreparationWithProvenance("qualified", "rules passed", "resume-1", "Hello", provenance, candidate.UpdatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("record preparation: %v", err)
 	}
 	for _, status := range []core.ApplicationStatus{core.ApplicationReady, core.ApplicationSubmitting} {
@@ -259,7 +263,7 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load application: %v", err)
 	}
-	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 || stored.DecisionCode != "qualified" || stored.PreparedResumeID != "resume-1" || stored.PreparedMessage != "Hello" || stored.PreparedAt == nil {
+	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 || stored.DecisionCode != "qualified" || stored.PreparedResumeID != "resume-1" || stored.PreparedMessage != "Hello" || stored.PreparationProvenance != provenance || stored.PreparedAt == nil {
 		t.Fatalf("unexpected stored application: %#v", stored)
 	}
 }
