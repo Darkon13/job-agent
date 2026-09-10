@@ -44,9 +44,10 @@ th, td { padding: .65rem .5rem; border-bottom: 1px solid var(--line); text-align
 th { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
 td:last-child, th:last-child { text-align: right; }
 .status { display: inline-flex; border-radius: 5px; padding: .15rem .4rem; background: var(--surface-2); color: var(--blue); font: .75rem ui-monospace, monospace; }
-.status-submitted, .task-completed { color: var(--green); }
-.status-failed, .task-failed { color: var(--red); }
-.status-waiting_validation, .status-pending_reconciliation, .task-waiting_confirmation, .task-retry_scheduled { color: var(--orange); }
+.status-sent, .task-completed { color: var(--green); }
+.status-not_sent, .task-failed { color: var(--red); }
+.status-needs_input, .task-waiting_confirmation, .task-retry_scheduled { color: var(--orange); }
+.status-queued { color: var(--blue); }
 .task-id { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; font: .72rem ui-monospace, monospace; }
 .task-error { min-width: 16rem; max-width: 34rem; white-space: normal; overflow-wrap: anywhere; color: var(--orange); }
 .task-actions { display: flex; justify-content: flex-end; gap: .4rem; }

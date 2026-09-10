@@ -158,6 +158,9 @@ func TestBrowserApplicationSuitableResumesExposeIDAndHash(t *testing.T) {
 	if !seen["17"] || !seen["resume-hash"] || seen["18"] || seen["unfinished"] {
 		t.Fatalf("resumes = %#v", resumes)
 	}
+	if len(resumes) != 2 || resumes[0].ID != "17" || resumes[1].ID != "resume-hash" {
+		t.Fatalf("resumes are not deterministic: %#v", resumes)
+	}
 }
 
 func TestBrowserApplicationSuitableResumesReadWrappedResponseStatus(t *testing.T) {

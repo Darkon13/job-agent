@@ -285,7 +285,7 @@ func TestApplicationHandlerReusesPreparedMessageOnSubmitRetry(t *testing.T) {
 	}
 }
 
-func TestApplicationHandlerWaitsWhenConfiguredResumeIsNotSuitable(t *testing.T) {
+func TestApplicationHandlerAutomaticallySelectsAvailableResume(t *testing.T) {
 	transport := &fakeApplicationTransport{suitableResumes: []adapter.SuitableResume{{ID: "another-resume"}}}
 	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
 	if err := handler.Handle(context.Background(), task); err != nil {
@@ -294,14 +294,22 @@ func TestApplicationHandlerWaitsWhenConfiguredResumeIsNotSuitable(t *testing.T) 
 	application, err := repository.Application(context.Background(), core.ApplicationKey{
 		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
 	})
-	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "resume_not_suitable" || application.PreparedResumeID != "" || transport.calls != 0 || transport.suitableCalls != 1 {
+	if err != nil || application.Status != core.ApplicationSubmitted || application.DecisionCode != "qualified" || application.PreparedResumeID != "another-resume" || transport.calls != 1 || transport.suitableCalls != 1 || transport.command.ResumeID != "another-resume" {
 		t.Fatalf("application=%#v submit=%d suitable=%d err=%v", application, transport.calls, transport.suitableCalls, err)
 	}
+}
+
+func TestApplicationHandlerWaitsWhenHHOffersNoResume(t *testing.T) {
+	transport := &fakeApplicationTransport{suitableResumes: []adapter.SuitableResume{}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
 	if err := handler.Handle(context.Background(), task); err != nil {
-		t.Fatalf("repeat handle: %v", err)
+		t.Fatalf("handle: %v", err)
 	}
-	if transport.calls != 0 || transport.suitableCalls != 1 {
-		t.Fatalf("waiting validation was bypassed: submit=%d suitable=%d", transport.calls, transport.suitableCalls)
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "resume_not_suitable" || application.DecisionReason != "HH has no resume available for this vacancy" || transport.calls != 0 {
+		t.Fatalf("application=%#v submit=%d err=%v", application, transport.calls, err)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -189,6 +190,7 @@ func (client *BrowserApplicationClient) ListSuitableResumes(ctx context.Context,
 			result = append(result, adapter.SuitableResume{ID: id, Title: browserResumeTitle(resume.Title)})
 		}
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
 

@@ -14,34 +14,55 @@ const taskTypeLabels = {
   "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
   "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
 };
-const applicationStatusLabels = {
-  new: "Новый", preparing: "Готовится", waiting_validation: "Нужны данные", waiting_approval: "Ждёт подтверждения", ready: "Готов к отправке",
-  submitting: "Отправляется", pending_reconciliation: "Проверяется результат", submitted: "Отправлен", dry_run: "Проверочный запуск", skipped: "Пропущен", failed: "Ошибка",
-};
+const applicationGroupLabels = { queued: "В очереди", sent: "Отправлено", needs_input: "Нужно участие", not_sent: "Не отправлено" };
+const queuedApplicationStatuses = new Set(["new", "preparing", "ready", "submitting", "pending_reconciliation"]);
+const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
 const taskStatusLabels = { new: "Ожидает", processing: "Выполняется", waiting_confirmation: "Нужно решение", retry_scheduled: "Повтор запланирован", completed: "Завершена", failed: "Ошибка", dismissed: "Закрыта" };
 const campaignStatusLabels = { running: "Выполняется", target_reached: "Цель достигнута", exhausted: "Вакансии закончились", paused_budget: "Пауза: лимит", paused_rate_limit: "Пауза: rate limit", failed: "Ошибка" };
 const conversationStatusLabels = { active: "Активный", closed: "Закрыт", rejected: "Отказ", archived: "Архив" };
 const activityKindLabels = { "vacancy.inspected": "Просмотрена вакансия", "application.submitted": "Отправлен отклик", "conversation.message_sent": "Отправлено сообщение", "resume.touched": "Поднято резюме" };
-const decisionLabels = { qualified: "Подходит", resume_not_suitable: "Резюме не подходит", questionnaire_required: "Нужна анкета", vacancy_test_required: "Нужен тест", vacancy_closed: "Вакансия закрыта", already_applied: "Уже отправлен" };
+const decisionLabels = { qualified: "Проверки пройдены", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
+const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
 function statusCell(value, className = "") { const cell = document.createElement("td"); cell.append(text("span", value, `status ${className}`.trim())); return cell; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
 function taskTypeLabel(value) { return taskTypeLabels[value] || value; }
-function applicationStatusLabel(value) { return applicationStatusLabels[value] || value || "—"; }
 function taskStatusLabel(value) { return taskStatusLabels[value] || value || "—"; }
 function conversationLabel(item) { return item.vacancy_title || `Диалог ${item.platform}`; }
 function total(items, predicate = () => true) { return items.filter(predicate).reduce((sum, item) => sum + Number(item.count || 0), 0); }
 function safeExternalURL(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : ""; } catch (_) { return ""; } }
 function compactID(value) { const id = String(value || ""); return id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id || "—"; }
+function applicationGroup(item) {
+  if (item.status === "submitted" || item.decision_code === "already_applied") return "sent";
+  if (item.status === "waiting_validation" && inputDecisionCodes.has(item.decision_code)) return "needs_input";
+  if (queuedApplicationStatuses.has(item.status)) return "queued";
+  return "not_sent";
+}
+function applicationReason(item) {
+  if (item.decision_code && item.decision_code !== "qualified") return decisionLabels[item.decision_code] || item.decision_code;
+  if (item.failure_category) return failureLabels[item.failure_category] || `Ошибка: ${item.failure_category}`;
+  switch (item.status) {
+  case "new": return "Ожидает обработки";
+  case "preparing": return "Подготавливается отклик";
+  case "ready": return "Подготовлен, ожидает доступного лимита";
+  case "submitting": return "Отправляется на платформу";
+  case "pending_reconciliation": return "Проверяется результат отправки";
+  case "submitted": return "Отправка подтверждена платформой";
+  case "dry_run": return "Старый проверочный запуск — отклик не отправлялся";
+  case "waiting_approval": return "Старый режим ручного подтверждения";
+  case "skipped": return "Платформа не позволила отправить отклик";
+  case "failed": return "Не удалось выполнить отправку";
+  default: return decisionLabels[item.decision_code] || "—";
+  }
+}
 
 function renderStats(summary = {}) {
   const applications = summary.applications || [];
-  const tasks = summary.tasks || [];
   const metrics = [
-    { value: total(applications, (item) => item.status === "submitted"), label: "Отклики отправлены", filter: "submitted" },
-    { value: total(applications, (item) => ["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status)), label: "Требуют внимания", filter: "attention" },
-    { value: total(tasks, (item) => ["new", "processing", "retry_scheduled", "waiting_confirmation"].includes(item.status)), label: "Работа в очереди" },
+    { value: total(applications, (item) => applicationGroup(item) === "sent"), label: "Отклики отправлены", filter: "sent" },
+    { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
+    { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
     { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
   ];
   elements.stats.replaceChildren(...metrics.map((metric) => {
@@ -54,10 +75,9 @@ function renderStats(summary = {}) {
 }
 
 function applicationMatchesFilter(item) {
-  if (state.applicationFilter === "attention" && !["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status)) return false;
-  if (state.applicationFilter && state.applicationFilter !== "attention" && item.status !== state.applicationFilter) return false;
+  if (state.applicationFilter && applicationGroup(item) !== state.applicationFilter) return false;
   const query = state.applicationQuery.trim().toLocaleLowerCase("ru");
-  return !query || [item.vacancy_title, item.employer, item.profile_id, item.decision_code].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
+  return !query || [item.vacancy_title, item.employer, item.profile_id, item.decision_code, applicationReason(item)].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
 }
 function setApplicationFilter(value) {
   state.applicationFilter = state.applicationFilter === value ? "" : value;
@@ -66,9 +86,8 @@ function setApplicationFilter(value) {
 }
 function renderApplicationFilters(items = []) {
   const grouped = new Map();
-  for (const item of items) grouped.set(item.status, (grouped.get(item.status) || 0) + Number(item.count || 0));
-  const attention = total(items, (item) => ["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status));
-  const filters = [["", "Все", total(items)], ...(attention ? [["attention", "Требуют внимания", attention]] : []), ...[...grouped.entries()].map(([status, count]) => [status, applicationStatusLabel(status), count])];
+  for (const item of items) { const group = applicationGroup(item); grouped.set(group, (grouped.get(group) || 0) + Number(item.count || 0)); }
+  const filters = [["", "Все", total(items)], ...["queued", "sent", "needs_input", "not_sent"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
   elements.applicationFilters.replaceChildren(...filters.map(([value, label, count]) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `filter-card${state.applicationFilter === value ? " active" : ""}`;
     button.append(text("strong", String(count)), text("span", label)); button.addEventListener("click", () => setApplicationFilter(value)); return button;
@@ -83,8 +102,8 @@ function renderApplicationObjects() {
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
     if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); } else action.textContent = "—";
-    const decision = decisionLabels[item.decision_code] || item.decision_code || (item.failure_category ? `Ошибка: ${item.failure_category}` : "—");
-    row.append(vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationStatusLabel(item.status), `status-${item.status}`), text("td", decision), text("td", formatDate(item.updated_at)), action);
+    const group = applicationGroup(item);
+    row.append(vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;
   }));
 }
@@ -125,7 +144,9 @@ function renderCampaigns(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
   elements.campaigns.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    const outcomes = (item.applications || []).map((entry) => `${applicationStatusLabel(entry.status)}${entry.decision_code ? ` / ${decisionLabels[entry.decision_code] || entry.decision_code}` : ""}: ${entry.count}`).join(" · ") || "нет откликов";
+    const grouped = new Map();
+    for (const entry of item.applications || []) { const group = applicationGroup(entry); grouped.set(group, (grouped.get(group) || 0) + Number(entry.count || 0)); }
+    const outcomes = [...grouped.entries()].map(([group, count]) => `${applicationGroupLabels[group]}: ${count}`).join(" · ") || "нет откликов";
     const status = item.stop_reason ? `${campaignStatusLabels[item.status] || item.status}: ${item.stop_reason}` : campaignStatusLabels[item.status] || item.status;
     row.append(text("td", item.id, "task-id"), text("td", item.job_tag), text("td", status), text("td", String(item.target_successful)), text("td", outcomes), text("td", formatDate(item.updated_at)));
     return row;
@@ -337,7 +358,7 @@ async function runJob(job) {
 async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
-    const [summary, failures, jobs, applications] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/applications?limit=100")]);
+    const [summary, failures, jobs, applications] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/applications?limit=200")]);
     state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || []; state.applicationObjects = applications.items || [];
     if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
     renderStats(summary); renderApplicationFilters(summary.applications || []); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);

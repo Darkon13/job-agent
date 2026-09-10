@@ -262,12 +262,9 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		preparedResumeID := ""
 		preparation, decided := applicationPlatformPreflight(vacancy)
 		if !decided && plan.Mode != core.ApplicationExecutionDryRun && plan.ResumeID != "" {
-			preparation, decided, err = handler.applicationResumePreflight(ctx, application, plan.ResumeID)
+			preparation, preparedResumeID, decided, err = handler.applicationResumePreflight(ctx, application, plan.ResumeID)
 			if err != nil {
 				return err
-			}
-			if !decided {
-				preparedResumeID = plan.ResumeID
 			}
 		}
 		if !decided {
@@ -369,10 +366,10 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	return handler.recordSubmitted(ctx, application)
 }
 
-func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, bool, error) {
+func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, string, bool, error) {
 	reader, err := handler.transports.ResolveSuitableResumeReader(application.Key.ProfileID)
 	if err != nil {
-		return applicationoperator.ApplicationPreparation{}, false, err
+		return applicationoperator.ApplicationPreparation{}, "", false, err
 	}
 	resumes, err := reader.ListSuitableResumes(ctx, application.Key.ProfileID, application.Key.Vacancy)
 	if err != nil {
@@ -390,19 +387,22 @@ func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Contex
 			}
 			return applicationoperator.ApplicationPreparation{
 				Outcome: applicationoperator.ApplicationReview, Code: code, Reason: reason,
-			}, true, nil
+			}, "", true, nil
 		}
-		return applicationoperator.ApplicationPreparation{}, false, err
+		return applicationoperator.ApplicationPreparation{}, "", false, err
 	}
 	for _, resume := range resumes {
 		if resume.ID == resumeID {
-			return applicationoperator.ApplicationPreparation{}, false, nil
+			return applicationoperator.ApplicationPreparation{}, resume.ID, false, nil
 		}
+	}
+	if len(resumes) > 0 {
+		return applicationoperator.ApplicationPreparation{}, resumes[0].ID, false, nil
 	}
 	return applicationoperator.ApplicationPreparation{
 		Outcome: applicationoperator.ApplicationReview, Code: "resume_not_suitable",
-		Reason: "configured resume is not suitable for this vacancy",
-	}, true, nil
+		Reason: "HH has no resume available for this vacancy",
+	}, "", true, nil
 }
 
 func preparedResumeID(application core.Application, plan ApplicationPlan) string {
