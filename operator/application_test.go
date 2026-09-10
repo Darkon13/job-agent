@@ -147,6 +147,34 @@ func TestRuleTemplatePreparerSelectsStableMessagePoolVariant(t *testing.T) {
 	if first.Message != second.Message || !strings.Contains(first.Reason, `message pool "backend" selected template`) {
 		t.Fatalf("unstable pool result: first=%#v second=%#v", first, second)
 	}
+	if !strings.HasPrefix(first.Provenance.MessagePoolDigest, "sha256:") ||
+		first.Provenance.MessagePoolDigest != second.Provenance.MessagePoolDigest {
+		t.Fatalf("message pool digest is missing or unstable: first=%#v second=%#v", first.Provenance, second.Provenance)
+	}
+}
+
+func TestMessagePoolDigestTracksNormalizedContent(t *testing.T) {
+	base := &MessagePoolConfig{Tag: "backend", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello"}}}
+	first, err := compileMessagePool(base, nil)
+	if err != nil {
+		t.Fatalf("compile first pool: %v", err)
+	}
+	same, err := compileMessagePool(&MessagePoolConfig{
+		Tag: " backend ", Strategy: MessagePoolFirst,
+		Templates: []MessageTemplateConfig{{Tag: " one ", Template: "Hello"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("compile equivalent pool: %v", err)
+	}
+	changed, err := compileMessagePool(&MessagePoolConfig{
+		Tag: "backend", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello!"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("compile changed pool: %v", err)
+	}
+	if first.digest != same.digest || first.digest == changed.digest {
+		t.Fatalf("unexpected content digests: first=%q same=%q changed=%q", first.digest, same.digest, changed.digest)
+	}
 }
 
 func TestRuleTemplatePreparerValidatesMessagePool(t *testing.T) {

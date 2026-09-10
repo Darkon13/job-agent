@@ -44,9 +44,12 @@ type Application struct {
 	SubmittedAt           *time.Time                       `json:"submitted_at,omitempty"`
 }
 
-const ApplicationPreparationProvenanceVersion = 2
+const ApplicationPreparationProvenanceVersion = 3
 
-const legacyApplicationPreparationProvenanceVersion = 1
+const (
+	legacyApplicationPreparationProvenanceVersion   = 1
+	evidenceApplicationPreparationProvenanceVersion = 2
+)
 
 const (
 	ApplicationPreparationSourceStatic        = "static"
@@ -66,6 +69,7 @@ type ApplicationPreparationProvenance struct {
 	FailureKind        string `json:"failure_kind,omitempty"`
 	FallbackSource     string `json:"fallback_source,omitempty"`
 	MessagePoolTag     string `json:"message_pool_tag,omitempty"`
+	MessagePoolDigest  string `json:"message_pool_digest,omitempty"`
 	TemplateTag        string `json:"template_tag,omitempty"`
 	ResumeFactsTag     string `json:"resume_facts_tag,omitempty"`
 	ResumeFactsDigest  string `json:"resume_facts_digest,omitempty"`
@@ -83,7 +87,9 @@ func (provenance ApplicationPreparationProvenance) Validate() error {
 	if provenance.IsZero() {
 		return nil
 	}
-	if provenance.Version != legacyApplicationPreparationProvenanceVersion && provenance.Version != ApplicationPreparationProvenanceVersion {
+	if provenance.Version != legacyApplicationPreparationProvenanceVersion &&
+		provenance.Version != evidenceApplicationPreparationProvenanceVersion &&
+		provenance.Version != ApplicationPreparationProvenanceVersion {
 		return fmt.Errorf("application preparation provenance has unsupported version %d", provenance.Version)
 	}
 	switch provenance.Source {
@@ -91,6 +97,9 @@ func (provenance ApplicationPreparationProvenance) Validate() error {
 	case ApplicationPreparationSourceMessagePool:
 		if strings.TrimSpace(provenance.MessagePoolTag) == "" || strings.TrimSpace(provenance.TemplateTag) == "" {
 			return errors.New("message pool provenance requires pool and template tags")
+		}
+		if provenance.Version >= 3 && !validApplicationDigest(provenance.MessagePoolDigest) {
+			return errors.New("message pool provenance requires content digest")
 		}
 	case ApplicationPreparationSourceModel:
 		if err := provenance.validateModelFields(true); err != nil {
@@ -109,6 +118,9 @@ func (provenance ApplicationPreparationProvenance) Validate() error {
 			if strings.TrimSpace(provenance.MessagePoolTag) == "" || strings.TrimSpace(provenance.TemplateTag) == "" {
 				return errors.New("model fallback message pool provenance requires pool and template tags")
 			}
+			if provenance.Version >= 3 && !validApplicationDigest(provenance.MessagePoolDigest) {
+				return errors.New("model fallback message pool provenance requires content digest")
+			}
 		default:
 			return fmt.Errorf("model fallback provenance has unsupported source %q", provenance.FallbackSource)
 		}
@@ -117,6 +129,14 @@ func (provenance ApplicationPreparationProvenance) Validate() error {
 	}
 	if !validApplicationDigest(provenance.OutputDigest) {
 		return errors.New("application preparation provenance requires output digest")
+	}
+	if provenance.Version < 3 && provenance.MessagePoolDigest != "" {
+		return errors.New("application provenance before v3 cannot contain message pool digest")
+	}
+	if provenance.Version >= 3 && provenance.Source != ApplicationPreparationSourceMessagePool &&
+		!(provenance.Source == ApplicationPreparationSourceModelFallback && provenance.FallbackSource == ApplicationPreparationSourceMessagePool) &&
+		provenance.MessagePoolDigest != "" {
+		return errors.New("only message pool provenance may contain content digest")
 	}
 	return nil
 }

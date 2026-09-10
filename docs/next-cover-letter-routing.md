@@ -3,8 +3,9 @@
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
 groups, policy routing, первый model provider с fallback, durable model
 provenance и evidence-based groundedness реализованы. Из этого среза остаются
-digest исходного message-pool файла и отдельный workflow ручной проверки
-модельного draft без повторной генерации.
+отдельный workflow ручной проверки модельного draft без повторной генерации и
+его end-to-end approval smoke.
+
 Явные resume facts уже загружаются из ограниченного файла, связываются с
 конкретным resume ID и входят в единый model/template context. Детерминированный
 output safety validator отсекает служебную обёртку, placeholders и не
@@ -135,22 +136,24 @@ full vacancy + employer
    `message_template_file` теперь принимает pool, старый `{ "template": ... }`
    остаётся совместимым.
 4. **Выполнено:** `first`/`stable_hash` выбирают вариант воспроизводимо, а
-   подготовленный текст сохраняется до submit/retry.
+   подготовленный текст сохраняется до submit/retry. Provenance содержит digest
+   нормализованного содержимого всего пула и выбранный template tag.
 5. **Выполнено:** упорядоченные profile-level rules выбирают отдельный pool,
    `skip` либо `review`; первое совпавшее правило побеждает, а причина решения
    содержит группу и evidence.
 6. **Выполнено:** общий model-operator port, OpenAI Responses adapter,
    timeout/error classification и fallback на готовый пул. API key приходит из
    environment, запрос использует `store:false`, а модель выбирается конфигом.
-7. **Частично выполнено:** длина, управляющие символы, JSON/code fence,
-   placeholders, новые числа, URL и e-mail приводят к безопасному fallback.
-   Явные resume facts уже входят в контекст; для полной семантической сверки
-   нужен evidence contract модели. Его сомнения должны отправляться в approval,
-   а не исправляться догадкой.
+7. **Выполнено для автоматической цепочки:** длина, управляющие символы,
+   JSON/code fence, placeholders, новые числа, URL и e-mail приводят к
+   безопасному fallback.
+   Явные resume facts входят в контекст; structured evidence contract локально
+   сверяет claims, JSON Pointer и точные quotes. Он не доказывает семантику
+   естественного языка, поэтому будущие сомнения должны отправляться в approval.
 8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
    parent cancellation, provider HTTP contract, config, routing, provenance
-   round-trip и миграция старых rows покрыты. Evidence groundedness и один
-   `approval` smoke ещё нужны.
+   v1/v2/v3 round-trip и миграция старых rows покрыты. Нужны draft-review
+   workflow и один `approval` smoke.
 
 ## Критерий готовности
 

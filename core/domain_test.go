@@ -133,6 +133,17 @@ func TestLegacyApplicationModelProvenanceRemainsReadable(t *testing.T) {
 	}
 }
 
+func TestEvidenceV2MessagePoolProvenanceRemainsReadable(t *testing.T) {
+	provenance := ApplicationPreparationProvenance{
+		Version: evidenceApplicationPreparationProvenanceVersion, Source: ApplicationPreparationSourceMessagePool,
+		MessagePoolTag: "backend", TemplateTag: "concise",
+		OutputDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	if err := provenance.Validate(); err != nil {
+		t.Fatalf("validate v2 message pool provenance: %v", err)
+	}
+}
+
 func TestProfileIsAccountNotProcess(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	profile, err := NewProfile("profile-1", "hh-main", "hh", now)

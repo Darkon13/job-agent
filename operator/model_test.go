@@ -109,6 +109,7 @@ func TestRuleTemplatePreparerFallsBackAfterModelTimeoutOrInvalidOutput(t *testin
 			}
 			if result.Provenance.Source != "model_fallback" || result.Provenance.FailureKind != string(test.wantKind) ||
 				result.Provenance.FallbackSource != "message_pool" || result.Provenance.MessagePoolTag != "fallback" ||
+				!strings.HasPrefix(result.Provenance.MessagePoolDigest, "sha256:") ||
 				result.Provenance.TemplateTag != "safe" || !strings.HasPrefix(result.Provenance.OutputDigest, "sha256:") {
 				t.Fatalf("fallback provenance = %#v", result.Provenance)
 			}

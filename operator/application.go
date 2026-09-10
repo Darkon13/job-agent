@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -129,6 +130,7 @@ type RuleTemplatePreparer struct {
 type compiledMessagePool struct {
 	tag       string
 	strategy  string
+	digest    string
 	templates []compiledMessageTemplate
 }
 
@@ -367,7 +369,8 @@ func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, applica
 		fallback.provenance = core.ApplicationPreparationProvenance{
 			Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceModelFallback,
 			OperatorTag: model.tag, OperatorVersion: model.promptVersion, FailureKind: string(ModelFailureKindOf(err)),
-			FallbackSource: fallback.provenance.Source, MessagePoolTag: fallback.provenance.MessagePoolTag, TemplateTag: fallback.provenance.TemplateTag,
+			FallbackSource: fallback.provenance.Source, MessagePoolTag: fallback.provenance.MessagePoolTag,
+			MessagePoolDigest: fallback.provenance.MessagePoolDigest, TemplateTag: fallback.provenance.TemplateTag,
 			ResumeFactsTag: preparer.resume.FactsTag, ResumeFactsDigest: preparer.resume.Digest,
 			InputDigest: inputDigest, OutputDigest: applicationTextDigest(fallback.text),
 		}
@@ -388,7 +391,8 @@ func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.A
 			text: message, selection: fmt.Sprintf("message pool %q selected template %q", messagePool.tag, selected.tag),
 			provenance: core.ApplicationPreparationProvenance{
 				Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceMessagePool,
-				MessagePoolTag: messagePool.tag, TemplateTag: selected.tag, OutputDigest: applicationTextDigest(message),
+				MessagePoolTag: messagePool.tag, MessagePoolDigest: messagePool.digest,
+				TemplateTag: selected.tag, OutputDigest: applicationTextDigest(message),
 			},
 		}, nil
 	}
@@ -523,6 +527,7 @@ func compileMessagePool(config *MessagePoolConfig, resume *ApplicationResumeCont
 		return nil, fmt.Errorf("message pool %q requires at least one template", tag)
 	}
 	result := &compiledMessagePool{tag: tag, strategy: strategy, templates: make([]compiledMessageTemplate, 0, len(config.Templates))}
+	digestInput := MessagePoolConfig{Tag: tag, Strategy: strategy, Templates: make([]MessageTemplateConfig, 0, len(config.Templates))}
 	seen := make(map[string]struct{}, len(config.Templates))
 	for _, candidate := range config.Templates {
 		candidateTag := strings.TrimSpace(candidate.Tag)
@@ -541,7 +546,13 @@ func compileMessagePool(config *MessagePoolConfig, resume *ApplicationResumeCont
 			return nil, err
 		}
 		result.templates = append(result.templates, compiledMessageTemplate{tag: candidateTag, template: compiled})
+		digestInput.Templates = append(digestInput.Templates, MessageTemplateConfig{Tag: candidateTag, Template: candidate.Template})
 	}
+	encoded, err := json.Marshal(digestInput)
+	if err != nil {
+		return nil, fmt.Errorf("message pool %q digest: %w", tag, err)
+	}
+	result.digest = applicationBytesDigest(encoded)
 	return result, nil
 }
 
