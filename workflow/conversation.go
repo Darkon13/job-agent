@@ -53,11 +53,12 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 			result.ConversationsCreated++
 		}
 		result.ConversationIDs = append(result.ConversationIDs, stored.ID)
-		if stored.Status != observation.Status {
-			expectedRevision := stored.Revision
-			if err := stored.SetStatus(observation.Status, observedAt); err != nil {
-				return result, err
-			}
+		expectedRevision := stored.Revision
+		changed, err := stored.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
+		if err != nil {
+			return result, err
+		}
+		if changed {
 			if err := workflow.repository.SaveConversation(ctx, stored, expectedRevision); err != nil {
 				return result, fmt.Errorf("save observed conversation %s: %w", observation.ExternalID, err)
 			}
@@ -135,6 +136,25 @@ func (workflow *ConversationWorkflow) ObserveConversationPresentation(ctx contex
 	}
 	if err := workflow.repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
 		return fmt.Errorf("save conversation presentation: %w", err)
+	}
+	return nil
+}
+
+func (workflow *ConversationWorkflow) MarkConversationRead(ctx context.Context, conversationID core.ConversationID) error {
+	conversation, err := workflow.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("load conversation read target: %w", err)
+	}
+	expectedRevision := conversation.Revision
+	changed, err := conversation.MarkRead(workflow.clock.Now())
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	if err := workflow.repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
+		return fmt.Errorf("save conversation read state: %w", err)
 	}
 	return nil
 }

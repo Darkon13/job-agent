@@ -23,7 +23,8 @@ h2 { color: #e6e1cf; font-size: 1.05rem; }
 .dot { width: .62rem; height: .62rem; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 4px rgb(138 145 153 / 10%); }
 .dot.ok { background: var(--green); box-shadow: 0 0 0 4px rgb(186 230 126 / 10%); }
 .dot.error { background: var(--red); box-shadow: 0 0 0 4px rgb(242 135 121 / 10%); }
-main { display: grid; gap: 1.6rem; width: min(1180px, 100%); margin: 0 auto; padding: 1.6rem clamp(1rem, 3vw, 2rem) 4rem; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.6rem; width: min(1180px, 100%); max-width: 100%; margin: 0 auto; padding: 1.6rem clamp(1rem, 3vw, 2rem) 4rem; }
+main > section, .split > *, .activity-grid > *, .resource-grid > *, .chat-layout > * { min-width: 0; }
 .section-title, .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .section-title time, .muted { color: var(--muted); font-size: .82rem; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
@@ -37,7 +38,7 @@ button.stat-card:hover { border-color: var(--cyan); filter: none; }
 .panel { min-width: 0; padding: 1rem; }
 .tag { border: 1px solid #4a5568; border-radius: 999px; padding: .25rem .55rem; color: var(--orange); font: 700 .67rem ui-monospace, monospace; }
 .tag.ready { border-color: #3f6e68; color: var(--green); }
-.table-wrap { overflow: auto; }
+.table-wrap { width: 100%; max-width: 100%; overflow: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .84rem; }
 th, td { padding: .65rem .5rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 th { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -93,9 +94,13 @@ input[type="search"]:focus { outline: 2px solid var(--cyan); border-color: var(-
 .conversation:hover, .conversation.active { border-color: var(--line); background: var(--surface-2); filter: none; }
 .conversation.active { border-color: var(--cyan); }
 .conversation strong, .conversation small { display: block; }
+.conversation-heading { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.conversation-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.unread-badge { flex: none; min-width: 1.4rem; border-radius: 999px; padding: .15rem .4rem; background: var(--cyan); color: #111820; font: 700 .7rem/1.2 ui-monospace, monospace; text-align: center; }
 .conversation-employer { display: block; margin-top: .25rem; overflow: hidden; color: var(--text); font-size: .78rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .conversation small { margin-top: .35rem; color: var(--muted); font-weight: 400; }
 .chat-actions { display: flex; align-items: center; gap: .7rem; }
+.section-actions { display: flex; align-items: center; justify-content: flex-end; gap: .7rem; }
 .button-link { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .75rem; font-size: .78rem; }
 .hidden { display: none; }
 .chat-panel { display: grid; grid-template-rows: auto 1fr auto; }
@@ -111,4 +116,4 @@ textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-
 textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .reply-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 @media (max-width: 850px) { .split, .chat-layout { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .conversation-list { max-height: 240px; } .topbar { align-items: flex-start; } .connection { flex-wrap: wrap; justify-content: flex-end; } .chat-actions { align-items: flex-end; flex-direction: column; } }
-@media (max-width: 520px) { .stat-grid, .activity-grid { grid-template-columns: 1fr; } .list-toolbar { grid-template-columns: 1fr; justify-content: stretch; } .section-title { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 520px) { .stat-grid, .activity-grid { grid-template-columns: 1fr; } .list-toolbar { grid-template-columns: 1fr; justify-content: stretch; } .section-title { align-items: flex-start; flex-direction: column; } .section-actions { width: 100%; align-items: stretch; flex-direction: column; } }

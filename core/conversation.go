@@ -91,6 +91,7 @@ func (observation ConversationMessageObservation) Message(id MessageID, conversa
 type ConversationObservation struct {
 	ExternalID  string                          `json:"external_id"`
 	Status      ConversationStatus              `json:"status"`
+	UnreadCount int                             `json:"unread_count"`
 	LastMessage *ConversationMessageObservation `json:"last_message,omitempty"`
 }
 
@@ -110,6 +111,9 @@ func (presentation ConversationPresentation) normalized() ConversationPresentati
 func (observation ConversationObservation) Validate() error {
 	if strings.TrimSpace(observation.ExternalID) == "" {
 		return errors.New("conversation observation requires external id")
+	}
+	if observation.UnreadCount < 0 {
+		return errors.New("conversation observation unread count must not be negative")
 	}
 	switch observation.Status {
 	case ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
@@ -169,6 +173,7 @@ type Conversation struct {
 	VacancyTitle   string             `json:"vacancy_title,omitempty"`
 	Employer       string             `json:"employer,omitempty"`
 	VacancyURL     string             `json:"vacancy_url,omitempty"`
+	UnreadCount    int                `json:"unread_count"`
 	Status         ConversationStatus `json:"status"`
 	LastMessageID  MessageID          `json:"last_message_id,omitempty"`
 	LastMessageAt  *time.Time         `json:"last_message_at,omitempty"`
@@ -208,6 +213,35 @@ func (conversation *Conversation) ObservePresentation(presentation ConversationP
 	return true, nil
 }
 
+func (conversation *Conversation) ObserveCatalogState(status ConversationStatus, unreadCount int, now time.Time) (bool, error) {
+	if conversation == nil {
+		return false, errors.New("conversation is nil")
+	}
+	switch status {
+	case ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
+	default:
+		return false, errors.New("invalid conversation status")
+	}
+	if unreadCount < 0 {
+		return false, errors.New("conversation unread count must not be negative")
+	}
+	if now.IsZero() || now.Before(conversation.UpdatedAt) {
+		return false, errors.New("conversation catalog observation time must not move backwards")
+	}
+	if conversation.Status == status && conversation.UnreadCount == unreadCount {
+		return false, nil
+	}
+	conversation.Status = status
+	conversation.UnreadCount = unreadCount
+	conversation.UpdatedAt = now
+	conversation.Revision++
+	return true, nil
+}
+
+func (conversation *Conversation) MarkRead(now time.Time) (bool, error) {
+	return conversation.ObserveCatalogState(conversation.Status, 0, now)
+}
+
 func (conversation Conversation) Validate() error {
 	if conversation.ID == "" || conversation.Platform == "" || conversation.ProfileID == "" || strings.TrimSpace(conversation.ExternalID) == "" {
 		return errors.New("conversation requires id, platform, profile and external id")
@@ -216,6 +250,9 @@ func (conversation Conversation) Validate() error {
 	case ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
 	default:
 		return errors.New("invalid conversation status")
+	}
+	if conversation.UnreadCount < 0 {
+		return errors.New("conversation unread count must not be negative")
 	}
 	if conversation.CreatedAt.IsZero() || conversation.UpdatedAt.Before(conversation.CreatedAt) || conversation.Revision < 1 {
 		return errors.New("conversation requires valid timestamps and revision")

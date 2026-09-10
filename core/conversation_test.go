@@ -90,6 +90,23 @@ func TestInactiveConversationCancelsFollowUp(t *testing.T) {
 	}
 }
 
+func TestConversationTracksUnreadCatalogStateAndMarkRead(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	conversation := testConversation(t, now)
+	changed, err := conversation.ObserveCatalogState(ConversationActive, 3, now.Add(time.Minute))
+	if err != nil || !changed || conversation.UnreadCount != 3 || conversation.Revision != 2 {
+		t.Fatalf("observe unread state: conversation=%#v changed=%t err=%v", conversation, changed, err)
+	}
+	changed, err = conversation.MarkRead(now.Add(2 * time.Minute))
+	if err != nil || !changed || conversation.UnreadCount != 0 || conversation.Revision != 3 {
+		t.Fatalf("mark read: conversation=%#v changed=%t err=%v", conversation, changed, err)
+	}
+	changed, err = conversation.MarkRead(now.Add(3 * time.Minute))
+	if err != nil || changed || conversation.Revision != 3 {
+		t.Fatalf("repeat mark read: conversation=%#v changed=%t err=%v", conversation, changed, err)
+	}
+}
+
 func TestConversationContentRequiresOneSource(t *testing.T) {
 	if err := (MessageContent{}).Validate(); err == nil {
 		t.Fatal("expected empty content to fail")

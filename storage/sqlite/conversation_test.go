@@ -23,6 +23,7 @@ func TestStorePersistsConversationsAndDueFollowUpsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new conversation: %v", err)
 	}
+	conversation.UnreadCount = 2
 	if _, created, err := store.CreateConversation(ctx, conversation); err != nil || !created {
 		t.Fatalf("create conversation: created=%t err=%v", created, err)
 	}
@@ -87,7 +88,7 @@ func TestStorePersistsConversationsAndDueFollowUpsAcrossReopen(t *testing.T) {
 		t.Fatalf("reloaded messages: %#v err=%v", messages, err)
 	}
 	reloadedConversation, err := store.Conversation(ctx, conversation.ID)
-	if err != nil || reloadedConversation.VacancyTitle != "Go developer" || reloadedConversation.Employer != "Example" || reloadedConversation.VacancyURL != "https://hh.ru/vacancy/42" {
+	if err != nil || reloadedConversation.VacancyTitle != "Go developer" || reloadedConversation.Employer != "Example" || reloadedConversation.VacancyURL != "https://hh.ru/vacancy/42" || reloadedConversation.UnreadCount != 2 {
 		t.Fatalf("reloaded conversation presentation: %#v err=%v", reloadedConversation, err)
 	}
 	due, err := store.ListFollowUps(ctx, storage.FollowUpFilter{Status: core.FollowUpScheduled, DueBefore: &runAt})

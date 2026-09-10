@@ -35,6 +35,7 @@ func (api *ConversationAPI) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/conversations/{conversation_id}/sync", api.syncConversation)
 	mux.HandleFunc("GET /api/v1/conversations/{conversation_id}/messages", api.listMessages)
 	mux.HandleFunc("POST /api/v1/conversations/{conversation_id}/messages", api.sendMessage)
+	mux.HandleFunc("POST /api/v1/conversations/mark-read", api.markAllRead)
 	mux.HandleFunc("POST /api/v1/conversations/{conversation_id}/mark-read", api.markRead)
 	mux.HandleFunc("GET /api/v1/conversations/{conversation_id}/follow-ups", api.listFollowUps)
 	mux.HandleFunc("POST /api/v1/conversations/{conversation_id}/follow-ups", api.scheduleFollowUp)
@@ -108,6 +109,38 @@ func (api *ConversationAPI) markRead(response http.ResponseWriter, request *http
 		return
 	}
 	writeJSON(response, http.StatusAccepted, taskResponse{TaskID: task.ID, Created: created})
+}
+
+func (api *ConversationAPI) markAllRead(response http.ResponseWriter, request *http.Request) {
+	key, ok := requireIdempotencyKey(response, request)
+	if !ok {
+		return
+	}
+	conversations, err := api.repository.ListConversations(request.Context(), storage.ConversationFilter{
+		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Status:    core.ConversationActive,
+	})
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	result := bulkTaskResponse{Tasks: make([]taskResponse, 0)}
+	for _, conversation := range conversations {
+		if conversation.UnreadCount == 0 {
+			continue
+		}
+		result.Matched++
+		task, created, err := api.workflow.EnqueueMarkRead(request.Context(), conversation.ID, key)
+		if err != nil {
+			writeError(response, err)
+			return
+		}
+		if created {
+			result.Created++
+		}
+		result.Tasks = append(result.Tasks, taskResponse{TaskID: task.ID, Created: created})
+	}
+	writeJSON(response, http.StatusAccepted, result)
 }
 
 func (api *ConversationAPI) syncConversation(response http.ResponseWriter, request *http.Request) {
@@ -237,6 +270,12 @@ type listResponse[T any] struct {
 type taskResponse struct {
 	TaskID  core.TaskID `json:"task_id"`
 	Created bool        `json:"created"`
+}
+
+type bulkTaskResponse struct {
+	Tasks   []taskResponse `json:"tasks"`
+	Matched int            `json:"matched"`
+	Created int            `json:"created"`
 }
 
 func requireIdempotencyKey(response http.ResponseWriter, request *http.Request) (string, bool) {

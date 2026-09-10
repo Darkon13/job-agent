@@ -14,6 +14,7 @@ POST   /api/v1/conversations/{conversation_id}/sync
 GET    /api/v1/conversations/{conversation_id}/messages?cursor=...
 POST   /api/v1/conversations/{conversation_id}/messages
 POST   /api/v1/conversations/{conversation_id}/mark-read
+POST   /api/v1/conversations/mark-read
 
 GET    /api/v1/conversations/{conversation_id}/follow-ups
 POST   /api/v1/conversations/{conversation_id}/follow-ups
@@ -27,7 +28,8 @@ POST   /api/v1/follow-ups/{follow_up_id}/run
 неограниченной production-истории необходимо добавить cursor pagination на
 уровне storage. Ответы с диалогами и сообщениями содержат нормализованные поля;
 сырые payload платформы и данные авторизации наружу не выдаются. `sync`, отправка
-сообщения, `mark-read` и `run` являются асинхронными командами и возвращают
+сообщения, одиночный и bulk `mark-read`, а также `run` являются асинхронными
+командами и возвращают
 `202 Accepted` с ID durable task. Для команд, создания и удаления требуется
 заголовок `Idempotency-Key`; revision-safe `PATCH` дополнительно использует
 `If-Match`.

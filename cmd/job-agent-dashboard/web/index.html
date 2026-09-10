@@ -87,13 +87,16 @@
       <div id="profile-resources" class="resource-grid"></div>
     </section>
     <section aria-labelledby="conversations-title">
-      <div class="section-title"><div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div></div>
+      <div class="section-title">
+        <div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div>
+        <div class="section-actions"><span id="conversation-bulk-state" class="muted"></span><button id="mark-all-read" class="secondary" type="button" disabled>Прочитать все</button></div>
+      </div>
       <div class="chat-layout">
         <nav id="conversations" class="conversation-list" aria-label="Список диалогов"></nav>
         <article class="panel chat-panel">
           <div class="panel-heading">
             <div><h2 id="chat-title">Выберите диалог</h2><p id="chat-meta" class="muted">Сообщения загружаются по запросу.</p></div>
-            <div class="chat-actions"><a id="chat-vacancy-link" class="button-link hidden" target="_blank" rel="noopener noreferrer">Открыть вакансию</a><button id="mark-read" class="secondary" type="button" disabled>Пометить прочитанным</button></div>
+            <div class="chat-actions"><a id="chat-vacancy-link" class="button-link hidden" target="_blank" rel="noopener noreferrer">Открыть вакансию</a></div>
           </div>
           <div id="messages" class="messages" aria-live="polite"><p class="empty">Здесь появится история переписки.</p></div>
           <form id="reply-form" class="reply-form">

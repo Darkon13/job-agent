@@ -35,6 +35,7 @@ func newAPI(t *testing.T) (http.Handler, *brokermemory.Queue, *apiClock) {
 	if err != nil {
 		t.Fatalf("new conversation: %v", err)
 	}
+	conversation.UnreadCount = 2
 	if _, _, err := repository.CreateConversation(context.Background(), conversation); err != nil {
 		t.Fatalf("store conversation: %v", err)
 	}
@@ -92,6 +93,23 @@ func TestConversationMessageAPIRequiresAndDeduplicatesIdempotencyKey(t *testing.
 	var repeated taskResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &repeated); err != nil || repeated.Created || repeated.TaskID != first.TaskID || len(queue.Tasks()) != 1 {
 		t.Fatalf("repeated response: %#v tasks=%d err=%v", repeated, len(queue.Tasks()), err)
+	}
+}
+
+func TestConversationAPIMarksAllUnreadDialogsIdempotently(t *testing.T) {
+	handler, queue, _ := newAPI(t)
+	response := performRequest(t, handler, http.MethodPost, "/api/v1/conversations/mark-read", "mark-all-1", "", nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("bulk mark-read status: %d body=%s", response.Code, response.Body.String())
+	}
+	var first bulkTaskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil || first.Matched != 1 || first.Created != 1 || len(first.Tasks) != 1 || len(queue.Tasks()) != 1 {
+		t.Fatalf("bulk mark-read response=%#v tasks=%d err=%v", first, len(queue.Tasks()), err)
+	}
+	response = performRequest(t, handler, http.MethodPost, "/api/v1/conversations/mark-read", "mark-all-1", "", nil)
+	var repeated bulkTaskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &repeated); err != nil || repeated.Matched != 1 || repeated.Created != 0 || len(queue.Tasks()) != 1 {
+		t.Fatalf("repeated bulk mark-read response=%#v tasks=%d err=%v", repeated, len(queue.Tasks()), err)
 	}
 }
 

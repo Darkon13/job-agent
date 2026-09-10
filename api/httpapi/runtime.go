@@ -69,6 +69,7 @@ type ConversationSummary struct {
 	VacancyTitle   string                  `json:"vacancy_title,omitempty"`
 	Employer       string                  `json:"employer,omitempty"`
 	VacancyURL     string                  `json:"vacancy_url,omitempty"`
+	UnreadCount    int                     `json:"unread_count"`
 }
 
 // ApplicationSummary is an operator-facing object. It intentionally omits
@@ -187,6 +188,7 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 			LastIncomingAt: conversation.LastIncomingAt, UpdatedAt: conversation.UpdatedAt,
 			Revision: conversation.Revision, VacancyTitle: conversation.VacancyTitle,
 			Employer: conversation.Employer, VacancyURL: conversation.VacancyURL,
+			UnreadCount: conversation.UnreadCount,
 		}
 		if summary.VacancyTitle == "" && conversation.ApplicationID != "" {
 			if application, err := api.repository.ApplicationByID(request.Context(), conversation.ApplicationID); err == nil {

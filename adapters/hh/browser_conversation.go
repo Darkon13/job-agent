@@ -174,7 +174,9 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 				continue
 			}
 			seenConversations[externalID] = struct{}{}
-			observation := core.ConversationObservation{ExternalID: externalID, Status: core.ConversationActive}
+			observation := core.ConversationObservation{
+				ExternalID: externalID, Status: core.ConversationActive, UnreadCount: item.UnreadCount,
+			}
 			if item.LastMessage != nil {
 				message, include, err := mapHHMessageObservation(*item.LastMessage, item.CurrentParticipantID)
 				if err != nil {

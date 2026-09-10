@@ -106,7 +106,10 @@ func newDashboardHandler(upstreamValue string) (http.Handler, error) {
 			Build  buildinfo.Info `json:"build"`
 		}{Status: "ok", Build: buildinfo.Current()})
 	})
-	mux.Handle("/", static)
+	mux.Handle("/", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Cache-Control", "no-store")
+		static.ServeHTTP(response, request)
+	}))
 	return securityHeaders(mux), nil
 }
 

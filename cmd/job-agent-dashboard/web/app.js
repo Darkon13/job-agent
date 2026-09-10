@@ -1,7 +1,7 @@
-const state = { summary: null, selectedConversation: null, jobs: [], applicationObjects: [], applicationFilter: "", applicationQuery: "", profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
+const state = { summary: null, selectedConversation: null, jobs: [], applicationObjects: [], applicationFilter: "", applicationQuery: "", markAllReadBusy: false, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
 const elements = Object.fromEntries([
   "application-filters", "application-items", "application-filter-state", "application-search", "application-reset", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
-  "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-read", "reply-form",
+  "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
@@ -162,8 +162,20 @@ function renderActivityObservations(items = []) {
   }));
 }
 function renderConversations(items = []) {
+  updateMarkAllRead(items);
   if (!items.length) { elements.conversations.replaceChildren(text("p", "Диалогов пока нет", "empty")); return; }
-  elements.conversations.replaceChildren(...items.map((item) => { const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`; button.append(text("strong", conversationLabel(item)), text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${item.profile_id} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`)); button.addEventListener("click", () => selectConversation(item)); return button; }));
+  elements.conversations.replaceChildren(...items.map((item) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
+    const heading = document.createElement("span"); heading.className = "conversation-heading"; heading.append(text("strong", conversationLabel(item)));
+    if (item.unread_count) heading.append(text("span", String(item.unread_count), "unread-badge"));
+    button.append(heading, text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${item.profile_id} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`));
+    button.addEventListener("click", () => selectConversation(item)); return button;
+  }));
+}
+function updateMarkAllRead(items = []) {
+  const unread = items.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
+  elements.markAllRead.textContent = unread ? `Прочитать все (${unread})` : "Все прочитано";
+  elements.markAllRead.disabled = state.markAllReadBusy || unread === 0;
 }
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
@@ -343,7 +355,7 @@ async function refreshVersion() {
 async function selectConversation(conversation) {
   state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${conversation.profile_id} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
-  elements.markRead.disabled = false; elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
+  elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try { const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`); renderMessages(result.items || []); } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
 }
 function newIdempotencyKey() {
@@ -357,9 +369,14 @@ elements.replyForm.addEventListener("submit", async (event) => {
   event.preventDefault(); const value = elements.reply.value.trim(); if (!state.selectedConversation || !value) return; elements.send.disabled = true; elements.actionState.textContent = "Создаю задачу…";
   try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`, { content: { text: value } }); elements.reply.value = ""; elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
 });
-elements.markRead.addEventListener("click", async () => {
-  if (!state.selectedConversation) return; elements.markRead.disabled = true; elements.actionState.textContent = "Создаю задачу…";
-  try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/mark-read`); elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.markRead.disabled = false; }
+elements.markAllRead.addEventListener("click", async () => {
+  state.markAllReadBusy = true; updateMarkAllRead(state.summary?.conversations || []); elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
+  try {
+    const result = await enqueue("/api/v1/conversations/mark-read");
+    elements.conversationBulkState.textContent = result.created ? `Непрочитанных диалогов: ${result.created}` : "Новых задач не потребовалось";
+    await refreshSummary();
+  } catch (error) { elements.conversationBulkState.textContent = error.message; }
+  finally { state.markAllReadBusy = false; updateMarkAllRead(state.summary?.conversations || []); }
 });
 elements.applicationSearch.addEventListener("input", () => { state.applicationQuery = elements.applicationSearch.value; renderApplicationObjects(); });
 elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; elements.applicationSearch.value = ""; renderApplicationFilters(state.summary?.applications || []); renderApplicationObjects(); });

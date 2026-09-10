@@ -159,7 +159,10 @@ func (handlers *ConversationHandlers) MarkRead(ctx context.Context, task core.Ta
 	if err != nil {
 		return err
 	}
-	return transport.MarkConversationRead(ctx, conversation.ProfileID, conversation.ExternalID)
+	if err := transport.MarkConversationRead(ctx, conversation.ProfileID, conversation.ExternalID); err != nil {
+		return err
+	}
+	return handlers.workflow.MarkConversationRead(ctx, conversation.ID)
 }
 
 func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Task) error {

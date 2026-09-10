@@ -146,6 +146,34 @@ func TestConversationSendHandlerCallsTransportAndStoresMessage(t *testing.T) {
 	}
 }
 
+func TestConversationMarkReadHandlerClearsStoredUnreadCount(t *testing.T) {
+	ctx := context.Background()
+	handlers, conversationWorkflow, repository, _, _, clock := newConversationHandlersFixture(t)
+	conversation, err := repository.Conversation(ctx, "conversation-1")
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	expectedRevision := conversation.Revision
+	if changed, err := conversation.ObserveCatalogState(core.ConversationActive, 2, clock.now); err != nil || !changed {
+		t.Fatalf("set unread count: changed=%t err=%v", changed, err)
+	}
+	if err := repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
+		t.Fatalf("save unread count: %v", err)
+	}
+	clock.now = clock.now.Add(time.Second)
+	task, _, err := conversationWorkflow.EnqueueMarkRead(ctx, conversation.ID, "mark-all-1")
+	if err != nil {
+		t.Fatalf("enqueue mark read: %v", err)
+	}
+	if err := handlers.MarkRead(ctx, task); err != nil {
+		t.Fatalf("handle mark read: %v", err)
+	}
+	stored, err := repository.Conversation(ctx, conversation.ID)
+	if err != nil || stored.UnreadCount != 0 {
+		t.Fatalf("stored conversation=%#v err=%v", stored, err)
+	}
+}
+
 func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing.T) {
 	ctx := context.Background()
 	handlers, _, repository, queue, transport, clock := newConversationHandlersFixture(t)
@@ -153,7 +181,7 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 		ObservedAt: clock.now,
 		Conversations: []core.ConversationObservation{
 			{
-				ExternalID: "external-chat-1", Status: core.ConversationActive,
+				ExternalID: "external-chat-1", Status: core.ConversationActive, UnreadCount: 2,
 				LastMessage: &core.ConversationMessageObservation{
 					ExternalID: "message-external-1", Direction: core.MessageIncoming,
 					Kind: core.MessageText, Text: "Добрый день", OccurredAt: clock.now.Add(-time.Minute),
@@ -176,6 +204,9 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 	conversations, err := repository.ListConversations(ctx, storage.ConversationFilter{ProfileID: "profile-1"})
 	if err != nil || len(conversations) != 2 {
 		t.Fatalf("conversations=%#v err=%v", conversations, err)
+	}
+	if (conversations[0].ExternalID == "external-chat-1" && conversations[0].UnreadCount != 2) || (conversations[1].ExternalID == "external-chat-1" && conversations[1].UnreadCount != 2) {
+		t.Fatalf("unread count was not stored: %#v", conversations)
 	}
 	messages, err := repository.ConversationMessages(ctx, "conversation-1")
 	if err != nil || len(messages) != 1 || messages[0].ExternalID != "message-external-1" {

@@ -28,7 +28,7 @@ func TestBrowserConversationDiscoversPaginatedCatalog(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		if request.URL.Query().Get("from") == "" {
 			_, _ = writer.Write([]byte(`{
-				"chats":{"items":[{"id":41,"currentParticipantId":"me","unknown":"ignored","lastMessage":{
+				"chats":{"items":[{"id":41,"currentParticipantId":"me","unreadCount":3,"unknown":"ignored","lastMessage":{
 					"id":101,"chatId":41,"creationTime":"2026-09-07T09:00:00Z","text":"","type":"NEGOTIATION_STATE","participantId":"me"
 				}}],"nextFrom":77},"resources":{"vacancies":{"42":{"name":"ignored"}}}
 			}`))
@@ -52,7 +52,7 @@ func TestBrowserConversationDiscoversPaginatedCatalog(t *testing.T) {
 		t.Fatalf("result=%#v requests=%d", result, requests.Load())
 	}
 	first := result.Conversations[0]
-	if first.ExternalID != "41" || first.LastMessage == nil || first.LastMessage.Kind != core.MessageSystem || first.LastMessage.Direction != core.MessageOutgoing {
+	if first.ExternalID != "41" || first.UnreadCount != 3 || first.LastMessage == nil || first.LastMessage.Kind != core.MessageSystem || first.LastMessage.Direction != core.MessageOutgoing {
 		t.Fatalf("first conversation = %#v", first)
 	}
 	second := result.Conversations[1]
