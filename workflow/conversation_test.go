@@ -130,3 +130,23 @@ func TestConversationCommandsAreIdempotentPerOperation(t *testing.T) {
 		t.Fatalf("decode send payload: %#v err=%v", payload, err)
 	}
 }
+
+func TestConversationWorkflowStoresPresentationFromTransport(t *testing.T) {
+	ctx := context.Background()
+	service, repository, _, clock := newConversationWorkflowFixture(t)
+	presentation := core.ConversationPresentation{VacancyTitle: "Go developer", Employer: "Example", VacancyURL: "https://hh.ru/vacancy/42"}
+	if err := service.ObserveConversationPresentation(ctx, "conversation-1", presentation, clock.now.Add(time.Minute)); err != nil {
+		t.Fatalf("observe presentation: %v", err)
+	}
+	stored, err := repository.Conversation(ctx, "conversation-1")
+	if err != nil || stored.VacancyTitle != presentation.VacancyTitle || stored.Employer != presentation.Employer || stored.VacancyURL != presentation.VacancyURL || stored.Revision != 2 {
+		t.Fatalf("stored conversation: %#v err=%v", stored, err)
+	}
+	if err := service.ObserveConversationPresentation(ctx, "conversation-1", presentation, clock.now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("repeat presentation: %v", err)
+	}
+	again, err := repository.Conversation(ctx, "conversation-1")
+	if err != nil || again.Revision != stored.Revision {
+		t.Fatalf("repeat changed conversation: %#v err=%v", again, err)
+	}
+}

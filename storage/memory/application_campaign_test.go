@@ -58,6 +58,14 @@ func TestApplicationCampaignRepositoryLifecycle(t *testing.T) {
 	if _, _, err := repository.CreateApplication(ctx, application); err != nil {
 		t.Fatalf("create application: %v", err)
 	}
+	byID, err := repository.ApplicationByID(ctx, application.ID)
+	if err != nil || byID.Key != application.Key {
+		t.Fatalf("load application by id: %#v err=%v", byID, err)
+	}
+	listed, err := repository.ListApplications(ctx, storage.ApplicationFilter{ProfileID: "primary", Limit: 10})
+	if err != nil || len(listed) != 1 || listed[0].ID != application.ID {
+		t.Fatalf("list applications: %#v err=%v", listed, err)
+	}
 	item := core.CampaignApplication{CampaignID: campaign.ID, RouteIndex: 0, ApplicationID: application.ID, DiscoveredAt: now}
 	if created, err := repository.LinkCampaignApplication(ctx, item); err != nil || !created {
 		t.Fatalf("link application: created=%v err=%v", created, err)

@@ -271,6 +271,17 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 	if stored.Status != core.ApplicationSubmitting || stored.Attempts != 1 || stored.DecisionCode != "qualified" || stored.PreparedResumeID != "resume-1" || stored.PreparedMessage != "Hello" || stored.PreparationProvenance != provenance || stored.PreparedAt == nil {
 		t.Fatalf("unexpected stored application: %#v", stored)
 	}
+	byID, err := store.ApplicationByID(ctx, application.ID)
+	if err != nil || byID.Key != application.Key || byID.Status != core.ApplicationSubmitting {
+		t.Fatalf("load application by id: %#v err=%v", byID, err)
+	}
+	listed, err := store.ListApplications(ctx, storage.ApplicationFilter{ProfileID: "primary", Status: core.ApplicationSubmitting, Limit: 10})
+	if err != nil || len(listed) != 1 || listed[0].ID != application.ID {
+		t.Fatalf("list applications: %#v err=%v", listed, err)
+	}
+	if _, err := store.ListApplications(ctx, storage.ApplicationFilter{}); err == nil {
+		t.Fatal("expected invalid application list limit")
+	}
 }
 
 func TestStoreCountsTasksWithoutReturningPayloads(t *testing.T) {

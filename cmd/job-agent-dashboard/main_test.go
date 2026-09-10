@@ -26,7 +26,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") || !strings.Contains(response.Body.String(), "Активность профилей") || !strings.Contains(response.Body.String(), "Доступные действия") || !strings.Contains(response.Body.String(), "Последние кампании откликов") || !strings.Contains(response.Body.String(), "Неразрешённые ошибки задач") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") || !strings.Contains(response.Body.String(), "Что видит HH") || !strings.Contains(response.Body.String(), "Доступные действия") || !strings.Contains(response.Body.String(), "Последние кампании откликов") || !strings.Contains(response.Body.String(), "Неразрешённые ошибки задач") || !strings.Contains(response.Body.String(), "application-items") {
 		t.Fatalf("index response: %d %s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" {
@@ -34,7 +34,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/app.js", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") || !strings.Contains(response.Body.String(), "/reconcile") || !strings.Contains(response.Body.String(), "activity_snapshots") || !strings.Contains(response.Body.String(), "renderCampaigns") || !strings.Contains(response.Body.String(), "/api/v1/tasks/failed") || !strings.Contains(response.Body.String(), "controlFailedTask") || !strings.Contains(response.Body.String(), "/api/v1/jobs/") || !strings.Contains(response.Body.String(), "runJob") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "base_manifest_digest") || !strings.Contains(response.Body.String(), "Одноразовое изменение") || !strings.Contains(response.Body.String(), "/reconcile") || !strings.Contains(response.Body.String(), "activity_snapshots") || !strings.Contains(response.Body.String(), "renderCampaigns") || !strings.Contains(response.Body.String(), "/api/v1/tasks/failed") || !strings.Contains(response.Body.String(), "controlFailedTask") || !strings.Contains(response.Body.String(), "/api/v1/jobs/") || !strings.Contains(response.Body.String(), "runJob") || !strings.Contains(response.Body.String(), "/api/v1/applications?limit=100") || !strings.Contains(response.Body.String(), "Снять показатели активности") || strings.Contains(response.Body.String(), "response_streak") {
 		t.Fatalf("dashboard script response: %d %s", response.Code, response.Body.String())
 	}
 

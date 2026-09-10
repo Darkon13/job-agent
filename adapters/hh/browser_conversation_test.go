@@ -65,10 +65,10 @@ func TestBrowserConversationSyncsAllMessagePagesInChronologicalOrder(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		if request.URL.Query().Get("lastMessageId") == "" {
-			_, _ = writer.Write([]byte(`{"chat":{"id":41,"currentParticipantId":"me","messages":{"items":[
+			_, _ = writer.Write([]byte(`{"chat":{"id":41,"currentParticipantId":"me","resources":{"VACANCY":[42]},"messages":{"items":[
 				{"id":2,"chatId":41,"creationTime":"2026-09-07T10:00:00Z","text":"Ответ","type":"SIMPLE","participantId":"employer"},
 				{"id":3,"chatId":41,"creationTime":"2026-09-07T11:00:00Z","text":"Спасибо","type":"SIMPLE","participantId":"me"}
-			],"hasMore":true}},"chatStates":{"writeMessageState":{"allowed":true}}}`))
+			],"hasMore":true}},"chatStates":{"writeMessageState":{"allowed":true}},"display":{"title":"Go developer","subtitle":"Example fallback"},"resources":{"vacancies":{"42":{"name":"Senior Go developer","company":{"visibleName":"Example"},"links":{"desktop":"https://hh.ru/vacancy/42"}}}}}`))
 			return
 		}
 		if request.URL.Query().Get("lastMessageId") != "2" {
@@ -90,6 +90,9 @@ func TestBrowserConversationSyncsAllMessagePagesInChronologicalOrder(t *testing.
 	}
 	if result.Messages[1].Direction != core.MessageIncoming || result.Messages[2].Status != core.MessageSent {
 		t.Fatalf("normalized messages = %#v", result.Messages)
+	}
+	if result.Presentation.VacancyTitle != "Senior Go developer" || result.Presentation.Employer != "Example" || result.Presentation.VacancyURL != "https://hh.ru/vacancy/42" {
+		t.Fatalf("presentation = %#v", result.Presentation)
 	}
 }
 

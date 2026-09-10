@@ -17,6 +17,7 @@ var (
 	_ storage.SearchRunRepository               = (*Repository)(nil)
 	_ storage.ApplicationCampaignRepository     = (*Repository)(nil)
 	_ storage.ApplicationRepository             = (*Repository)(nil)
+	_ storage.ApplicationReadRepository         = (*Repository)(nil)
 	_ storage.ApplicationBudgetRepository       = (*Repository)(nil)
 	_ storage.TestCatalogRepository             = (*Repository)(nil)
 	_ storage.ReviewRepository                  = (*Repository)(nil)
@@ -249,6 +250,53 @@ func (repository *Repository) SaveApplication(ctx context.Context, candidate cor
 	}
 	repository.applications[candidate.Key] = candidate
 	return nil
+}
+
+func (repository *Repository) ApplicationByID(ctx context.Context, id core.ApplicationID) (core.Application, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Application{}, err
+	}
+	if id == "" {
+		return core.Application{}, errors.New("application id is required")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	application, exists := repository.applicationsByID(id)
+	if !exists {
+		return core.Application{}, errors.New("application not found")
+	}
+	return application, nil
+}
+
+func (repository *Repository) ListApplications(ctx context.Context, filter storage.ApplicationFilter) ([]core.Application, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if filter.Limit < 1 || filter.Limit > 500 {
+		return nil, errors.New("application limit must be between 1 and 500")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.Application, 0, min(filter.Limit, len(repository.applications)))
+	for _, application := range repository.applications {
+		if filter.ProfileID != "" && application.Key.ProfileID != filter.ProfileID {
+			continue
+		}
+		if filter.Status != "" && application.Status != filter.Status {
+			continue
+		}
+		result = append(result, application)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].UpdatedAt.Equal(result[j].UpdatedAt) {
+			return result[i].UpdatedAt.After(result[j].UpdatedAt)
+		}
+		return result[i].ID > result[j].ID
+	})
+	if len(result) > filter.Limit {
+		result = result[:filter.Limit]
+	}
+	return result, nil
 }
 
 func (repository *Repository) Applications() []core.Application {

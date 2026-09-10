@@ -25,22 +25,39 @@
       </div>
       <div id="stats" class="stat-grid"></div>
     </section>
-    <section class="split" aria-label="Состояния откликов и очереди">
-      <article class="panel">
-        <div class="panel-heading"><h2>Отклики</h2><span class="tag">lifecycle</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Статус</th><th>Решение</th><th>Количество</th></tr></thead><tbody id="applications"></tbody></table></div>
-      </article>
-      <article class="panel">
-        <div class="panel-heading"><h2>Очередь</h2><span class="tag">durable</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Тип</th><th>Статус</th><th>Количество</th></tr></thead><tbody id="tasks"></tbody></table></div>
+    <section aria-labelledby="activity-title">
+      <div class="section-title">
+        <div><p class="eyebrow">АКТИВНОСТЬ РЕЗЮМЕ</p><h2 id="activity-title">Что видит HH</h2></div>
+        <span class="muted">Последний снимок и подтверждённые действия</span>
+      </div>
+      <div id="activity-observations" class="activity-grid"></div>
+      <article class="panel activity-events">
+        <div class="panel-heading"><h2>Действия профилей</h2><span class="tag">факты</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Профиль</th><th>Платформа</th><th>Действие</th><th>Количество</th><th>Последнее</th></tr></thead><tbody id="activity"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="jobs-title">
+    <section id="applications-section" aria-labelledby="applications-title">
       <div class="section-title">
-        <div><p class="eyebrow">DECLARATIVE JOBS</p><h2 id="jobs-title">Доступные действия</h2></div>
-        <span class="muted">Тот же durable command, который запускает расписание</span>
+        <div><p class="eyebrow">ОБЪЕКТЫ</p><h2 id="applications-title">Отклики</h2></div>
+        <span id="application-filter-state" class="muted">Последние 100</span>
       </div>
+      <div id="application-filters" class="filter-grid" aria-label="Фильтр откликов по состоянию"></div>
       <article class="panel">
+        <div class="list-toolbar">
+          <label for="application-search">Поиск</label>
+          <input id="application-search" type="search" placeholder="Вакансия, компания или профиль">
+          <button id="application-reset" class="secondary compact" type="button">Сбросить</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Вакансия</th><th>Компания</th><th>Профиль</th><th>Состояние</th><th>Решение</th><th>Обновлён</th><th>Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
+      </article>
+    </section>
+    <section class="split" aria-label="Очередь и доступные действия">
+      <article class="panel">
+        <div class="panel-heading"><h2>Очередь</h2><span class="tag">durable</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Действие</th><th>Состояние</th><th>Приоритет</th><th>Количество</th></tr></thead><tbody id="tasks"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><h2>Доступные действия</h2><span class="tag">jobs</span></div>
         <div class="table-wrap"><table><thead><tr><th>Job</th><th>Тип</th><th>Платформа</th><th>Профиль</th><th>Приоритет</th><th>Действие</th></tr></thead><tbody id="jobs"></tbody></table></div>
       </article>
     </section>
@@ -62,19 +79,6 @@
         <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Тип</th><th>Профиль</th><th>Попытки</th><th>Ошибка</th><th>Обновлена</th><th>Действия</th></tr></thead><tbody id="failed-tasks"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="activity-title">
-      <div class="section-title">
-        <div><p class="eyebrow">НАБЛЮДАЕМЫЕ СИГНАЛЫ</p><h2 id="activity-title">Активность профилей</h2></div>
-        <span class="muted">Факты без предположений о весах HH</span>
-      </div>
-      <article class="panel">
-        <div class="table-wrap"><table><thead><tr><th>Профиль</th><th>Платформа</th><th>Действие</th><th>Количество</th><th>Последнее</th></tr></thead><tbody id="activity"></tbody></table></div>
-      </article>
-      <article class="panel activity-observations">
-        <div class="panel-heading"><h2>Последние показатели HH</h2><span class="tag">read-only</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Профиль</th><th>Резюме</th><th>Период</th><th>Показы</th><th>Просмотры</th><th>Приглашения</th><th>Отклики</th><th>Наблюдение</th></tr></thead><tbody id="activity-observations"></tbody></table></div>
-      </article>
-    </section>
     <section aria-labelledby="profile-state-title">
       <div class="section-title">
         <div><p class="eyebrow">DESIRED STATE</p><h2 id="profile-state-title">Профиль и резюме</h2></div>
@@ -89,7 +93,7 @@
         <article class="panel chat-panel">
           <div class="panel-heading">
             <div><h2 id="chat-title">Выберите диалог</h2><p id="chat-meta" class="muted">Сообщения загружаются по запросу.</p></div>
-            <button id="mark-read" class="secondary" type="button" disabled>Пометить прочитанным</button>
+            <div class="chat-actions"><a id="chat-vacancy-link" class="button-link hidden" target="_blank" rel="noopener noreferrer">Открыть вакансию</a><button id="mark-read" class="secondary" type="button" disabled>Пометить прочитанным</button></div>
           </div>
           <div id="messages" class="messages" aria-live="polite"><p class="empty">Здесь появится история переписки.</p></div>
           <form id="reply-form" class="reply-form">

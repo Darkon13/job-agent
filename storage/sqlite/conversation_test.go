@@ -26,6 +26,15 @@ func TestStorePersistsConversationsAndDueFollowUpsAcrossReopen(t *testing.T) {
 	if _, created, err := store.CreateConversation(ctx, conversation); err != nil || !created {
 		t.Fatalf("create conversation: created=%t err=%v", created, err)
 	}
+	expectedRevision := conversation.Revision
+	if changed, err := conversation.ObservePresentation(core.ConversationPresentation{
+		VacancyTitle: "Go developer", Employer: "Example", VacancyURL: "https://hh.ru/vacancy/42",
+	}, now.Add(time.Minute)); err != nil || !changed {
+		t.Fatalf("observe conversation presentation: changed=%t err=%v", changed, err)
+	}
+	if err := store.SaveConversation(ctx, conversation, expectedRevision); err != nil {
+		t.Fatalf("save conversation presentation: %v", err)
+	}
 	message := core.ConversationMessage{
 		ID: "message-1", ConversationID: conversation.ID, ExternalID: "external-message-1",
 		Direction: core.MessageOutgoing, Kind: core.MessageText, Status: core.MessageSent,
@@ -76,6 +85,10 @@ func TestStorePersistsConversationsAndDueFollowUpsAcrossReopen(t *testing.T) {
 	messages, err := store.ConversationMessages(ctx, conversation.ID)
 	if err != nil || len(messages) != 1 || messages[0].Text != message.Text {
 		t.Fatalf("reloaded messages: %#v err=%v", messages, err)
+	}
+	reloadedConversation, err := store.Conversation(ctx, conversation.ID)
+	if err != nil || reloadedConversation.VacancyTitle != "Go developer" || reloadedConversation.Employer != "Example" || reloadedConversation.VacancyURL != "https://hh.ru/vacancy/42" {
+		t.Fatalf("reloaded conversation presentation: %#v err=%v", reloadedConversation, err)
 	}
 	due, err := store.ListFollowUps(ctx, storage.FollowUpFilter{Status: core.FollowUpScheduled, DueBefore: &runAt})
 	if err != nil || len(due) != 1 || due[0].Content.OperatorTag != "employer-reminder" || due[0].Policy.Cooldown.Value() != 72*time.Hour {

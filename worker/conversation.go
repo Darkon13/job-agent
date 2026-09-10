@@ -225,6 +225,9 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	if result.ObservedAt.IsZero() {
 		return errors.New("conversation sync returned zero observation time")
 	}
+	if err := handlers.workflow.ObserveConversationPresentation(ctx, conversation.ID, result.Presentation, result.ObservedAt); err != nil {
+		return err
+	}
 	for _, message := range result.Messages {
 		if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, result.ObservedAt); err != nil {
 			return err

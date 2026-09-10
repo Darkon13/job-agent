@@ -60,6 +60,19 @@ type ApplicationCount struct {
 	Count        int                    `json:"count"`
 }
 
+type ApplicationFilter struct {
+	ProfileID core.ProfileID
+	Status    core.ApplicationStatus
+	Limit     int
+}
+
+// ApplicationReadRepository exposes application objects to operator-facing
+// read models without widening the workflow write contract.
+type ApplicationReadRepository interface {
+	ApplicationByID(ctx context.Context, id core.ApplicationID) (core.Application, error)
+	ListApplications(ctx context.Context, filter ApplicationFilter) ([]core.Application, error)
+}
+
 type ProfileActivityFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID

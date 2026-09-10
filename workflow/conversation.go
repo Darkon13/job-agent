@@ -120,6 +120,25 @@ func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Contex
 	return created, nil
 }
 
+func (workflow *ConversationWorkflow) ObserveConversationPresentation(ctx context.Context, conversationID core.ConversationID, presentation core.ConversationPresentation, observedAt time.Time) error {
+	conversation, err := workflow.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return fmt.Errorf("load conversation presentation target: %w", err)
+	}
+	expectedRevision := conversation.Revision
+	changed, err := conversation.ObservePresentation(presentation, observedAt)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	if err := workflow.repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
+		return fmt.Errorf("save conversation presentation: %w", err)
+	}
+	return nil
+}
+
 func NewConversationWorkflow(repository storage.ConversationRepository, tasks broker.TaskStore, clock Clock, ids IDGenerator) (*ConversationWorkflow, error) {
 	if repository == nil || tasks == nil || clock == nil || ids == nil {
 		return nil, errors.New("conversation workflow requires repository, task queue, clock and id generator")

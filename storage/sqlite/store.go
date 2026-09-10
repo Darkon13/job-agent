@@ -23,6 +23,7 @@ var (
 	_ storage.SearchRunRepository               = (*Store)(nil)
 	_ storage.ApplicationCampaignRepository     = (*Store)(nil)
 	_ storage.ApplicationRepository             = (*Store)(nil)
+	_ storage.ApplicationReadRepository         = (*Store)(nil)
 	_ storage.ApplicationBudgetRepository       = (*Store)(nil)
 	_ storage.ConversationRepository            = (*Store)(nil)
 	_ storage.ProfileStateProposalRepository    = (*Store)(nil)
@@ -221,17 +222,61 @@ func (store *Store) Application(ctx context.Context, key core.ApplicationKey) (c
 	if err := key.Validate(); err != nil {
 		return core.Application{}, err
 	}
-	row := store.db.QueryRowContext(ctx, `SELECT id, status, attempts, external_negotiation_id,
+	row := store.db.QueryRowContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
 		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
 		preparation_provenance, created_at, updated_at, prepared_at, submitted_at
 		FROM applications WHERE profile_id = ? AND platform = ? AND external_id = ?`,
 		key.ProfileID, key.Vacancy.Platform, key.Vacancy.ExternalID)
+	return scanApplication(row)
+}
+
+func (store *Store) ApplicationByID(ctx context.Context, id core.ApplicationID) (core.Application, error) {
+	if id == "" {
+		return core.Application{}, errors.New("application id is required")
+	}
+	row := store.db.QueryRowContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
+		preparation_provenance, created_at, updated_at, prepared_at, submitted_at
+		FROM applications WHERE id = ?`, id)
+	return scanApplication(row)
+}
+
+func (store *Store) ListApplications(ctx context.Context, filter storage.ApplicationFilter) ([]core.Application, error) {
+	if filter.Limit < 1 || filter.Limit > 500 {
+		return nil, errors.New("application limit must be between 1 and 500")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
+		preparation_provenance, created_at, updated_at, prepared_at, submitted_at
+		FROM applications
+		WHERE (? = '' OR profile_id = ?) AND (? = '' OR status = ?)
+		ORDER BY updated_at DESC, id DESC LIMIT ?`,
+		filter.ProfileID, filter.ProfileID, filter.Status, filter.Status, filter.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("list applications: %w", err)
+	}
+	defer rows.Close()
+	applications := make([]core.Application, 0)
+	for rows.Next() {
+		application, err := scanApplication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan application: %w", err)
+		}
+		applications = append(applications, application)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate applications: %w", err)
+	}
+	return applications, nil
+}
+
+func scanApplication(row rowScanner) (core.Application, error) {
 	var application core.Application
 	var createdAt, updatedAt int64
 	var preparedAt, submittedAt sql.NullInt64
 	var preparationProvenance []byte
-	application.Key = key
-	if err := row.Scan(&application.ID, &application.Status, &application.Attempts, &application.ExternalNegotiationID,
+	if err := row.Scan(&application.ID, &application.Key.ProfileID, &application.Key.Vacancy.Platform,
+		&application.Key.Vacancy.ExternalID, &application.Status, &application.Attempts, &application.ExternalNegotiationID,
 		&application.FailureCategory, &application.FailureMessage, &application.DecisionCode,
 		&application.DecisionReason, &application.PreparedResumeID, &application.PreparedMessage, &preparationProvenance,
 		&createdAt, &updatedAt, &preparedAt, &submittedAt); err != nil {

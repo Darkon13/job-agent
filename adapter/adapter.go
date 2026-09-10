@@ -132,8 +132,9 @@ type ConversationSendCommand struct {
 }
 
 type ConversationSyncResult struct {
-	Messages   []core.ConversationMessage
-	ObservedAt time.Time
+	Messages     []core.ConversationMessage
+	Presentation core.ConversationPresentation
+	ObservedAt   time.Time
 }
 
 type ConversationDiscoveryResult struct {

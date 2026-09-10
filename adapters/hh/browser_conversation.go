@@ -70,6 +70,9 @@ type hhChatDataResponse struct {
 		UnreadCount          int                `json:"unreadCount"`
 		Messages             hhChatMessages     `json:"messages"`
 		WritePossibility     hhWritePossibility `json:"writePossibility"`
+		Resources            struct {
+			Vacancies flexibleIDs `json:"VACANCY"`
+		} `json:"resources"`
 	} `json:"chat"`
 	ChatStates struct {
 		WriteMessageState hhWriteMessageState `json:"writeMessageState"`
@@ -77,6 +80,22 @@ type hhChatDataResponse struct {
 	Error *struct {
 		Code string `json:"code"`
 	} `json:"error,omitempty"`
+	Display struct {
+		Title    string `json:"title"`
+		Subtitle string `json:"subtitle"`
+	} `json:"display"`
+	Resources struct {
+		Vacancies map[string]struct {
+			Name    string `json:"name"`
+			Company struct {
+				Name        string `json:"name"`
+				VisibleName string `json:"visibleName"`
+			} `json:"company"`
+			Links struct {
+				Desktop string `json:"desktop"`
+			} `json:"links"`
+		} `json:"vacancies"`
+	} `json:"resources"`
 }
 
 type hhChatMessages struct {
@@ -193,6 +212,7 @@ func (client *BrowserConversationClient) SyncConversation(ctx context.Context, p
 	observedAt := time.Now().UTC()
 	messages := make([]core.ConversationMessage, 0)
 	seen := make(map[string]struct{})
+	presentation := core.ConversationPresentation{}
 	lastMessageID := ""
 	for page := 0; page < maxChatPages; page++ {
 		data, err := client.fetchChatData(ctx, chatID, lastMessageID, "conversations.sync.browser")
@@ -201,6 +221,9 @@ func (client *BrowserConversationClient) SyncConversation(ctx context.Context, p
 		}
 		if string(data.Chat.ID) != externalConversationID {
 			return adapter.ConversationSyncResult{}, operationError(core.ErrorPermanentFailure, "conversations.sync.browser", "HH returned another conversation", nil)
+		}
+		if page == 0 {
+			presentation = mapHHConversationPresentation(data)
 		}
 		for _, raw := range data.Chat.Messages.Items {
 			observation, include, err := mapHHMessageObservation(raw, data.Chat.CurrentParticipantID)
@@ -222,7 +245,7 @@ func (client *BrowserConversationClient) SyncConversation(ctx context.Context, p
 		}
 		if !data.Chat.Messages.HasMore || len(data.Chat.Messages.Items) == 0 {
 			sortConversationMessages(messages)
-			return adapter.ConversationSyncResult{Messages: messages, ObservedAt: observedAt}, nil
+			return adapter.ConversationSyncResult{Messages: messages, Presentation: presentation, ObservedAt: observedAt}, nil
 		}
 		candidate := string(data.Chat.Messages.Items[0].ID)
 		if candidate == "" || candidate == lastMessageID {
@@ -231,6 +254,39 @@ func (client *BrowserConversationClient) SyncConversation(ctx context.Context, p
 		lastMessageID = candidate
 	}
 	return adapter.ConversationSyncResult{}, operationError(core.ErrorTemporaryFailure, "conversations.sync.browser", "HH message pagination exceeded its safety limit", nil)
+}
+
+func mapHHConversationPresentation(data hhChatDataResponse) core.ConversationPresentation {
+	presentation := core.ConversationPresentation{
+		VacancyTitle: strings.TrimSpace(data.Display.Title),
+		Employer:     strings.TrimSpace(data.Display.Subtitle),
+	}
+	ids := append([]string(nil), data.Chat.Resources.Vacancies...)
+	if len(ids) == 0 {
+		for id := range data.Resources.Vacancies {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+	}
+	for _, id := range ids {
+		vacancy, exists := data.Resources.Vacancies[id]
+		if !exists {
+			continue
+		}
+		if title := strings.TrimSpace(vacancy.Name); title != "" {
+			presentation.VacancyTitle = title
+		}
+		employer := strings.TrimSpace(vacancy.Company.VisibleName)
+		if employer == "" {
+			employer = strings.TrimSpace(vacancy.Company.Name)
+		}
+		if employer != "" {
+			presentation.Employer = employer
+		}
+		presentation.VacancyURL = strings.TrimSpace(vacancy.Links.Desktop)
+		break
+	}
+	return presentation
 }
 
 func (client *BrowserConversationClient) SendConversationMessage(ctx context.Context, command adapter.ConversationSendCommand) (core.ConversationMessage, error) {

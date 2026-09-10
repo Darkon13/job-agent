@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/buildinfo"
@@ -16,6 +18,9 @@ type RuntimeReadRepository interface {
 	Stats(context.Context) (storage.RuntimeStats, error)
 	TaskCounts(context.Context) ([]storage.TaskCount, error)
 	ApplicationCounts(context.Context) ([]storage.ApplicationCount, error)
+	ApplicationByID(context.Context, core.ApplicationID) (core.Application, error)
+	ListApplications(context.Context, storage.ApplicationFilter) ([]core.Application, error)
+	Vacancy(context.Context, core.VacancyKey) (core.Vacancy, error)
 	ListApplicationCampaigns(context.Context, int) ([]core.ApplicationCampaign, error)
 	ListCampaignApplicationStates(context.Context, core.ApplicationCampaignID) ([]core.CampaignApplicationState, error)
 	ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error)
@@ -61,6 +66,27 @@ type ConversationSummary struct {
 	LastIncomingAt *time.Time              `json:"last_incoming_at,omitempty"`
 	UpdatedAt      time.Time               `json:"updated_at"`
 	Revision       uint64                  `json:"revision"`
+	VacancyTitle   string                  `json:"vacancy_title,omitempty"`
+	Employer       string                  `json:"employer,omitempty"`
+	VacancyURL     string                  `json:"vacancy_url,omitempty"`
+}
+
+// ApplicationSummary is an operator-facing object. It intentionally omits
+// prepared messages, decision reasons and external negotiation identifiers.
+type ApplicationSummary struct {
+	ID              core.ApplicationID     `json:"id"`
+	Platform        core.Platform          `json:"platform"`
+	ProfileID       core.ProfileID         `json:"profile_id"`
+	Status          core.ApplicationStatus `json:"status"`
+	DecisionCode    string                 `json:"decision_code,omitempty"`
+	FailureCategory core.ErrorCategory     `json:"failure_category,omitempty"`
+	Attempts        int                    `json:"attempts"`
+	VacancyTitle    string                 `json:"vacancy_title"`
+	Employer        string                 `json:"employer,omitempty"`
+	VacancyURL      string                 `json:"vacancy_url,omitempty"`
+	HasCoverLetter  bool                   `json:"has_cover_letter"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+	SubmittedAt     *time.Time             `json:"submitted_at,omitempty"`
 }
 
 func NewRuntimeAPI(repository RuntimeReadRepository) (*RuntimeAPI, error) {
@@ -82,6 +108,7 @@ func (api *RuntimeAPI) Handler(productAPI http.Handler) http.Handler {
 	mux.HandleFunc("GET /readyz", api.ready)
 	mux.HandleFunc("GET /api/v1/version", api.version)
 	mux.HandleFunc("GET /api/v1/dashboard/summary", api.summary)
+	mux.HandleFunc("GET /api/v1/applications", api.listApplications)
 	mux.Handle("/", productAPI)
 	return mux
 }
@@ -154,12 +181,23 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 	}
 	conversationSummaries := make([]ConversationSummary, 0, len(conversations))
 	for _, conversation := range conversations {
-		conversationSummaries = append(conversationSummaries, ConversationSummary{
+		summary := ConversationSummary{
 			ID: conversation.ID, Platform: conversation.Platform, ProfileID: conversation.ProfileID,
 			Status: conversation.Status, LastMessageAt: conversation.LastMessageAt,
 			LastIncomingAt: conversation.LastIncomingAt, UpdatedAt: conversation.UpdatedAt,
-			Revision: conversation.Revision,
-		})
+			Revision: conversation.Revision, VacancyTitle: conversation.VacancyTitle,
+			Employer: conversation.Employer, VacancyURL: conversation.VacancyURL,
+		}
+		if summary.VacancyTitle == "" && conversation.ApplicationID != "" {
+			if application, err := api.repository.ApplicationByID(request.Context(), conversation.ApplicationID); err == nil {
+				if vacancy, err := api.repository.Vacancy(request.Context(), application.Key.Vacancy); err == nil {
+					summary.VacancyTitle = vacancy.Title
+					summary.Employer = vacancy.Employer
+					summary.VacancyURL = vacancy.URL
+				}
+			}
+		}
+		conversationSummaries = append(conversationSummaries, summary)
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, DashboardSummary{
@@ -172,6 +210,46 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		ActivitySnapshots: activitySnapshots,
 		Conversations:     conversationSummaries,
 	})
+}
+
+func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *http.Request) {
+	limit := 100
+	if value := strings.TrimSpace(request.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeProblem(response, http.StatusBadRequest, "application limit must be between 1 and 200")
+			return
+		}
+		limit = parsed
+	}
+	filter := storage.ApplicationFilter{
+		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Status:    core.ApplicationStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
+		Limit:     limit,
+	}
+	applications, err := api.repository.ListApplications(request.Context(), filter)
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load applications")
+		return
+	}
+	items := make([]ApplicationSummary, 0, len(applications))
+	for _, application := range applications {
+		vacancy, err := api.repository.Vacancy(request.Context(), application.Key.Vacancy)
+		if err != nil {
+			writeProblem(response, http.StatusInternalServerError, "load application vacancy")
+			return
+		}
+		items = append(items, ApplicationSummary{
+			ID: application.ID, Platform: application.Key.Vacancy.Platform, ProfileID: application.Key.ProfileID,
+			Status: application.Status, DecisionCode: application.DecisionCode,
+			FailureCategory: application.FailureCategory, Attempts: application.Attempts,
+			VacancyTitle: vacancy.Title, Employer: vacancy.Employer, VacancyURL: vacancy.URL,
+			HasCoverLetter: strings.TrimSpace(application.PreparedMessage) != "",
+			UpdatedAt:      application.UpdatedAt, SubmittedAt: application.SubmittedAt,
+		})
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, listResponse[ApplicationSummary]{Items: items})
 }
 
 func applicationCampaignSummary(campaign core.ApplicationCampaign, states []core.CampaignApplicationState) ApplicationCampaignSummary {

@@ -13,7 +13,7 @@ Xray и sing-box. Идея проекта появилась как самост
 Реализация пишется заново. Код сторонних проектов может использоваться только
 с соблюдением их лицензий.
 
-Текущая product version — `0.1.0-dev`; HTTP contract уже использует namespace
+Текущая product version — `0.2.0-dev`; HTTP contract уже использует namespace
 `/api/v1`. Версия, commit и время сборки доступны через `job-agent --version` и
 `GET /api/v1/version`. Порядок выпуска и критерии будущего `v1.0.0` описаны в
 [`docs/releasing.md`](docs/releasing.md).

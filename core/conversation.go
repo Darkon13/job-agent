@@ -94,6 +94,19 @@ type ConversationObservation struct {
 	LastMessage *ConversationMessageObservation `json:"last_message,omitempty"`
 }
 
+type ConversationPresentation struct {
+	VacancyTitle string `json:"vacancy_title,omitempty"`
+	Employer     string `json:"employer,omitempty"`
+	VacancyURL   string `json:"vacancy_url,omitempty"`
+}
+
+func (presentation ConversationPresentation) normalized() ConversationPresentation {
+	presentation.VacancyTitle = strings.TrimSpace(presentation.VacancyTitle)
+	presentation.Employer = strings.TrimSpace(presentation.Employer)
+	presentation.VacancyURL = strings.TrimSpace(presentation.VacancyURL)
+	return presentation
+}
+
 func (observation ConversationObservation) Validate() error {
 	if strings.TrimSpace(observation.ExternalID) == "" {
 		return errors.New("conversation observation requires external id")
@@ -153,6 +166,9 @@ type Conversation struct {
 	ProfileID      ProfileID          `json:"profile_id"`
 	ExternalID     string             `json:"external_id"`
 	ApplicationID  ApplicationID      `json:"application_id,omitempty"`
+	VacancyTitle   string             `json:"vacancy_title,omitempty"`
+	Employer       string             `json:"employer,omitempty"`
+	VacancyURL     string             `json:"vacancy_url,omitempty"`
 	Status         ConversationStatus `json:"status"`
 	LastMessageID  MessageID          `json:"last_message_id,omitempty"`
 	LastMessageAt  *time.Time         `json:"last_message_at,omitempty"`
@@ -161,6 +177,35 @@ type Conversation struct {
 	CreatedAt      time.Time          `json:"created_at"`
 	UpdatedAt      time.Time          `json:"updated_at"`
 	Revision       uint64             `json:"revision"`
+}
+
+func (conversation *Conversation) ObservePresentation(presentation ConversationPresentation, now time.Time) (bool, error) {
+	if conversation == nil {
+		return false, errors.New("conversation is nil")
+	}
+	if now.IsZero() || now.Before(conversation.UpdatedAt) {
+		return false, errors.New("conversation presentation time must not move backwards")
+	}
+	presentation = presentation.normalized()
+	changed := false
+	if presentation.VacancyTitle != "" && presentation.VacancyTitle != conversation.VacancyTitle {
+		conversation.VacancyTitle = presentation.VacancyTitle
+		changed = true
+	}
+	if presentation.Employer != "" && presentation.Employer != conversation.Employer {
+		conversation.Employer = presentation.Employer
+		changed = true
+	}
+	if presentation.VacancyURL != "" && presentation.VacancyURL != conversation.VacancyURL {
+		conversation.VacancyURL = presentation.VacancyURL
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	conversation.UpdatedAt = now
+	conversation.Revision++
+	return true, nil
 }
 
 func (conversation Conversation) Validate() error {

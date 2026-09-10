@@ -1,22 +1,99 @@
-const state = { summary: null, selectedConversation: null, jobs: [], profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
+const state = { summary: null, selectedConversation: null, jobs: [], applicationObjects: [], applicationFilter: "", applicationQuery: "", profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
 const elements = Object.fromEntries([
-  "applications", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
+  "application-filters", "application-items", "application-filter-state", "application-search", "application-reset", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
-const statLabels = [["vacancies", "Вакансии"], ["applications", "Отклики"], ["application_campaigns", "Кампании"], ["tasks", "Задачи"], ["profile_activity", "Сигналы активности"], ["activity_snapshots", "Снимки HH"], ["profile_state_proposals", "Планы профиля"], ["conversations", "Диалоги"], ["messages", "Сообщения"], ["follow_ups", "Follow-up"]];
+const taskTypeLabels = {
+  "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить кампанию откликов", "application.submit": "Отправить отклик",
+  "questionnaire.answer": "Ответить на анкету", "test.complete": "Пройти тест", "test.capture": "Сохранить вопросы теста", "review.answer": "Сохранить проверенный ответ",
+  "conversation.reply": "Ответить в чате", "conversation.send": "Отправить сообщение", "conversation.follow_up": "Отправить напоминание", "conversation.follow_up.select": "Выбрать чат для напоминания",
+  "conversation.discover": "Обновить список чатов", "conversation.mark_read": "Пометить чат прочитанным", "conversation.sync": "Загрузить сообщения чата", "vacancy.inspect": "Открыть и изучить вакансию",
+  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Снять показатели активности",
+  "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
+  "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
+};
+const applicationStatusLabels = {
+  new: "Новый", preparing: "Готовится", waiting_validation: "Нужны данные", waiting_approval: "Ждёт подтверждения", ready: "Готов к отправке",
+  submitting: "Отправляется", pending_reconciliation: "Проверяется результат", submitted: "Отправлен", dry_run: "Проверочный запуск", skipped: "Пропущен", failed: "Ошибка",
+};
+const taskStatusLabels = { new: "Ожидает", processing: "Выполняется", waiting_confirmation: "Нужно решение", retry_scheduled: "Повтор запланирован", completed: "Завершена", failed: "Ошибка", dismissed: "Закрыта" };
+const campaignStatusLabels = { running: "Выполняется", target_reached: "Цель достигнута", exhausted: "Вакансии закончились", paused_budget: "Пауза: лимит", paused_rate_limit: "Пауза: rate limit", failed: "Ошибка" };
+const conversationStatusLabels = { active: "Активный", closed: "Закрыт", rejected: "Отказ", archived: "Архив" };
+const activityKindLabels = { "vacancy.inspected": "Просмотрена вакансия", "application.submitted": "Отправлен отклик", "conversation.message_sent": "Отправлено сообщение", "resume.touched": "Поднято резюме" };
+const decisionLabels = { qualified: "Подходит", resume_not_suitable: "Резюме не подходит", questionnaire_required: "Нужна анкета", vacancy_test_required: "Нужен тест", vacancy_closed: "Вакансия закрыта", already_applied: "Уже отправлен" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
+function statusCell(value, className = "") { const cell = document.createElement("td"); cell.append(text("span", value, `status ${className}`.trim())); return cell; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
-function conversationLabel(item) { return `${item.platform} · ${item.profile_id}`; }
+function taskTypeLabel(value) { return taskTypeLabels[value] || value; }
+function applicationStatusLabel(value) { return applicationStatusLabels[value] || value || "—"; }
+function taskStatusLabel(value) { return taskStatusLabels[value] || value || "—"; }
+function conversationLabel(item) { return item.vacancy_title || `Диалог ${item.platform}`; }
+function total(items, predicate = () => true) { return items.filter(predicate).reduce((sum, item) => sum + Number(item.count || 0), 0); }
+function safeExternalURL(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : ""; } catch (_) { return ""; } }
+function compactID(value) { const id = String(value || ""); return id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id || "—"; }
 
-function renderStats(stats = {}) {
-  elements.stats.replaceChildren(...statLabels.map(([key, label]) => { const card = document.createElement("article"); card.className = "stat-card"; card.append(text("strong", String(stats[key] ?? 0)), text("span", label)); return card; }));
+function renderStats(summary = {}) {
+  const applications = summary.applications || [];
+  const tasks = summary.tasks || [];
+  const metrics = [
+    { value: total(applications, (item) => item.status === "submitted"), label: "Отклики отправлены", filter: "submitted" },
+    { value: total(applications, (item) => ["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status)), label: "Требуют внимания", filter: "attention" },
+    { value: total(tasks, (item) => ["new", "processing", "retry_scheduled", "waiting_confirmation"].includes(item.status)), label: "Работа в очереди" },
+    { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
+  ];
+  elements.stats.replaceChildren(...metrics.map((metric) => {
+    const card = document.createElement(metric.filter || metric.target ? "button" : "article"); card.className = "stat-card";
+    card.append(text("strong", String(metric.value)), text("span", metric.label));
+    if (metric.filter) card.addEventListener("click", () => setApplicationFilter(metric.filter));
+    if (metric.target) card.addEventListener("click", () => document.querySelector(`#${metric.target}`)?.scrollIntoView({ behavior: "smooth" }));
+    return card;
+  }));
 }
-function renderRows(target, items, fields) {
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Пока нет данных"); cell.colSpan = fields.length; row.append(cell); target.replaceChildren(row); return; }
-  target.replaceChildren(...items.map((item) => { const row = document.createElement("tr"); fields.forEach((field, index) => { const cell = document.createElement("td"); const value = item[field] || (field === "decision_code" ? "—" : "0"); cell.append(index < fields.length - 1 ? text("span", String(value), "status") : document.createTextNode(String(value))); row.append(cell); }); return row; }));
+
+function applicationMatchesFilter(item) {
+  if (state.applicationFilter === "attention" && !["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status)) return false;
+  if (state.applicationFilter && state.applicationFilter !== "attention" && item.status !== state.applicationFilter) return false;
+  const query = state.applicationQuery.trim().toLocaleLowerCase("ru");
+  return !query || [item.vacancy_title, item.employer, item.profile_id, item.decision_code].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
+}
+function setApplicationFilter(value) {
+  state.applicationFilter = state.applicationFilter === value ? "" : value;
+  renderApplicationFilters(state.summary?.applications || []); renderApplicationObjects();
+  document.querySelector("#applications-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function renderApplicationFilters(items = []) {
+  const grouped = new Map();
+  for (const item of items) grouped.set(item.status, (grouped.get(item.status) || 0) + Number(item.count || 0));
+  const attention = total(items, (item) => ["waiting_validation", "waiting_approval", "pending_reconciliation", "failed"].includes(item.status));
+  const filters = [["", "Все", total(items)], ...(attention ? [["attention", "Требуют внимания", attention]] : []), ...[...grouped.entries()].map(([status, count]) => [status, applicationStatusLabel(status), count])];
+  elements.applicationFilters.replaceChildren(...filters.map(([value, label, count]) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = `filter-card${state.applicationFilter === value ? " active" : ""}`;
+    button.append(text("strong", String(count)), text("span", label)); button.addEventListener("click", () => setApplicationFilter(value)); return button;
+  }));
+}
+function renderApplicationObjects() {
+  const items = state.applicationObjects.filter(applicationMatchesFilter);
+  elements.applicationFilterState.textContent = `${items.length} из ${state.applicationObjects.length} последних откликов`;
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 7; row.append(cell); elements.applicationItems.replaceChildren(row); return; }
+  elements.applicationItems.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
+    const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
+    if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); } else action.textContent = "—";
+    const decision = decisionLabels[item.decision_code] || item.decision_code || (item.failure_category ? `Ошибка: ${item.failure_category}` : "—");
+    row.append(vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationStatusLabel(item.status), `status-${item.status}`), text("td", decision), text("td", formatDate(item.updated_at)), action);
+    return row;
+  }));
+}
+function renderTasks(items = []) {
+  const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));
+  if (!queued.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 4; row.append(cell); elements.tasks.replaceChildren(row); return; }
+  elements.tasks.replaceChildren(...queued.map((item) => {
+    const row = document.createElement("tr"); row.append(text("td", taskTypeLabel(item.type)), statusCell(taskStatusLabel(item.status), `task-${item.status}`), text("td", String(item.priority)), text("td", String(item.count))); return row;
+  }));
 }
 function renderJobs(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
@@ -25,7 +102,7 @@ function renderJobs(items = []) {
     const action = document.createElement("td");
     const run = text("button", "Запустить", "secondary compact"); run.type = "button"; run.disabled = state.jobBusy.has(item.tag);
     run.addEventListener("click", () => runJob(item)); action.append(run);
-    row.append(text("td", item.tag), text("td", item.task_type), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), action);
+    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), action);
     return row;
   }));
 }
@@ -40,7 +117,7 @@ function renderFailedTasks(items = []) {
     const dismiss = text("button", "Dismiss", "secondary compact"); dismiss.type = "button"; dismiss.disabled = state.taskBusy.has(item.id);
     dismiss.addEventListener("click", () => controlFailedTask(item, "dismiss"));
     actions.append(retry, dismiss);
-    row.append(text("td", item.id, "task-id"), text("td", item.type), text("td", item.profile_id || "—"), text("td", String(item.attempts)), text("td", error, "task-error"), text("td", formatDate(item.updated_at)), actions);
+    row.append(text("td", item.id, "task-id"), text("td", taskTypeLabel(item.type)), text("td", item.profile_id || "—"), text("td", String(item.attempts)), text("td", error, "task-error"), text("td", formatDate(item.updated_at)), actions);
     return row;
   }));
 }
@@ -48,8 +125,8 @@ function renderCampaigns(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
   elements.campaigns.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    const outcomes = (item.applications || []).map((entry) => `${entry.status}${entry.decision_code ? `/${entry.decision_code}` : ""}: ${entry.count}`).join(" · ") || "нет откликов";
-    const status = item.stop_reason ? `${item.status}: ${item.stop_reason}` : item.status;
+    const outcomes = (item.applications || []).map((entry) => `${applicationStatusLabel(entry.status)}${entry.decision_code ? ` / ${decisionLabels[entry.decision_code] || entry.decision_code}` : ""}: ${entry.count}`).join(" · ") || "нет откликов";
+    const status = item.stop_reason ? `${campaignStatusLabels[item.status] || item.status}: ${item.stop_reason}` : campaignStatusLabels[item.status] || item.status;
     row.append(text("td", item.id, "task-id"), text("td", item.job_tag), text("td", status), text("td", String(item.target_successful)), text("td", outcomes), text("td", formatDate(item.updated_at)));
     return row;
   }));
@@ -58,7 +135,7 @@ function renderActivity(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
   elements.activity.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    row.append(text("td", item.profile_id), text("td", item.platform), text("td", item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
+    row.append(text("td", item.profile_id), text("td", item.platform), text("td", activityKindLabels[item.kind] || item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
     return row;
   }));
 }
@@ -71,17 +148,22 @@ function renderActivityObservations(items = []) {
     if (seen.has(key)) continue;
     seen.add(key); latest.push(item);
   }
-  if (!latest.length) { const row = document.createElement("tr"); const cell = text("td", "Показатели ещё не снимались"); cell.colSpan = 8; row.append(cell); elements.activityObservations.replaceChildren(row); return; }
+  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Показатели ещё не снимались. Запустите job «Снять показатели активности».", "empty panel")); return; }
   elements.activityObservations.replaceChildren(...latest.map((item) => {
-    const row = document.createElement("tr");
-    const responses = item.response_streak === undefined ? "—" : `${item.response_streak}/${counter(item.responses_required)}`;
-    row.append(text("td", `${item.platform} · ${item.profile_id}`), text("td", item.resume_id), text("td", item.period_days === undefined ? "—" : `${item.period_days} дн.`), text("td", counter(item.search_shows)), text("td", counter(item.views)), text("td", counter(item.invitations)), text("td", responses), text("td", `${formatDate(item.observed_at)}${item.score_hidden ? " · score скрыт" : ""}`));
-    return row;
+    const card = document.createElement("article"); card.className = "panel activity-card";
+    const heading = document.createElement("div"); heading.className = "panel-heading";
+    const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", item.profile_id), resume);
+    heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
+    const metrics = document.createElement("div"); metrics.className = "activity-metrics";
+    [["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
+      const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
+    });
+    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}${item.score_hidden ? " · общая шкала скрыта HH" : ""}`, "muted")); return card;
   }));
 }
 function renderConversations(items = []) {
   if (!items.length) { elements.conversations.replaceChildren(text("p", "Диалогов пока нет", "empty")); return; }
-  elements.conversations.replaceChildren(...items.map((item) => { const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`; button.append(text("strong", conversationLabel(item)), text("small", `${item.status} · ${formatDate(item.updated_at)}`)); button.addEventListener("click", () => selectConversation(item)); return button; }));
+  elements.conversations.replaceChildren(...items.map((item) => { const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`; button.append(text("strong", conversationLabel(item)), text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${item.profile_id} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`)); button.addEventListener("click", () => selectConversation(item)); return button; }));
 }
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
@@ -215,7 +297,7 @@ async function reconcileProfileState(resource) {
 async function request(path, options = {}) { const response = await fetch(path, { cache: "no-store", ...options }); let body = {}; try { body = await response.json(); } catch (_) {} if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); return body; }
 
 async function controlFailedTask(task, action) {
-  if (action === "retry" && !globalThis.confirm(`Повторить ${task.type} (${task.id})? Действие может обратиться к внешней платформе.`)) return;
+  if (action === "retry" && !globalThis.confirm(`Повторить «${taskTypeLabel(task.type)}» (${task.id})? Действие может обратиться к внешней платформе.`)) return;
   state.taskBusy.add(task.id); renderFailedTasks(state.failedTasks || []);
   try {
     await request(`/api/v1/tasks/${encodeURIComponent(task.id)}/${action}`, { method: "POST" });
@@ -243,8 +325,10 @@ async function runJob(job) {
 async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
-    const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs")]); state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
-    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "priority", "count"]); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    const [summary, failures, jobs, applications] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/applications?limit=100")]);
+    state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || []; state.applicationObjects = applications.items || [];
+    if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
+    renderStats(summary); renderApplicationFilters(summary.applications || []); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }
@@ -257,7 +341,9 @@ async function refreshVersion() {
   } catch (error) { elements.runtimeVersion.textContent = "версия недоступна"; }
 }
 async function selectConversation(conversation) {
-  state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.status} · revision ${conversation.revision}`; elements.markRead.disabled = false; elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
+  state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${conversation.profile_id} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
+  const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
+  elements.markRead.disabled = false; elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try { const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`); renderMessages(result.items || []); } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
 }
 function newIdempotencyKey() {
@@ -275,5 +361,7 @@ elements.markRead.addEventListener("click", async () => {
   if (!state.selectedConversation) return; elements.markRead.disabled = true; elements.actionState.textContent = "Создаю задачу…";
   try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/mark-read`); elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.markRead.disabled = false; }
 });
+elements.applicationSearch.addEventListener("input", () => { state.applicationQuery = elements.applicationSearch.value; renderApplicationObjects(); });
+elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; elements.applicationSearch.value = ""; renderApplicationFilters(state.summary?.applications || []); renderApplicationObjects(); });
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);
