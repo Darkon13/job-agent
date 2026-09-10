@@ -1,8 +1,10 @@
 # Следующая задача: пулы сопроводительных и группы работодателей
 
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
-groups, policy routing, первый model provider с fallback и durable model
-provenance реализованы. Остался evidence-based семантический groundedness.
+groups, policy routing, первый model provider с fallback, durable model
+provenance и evidence-based groundedness реализованы. Из этого среза остаются
+digest исходного message-pool файла и отдельный workflow ручной проверки
+модельного draft без повторной генерации.
 Явные resume facts уже загружаются из ограниченного файла, связываются с
 конкретным resume ID и входят в единый model/template context. Детерминированный
 output safety validator отсекает служебную обёртку, placeholders и не
@@ -91,10 +93,20 @@ Timeout, rate limit, пустой или невалидный ответ пер�
 именованному пулу, а не блокируют всю campaign.
 
 Сохраняются итоговый текст и отдельная versioned provenance: источник, tag
-оператора, модель, версия prompt/template, provider response ID, input/output
-digests, resume facts tag/digest и безопасная категория fallback. Полные prompt,
+оператора, модель, версия prompt/template, provider response ID,
+input/output/evidence digests, число evidence claims, resume facts tag/digest и
+безопасная категория fallback. Полные prompt,
 facts, provider error и внутреннее reasoning модели не сохраняются и не
 отправляются работодателю.
+
+Model response содержит `text` и claims со списком `{path, quote}`. Локальный
+validator, независимо от provider schema, требует точные уникальные claims,
+полное покрытие буквенно-цифрового текста, разрешённые JSON Pointer только в
+`resume.facts`/`vacancy`, scalar leaf и буквальное присутствие quote в source и
+claim. Контакты и числа сверяются с цитатами своего claim. При любой ошибке
+результат классифицируется как `invalid_output` и не покидает operator chain.
+Такой контракт делает заявленное evidence воспроизводимо проверяемым, но не
+является общим доказательством семантической истинности естественного языка.
 
 ## Целевая цепочка
 

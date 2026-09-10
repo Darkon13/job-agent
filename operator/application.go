@@ -349,6 +349,7 @@ func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, applica
 					OperatorTag: model.tag, OperatorVersion: model.promptVersion, Model: name, ProviderResponseID: strings.TrimSpace(response.ResponseID),
 					ResumeFactsTag: preparer.resume.FactsTag, ResumeFactsDigest: preparer.resume.Digest,
 					InputDigest: inputDigest, OutputDigest: applicationTextDigest(response.Text),
+					EvidenceDigest: response.EvidenceDigest, EvidenceClaims: len(response.Evidence),
 				},
 			}, nil
 		}

@@ -242,8 +242,13 @@ func TestStoreSavesApplicationWithStatusCAS(t *testing.T) {
 		t.Fatalf("transition to preparing: %v", err)
 	}
 	provenance := core.ApplicationPreparationProvenance{
-		Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceStatic,
-		OutputDigest: "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+		Version: core.ApplicationPreparationProvenanceVersion, Source: core.ApplicationPreparationSourceModel,
+		OperatorTag: "cover-letter-mini", OperatorVersion: "v2", Model: "gpt-test",
+		ResumeFactsTag: "backend", ResumeFactsDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		InputDigest:    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		OutputDigest:   "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+		EvidenceDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		EvidenceClaims: 1,
 	}
 	if err := candidate.RecordPreparationWithProvenance("qualified", "rules passed", "resume-1", "Hello", provenance, candidate.UpdatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("record preparation: %v", err)

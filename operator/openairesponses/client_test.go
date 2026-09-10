@@ -14,11 +14,12 @@ import (
 
 func TestClientCreatesPrivateResponseAndCollectsOutputText(t *testing.T) {
 	var received struct {
-		Model           string `json:"model"`
-		Instructions    string `json:"instructions"`
-		Input           string `json:"input"`
-		MaxOutputTokens int    `json:"max_output_tokens"`
-		Store           bool   `json:"store"`
+		Model           string              `json:"model"`
+		Instructions    string              `json:"instructions"`
+		Input           string              `json:"input"`
+		Text            responsesTextConfig `json:"text"`
+		MaxOutputTokens int                 `json:"max_output_tokens"`
+		Store           bool                `json:"store"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/responses" || request.Header.Get("Authorization") != "Bearer secret" {
@@ -33,8 +34,7 @@ func TestClientCreatesPrivateResponseAndCollectsOutputText(t *testing.T) {
 			"output":[
 				{"type":"reasoning","content":[]},
 				{"type":"message","content":[
-					{"type":"output_text","text":"First paragraph."},
-					{"type":"output_text","text":"Second paragraph."}
+					{"type":"output_text","text":"{\"text\":\"Backend\",\"evidence\":[{\"claim\":\"Backend\",\"sources\":[{\"path\":\"/vacancy/title\",\"quote\":\"Backend\"}]}]}"}
 				]}
 			]
 		}`))
@@ -55,11 +55,14 @@ func TestClientCreatesPrivateResponseAndCollectsOutputText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	if result.Text != "First paragraph.\nSecond paragraph." || result.Model != "gpt-test" || result.ResponseID != "response-1" {
+	if result.Text != "Backend" || len(result.Evidence) != 1 || result.Evidence[0].Sources[0].Path != "/vacancy/title" ||
+		result.Model != "gpt-test" || result.ResponseID != "response-1" {
 		t.Fatalf("result = %#v", result)
 	}
 	if received.Store || received.Model != "gpt-test" || received.MaxOutputTokens != 700 || received.Instructions != "Use only facts" ||
-		!strings.Contains(received.Input, `"external_id":"42"`) {
+		!strings.Contains(received.Input, `"external_id":"42"`) || received.Text.Format.Type != "json_schema" ||
+		received.Text.Format.Name != "application_cover_letter" || !received.Text.Format.Strict ||
+		received.Text.Format.Schema["additionalProperties"] != false {
 		t.Fatalf("request body = %#v", received)
 	}
 }
@@ -128,6 +131,24 @@ func TestClientRejectsNonCompletedResponse(t *testing.T) {
 func TestClientRejectsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte(strings.Repeat("x", maximumResponseBytes+1)))
+	}))
+	defer server.Close()
+	client, err := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "gpt-test"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	_, err = client.Generate(context.Background(), applicationoperator.ApplicationModelRequest{Instruction: "instruction", PromptVersion: "v1"})
+	if applicationoperator.ModelFailureKindOf(err) != applicationoperator.ModelFailureInvalidOutput {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestClientRejectsMalformedStructuredOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{
+			"id":"response-1","model":"gpt-test","status":"completed",
+			"output_text":"{\"text\":\"Backend\",\"evidence\":[],\"unexpected\":true}"
+		}`))
 	}))
 	defer server.Close()
 	client, err := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "gpt-test"})

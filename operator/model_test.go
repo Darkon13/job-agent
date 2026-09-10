@@ -21,6 +21,12 @@ func modelResumeFixture() *ApplicationResumeContext {
 	}
 }
 
+func modelEvidence(claim, path, quote string) []ApplicationModelEvidence {
+	return []ApplicationModelEvidence{{
+		Claim: claim, Sources: []ApplicationModelEvidenceSource{{Path: path, Quote: quote}},
+	}}
+}
+
 func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 	application, vacancy := operatorFixture()
 	var received ApplicationModelRequest
@@ -31,7 +37,10 @@ func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 			Tag: "cover-letter-mini", PromptVersion: "v1", Instruction: "Keep it concise.", Timeout: time.Second,
 			Generator: applicationModelFunc(func(_ context.Context, request ApplicationModelRequest) (ApplicationModelResponse, error) {
 				received = request
-				return ApplicationModelResponse{Text: "  Generated for Example  ", Model: "mini-model", ResponseID: "response-1"}, nil
+				return ApplicationModelResponse{
+					Text: "  Generated for Example  ", Evidence: modelEvidence("Generated for Example", "/vacancy/employer", "Example"),
+					Model: "mini-model", ResponseID: "response-1",
+				}, nil
 			}),
 		},
 	})
@@ -48,6 +57,7 @@ func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 	if result.Provenance.Source != "model" || result.Provenance.OperatorTag != "cover-letter-mini" ||
 		result.Provenance.OperatorVersion != "v1" || result.Provenance.Model != "mini-model" ||
 		result.Provenance.ProviderResponseID != "response-1" || result.Provenance.ResumeFactsTag != "backend" ||
+		result.Provenance.EvidenceClaims != 1 || !strings.HasPrefix(result.Provenance.EvidenceDigest, "sha256:") ||
 		!strings.HasPrefix(result.Provenance.InputDigest, "sha256:") || !strings.HasPrefix(result.Provenance.OutputDigest, "sha256:") {
 		t.Fatalf("provenance = %#v", result.Provenance)
 	}
@@ -228,7 +238,16 @@ func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
 		Model: &ApplicationModelConfig{
 			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
 			Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
-				return ApplicationModelResponse{Text: message}, nil
+				return ApplicationModelResponse{
+					Text: message,
+					Evidence: []ApplicationModelEvidence{{
+						Claim: message,
+						Sources: []ApplicationModelEvidenceSource{
+							{Path: "/vacancy/attributes/experience", Quote: "1 года до 3 лет"},
+							{Path: "/vacancy/url", Quote: "https://hh.ru/vacancy/42"},
+						},
+					}},
+				}, nil
 			}),
 		},
 	})
@@ -238,5 +257,47 @@ func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
 	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
 	if err != nil || result.Message != message || strings.Contains(result.Reason, "fallback") {
 		t.Fatalf("preparation = %#v, err=%v", result, err)
+	}
+}
+
+func TestApplicationModelEvidenceRejectsUnverifiableClaims(t *testing.T) {
+	application, vacancy := operatorFixture()
+	vacancy.Attributes["experience"] = "От 1 года до 3 лет"
+	data := newApplicationTemplateData(application, vacancy, modelResumeFixture())
+	tests := []struct {
+		name     string
+		text     string
+		evidence []ApplicationModelEvidence
+	}{
+		{name: "missing evidence", text: "Backend developer"},
+		{name: "forbidden metadata", text: "application-1", evidence: modelEvidence("application-1", "/application_id", "application-1")},
+		{name: "missing path", text: "Kotlin", evidence: modelEvidence("Kotlin", "/resume/facts/skills/9", "Kotlin")},
+		{name: "quote absent from source", text: "Rust", evidence: modelEvidence("Rust", "/resume/facts/skills/0", "Rust")},
+		{name: "quote absent from claim", text: "Backend role", evidence: modelEvidence("Backend role", "/vacancy/title", "developer")},
+		{name: "claim absent from text", text: "Backend developer", evidence: modelEvidence("Example", "/vacancy/employer", "Example")},
+		{name: "partial coverage", text: "Backend developer at Example", evidence: modelEvidence("Backend developer", "/vacancy/title", "Backend developer")},
+		{name: "unsupported claim number", text: "7 лет, Go", evidence: modelEvidence("7 лет, Go", "/resume/facts/skills/0", "Go")},
+		{name: "duplicate claim", text: "Go", evidence: []ApplicationModelEvidence{
+			{Claim: "Go", Sources: []ApplicationModelEvidenceSource{{Path: "/resume/facts/skills/0", Quote: "Go"}}},
+			{Claim: "Go", Sources: []ApplicationModelEvidenceSource{{Path: "/resume/facts/skills/0", Quote: "Go"}}},
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateApplicationModelEvidence(test.text, test.evidence, data)
+			if ModelFailureKindOf(err) != ModelFailureInvalidOutput {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestApplicationModelEvidenceResolvesEscapedJSONPointer(t *testing.T) {
+	application, vacancy := operatorFixture()
+	vacancy.Attributes["a/b~c"] = "quoted value"
+	data := newApplicationTemplateData(application, vacancy, modelResumeFixture())
+	evidence := modelEvidence("A quoted value is present", "/vacancy/attributes/a~1b~0c", "quoted value")
+	if err := validateApplicationModelEvidence("A quoted value is present", evidence, data); err != nil {
+		t.Fatalf("validate evidence: %v", err)
 	}
 }

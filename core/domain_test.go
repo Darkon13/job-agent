@@ -102,8 +102,10 @@ func TestApplicationPreparationIsRecordedBeforeExternalAction(t *testing.T) {
 		Version: ApplicationPreparationProvenanceVersion, Source: ApplicationPreparationSourceModel,
 		OperatorTag: "cover-letter-mini", OperatorVersion: "v1", Model: "gpt-test", ProviderResponseID: "response-1",
 		ResumeFactsTag: "backend", ResumeFactsDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-		InputDigest:  "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		OutputDigest: "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+		InputDigest:    "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		OutputDigest:   "sha256:185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969",
+		EvidenceDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		EvidenceClaims: 1,
 	}
 	if err := application.RecordPreparationWithProvenance("qualified", "rules passed", "  resume-1  ", "  Hello  ", provenance, preparedAt); err != nil {
 		t.Fatalf("record preparation: %v", err)
@@ -115,6 +117,19 @@ func TestApplicationPreparationIsRecordedBeforeExternalAction(t *testing.T) {
 	invalid.OutputDigest = ""
 	if err := application.RecordPreparationWithProvenance("qualified", "rules passed", "resume-1", "Hello", invalid, preparedAt.Add(time.Second)); err == nil {
 		t.Fatal("expected invalid provenance to fail")
+	}
+}
+
+func TestLegacyApplicationModelProvenanceRemainsReadable(t *testing.T) {
+	provenance := ApplicationPreparationProvenance{
+		Version: legacyApplicationPreparationProvenanceVersion, Source: ApplicationPreparationSourceModel,
+		OperatorTag: "cover-letter-mini", OperatorVersion: "v1", Model: "gpt-test",
+		ResumeFactsTag: "backend", ResumeFactsDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		InputDigest:  "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		OutputDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	if err := provenance.Validate(); err != nil {
+		t.Fatalf("validate legacy provenance: %v", err)
 	}
 }
 

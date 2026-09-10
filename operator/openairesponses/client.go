@@ -105,14 +105,16 @@ func (client *Client) Generate(ctx context.Context, request applicationoperator.
 		}
 	}
 	payload, err := json.Marshal(struct {
-		Model           string `json:"model"`
-		Instructions    string `json:"instructions"`
-		Input           string `json:"input"`
-		MaxOutputTokens int    `json:"max_output_tokens"`
-		Store           bool   `json:"store"`
+		Model           string              `json:"model"`
+		Instructions    string              `json:"instructions"`
+		Input           string              `json:"input"`
+		Text            responsesTextConfig `json:"text"`
+		MaxOutputTokens int                 `json:"max_output_tokens"`
+		Store           bool                `json:"store"`
 	}{
 		Model: client.model, Instructions: request.Instruction,
 		Input:           "Generate a cover letter from this structured context JSON:\n" + string(contextJSON),
+		Text:            applicationResponseTextConfig(),
 		MaxOutputTokens: client.maxOutputTokens, Store: false,
 	})
 	if err != nil {
@@ -171,21 +173,99 @@ func (client *Client) Generate(ctx context.Context, request applicationoperator.
 			Kind: kind, Operation: "responses.create", StatusCode: response.StatusCode, Message: "unexpected response status " + decoded.Status,
 		}
 	}
-	text := strings.TrimSpace(decoded.OutputText)
-	if text == "" {
+	structuredOutput := strings.TrimSpace(decoded.OutputText)
+	if structuredOutput == "" {
 		parts := make([]string, 0)
 		for _, output := range decoded.Output {
 			for _, content := range output.Content {
 				if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
-					parts = append(parts, strings.TrimSpace(content.Text))
+					parts = append(parts, content.Text)
 				}
 			}
 		}
-		text = strings.Join(parts, "\n")
+		structuredOutput = strings.TrimSpace(strings.Join(parts, ""))
+	}
+	var result struct {
+		Text     string                                         `json:"text"`
+		Evidence []applicationoperator.ApplicationModelEvidence `json:"evidence"`
+	}
+	outputDecoder := json.NewDecoder(strings.NewReader(structuredOutput))
+	outputDecoder.DisallowUnknownFields()
+	if err := outputDecoder.Decode(&result); err != nil {
+		return applicationoperator.ApplicationModelResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create", StatusCode: response.StatusCode,
+			Message: "decode structured output", Cause: err,
+		}
+	}
+	if err := ensureJSONEOF(outputDecoder); err != nil {
+		return applicationoperator.ApplicationModelResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create", StatusCode: response.StatusCode,
+			Message: "decode structured output", Cause: err,
+		}
 	}
 	return applicationoperator.ApplicationModelResponse{
-		Text: text, Model: decoded.Model, ResponseID: decoded.ID,
+		Text: result.Text, Evidence: result.Evidence, Model: decoded.Model, ResponseID: decoded.ID,
 	}, nil
+}
+
+type responsesTextConfig struct {
+	Format responsesTextFormat `json:"format"`
+}
+
+type responsesTextFormat struct {
+	Type   string         `json:"type"`
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema map[string]any `json:"schema"`
+}
+
+func applicationResponseTextConfig() responsesTextConfig {
+	sourceSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":  map[string]any{"type": "string", "description": "RFC 6901 JSON Pointer to one scalar context value"},
+			"quote": map[string]any{"type": "string", "description": "Exact quote occurring in both the source value and claim"},
+		},
+		"required":             []string{"path", "quote"},
+		"additionalProperties": false,
+	}
+	evidenceSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"claim": map[string]any{"type": "string", "description": "Exact unique span of the generated cover letter"},
+			"sources": map[string]any{
+				"type": "array", "items": sourceSchema,
+			},
+		},
+		"required":             []string{"claim", "sources"},
+		"additionalProperties": false,
+	}
+	return responsesTextConfig{Format: responsesTextFormat{
+		Type: "json_schema", Name: "application_cover_letter", Strict: true,
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"text": map[string]any{"type": "string", "description": "Cover letter text only"},
+				"evidence": map[string]any{
+					"type": "array", "items": evidenceSchema,
+				},
+			},
+			"required":             []string{"text", "evidence"},
+			"additionalProperties": false,
+		},
+	}}
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	err := decoder.Decode(&trailing)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("structured output contains trailing JSON")
+	}
+	return err
 }
 
 type responseEnvelope struct {

@@ -44,7 +44,9 @@ type Application struct {
 	SubmittedAt           *time.Time                       `json:"submitted_at,omitempty"`
 }
 
-const ApplicationPreparationProvenanceVersion = 1
+const ApplicationPreparationProvenanceVersion = 2
+
+const legacyApplicationPreparationProvenanceVersion = 1
 
 const (
 	ApplicationPreparationSourceStatic        = "static"
@@ -69,6 +71,8 @@ type ApplicationPreparationProvenance struct {
 	ResumeFactsDigest  string `json:"resume_facts_digest,omitempty"`
 	InputDigest        string `json:"input_digest,omitempty"`
 	OutputDigest       string `json:"output_digest,omitempty"`
+	EvidenceDigest     string `json:"evidence_digest,omitempty"`
+	EvidenceClaims     int    `json:"evidence_claims,omitempty"`
 }
 
 func (provenance ApplicationPreparationProvenance) IsZero() bool {
@@ -79,7 +83,7 @@ func (provenance ApplicationPreparationProvenance) Validate() error {
 	if provenance.IsZero() {
 		return nil
 	}
-	if provenance.Version != ApplicationPreparationProvenanceVersion {
+	if provenance.Version != legacyApplicationPreparationProvenanceVersion && provenance.Version != ApplicationPreparationProvenanceVersion {
 		return fmt.Errorf("application preparation provenance has unsupported version %d", provenance.Version)
 	}
 	switch provenance.Source {
@@ -130,6 +134,17 @@ func (provenance ApplicationPreparationProvenance) validateModelFields(requireIn
 	}
 	if provenance.Source == ApplicationPreparationSourceModel && strings.TrimSpace(provenance.Model) == "" {
 		return errors.New("model provenance requires resolved model")
+	}
+	if provenance.Version >= 2 && provenance.Source == ApplicationPreparationSourceModel &&
+		(!validApplicationDigest(provenance.EvidenceDigest) || provenance.EvidenceClaims < 1) {
+		return errors.New("model provenance requires verified evidence")
+	}
+	if provenance.Version < 2 && (provenance.EvidenceDigest != "" || provenance.EvidenceClaims != 0) {
+		return errors.New("legacy model provenance cannot contain evidence")
+	}
+	if provenance.Version >= 2 && provenance.Source != ApplicationPreparationSourceModel &&
+		(provenance.EvidenceDigest != "" || provenance.EvidenceClaims != 0) {
+		return errors.New("only successful model provenance may contain evidence")
 	}
 	return nil
 }
