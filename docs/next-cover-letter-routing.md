@@ -1,10 +1,12 @@
 # Следующая задача: пулы сопроводительных и группы работодателей
 
-Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
-groups, policy routing, первый model provider с fallback, durable model
-provenance и evidence-based groundedness реализованы. Из этого среза остаются
-отдельный workflow ручной проверки модельного draft без повторной генерации и
-его end-to-end approval smoke.
+Статус: `done` для автоматического application flow. Файловые message pools,
+воспроизводимый выбор, employer groups, policy routing, первый model provider с
+детерминированным fallback, durable model provenance и evidence-based
+groundedness реализованы. Общий ручной draft-review не входит в этот срез:
+невалидный, пустой или недоступный model output автоматически заменяется
+проверенным вариантом из пула. Явный action `review` остаётся отдельной
+opt-in-политикой для исключительных правил работодателя.
 
 Явные resume facts уже загружаются из ограниченного файла, связываются с
 конкретным resume ID и входят в единый model/template context. Детерминированный
@@ -149,11 +151,13 @@ full vacancy + employer
    безопасному fallback.
    Явные resume facts входят в контекст; structured evidence contract локально
    сверяет claims, JSON Pointer и точные quotes. Он не доказывает семантику
-   естественного языка, поэтому будущие сомнения должны отправляться в approval.
-8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
-   parent cancellation, provider HTTP contract, config, routing, provenance
-   v1/v2/v3 round-trip и миграция старых rows покрыты. Нужны draft-review
-   workflow и один `approval` smoke.
+   естественного языка. При ошибке локальной проверки используется
+   детерминированный fallback; автоматический путь не создаёт draft approval.
+8. **Выполнено:** model success, timeout, rate-limit, invalid output, parent
+   cancellation, provider HTTP contract, config, routing, provenance v1/v2/v3
+   round-trip и миграция старых rows покрыты. Live `submit` smoke подтвердил
+   успешный browser-backed отклик; `review` проверяется отдельно только когда
+   явно выбран конфигурацией.
 
 ## Критерий готовности
 
