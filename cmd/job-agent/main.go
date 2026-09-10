@@ -536,6 +536,12 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 
 func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ApplicationPreparer, error) {
 	var messagePool *applicationoperator.MessagePoolConfig
+	var resumeContext *applicationoperator.ApplicationResumeContext
+	if facts, exists := profile.ResolvedResumeFacts(); exists {
+		resumeContext = &applicationoperator.ApplicationResumeContext{
+			ResumeID: facts.ResumeID, FactsTag: facts.Tag, Digest: facts.Digest, Facts: facts.Facts,
+		}
+	}
 	messageTemplate := profile.Applications.ResolvedMessageTemplate()
 	if configured, exists := profile.Applications.ResolvedMessagePool(); exists {
 		messageTemplate = ""
@@ -567,6 +573,7 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		MessageTemplate: messageTemplate,
 		MessagePool:     messagePool,
 		Model:           model,
+		Resume:          resumeContext,
 		EmployerMatcher: employerMatcher,
 		EmployerRules:   employerRules,
 	})

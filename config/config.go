@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -208,15 +210,31 @@ type AdapterConfig struct {
 }
 
 type Profile struct {
-	Tag            string             `json:"tag"`
-	Adapter        string             `json:"adapter"`
-	Resume         string             `json:"resume,omitempty"`
-	CredentialsRef string             `json:"credentials_ref,omitempty"`
-	StateFile      string             `json:"state_file,omitempty"`
-	Enabled        bool               `json:"enabled"`
-	Bootstrap      *ProfileBootstrap  `json:"bootstrap,omitempty"`
-	Applications   ApplicationPolicy  `json:"applications,omitempty"`
-	Conversations  ConversationPolicy `json:"conversations,omitempty"`
+	Tag                 string             `json:"tag"`
+	Adapter             string             `json:"adapter"`
+	Resume              string             `json:"resume,omitempty"`
+	ResumeFactsFile     string             `json:"resume_facts_file,omitempty"`
+	CredentialsRef      string             `json:"credentials_ref,omitempty"`
+	StateFile           string             `json:"state_file,omitempty"`
+	Enabled             bool               `json:"enabled"`
+	Bootstrap           *ProfileBootstrap  `json:"bootstrap,omitempty"`
+	Applications        ApplicationPolicy  `json:"applications,omitempty"`
+	Conversations       ConversationPolicy `json:"conversations,omitempty"`
+	resolvedResumeFacts *ApplicationResumeFacts
+}
+
+type ApplicationResumeFacts struct {
+	Tag      string         `json:"tag"`
+	ResumeID string         `json:"resume_id"`
+	Digest   string         `json:"digest"`
+	Facts    map[string]any `json:"facts"`
+}
+
+func (profile Profile) ResolvedResumeFacts() (ApplicationResumeFacts, bool) {
+	if profile.resolvedResumeFacts == nil {
+		return ApplicationResumeFacts{}, false
+	}
+	return cloneApplicationResumeFacts(*profile.resolvedResumeFacts), true
 }
 
 type ConversationPolicy struct {
@@ -372,6 +390,9 @@ func Load(path string) (Config, error) {
 	if err := cfg.resolveApplicationMessageFiles(filepath.Dir(path)); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.resolveApplicationResumeFactsFiles(filepath.Dir(path)); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.resolveProfileBootstrapFiles(filepath.Dir(path)); err != nil {
 		return Config{}, err
 	}
@@ -379,6 +400,140 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+const maximumApplicationResumeFactsBytes = 128 << 10
+
+func (c *Config) resolveApplicationResumeFactsFiles(baseDirectory string) error {
+	for index := range c.Profiles {
+		profile := &c.Profiles[index]
+		reference := strings.TrimSpace(profile.ResumeFactsFile)
+		if reference == "" {
+			continue
+		}
+		path := reference
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("profile %q resume_facts_file: %w", profile.Tag, err)
+		}
+		if len(data) > maximumApplicationResumeFactsBytes {
+			return fmt.Errorf("profile %q resume_facts_file exceeds %d bytes", profile.Tag, maximumApplicationResumeFactsBytes)
+		}
+		var file struct {
+			ResumeID string         `json:"resume_id"`
+			Facts    map[string]any `json:"facts"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		decoder.UseNumber()
+		if err := decoder.Decode(&file); err != nil {
+			return fmt.Errorf("profile %q resume_facts_file: decode: %w", profile.Tag, err)
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return fmt.Errorf("profile %q resume_facts_file contains trailing JSON", profile.Tag)
+		}
+		facts := ApplicationResumeFacts{
+			Tag:      strings.TrimSuffix(filepath.Base(reference), filepath.Ext(reference)),
+			ResumeID: strings.TrimSpace(file.ResumeID), Facts: file.Facts,
+		}
+		if err := validateApplicationResumeFacts(facts); err != nil {
+			return fmt.Errorf("profile %q resume_facts_file: %w", profile.Tag, err)
+		}
+		facts.Digest, err = applicationResumeFactsDigest(facts)
+		if err != nil {
+			return fmt.Errorf("profile %q resume_facts_file: %w", profile.Tag, err)
+		}
+		profile.resolvedResumeFacts = &facts
+	}
+	return nil
+}
+
+func validateApplicationResumeFacts(facts ApplicationResumeFacts) error {
+	if strings.TrimSpace(facts.Tag) == "" || strings.TrimSpace(facts.ResumeID) == "" || len(facts.Facts) == 0 {
+		return errors.New("resume facts require file tag, resume_id and a non-empty facts object")
+	}
+	entries := 0
+	if err := validateApplicationResumeFactValue(facts.Facts, 0, &entries); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateApplicationResumeFactValue(value any, depth int, entries *int) error {
+	if depth > 8 {
+		return errors.New("resume facts exceed maximum nesting depth")
+	}
+	*entries = *entries + 1
+	if *entries > 512 {
+		return errors.New("resume facts exceed maximum entry count")
+	}
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			if strings.TrimSpace(key) == "" || len(key) > 128 {
+				return errors.New("resume facts contain an empty or oversized key")
+			}
+			if err := validateApplicationResumeFactValue(child, depth+1, entries); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range item {
+			if err := validateApplicationResumeFactValue(child, depth+1, entries); err != nil {
+				return err
+			}
+		}
+	case string:
+		if strings.TrimSpace(item) == "" || len(item) > 10_000 {
+			return errors.New("resume facts contain an empty or oversized string")
+		}
+	case json.Number, bool:
+	case nil:
+		return errors.New("resume facts must not contain null values")
+	default:
+		return fmt.Errorf("resume facts contain unsupported value type %T", value)
+	}
+	return nil
+}
+
+func applicationResumeFactsDigest(facts ApplicationResumeFacts) (string, error) {
+	canonical, err := json.Marshal(struct {
+		ResumeID string         `json:"resume_id"`
+		Facts    map[string]any `json:"facts"`
+	}{ResumeID: facts.ResumeID, Facts: facts.Facts})
+	if err != nil {
+		return "", fmt.Errorf("encode resume facts: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func cloneApplicationResumeFacts(facts ApplicationResumeFacts) ApplicationResumeFacts {
+	result := facts
+	result.Facts = cloneApplicationResumeFactValue(facts.Facts).(map[string]any)
+	return result
+}
+
+func cloneApplicationResumeFactValue(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(item))
+		for key, child := range item {
+			result[key] = cloneApplicationResumeFactValue(child)
+		}
+		return result
+	case []any:
+		result := make([]any, len(item))
+		for index, child := range item {
+			result[index] = cloneApplicationResumeFactValue(child)
+		}
+		return result
+	default:
+		return item
+	}
 }
 
 func (c *Config) resolveProfileBootstrapFiles(baseDirectory string) error {
@@ -628,6 +783,22 @@ func (c Config) Validate() error {
 		if _, exists := profiles[profile.Tag]; exists {
 			return fmt.Errorf("duplicate profile tag %q", profile.Tag)
 		}
+		resumeFacts, hasResumeFacts := profile.ResolvedResumeFacts()
+		if strings.TrimSpace(profile.ResumeFactsFile) != "" && !hasResumeFacts {
+			return fmt.Errorf("profile %q resume_facts_file must be resolved by config loader", profile.Tag)
+		}
+		if hasResumeFacts {
+			if err := validateApplicationResumeFacts(resumeFacts); err != nil {
+				return fmt.Errorf("profile %q: %w", profile.Tag, err)
+			}
+			digest, err := applicationResumeFactsDigest(resumeFacts)
+			if err != nil || resumeFacts.Digest != digest {
+				return fmt.Errorf("profile %q resume facts digest does not match its contents", profile.Tag)
+			}
+			if strings.TrimSpace(profile.Resume) == "" || resumeFacts.ResumeID != strings.TrimSpace(profile.Resume) {
+				return fmt.Errorf("profile %q resume facts belong to resume %q, configured resume is %q", profile.Tag, resumeFacts.ResumeID, profile.Resume)
+			}
+		}
 		if profile.Bootstrap != nil {
 			if strings.TrimSpace(profile.Bootstrap.Source) == "" {
 				return fmt.Errorf("profile %q bootstrap requires source", profile.Tag)
@@ -665,6 +836,9 @@ func (c Config) Validate() error {
 		if profile.Applications.Model != nil {
 			if messageSources != 1 {
 				return fmt.Errorf("profile %q application model requires exactly one message fallback", profile.Tag)
+			}
+			if !hasResumeFacts {
+				return fmt.Errorf("profile %q application model requires resume_facts_file", profile.Tag)
 			}
 			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q applications", profile.Tag), profile.Applications.Model, modelProviders); err != nil {
 				return err
@@ -709,6 +883,9 @@ func (c Config) Validate() error {
 			case applicationoperator.EmployerRuleModel:
 				if strings.TrimSpace(rule.MessageTemplateFile) == "" || rule.resolvedMessagePool == nil || rule.Model == nil {
 					return fmt.Errorf("%s action %q requires model and resolved message_template_file fallback", ruleLabel, rule.Action)
+				}
+				if !hasResumeFacts {
+					return fmt.Errorf("%s action %q requires profile resume_facts_file", ruleLabel, rule.Action)
 				}
 				if err := validateApplicationMessagePool(*rule.resolvedMessagePool); err != nil {
 					return fmt.Errorf("%s: %w", ruleLabel, err)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,16 @@ func TestLoadResolvesApplicationModelsWithFallbackPools(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
+	resumeDirectory := filepath.Join(directory, "resumes")
+	if err := os.Mkdir(resumeDirectory, 0o700); err != nil {
+		t.Fatalf("create resumes directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(resumeDirectory, "backend.json"), []byte(`{
+		"resume_id":"resume-1",
+		"facts":{"headline":"Backend developer","skills":["Go","PostgreSQL"],"commercial_years":3}
+	}`), 0o600); err != nil {
+		t.Fatalf("write resume facts: %v", err)
+	}
 	configPath := filepath.Join(directory, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
 		"database":{"driver":"sqlite","path":"job-agent.db"},
@@ -223,7 +234,7 @@ func TestLoadResolvesApplicationModelsWithFallbackPools(t *testing.T) {
 		"models":[{"tag":"cover-letter-mini","type":"openai_responses","model":"gpt-test","api_key_env":"TEST_OPENAI_KEY","max_output_tokens":700}],
 		"employer_groups":[{"tag":"marketplaces","rules":[{"name":"Ozon Tech"}]}],
 		"profiles":[{
-			"tag":"primary","adapter":"hh-main","enabled":true,
+			"tag":"primary","adapter":"hh-main","resume":"resume-1","resume_facts_file":"resumes/backend.json","enabled":true,
 			"applications":{
 				"message_template_file":"messages/default.json",
 				"model":{"provider":"cover-letter-mini","prompt_version":"v1","instruction":"Кратко","timeout":"15s"},
@@ -245,6 +256,15 @@ func TestLoadResolvesApplicationModelsWithFallbackPools(t *testing.T) {
 	if len(loaded.Models) != 1 || loaded.Models[0].APIKeyEnvironment() != "TEST_OPENAI_KEY" || loaded.Profiles[0].Applications.Model.Provider != "cover-letter-mini" {
 		t.Fatalf("loaded model config = %#v", loaded)
 	}
+	facts, exists := loaded.Profiles[0].ResolvedResumeFacts()
+	if !exists || facts.Tag != "backend" || facts.ResumeID != "resume-1" || !strings.HasPrefix(facts.Digest, "sha256:") || facts.Facts["commercial_years"] != json.Number("3") {
+		t.Fatalf("resolved resume facts = %#v, exists=%t", facts, exists)
+	}
+	facts.Facts["headline"] = "changed"
+	againFacts, _ := loaded.Profiles[0].ResolvedResumeFacts()
+	if againFacts.Facts["headline"] == "changed" {
+		t.Fatal("resolved resume facts leaked mutable state")
+	}
 	rules := loaded.Profiles[0].Applications.ResolvedEmployerRules()
 	if len(rules) != 1 || rules[0].Model == nil || rules[0].Model.PromptVersion != "marketplace-v1" || rules[0].MessagePool == nil || rules[0].MessagePool.Tag != "employer" {
 		t.Fatalf("resolved rules = %#v", rules)
@@ -257,11 +277,13 @@ func TestLoadResolvesApplicationModelsWithFallbackPools(t *testing.T) {
 
 func TestConfigValidatesModelProvidersAndFallbacks(t *testing.T) {
 	validModel := ModelProviderConfig{Tag: "mini", Type: ModelProviderOpenAIResponses, Model: "gpt-test"}
+	resumeFacts := ApplicationResumeFacts{Tag: "backend", ResumeID: "resume-1", Facts: map[string]any{"skills": []any{"Go"}}}
+	resumeFacts.Digest, _ = applicationResumeFactsDigest(resumeFacts)
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
 		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
 		Models:   []ModelProviderConfig{validModel},
-		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Applications: ApplicationPolicy{
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true, resolvedResumeFacts: &resumeFacts, Applications: ApplicationPolicy{
 			Message: "fallback",
 			Model:   &ApplicationModelPolicy{Provider: "mini", PromptVersion: "v1", Instruction: "Concise", Timeout: "10s"},
 		}}},
@@ -278,6 +300,8 @@ func TestConfigValidatesModelProvidersAndFallbacks(t *testing.T) {
 		{name: "unsafe base URL", mutate: func(config *Config) { config.Models[0].BaseURL = "http://models.example.test/v1" }},
 		{name: "unknown provider", mutate: func(config *Config) { config.Profiles[0].Applications.Model.Provider = "missing" }},
 		{name: "missing fallback", mutate: func(config *Config) { config.Profiles[0].Applications.Message = "" }},
+		{name: "missing resume facts", mutate: func(config *Config) { config.Profiles[0].resolvedResumeFacts = nil }},
+		{name: "mismatched resume facts", mutate: func(config *Config) { config.Profiles[0].Resume = "resume-2" }},
 		{name: "invalid timeout", mutate: func(config *Config) { config.Profiles[0].Applications.Model.Timeout = "0s" }},
 	}
 	for _, test := range tests {

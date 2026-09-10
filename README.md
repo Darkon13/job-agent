@@ -344,7 +344,8 @@ retry не вызывает модель повторно. Перед сохра
 }
 ```
 
-Минимальная модель с обязательным fallback:
+Минимальная модель с обязательными fallback и фактами выбранного резюме
+(показаны соответствующие фрагменты общего config):
 
 ```json
 "models": [
@@ -356,16 +357,45 @@ retry не вызывает модель повторно. Перед сохра
     "max_output_tokens": 1024
   }
 ],
-"applications": {
-  "message_template_file": "messages/backend.json",
-  "model": {
-    "provider": "cover-letter-mini",
-    "prompt_version": "backend-v1",
-    "instruction": "Напиши краткое предметное сопроводительное без общих фраз.",
-    "timeout": "20s"
+"profiles": [
+  {
+    "tag": "primary",
+    "adapter": "hh-main",
+    "resume": "resume-id-from-platform",
+    "resume_facts_file": "resumes/backend.json",
+    "enabled": true,
+    "applications": {
+      "message_template_file": "messages/backend.json",
+      "model": {
+        "provider": "cover-letter-mini",
+        "prompt_version": "backend-v1",
+        "instruction": "Напиши краткое предметное сопроводительное без общих фраз.",
+        "timeout": "20s"
+      }
+    }
+  }
+]
+```
+
+`resumes/backend.json` содержит только факты, которые разрешено сообщать
+работодателю:
+
+```json
+{
+  "resume_id": "resume-id-from-platform",
+  "facts": {
+    "headline": "Backend developer",
+    "skills": ["Go", "PostgreSQL"],
+    "commercial_years": 3,
+    "work_format": "удалённо"
   }
 }
 ```
+
+Неизвестные поля верхнего уровня, `null`, пустые строки, чрезмерная вложенность
+и файлы больше 128 KiB отклоняются. `resume_id` обязан совпадать с
+`profiles[].resume`. Loader вычисляет digest нормализованного содержимого;
+путь и полный файл не пишутся в decision reason.
 
 При Compose-запуске `OPENAI_API_KEY` передаётся только backend-сервису. Для
 другого `api_key_env` переменную нужно явно добавить в deployment override.

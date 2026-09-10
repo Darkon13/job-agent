@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
@@ -63,6 +64,7 @@ type RuleTemplateConfig struct {
 	MessageTemplate string
 	MessagePool     *MessagePoolConfig
 	Model           *ApplicationModelConfig
+	Resume          *ApplicationResumeContext
 	EmployerMatcher *EmployerGroupMatcher
 	EmployerRules   []EmployerRuleConfig
 }
@@ -109,6 +111,7 @@ type RuleTemplatePreparer struct {
 	template      *template.Template
 	messagePool   *compiledMessagePool
 	model         *compiledApplicationModel
+	resume        *ApplicationResumeContext
 	employerMatch *EmployerGroupMatcher
 	employerRules []compiledEmployerRule
 }
@@ -130,6 +133,7 @@ type ApplicationTemplateData struct {
 	ApplicationID string                    `json:"application_id"`
 	ProfileID     string                    `json:"profile_id"`
 	Vacancy       ApplicationVacancyContext `json:"vacancy"`
+	Resume        *ApplicationResumeContext `json:"resume,omitempty"`
 
 	// Flat fields are retained for existing templates. New templates should use
 	// Vacancy so the same structured context can later be passed to a model
@@ -139,6 +143,25 @@ type ApplicationTemplateData struct {
 	URL         string   `json:"-"`
 	Description string   `json:"-"`
 	KeySkills   []string `json:"-"`
+}
+
+type ApplicationResumeContext struct {
+	ResumeID string         `json:"resume_id"`
+	FactsTag string         `json:"facts_tag"`
+	Digest   string         `json:"digest"`
+	Facts    map[string]any `json:"facts"`
+}
+
+func (resume ApplicationResumeContext) Validate() error {
+	if strings.TrimSpace(resume.ResumeID) == "" || strings.TrimSpace(resume.FactsTag) == "" || len(resume.Facts) == 0 {
+		return errors.New("application resume context requires resume id, facts tag and facts")
+	}
+	encoded := strings.TrimPrefix(strings.TrimSpace(resume.Digest), "sha256:")
+	digest, err := hex.DecodeString(encoded)
+	if err != nil || len(digest) != sha256.Size || !strings.HasPrefix(resume.Digest, "sha256:") {
+		return errors.New("application resume context requires a sha256 digest")
+	}
+	return nil
 }
 
 type ApplicationVacancyContext struct {
@@ -176,14 +199,18 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if messageSources > 1 {
 		return nil, errors.New("application operator accepts one static message, message template or message pool")
 	}
+	resume, err := cloneApplicationResumeContext(config.Resume)
+	if err != nil {
+		return nil, err
+	}
 	var compiled *template.Template
 	if strings.TrimSpace(config.MessageTemplate) != "" {
-		compiled, err = compileApplicationTemplate("cover-letter", config.MessageTemplate)
+		compiled, err = compileApplicationTemplate("cover-letter", config.MessageTemplate, resume)
 		if err != nil {
 			return nil, err
 		}
 	}
-	messagePool, err := compileMessagePool(config.MessagePool)
+	messagePool, err := compileMessagePool(config.MessagePool, resume)
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +221,16 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if model != nil && messageSources != 1 {
 		return nil, errors.New("application model requires exactly one configured message fallback")
 	}
-	employerRules, err := compileEmployerRules(config.EmployerMatcher, config.EmployerRules)
+	if model != nil && resume == nil {
+		return nil, errors.New("application model requires explicit resume facts")
+	}
+	employerRules, err := compileEmployerRules(config.EmployerMatcher, config.EmployerRules, resume)
 	if err != nil {
 		return nil, err
 	}
 	preparer := &RuleTemplatePreparer{
 		includeAny: includeAny, excludeAny: excludeAny,
-		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model,
+		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model, resume: resume,
 		employerMatch: config.EmployerMatcher, employerRules: employerRules,
 	}
 	probe := ApplicationPreparation{Outcome: ApplicationApply, Code: "qualified", Reason: "vacancy passed deterministic rules", Message: preparer.staticMessage}
@@ -290,7 +320,7 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 
 func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool, model *compiledApplicationModel) (string, string, error) {
 	if model != nil {
-		response, err := model.generate(ctx, application, vacancy)
+		response, err := model.generate(ctx, application, vacancy, preparer.resume)
 		if err == nil {
 			name := strings.TrimSpace(response.Model)
 			if name == "" {
@@ -316,7 +346,7 @@ func (preparer *RuleTemplatePreparer) renderMessage(ctx context.Context, applica
 func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.Application, vacancy core.Vacancy, messagePool *compiledMessagePool) (string, string, error) {
 	if messagePool != nil {
 		selected := messagePool.templates[messagePool.index(application)]
-		message, err := executeApplicationTemplate(selected.template, application, vacancy)
+		message, err := executeApplicationTemplate(selected.template, application, vacancy, preparer.resume)
 		if err != nil {
 			return "", "", err
 		}
@@ -325,11 +355,11 @@ func (preparer *RuleTemplatePreparer) renderConfiguredMessage(application core.A
 	if preparer.template == nil {
 		return preparer.staticMessage, "", nil
 	}
-	message, err := executeApplicationTemplate(preparer.template, application, vacancy)
+	message, err := executeApplicationTemplate(preparer.template, application, vacancy, preparer.resume)
 	return message, "", err
 }
 
-func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleConfig) ([]compiledEmployerRule, error) {
+func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleConfig, resume *ApplicationResumeContext) ([]compiledEmployerRule, error) {
 	if len(configs) == 0 {
 		return nil, nil
 	}
@@ -371,13 +401,16 @@ func compileEmployerRules(matcher *EmployerGroupMatcher, configs []EmployerRuleC
 		default:
 			return nil, fmt.Errorf("employer rule %d has unsupported action %q", index, action)
 		}
-		pool, err := compileMessagePool(config.MessagePool)
+		pool, err := compileMessagePool(config.MessagePool, resume)
 		if err != nil {
 			return nil, fmt.Errorf("employer rule %d: %w", index, err)
 		}
 		model, err := compileApplicationModel(config.Model)
 		if err != nil {
 			return nil, fmt.Errorf("employer rule %d: %w", index, err)
+		}
+		if model != nil && resume == nil {
+			return nil, fmt.Errorf("employer rule %d: application model requires explicit resume facts", index)
 		}
 		result = append(result, compiledEmployerRule{groups: groups, action: action, messagePool: pool, model: model})
 	}
@@ -392,8 +425,8 @@ func employerMatchReason(match EmployerGroupMatch) string {
 	return reason
 }
 
-func executeApplicationTemplate(compiled *template.Template, application core.Application, vacancy core.Vacancy) (string, error) {
-	data := NewApplicationTemplateData(application, vacancy)
+func executeApplicationTemplate(compiled *template.Template, application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) (string, error) {
+	data := newApplicationTemplateData(application, vacancy, resume)
 	var output bytes.Buffer
 	if err := compiled.Execute(&output, data); err != nil {
 		return "", fmt.Errorf("render cover letter template: %w", err)
@@ -401,13 +434,13 @@ func executeApplicationTemplate(compiled *template.Template, application core.Ap
 	return strings.TrimSpace(output.String()), nil
 }
 
-func compileApplicationTemplate(name, source string) (*template.Template, error) {
+func compileApplicationTemplate(name, source string, resume *ApplicationResumeContext) (*template.Template, error) {
 	compiled, err := template.New(name).Option("missingkey=error").Parse(source)
 	if err != nil {
 		return nil, fmt.Errorf("parse cover letter template %q: %w", name, err)
 	}
 	var probe bytes.Buffer
-	if err := compiled.Execute(&probe, ApplicationTemplateData{Vacancy: ApplicationVacancyContext{Attributes: map[string]any{}}}); err != nil {
+	if err := compiled.Execute(&probe, ApplicationTemplateData{Vacancy: ApplicationVacancyContext{Attributes: map[string]any{}}, Resume: resume}); err != nil {
 		return nil, fmt.Errorf("validate cover letter template %q: %w", name, err)
 	}
 	if !utf8.ValidString(probe.String()) || utf8.RuneCountInString(probe.String()) > maximumApplicationMessageRunes {
@@ -416,7 +449,7 @@ func compileApplicationTemplate(name, source string) (*template.Template, error)
 	return compiled, nil
 }
 
-func compileMessagePool(config *MessagePoolConfig) (*compiledMessagePool, error) {
+func compileMessagePool(config *MessagePoolConfig, resume *ApplicationResumeContext) (*compiledMessagePool, error) {
 	if config == nil {
 		return nil, nil
 	}
@@ -448,7 +481,7 @@ func compileMessagePool(config *MessagePoolConfig) (*compiledMessagePool, error)
 		if strings.TrimSpace(candidate.Template) == "" {
 			return nil, fmt.Errorf("message pool %q template %q is empty", tag, candidateTag)
 		}
-		compiled, err := compileApplicationTemplate(tag+"/"+candidateTag, candidate.Template)
+		compiled, err := compileApplicationTemplate(tag+"/"+candidateTag, candidate.Template, resume)
 		if err != nil {
 			return nil, err
 		}
@@ -466,6 +499,10 @@ func (pool *compiledMessagePool) index(application core.Application) int {
 }
 
 func NewApplicationTemplateData(application core.Application, vacancy core.Vacancy) ApplicationTemplateData {
+	return newApplicationTemplateData(application, vacancy, nil)
+}
+
+func newApplicationTemplateData(application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) ApplicationTemplateData {
 	description := vacancyAttributeString(vacancy, "description")
 	keySkills := vacancyAttributeStrings(vacancy, "key_skills")
 	var publishedAt *time.Time
@@ -479,10 +516,29 @@ func NewApplicationTemplateData(application core.Application, vacancy core.Vacan
 		Description: description, KeySkills: append([]string(nil), keySkills...), Attributes: cloneVacancyAttributes(vacancy.Attributes),
 	}
 	return ApplicationTemplateData{
-		ApplicationID: string(application.ID), ProfileID: string(application.Key.ProfileID), Vacancy: context,
+		ApplicationID: string(application.ID), ProfileID: string(application.Key.ProfileID), Vacancy: context, Resume: copyApplicationResumeContext(resume),
 		Title: context.Title, Employer: context.Employer, URL: context.URL,
 		Description: context.Description, KeySkills: append([]string(nil), context.KeySkills...),
 	}
+}
+
+func cloneApplicationResumeContext(source *ApplicationResumeContext) (*ApplicationResumeContext, error) {
+	if source == nil {
+		return nil, nil
+	}
+	if err := source.Validate(); err != nil {
+		return nil, err
+	}
+	return copyApplicationResumeContext(source), nil
+}
+
+func copyApplicationResumeContext(source *ApplicationResumeContext) *ApplicationResumeContext {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.Facts = cloneVacancyAttributes(source.Facts)
+	return &result
 }
 
 func cloneVacancyAttributes(attributes map[string]any) map[string]any {

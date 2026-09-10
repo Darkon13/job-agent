@@ -2,10 +2,11 @@
 
 Статус: `in progress`. Файловые message pools, воспроизводимый выбор, employer
 groups, policy routing и первый model provider с fallback реализованы. Остался
-семантический groundedness по полным resume facts и отдельное хранение
-расширенной model provenance. Детерминированный output safety validator уже
-отсекает служебную обёртку, placeholders и не подтверждённые контекстом числа и
-контакты.
+семантический groundedness и отдельное хранение расширенной model provenance.
+Явные resume facts уже загружаются из ограниченного файла, связываются с
+конкретным resume ID и входят в единый model/template context. Детерминированный
+output safety validator отсекает служебную обёртку, placeholders и не
+подтверждённые контекстом числа и контакты.
 
 Общий контракт `rule_sets → policy rules → named action`, а также processors,
 которые разделяют детерминированные преобразования и LLM, зафиксирован в
@@ -78,9 +79,10 @@ Model operator получает структурированный и огран
 Базовая схема контекста уже существует в application operator: `ApplicationID`,
 `ProfileID` и вложенный `Vacancy` с platform/external ID, URL, названием,
 работодателем, состоянием, датой публикации, description, key skills и
-нормализованными attributes полной карточки. Шаблоны используют тот же объект;
-model adapter должен принимать его после явного отбора разрешённых полей, а не
-повторно собирать контекст из platform-specific payload.
+нормализованными attributes полной карточки. `Resume` содержит platform resume
+ID, tag/digest файла и только явно объявленные пользователем `facts`. Шаблоны и
+model adapter используют один объект, не читают platform payload и не собирают
+контекст повторно.
 
 Конфигурация ссылается на provider/model по тегу; конкретная компактная модель
 не зашивается в core. Результат проходит formatter и validator. Нельзя
@@ -128,8 +130,9 @@ full vacancy + employer
    environment, запрос использует `store:false`, а модель выбирается конфигом.
 7. **Частично выполнено:** длина, управляющие символы, JSON/code fence,
    placeholders, новые числа, URL и e-mail приводят к безопасному fallback.
-   Полная семантическая сверка требует добавить явные resume facts в контекст;
-   её сомнения должны отправляться в approval, а не исправляться догадкой.
+   Явные resume facts уже входят в контекст; для полной семантической сверки
+   нужен evidence contract модели. Его сомнения должны отправляться в approval,
+   а не исправляться догадкой.
 8. **Частично выполнено:** model success, timeout, rate-limit, invalid output,
    parent cancellation, provider HTTP contract, config и routing покрыты.
    Groundedness и один `approval` smoke ещё нужны.

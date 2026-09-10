@@ -144,13 +144,13 @@ func compileApplicationModel(config *ApplicationModelConfig) (*compiledApplicati
 	return result, nil
 }
 
-func (model *compiledApplicationModel) generate(ctx context.Context, application core.Application, vacancy core.Vacancy) (ApplicationModelResponse, error) {
+func (model *compiledApplicationModel) generate(ctx context.Context, application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) (ApplicationModelResponse, error) {
 	modelCtx, cancel := context.WithTimeout(ctx, model.timeout)
 	defer cancel()
 	request := ApplicationModelRequest{
 		Instruction:   applicationModelInstruction + "\n\n" + model.instruction,
 		PromptVersion: model.promptVersion,
-		Context:       NewApplicationTemplateData(application, vacancy),
+		Context:       newApplicationTemplateData(application, vacancy, resume),
 	}
 	response, err := model.generator.Generate(modelCtx, request)
 	if err != nil {
@@ -209,13 +209,14 @@ func validateApplicationModelText(text string, data ApplicationTemplateData) err
 		}
 	}
 	semanticContext, err := json.Marshal(struct {
-		Title       string         `json:"title"`
-		Employer    string         `json:"employer,omitempty"`
-		Description string         `json:"description,omitempty"`
-		KeySkills   []string       `json:"key_skills,omitempty"`
-		Attributes  map[string]any `json:"attributes,omitempty"`
+		Resume      *ApplicationResumeContext `json:"resume,omitempty"`
+		Title       string                    `json:"title"`
+		Employer    string                    `json:"employer,omitempty"`
+		Description string                    `json:"description,omitempty"`
+		KeySkills   []string                  `json:"key_skills,omitempty"`
+		Attributes  map[string]any            `json:"attributes,omitempty"`
 	}{
-		Title: data.Vacancy.Title, Employer: data.Vacancy.Employer,
+		Resume: data.Resume, Title: data.Vacancy.Title, Employer: data.Vacancy.Employer,
 		Description: data.Vacancy.Description, KeySkills: data.Vacancy.KeySkills,
 		Attributes: data.Vacancy.Attributes,
 	})

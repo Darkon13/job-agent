@@ -72,6 +72,23 @@ func TestApplicationTemplateDataIncludesStructuredVacancyContext(t *testing.T) {
 	}
 }
 
+func TestRuleTemplatePreparerRendersExplicitResumeFacts(t *testing.T) {
+	application, vacancy := operatorFixture()
+	resume := modelResumeFixture()
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		Resume:          resume,
+		MessageTemplate: `{{index .Resume.Facts "summary"}}: {{.Vacancy.Title}}`,
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	resume.Facts["summary"] = "mutated after composition"
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Message != "Backend developer: Backend developer" {
+		t.Fatalf("preparation=%#v err=%v", result, err)
+	}
+}
+
 func TestRuleTemplatePreparerRequiresOneIncludedTerm(t *testing.T) {
 	application, vacancy := operatorFixture()
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{IncludeAny: []string{"Rust"}})

@@ -14,10 +14,18 @@ func (function applicationModelFunc) Generate(ctx context.Context, request Appli
 	return function(ctx, request)
 }
 
+func modelResumeFixture() *ApplicationResumeContext {
+	return &ApplicationResumeContext{
+		ResumeID: "resume-1", FactsTag: "backend", Digest: "sha256:" + strings.Repeat("0", 64),
+		Facts: map[string]any{"skills": []string{"Go", "SQL"}, "summary": "Backend developer"},
+	}
+}
+
 func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 	application, vacancy := operatorFixture()
 	var received ApplicationModelRequest
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		Resume:      modelResumeFixture(),
 		MessagePool: &MessagePoolConfig{Tag: "fallback", Templates: []MessageTemplateConfig{{Tag: "one", Template: "fallback"}}},
 		Model: &ApplicationModelConfig{
 			Tag: "cover-letter-mini", PromptVersion: "v1", Instruction: "Keep it concise.", Timeout: time.Second,
@@ -37,7 +45,8 @@ func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 	if result.Message != "Generated for Example" || !strings.Contains(result.Reason, `model "cover-letter-mini" generated with "mini-model" prompt "v1"`) {
 		t.Fatalf("preparation = %#v", result)
 	}
-	if received.Context.Vacancy.ExternalID != vacancy.ExternalID || received.PromptVersion != "v1" ||
+	if received.Context.Vacancy.ExternalID != vacancy.ExternalID || received.Context.Resume == nil ||
+		received.Context.Resume.ResumeID != "resume-1" || received.PromptVersion != "v1" ||
 		!strings.Contains(received.Instruction, "untrusted data") || !strings.Contains(received.Instruction, "Keep it concise") {
 		t.Fatalf("model request = %#v", received)
 	}
@@ -67,6 +76,7 @@ func TestRuleTemplatePreparerFallsBackAfterModelTimeoutOrInvalidOutput(t *testin
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+				Resume:      modelResumeFixture(),
 				MessagePool: &MessagePoolConfig{Tag: "fallback", Templates: []MessageTemplateConfig{{Tag: "safe", Template: "Safe {{.Vacancy.Title}}"}}},
 				Model: &ApplicationModelConfig{
 					Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: 5 * time.Millisecond, Generator: test.generator,
@@ -90,6 +100,7 @@ func TestRuleTemplatePreparerDoesNotFallbackAfterParentCancellation(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
 		StaticMessage: "fallback",
+		Resume:        modelResumeFixture(),
 		Model: &ApplicationModelConfig{
 			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
 			Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
@@ -114,6 +125,7 @@ func TestRuleTemplatePreparerRoutesEmployerToModelWithOwnFallback(t *testing.T) 
 	}
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
 		StaticMessage:   "default",
+		Resume:          modelResumeFixture(),
 		EmployerMatcher: matcher,
 		EmployerRules: []EmployerRuleConfig{{
 			EmployerGroups: []string{"example"}, Action: EmployerRuleModel,
@@ -143,13 +155,18 @@ func TestRuleTemplatePreparerRequiresModelFallbackAndCompleteConfig(t *testing.T
 	})
 	if _, err := NewRuleTemplatePreparer(RuleTemplateConfig{Model: &ApplicationModelConfig{
 		Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second, Generator: generator,
-	}}); err == nil {
+	}, Resume: modelResumeFixture()}); err == nil {
 		t.Fatal("expected missing model fallback to fail")
 	}
 	if _, err := NewRuleTemplatePreparer(RuleTemplateConfig{StaticMessage: "fallback", Model: &ApplicationModelConfig{
 		Tag: "model", PromptVersion: "", Instruction: "Concise", Timeout: time.Second, Generator: generator,
-	}}); err == nil {
+	}, Resume: modelResumeFixture()}); err == nil {
 		t.Fatal("expected incomplete model config to fail")
+	}
+	if _, err := NewRuleTemplatePreparer(RuleTemplateConfig{StaticMessage: "fallback", Model: &ApplicationModelConfig{
+		Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second, Generator: generator,
+	}}); err == nil {
+		t.Fatal("expected missing explicit resume facts to fail")
 	}
 }
 
@@ -171,6 +188,7 @@ func TestRuleTemplatePreparerRejectsUnsafeOrUngroundedModelText(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
 				StaticMessage: "safe fallback",
+				Resume:        modelResumeFixture(),
 				Model: &ApplicationModelConfig{
 					Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
 					Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
@@ -195,6 +213,7 @@ func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
 	message := "Подхожу под требование опыта от 1 года до 3 лет: https://hh.ru/vacancy/42"
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
 		StaticMessage: "fallback",
+		Resume:        modelResumeFixture(),
 		Model: &ApplicationModelConfig{
 			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
 			Generator: applicationModelFunc(func(context.Context, ApplicationModelRequest) (ApplicationModelResponse, error) {
