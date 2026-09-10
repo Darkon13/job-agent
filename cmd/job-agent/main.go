@@ -467,12 +467,33 @@ func main() {
 	if err := scheduler.Sync(context.Background(), definitions); err != nil {
 		log.Fatalf("sync scheduled jobs: %v", err)
 	}
+	jobRunWorkflow, err := workflow.NewJobRunWorkflow(
+		store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, jobRunDefinitions(definitions),
+	)
+	if err != nil {
+		log.Fatalf("create job run workflow: %v", err)
+	}
+	jobAPI, err := httpapi.NewJobAPI(jobRunWorkflow)
+	if err != nil {
+		log.Fatalf("create job API: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, runtimeAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler()))), conversationWorkflow, scheduler, workers); err != nil {
+	if err := serve(ctx, cfg, runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler())))), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func jobRunDefinitions(definitions []jobscheduler.Definition) []workflow.JobRunDefinition {
+	result := make([]workflow.JobRunDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, workflow.JobRunDefinition{
+			Tag: definition.JobTag, TaskType: definition.ActionType, Platform: definition.Platform,
+			ProfileID: definition.ProfileID, Payload: definition.Payload, Priority: definition.Priority,
+		})
+	}
+	return result
 }
 
 func reconcileConfiguredProfileBootstraps(

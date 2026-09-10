@@ -96,6 +96,8 @@ profile-aware round-robin/aging: priority сам по себе не гарант
   payload в эту сводку не входят;
 - список terminal failed-задач без payload/idempotency data с явными
   `retry`/`dismiss`; retry предупреждает о возможном повторе внешнего действия;
+- список фактически runnable декларативных jobs и их ручной запуск через тот же
+  типизированный durable command, payload и priority, что использует scheduler;
 - список диалогов и загрузка сообщений;
 - постановка `conversation.send` и `conversation.mark_read` в durable queue;
 - liveness dashboard и proxy к backend health/readiness.

@@ -698,6 +698,20 @@ CAPTCHA, неподходящее резюме, неизвестная форм�
 поставить job вручную и запустить обычный `job-agent`; cron при этом остаётся
 единственным владельцем периодического расписания.
 
+Запущенный backend предоставляет тот же control-plane сценарий без доступа к
+SQLite из отдельного процесса:
+
+```text
+GET  /api/v1/jobs
+POST /api/v1/jobs/{job_tag}/runs
+Idempotency-Key: <client request id>
+```
+
+В списке присутствуют только jobs, для которых при старте реально собраны
+transport, авторизация и capability. Ручной запуск создаёт обычную durable task
+с теми же payload и priority, что cron, и не выполняет platform action в HTTP
+handler. Dashboard показывает этот список и ставит выбранную job в очередь.
+
 `job-agent-approve` выпускает один уже подготовленный `waiting_approval`
 отклик. Команда работает только после явного переключения профиля в `submit`,
 требует непустое сохранённое письмо и ставит idempotent submit-task. Если

@@ -1,6 +1,6 @@
-const state = { summary: null, selectedConversation: null, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set() };
+const state = { summary: null, selectedConversation: null, jobs: [], profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
 const elements = Object.fromEntries([
-  "applications", "tasks", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
+  "applications", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-read", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
@@ -17,6 +17,17 @@ function renderStats(stats = {}) {
 function renderRows(target, items, fields) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Пока нет данных"); cell.colSpan = fields.length; row.append(cell); target.replaceChildren(row); return; }
   target.replaceChildren(...items.map((item) => { const row = document.createElement("tr"); fields.forEach((field, index) => { const cell = document.createElement("td"); const value = item[field] || (field === "decision_code" ? "—" : "0"); cell.append(index < fields.length - 1 ? text("span", String(value), "status") : document.createTextNode(String(value))); row.append(cell); }); return row; }));
+}
+function renderJobs(items = []) {
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
+  elements.jobs.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    const action = document.createElement("td");
+    const run = text("button", "Запустить", "secondary compact"); run.type = "button"; run.disabled = state.jobBusy.has(item.tag);
+    run.addEventListener("click", () => runJob(item)); action.append(run);
+    row.append(text("td", item.tag), text("td", item.task_type), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), action);
+    return row;
+  }));
 }
 function renderFailedTasks(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
@@ -216,11 +227,24 @@ async function controlFailedTask(task, action) {
   }
 }
 
+async function runJob(job) {
+  state.jobBusy.add(job.tag); renderJobs(state.jobs);
+  try {
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/runs`);
+    elements.connectionState.textContent = `Job ${job.tag}: задача ${result.task_id} поставлена в очередь`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  } finally {
+    state.jobBusy.delete(job.tag); renderJobs(state.jobs);
+  }
+}
+
 async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
-    const [summary, failures] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed")]); state.summary = summary; state.failedTasks = failures.items || [];
-    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "priority", "count"]); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs")]); state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
+    renderStats(summary.stats); renderRows(elements.applications, summary.applications || [], ["status", "decision_code", "count"]); renderRows(elements.tasks, summary.tasks || [], ["type", "status", "priority", "count"]); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }

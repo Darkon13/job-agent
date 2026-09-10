@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
+	"github.com/Darkon13/job-agent/workflow"
 )
 
 type profileReaderStub struct {
@@ -119,6 +122,22 @@ func TestApplyServerEnvironmentRejectsUnsafeListener(t *testing.T) {
 		return "", false
 	}); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("expected unsafe listener error, got %v", err)
+	}
+}
+
+func TestJobRunDefinitionsCollapseCompatibleTriggersInWorkflow(t *testing.T) {
+	payload := json.RawMessage(`{"profile_id":"primary","resume_id":"resume-1"}`)
+	definitions := []jobscheduler.Definition{
+		{JobTag: "touch", TriggerIndex: 0, ActionType: core.TaskResumeTouch, Platform: "hh", ProfileID: "primary", Payload: payload, Priority: 50},
+		{JobTag: "touch", TriggerIndex: 1, ActionType: core.TaskResumeTouch, Platform: "hh", ProfileID: "primary", Payload: payload, Priority: 50},
+	}
+	jobWorkflow, err := workflow.NewJobRunWorkflow(brokermemory.NewQueue(), workflow.SystemClock{}, workflow.RandomIDGenerator{}, jobRunDefinitions(definitions))
+	if err != nil {
+		t.Fatalf("new job run workflow: %v", err)
+	}
+	listed := jobWorkflow.Definitions()
+	if len(listed) != 1 || listed[0].Tag != "touch" || listed[0].Priority != 50 {
+		t.Fatalf("unexpected runnable jobs: %#v", listed)
 	}
 }
 
