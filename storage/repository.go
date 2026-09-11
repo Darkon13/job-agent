@@ -219,6 +219,13 @@ type TestAttemptRepository interface {
 	LatestTestAttempt(ctx context.Context, platform core.Platform, profileID core.ProfileID, externalID string) (core.TestAttempt, bool, error)
 }
 
+// AnswerBlockRevisionRepository stores append-only reviewed answer revisions.
+// Append assigns the next revision number for the block tag.
+type AnswerBlockRevisionRepository interface {
+	AppendAnswerBlockRevision(ctx context.Context, revision core.AnswerBlockRevision) (core.AnswerBlockRevision, error)
+	LatestAnswerBlockRevision(ctx context.Context, tag string) (core.AnswerBlockRevision, bool, error)
+}
+
 type ConversationFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID

@@ -12,9 +12,9 @@ import (
 
 type staticVacancyBlocks map[core.Platform]core.AnswerBlock
 
-func (blocks staticVacancyBlocks) FindVacancy(platform core.Platform) (core.AnswerBlock, bool) {
+func (blocks staticVacancyBlocks) FindVacancy(_ context.Context, platform core.Platform) (core.AnswerBlock, bool, error) {
 	block, exists := blocks[platform]
-	return block, exists
+	return block, exists, nil
 }
 
 type recordingVacancyTestChain struct {

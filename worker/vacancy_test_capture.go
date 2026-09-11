@@ -54,9 +54,9 @@ func (registry *VacancyTestCapturerRegistry) Count() int {
 }
 
 // VacancyAnswerBlockResolver returns the reviewed question bank of vacancy
-// popup tests for one platform.
+// popup tests for one platform, merging config and appended human revisions.
 type VacancyAnswerBlockResolver interface {
-	FindVacancy(platform core.Platform) (core.AnswerBlock, bool)
+	FindVacancy(ctx context.Context, platform core.Platform) (core.AnswerBlock, bool, error)
 }
 
 // VacancyTestCaptureHandler observes the questionnaire exposed by a vacancy
@@ -138,7 +138,10 @@ func (handler *VacancyTestCaptureHandler) routeAnswers(ctx context.Context, payl
 	if handler.resolver == nil {
 		return nil
 	}
-	block, found := handler.resolver.FindVacancy(payload.Platform)
+	block, found, err := handler.resolver.FindVacancy(ctx, payload.Platform)
+	if err != nil {
+		return err
+	}
 	if !found {
 		return nil
 	}

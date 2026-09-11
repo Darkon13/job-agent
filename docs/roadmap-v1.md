@@ -87,7 +87,11 @@
       миграция 24).
 - [x] Review API + CLI: `GET /review-sessions/{id}` с текущим prompt и
       `POST /review-sessions/{id}/answers` с Idempotency-Key.
-- [ ] Dashboard review; append-only ревизии answer blocks.
+- [x] Append-only ревизии answer blocks: `answer_block_revisions` (миграция
+      25); человеческие ответы пишутся ревизией и подмешиваются композитом
+      `ReviewedVacancyAnswers` (latest revision wins), повтор без изменений
+      ревизию не создаёт.
+- [ ] Dashboard review.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence
       записан.

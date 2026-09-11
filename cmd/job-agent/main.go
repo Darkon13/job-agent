@@ -113,6 +113,13 @@ func main() {
 			log.Printf("close database: %v", err)
 		}
 	}()
+	var answerResolver taskworker.VacancyAnswerBlockResolver
+	if answerRegistry != nil {
+		answerResolver, err = taskworker.NewReviewedVacancyAnswers(answerRegistry, store)
+		if err != nil {
+			log.Fatalf("build reviewed vacancy answers: %v", err)
+		}
+	}
 
 	instances := make(map[string]adapter.Adapter, len(cfg.Adapters))
 	for _, item := range cfg.Adapters {
@@ -534,8 +541,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("create vacancy test capture handler: %v", err)
 		}
-		if answerRegistry != nil {
-			testCaptureHandler.ConfigureAnswerRouting(answerRegistry, store, vacancyTestWorkflow)
+		if answerResolver != nil {
+			testCaptureHandler.ConfigureAnswerRouting(answerResolver, store, vacancyTestWorkflow)
 		}
 		testCaptureWorker, err := newTaskWorker(store, core.TaskTestCapture, testCaptureHandler.Handle)
 		if err != nil {
@@ -570,8 +577,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("create review answer handler: %v", err)
 	}
-	if answerRegistry != nil {
-		reviewAnswerHandler.ConfigureContinuation(answerRegistry, vacancyTestWorkflow)
+	if answerResolver != nil {
+		reviewAnswerHandler.ConfigureContinuation(answerResolver, store, vacancyTestWorkflow)
 	}
 	reviewAnswerWorker, err := newTaskWorker(store, core.TaskReviewAnswer, reviewAnswerHandler.Handle)
 	if err != nil {

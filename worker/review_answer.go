@@ -16,10 +16,11 @@ import (
 // resumes the automatic submit chain. A stale revision never overwrites a
 // newer answer.
 type ReviewAnswerHandler struct {
-	reviews  storage.ReviewRepository
-	clock    Clock
-	resolver VacancyAnswerBlockResolver
-	chain    VacancyTestEnqueuer
+	reviews   storage.ReviewRepository
+	clock     Clock
+	resolver  VacancyAnswerBlockResolver
+	revisions storage.AnswerBlockRevisionRepository
+	chain     VacancyTestEnqueuer
 }
 
 func NewReviewAnswerHandler(reviews storage.ReviewRepository, clock Clock) (*ReviewAnswerHandler, error) {
@@ -29,14 +30,16 @@ func NewReviewAnswerHandler(reviews storage.ReviewRepository, clock Clock) (*Rev
 	return &ReviewAnswerHandler{reviews: reviews, clock: clock}, nil
 }
 
-// ConfigureContinuation attaches the known-answer registry and task chain. The
-// selection is always recorded; continuation only happens when the session
-// carries the observed questionnaire and a vacancy block exists.
-func (handler *ReviewAnswerHandler) ConfigureContinuation(resolver VacancyAnswerBlockResolver, chain VacancyTestEnqueuer) {
+// ConfigureContinuation attaches the known-answer registry, the append-only
+// revision store and the task chain. The selection is always recorded;
+// continuation only happens when the session carries the observed
+// questionnaire and a vacancy block exists.
+func (handler *ReviewAnswerHandler) ConfigureContinuation(resolver VacancyAnswerBlockResolver, revisions storage.AnswerBlockRevisionRepository, chain VacancyTestEnqueuer) {
 	if handler == nil {
 		return
 	}
 	handler.resolver = resolver
+	handler.revisions = revisions
 	handler.chain = chain
 }
 
@@ -67,14 +70,82 @@ func (handler *ReviewAnswerHandler) Handle(ctx context.Context, task core.Task) 
 	if err := handler.reviews.AppendReviewSelection(ctx, session, selection, payload.ExpectedRevision); err != nil {
 		return err
 	}
+	if handler.revisions != nil {
+		if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
+			return err
+		}
+	}
 	return handler.continueChain(ctx, session, prompt, selection, now)
+}
+
+// appendRevision extends the platform vacancy block with the human answer.
+// Repeated answers with identical content do not create a new revision.
+func (handler *ReviewAnswerHandler) appendRevision(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, selection core.ReviewSelection, now time.Time) error {
+	if handler.resolver == nil {
+		return nil
+	}
+	base, found, err := handler.resolver.FindVacancy(ctx, session.Platform)
+	if err != nil {
+		return err
+	}
+	name, kind := "Reviewed vacancy answers", core.AnswerBlockVacancy
+	if found {
+		name, kind = base.Name, base.Kind
+	}
+	fingerprint, err := core.QuestionFingerprint(prompt.Question)
+	if err != nil {
+		return err
+	}
+	human := core.StoredAnswer{
+		Question: prompt.Question.Text, QuestionFingerprint: fingerprint,
+		SelectedOptions: append([]string(nil), selection.SelectedOptions...), Text: selection.Text,
+	}
+	answers := make([]core.StoredAnswer, 0, len(base.Answers)+1)
+	replaced := false
+	for _, answer := range base.Answers {
+		if core.NormalizeQuestionText(answer.Question) == core.NormalizeQuestionText(human.Question) {
+			answers = append(answers, human)
+			replaced = true
+			continue
+		}
+		answers = append(answers, answer)
+	}
+	if !replaced {
+		answers = append(answers, human)
+	}
+	tag := VacancyReviewedBlockTag(session.Platform, base, found)
+	latest, exists, err := handler.revisions.LatestAnswerBlockRevision(ctx, tag)
+	if err != nil {
+		return err
+	}
+	if exists {
+		latestDigest, err := core.StoredAnswersDigest(latest.Answers)
+		if err != nil {
+			return err
+		}
+		nextDigest, err := core.StoredAnswersDigest(answers)
+		if err != nil {
+			return err
+		}
+		if latestDigest == nextDigest {
+			return nil
+		}
+	}
+	_, err = handler.revisions.AppendAnswerBlockRevision(ctx, core.AnswerBlockRevision{
+		BlockTag: tag, Name: name, Kind: kind, Platform: session.Platform,
+		Source: "review:" + string(session.ID), Answers: answers, CreatedAt: now,
+	})
+	return err
 }
 
 func (handler *ReviewAnswerHandler) continueChain(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, selection core.ReviewSelection, now time.Time) error {
 	if handler.resolver == nil || handler.chain == nil || len(session.Questionnaire.Questions) == 0 {
 		return nil
 	}
-	block, found := handler.resolver.FindVacancy(session.Platform)
+	block, found, err := handler.resolver.FindVacancy(ctx, session.Platform)
+	if err != nil {
+		return err
+	}
 	if !found {
 		return nil
 	}

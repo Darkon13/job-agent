@@ -56,6 +56,9 @@
 - Review API и CLI: `GET /api/v1/review-sessions/{id}` отдаёт текущий prompt,
   `POST .../answers` принимает выбор с Idempotency-Key и ставит durable
   `review.answer`; `job-agent review show|answer` работает как API-клиент.
+- Append-only ревизии answer blocks (миграция 25): ответ человека сохраняется
+  ревизией и переиспользуется в следующих capture через композит
+  `ReviewedVacancyAnswers`; повтор идентичного ответа ревизию не создаёт.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 
