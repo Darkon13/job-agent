@@ -127,7 +127,11 @@
 ## M4. Жизненный цикл резюме
 
 - [ ] `resume.create`/`resume.update` как desired state с deterministic/model
-      processor, semantic diff и approval policy.
+      processor, semantic diff и approval policy. Готовы durable
+      `resume.update` (payload + idempotency + workflow) и worker
+      «plan → apply → read-back → optional publish» на fake-тестах; остались
+      API `POST /profiles/{profile}/resumes/{resume}/update`, main-проводка и
+      approval policy.
 - [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
 - [x] Алиасы (`resume_aliases`, резолв в `profile.resume` и job actions) и
       каталог targets (`GET /api/v1/profiles/{profile}/resumes`).

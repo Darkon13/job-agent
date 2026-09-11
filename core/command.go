@@ -517,3 +517,32 @@ func (payload ConversationIDPayload) Validate() error {
 	}
 	return nil
 }
+
+// ResumeUpdatePayload applies one declared resume resource and optionally
+// publishes the resume after a verified read-back.
+type ResumeUpdatePayload struct {
+	ProfileID   ProfileID `json:"profile_id"`
+	ResourceTag string    `json:"resource_tag"`
+	ResumeID    string    `json:"resume_id,omitempty"`
+	Publish     bool      `json:"publish,omitempty"`
+}
+
+func (payload ResumeUpdatePayload) Validate() error {
+	if payload.ProfileID == "" || strings.TrimSpace(payload.ResourceTag) == "" {
+		return errors.New("resume update requires profile and resource")
+	}
+	if payload.Publish && strings.TrimSpace(payload.ResumeID) == "" {
+		return errors.New("resume update with publish requires resume")
+	}
+	return nil
+}
+
+func ResumeUpdateIdempotencyKey(profileID ProfileID, resourceTag, requestKey string) (string, error) {
+	resourceTag = strings.TrimSpace(resourceTag)
+	requestKey = strings.TrimSpace(requestKey)
+	if profileID == "" || resourceTag == "" || requestKey == "" {
+		return "", errors.New("resume update idempotency requires profile, resource and request key")
+	}
+	digest := sha256.Sum256([]byte(string(profileID) + "\x00" + resourceTag + "\x00" + requestKey))
+	return "resume.update:" + hex.EncodeToString(digest[:]), nil
+}
