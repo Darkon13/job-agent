@@ -113,8 +113,9 @@
 - [x] Явный single-replica guard: exclusive runtime lease в SQLite (TTL 90s,
       renew, takeover после падения); второй живой инстанс останавливается.
       Shared mutation lease для нескольких реплик — вне v1.
-- [ ] Config builder: include/glob и точные ошибки с путём к файлу; заморозка
-      схемы конфига.
+- [x] Config builder: `include` с рекурсией, glob, cycle/depth guard; ошибки
+      несут путь к файлу; ссылки внутри include-файла резолвятся от него.
+- [ ] Заморозка схемы конфига (versioned schema и миграция конфигов).
 - [ ] Метрики, структурные логи, request/correlation ID.
 - [ ] Backup/restore и проверка upgrade/rollback, включая destructive guard.
 - [ ] CI (`make verify`, `go test -race`), LICENSE, release checklist.

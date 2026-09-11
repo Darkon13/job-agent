@@ -65,6 +65,9 @@
 - Single-replica guard (миграция 26): startup берёт exclusive runtime lease в
   SQLite с renew и takeover после падения; второй живой инстанс завершается
   с понятной ошибкой.
+- Config builder: top-level `include` с glob, depth-first merge, cycle/depth
+  guard и ошибками с путём к файлу; файловые ссылки внутри include резолвятся
+  относительно объявившего их файла.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

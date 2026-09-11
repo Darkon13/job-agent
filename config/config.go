@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,7 +33,10 @@ type Config struct {
 	Server         ServerConfig                 `json:"server,omitempty"`
 	// AnswerSets lists reviewed answer block files. They are resolved relative
 	// to the config file and assembled into one runtime registry.
-	AnswerSets           []string `json:"answer_sets,omitempty"`
+	AnswerSets []string `json:"answer_sets,omitempty"`
+	// Include lists additional config files or globs. Included files contribute
+	// collections only; database and server stay in the main file.
+	Include              []string `json:"include,omitempty"`
 	resolvedAnswerBlocks []core.AnswerBlock
 }
 
@@ -469,30 +473,151 @@ type Search struct {
 }
 
 func Load(path string) (Config, error) {
-	data, err := os.ReadFile(path)
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("read config: %w", err)
+		return Config{}, fmt.Errorf("resolve config path %q: %w", path, err)
 	}
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config: %w", err)
-	}
-	if err := cfg.resolveApplicationMessageFiles(filepath.Dir(path)); err != nil {
+	cfg, err := loadConfigFile(absolute, make(map[string]bool), 0)
+	if err != nil {
 		return Config{}, err
 	}
-	if err := cfg.resolveApplicationResumeFactsFiles(filepath.Dir(path)); err != nil {
+	baseDirectory := filepath.Dir(absolute)
+	if err := cfg.resolveApplicationMessageFiles(baseDirectory); err != nil {
 		return Config{}, err
 	}
-	if err := cfg.resolveProfileBootstrapFiles(filepath.Dir(path)); err != nil {
+	if err := cfg.resolveApplicationResumeFactsFiles(baseDirectory); err != nil {
 		return Config{}, err
 	}
-	if err := cfg.resolveAnswerSets(filepath.Dir(path)); err != nil {
+	if err := cfg.resolveProfileBootstrapFiles(baseDirectory); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.resolveAnswerSets(baseDirectory); err != nil {
 		return Config{}, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("validate config %s: %w", absolute, err)
 	}
 	return cfg, nil
+}
+
+const maximumConfigIncludeDepth = 16
+
+// loadConfigFile reads one config file, merges its includes depth-first, and
+// returns the combined object. The main file owns database and server; every
+// declared file contributes adapters, profiles, searches, resources, employer
+// groups, models, jobs and answer sets. File references inside a file resolve
+// relative to that file, so included fragments stay movable.
+func loadConfigFile(path string, visiting map[string]bool, depth int) (Config, error) {
+	if depth > maximumConfigIncludeDepth {
+		return Config{}, fmt.Errorf("config %s: include depth exceeds %d", path, maximumConfigIncludeDepth)
+	}
+	if visiting[path] {
+		return Config{}, fmt.Errorf("config %s: include cycle detected", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("read config %s: %w", path, err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Config{}, fmt.Errorf("decode config %s: %w", path, err)
+	}
+	var file Config
+	if err := json.Unmarshal(data, &file); err != nil {
+		return Config{}, fmt.Errorf("decode config %s: %w", path, err)
+	}
+	if depth > 0 {
+		if _, exists := raw["database"]; exists {
+			return Config{}, fmt.Errorf("config %s: database is only allowed in the main file", path)
+		}
+		if _, exists := raw["server"]; exists {
+			return Config{}, fmt.Errorf("config %s: server is only allowed in the main file", path)
+		}
+	}
+	directory := filepath.Dir(path)
+	normalizeConfigFileReferences(&file, directory)
+	result := mergeConfigCollections(Config{Database: file.Database, Server: file.Server}, file)
+	visiting[path] = true
+	defer delete(visiting, path)
+	for _, reference := range file.Include {
+		matches, err := expandConfigIncludes(directory, reference)
+		if err != nil {
+			return Config{}, err
+		}
+		for _, match := range matches {
+			included, err := loadConfigFile(match, visiting, depth+1)
+			if err != nil {
+				return Config{}, err
+			}
+			result = mergeConfigCollections(result, included)
+		}
+	}
+	return result, nil
+}
+
+func mergeConfigCollections(target, extra Config) Config {
+	target.Adapters = append(target.Adapters, extra.Adapters...)
+	target.Profiles = append(target.Profiles, extra.Profiles...)
+	target.Searches = append(target.Searches, extra.Searches...)
+	target.Resources = append(target.Resources, extra.Resources...)
+	target.EmployerGroups = append(target.EmployerGroups, extra.EmployerGroups...)
+	target.Models = append(target.Models, extra.Models...)
+	target.Jobs = append(target.Jobs, extra.Jobs...)
+	target.AnswerSets = append(target.AnswerSets, extra.AnswerSets...)
+	return target
+}
+
+func normalizeConfigFileReferences(cfg *Config, directory string) {
+	for index := range cfg.AnswerSets {
+		cfg.AnswerSets[index] = configFileReference(directory, cfg.AnswerSets[index])
+	}
+	for index := range cfg.Profiles {
+		profile := &cfg.Profiles[index]
+		profile.ResumeFactsFile = configFileReference(directory, profile.ResumeFactsFile)
+		profile.Applications.MessageTemplateFile = configFileReference(directory, profile.Applications.MessageTemplateFile)
+		for ruleIndex := range profile.Applications.EmployerRules {
+			rule := &profile.Applications.EmployerRules[ruleIndex]
+			rule.MessageTemplateFile = configFileReference(directory, rule.MessageTemplateFile)
+		}
+		if profile.Bootstrap != nil {
+			profile.Bootstrap.Source = configFileReference(directory, profile.Bootstrap.Source)
+		}
+	}
+}
+
+func configFileReference(directory, reference string) string {
+	reference = strings.TrimSpace(reference)
+	if reference == "" || filepath.IsAbs(reference) {
+		return reference
+	}
+	return filepath.Clean(filepath.Join(directory, reference))
+}
+
+func expandConfigIncludes(directory, reference string) ([]string, error) {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return nil, errors.New("include path must not be empty")
+	}
+	pattern := reference
+	if !filepath.IsAbs(pattern) {
+		pattern = filepath.Join(directory, pattern)
+	}
+	if !strings.ContainsAny(pattern, "*?[") {
+		return []string{filepath.Clean(pattern)}, nil
+	}
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("include %q: %w", reference, err)
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("include %q matched no files", reference)
+	}
+	sort.Strings(matches)
+	result := make([]string, 0, len(matches))
+	for _, match := range matches {
+		result = append(result, filepath.Clean(match))
+	}
+	return result, nil
 }
 
 func (c *Config) resolveAnswerSets(baseDirectory string) error {
