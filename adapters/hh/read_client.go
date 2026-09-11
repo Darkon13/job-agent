@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/credentials"
 )
 
 const (
@@ -138,40 +138,24 @@ func (client *ReadClient) ReadProfile(ctx context.Context, profileID core.Profil
 }
 
 func loadOAuthCredentials(reference string) (oauthCredentials, error) {
-	path := strings.TrimSpace(reference)
-	if strings.HasPrefix(path, "file:") {
-		path = strings.TrimPrefix(path, "file:")
-	}
-	if path == "" || strings.Contains(path, "://") {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "unsupported credentials_ref", nil)
-	}
-	file, err := os.Open(path)
+	record, err := credentials.Load(reference)
 	if err != nil {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file is unavailable", err)
+		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", credentialMessage(err), err)
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file is unavailable", err)
+	return oauthCredentials{AccessToken: record.AccessToken}, nil
+}
+
+func credentialMessage(err error) string {
+	switch {
+	case errors.Is(err, credentials.ErrUnsupportedReference):
+		return "unsupported credentials_ref"
+	case errors.Is(err, credentials.ErrUnsafePermissions):
+		return "credential file permissions must not allow group or other access"
+	case errors.Is(err, credentials.ErrInvalidRecord):
+		return "credential file is invalid"
+	default:
+		return "credential file is unavailable"
 	}
-	if !info.Mode().IsRegular() {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential reference is not a regular file", nil)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file permissions must not allow group or other access", nil)
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxAPIResponse))
-	if err != nil {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file is unavailable", err)
-	}
-	var credentials oauthCredentials
-	if err := json.Unmarshal(data, &credentials); err != nil {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file is invalid", err)
-	}
-	if strings.TrimSpace(credentials.AccessToken) == "" {
-		return oauthCredentials{}, operationError(core.ErrorUnauthorized, "profiles.read.auth", "credential file has no access token", nil)
-	}
-	return credentials, nil
 }
 
 func operationError(category core.ErrorCategory, operation, message string, cause error) *core.OperationError {

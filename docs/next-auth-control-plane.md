@@ -1,11 +1,28 @@
 # Следующая задача: auth control plane и вывод credentials
 
-Статус: `planned`. Реализация в рамках этой задачи ещё не начата.
+Статус: `in_progress`. Credential record и JSON/dotenv reader/writer уже
+реализованы; auth session, adapter login и presenters ещё не начаты.
 
 Живой HH login, OAuth exchange, captcha и обновление токенов должны быть одним
 backend workflow. CLI и dashboard являются клиентами одной auth session, а не
 двумя независимыми реализациями входа. Исследованный HH flow описан в
 [`hh-auth-flow.md`](hh-auth-flow.md).
+
+## Credential storage
+
+Пакет `credentials/` читает и пишет канонический `Record` с access/refresh
+token, expiry, token type, scopes, platform/profile и revision. Поддерживаемые
+`credentials_ref`:
+
+- `file:/path/credentials.json` — основной JSON-формат;
+- `dotenv-file:/path/credentials.env` — dotenv с `HH_ACCESS_TOKEN`,
+  `HH_REFRESH_TOKEN`, `HH_EXPIRES_AT`;
+- bare path без схемы сохранён для совместимости и трактуется как JSON.
+
+Reader принимает только regular file с правами без group/other и ограничивает
+размер записи. Writer пишет атомарно через temp-файл и rename, выставляет
+`0600`, не следует по symlink и не перезаписывает существующий secret без
+явного `force`. Секреты не попадают в сообщения ошибок.
 
 ## Пользовательские сценарии
 
@@ -125,7 +142,7 @@ per-profile lock и revision CAS; после частичного сбоя по�
 
 ## Порядок реализации
 
-1. Credential record, reader/writer и JSON/dotenv round-trip.
+1. ✅ Credential record, reader/writer и JSON/dotenv round-trip.
 2. Persistent auth session и challenge API без platform-specific UI.
 3. HH browser login и OAuth token exchange внутри adapter-а.
 4. Terminal presenter: TTY separation, Kitty, Sixel и fallback.

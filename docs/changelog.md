@@ -17,6 +17,9 @@
   `applications.tailoring.skills`, модель выбирает навыки с fallback на
   детерминированную политику; активная фаза, skill diff и recovery показываются
   в dashboard; подробности в `application-resume-tailoring.md`.
+- Credential record в пакете `credentials`: чтение JSON и dotenv
+  (`file:`/`dotenv-file:`), атомарная запись `0600` без symlink и случайной
+  перезаписи; HH adapter читает refresh-совместимую запись.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

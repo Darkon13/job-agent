@@ -173,3 +173,30 @@ func TestReadClientRejectsCredentialFileVisibleToOtherUsers(t *testing.T) {
 		t.Fatalf("error = %v, want unauthorized", err)
 	}
 }
+
+func TestReadClientLoadsDotenvCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testAccessToken {
+			t.Error("missing bearer authorization")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":"applicant-42","auth_type":"applicant","is_applicant":true}`))
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "credentials.env")
+	if err := os.WriteFile(path, []byte("HH_ACCESS_TOKEN='"+testAccessToken+"'\n"), 0o600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+	client, err := NewReadClient("primary", "dotenv-file:"+path, "", server.Client())
+	if err != nil {
+		t.Fatalf("new read client: %v", err)
+	}
+	client.apiBaseURL = server.URL
+	profile, err := client.ReadProfile(context.Background(), "primary")
+	if err != nil {
+		t.Fatalf("read profile: %v", err)
+	}
+	if profile.ExternalAccountID != "applicant-42" {
+		t.Fatalf("profile = %#v", profile)
+	}
+}

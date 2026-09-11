@@ -661,6 +661,14 @@ composition root только для режимов `approval` и `submit`.
 {"access_token":"..."}
 ```
 
+Поддерживаются две схемы `credentials_ref`: `file:` для JSON и
+`dotenv-file:` для dotenv с `HH_ACCESS_TOKEN`, `HH_REFRESH_TOKEN` и
+`HH_EXPIRES_AT`. Bare path без схемы по-прежнему читается как JSON. Loader
+принимает только regular file с правами без group/other. Пакет `credentials/`
+уже умеет писать запись атомарно, выставляет `0600`, не следует по symlink и
+не перезаписывает существующий secret без явного `force`; CLI-команда
+`auth login` подключит этот writer на следующем срезе.
+
 В профиле указывается только ссылка:
 
 ```json
