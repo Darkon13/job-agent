@@ -42,8 +42,10 @@
 - [x] Compose-сервис `browser-worker` (профиль `browser`) + volume contexts.
 - [x] Операции v1: `health`, `ensure`, `storage_state`, `goto`, `screenshot`,
       `click`, `fill`, `press`, `wait`, `content`, `page`, `close`.
-- [ ] DoD: worker unit-тесты и VNC E2E smoke; подключение клиента к backend
-      (M2) с `BROWSER_WORKER_URL`/`BROWSER_WORKER_TOKEN`.
+- [x] Unit-тесты worker: config и HTTP-поверхность (валидация, Bearer-токен,
+      лимиты тела).
+- [ ] DoD: VNC E2E smoke; подключение клиента к backend (M2) с
+      `BROWSER_WORKER_URL`/`BROWSER_WORKER_TOKEN`.
 
 ## M2. Auth control plane
 
