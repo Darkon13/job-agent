@@ -75,10 +75,11 @@
 - [x] Worker `test.complete`: монотонный результат попытки по профилю
       (миграция 23).
 - [ ] Worker `review.answer`.
-- [ ] Цепочка ответа (решение: автоматически, review-фолбэк): blocked
-      application → `test.capture`; полное покрытие `AnswerBlock` →
-      `questionnaire.answer`; неполное → review session без submit; после
-      успешного submit → `test.complete` и возврат application в submit;
+- [x] Producer и gate (решение: автоматически, review-фолбэк): blocked
+      application → `test.capture`; запись `submitted`/`passed` attempt снимает
+      статический `has_test`-блок и возвращает pipeline к submit.
+- [ ] Полное покрытие `AnswerBlock` → `questionnaire.answer`; неполное →
+      review session без submit; после успешного submit → `test.complete`;
       ревизии answer blocks; contextual-вопросы только в manual.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] Review UI в dashboard; CLI review.

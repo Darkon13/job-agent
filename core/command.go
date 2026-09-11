@@ -197,7 +197,7 @@ func (payload TestCompletePayload) Validate() error {
 	if strings.TrimSpace(payload.VacancyExternalID) == "" {
 		return errors.New("test completion requires vacancy external id")
 	}
-	if payload.Status != TestAttemptPassed && payload.Status != TestAttemptFailed {
+	if payload.Status != TestAttemptSubmitted && payload.Status != TestAttemptPassed && payload.Status != TestAttemptFailed {
 		return fmt.Errorf("test completion has unsupported status %q", payload.Status)
 	}
 	return nil

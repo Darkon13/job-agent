@@ -42,6 +42,9 @@
   browser write transport (входные ответы не догадываются в worker-е).
 - Worker `test.complete` и миграция 23: монотонный результат vacancy test по
   профилю, где `passed` не понижается поздним `failed`.
+- Цепочка vacancy test: blocked application ставит идемпотентный
+  `test.capture`; `submitted`/`passed` attempt снимает статический
+  `has_test`-блок, и повторный submit продолжает pipeline.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

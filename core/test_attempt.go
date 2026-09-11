@@ -10,8 +10,11 @@ import (
 type TestAttemptStatus string
 
 const (
-	TestAttemptPassed TestAttemptStatus = "passed"
-	TestAttemptFailed TestAttemptStatus = "failed"
+	// TestAttemptSubmitted means the platform accepted the answers but the
+	// graded outcome is not observed yet. The application flow may continue.
+	TestAttemptSubmitted TestAttemptStatus = "submitted"
+	TestAttemptPassed    TestAttemptStatus = "passed"
+	TestAttemptFailed    TestAttemptStatus = "failed"
 )
 
 // TestAttempt is the latest observed outcome of a vacancy test for one profile.
@@ -34,7 +37,7 @@ func (attempt TestAttempt) Validate() error {
 		return errors.New("test attempt requires platform, profile, external id and definition")
 	}
 	switch attempt.Status {
-	case TestAttemptPassed, TestAttemptFailed:
+	case TestAttemptSubmitted, TestAttemptPassed, TestAttemptFailed:
 	default:
 		return fmt.Errorf("test attempt has unsupported status %q", attempt.Status)
 	}
@@ -50,3 +53,7 @@ func (attempt TestAttempt) Validate() error {
 }
 
 func (attempt TestAttempt) Passed() bool { return attempt.Status == TestAttemptPassed }
+
+// Continues reports whether the recorded outcome allows the application
+// pipeline to proceed. Only an explicit failure blocks it.
+func (attempt TestAttempt) Continues() bool { return attempt.Status != TestAttemptFailed }

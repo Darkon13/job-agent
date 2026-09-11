@@ -130,6 +130,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation workflow: %v", err)
 	}
+	vacancyTestWorkflow, err := workflow.NewVacancyTestWorkflow(store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	if err != nil {
+		log.Fatalf("create vacancy test workflow: %v", err)
+	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -459,6 +463,7 @@ func main() {
 			log.Fatalf("create application handler: %v", err)
 		}
 		applicationHandler.ConfigureTailoring(applicationTailoringCoordinator)
+		applicationHandler.ConfigureTestChain(store, vacancyTestWorkflow)
 		applicationWorker, err := newTaskWorkerBlockedBy(
 			store, core.TaskApplicationSubmit, core.TaskProfileStateApply,
 			profileMutationLane.Wrap(applicationHandler.Handle),

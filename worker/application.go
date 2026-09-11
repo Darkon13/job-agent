@@ -179,17 +179,26 @@ func (registry *ApplicationTransportRegistry) VacancyReaderCount() int {
 	return len(registry.vacancyReaders)
 }
 
+// VacancyTestEnqueuer schedules the durable steps of the vacancy test answer
+// chain. The application worker only requests a capture; it never resolves or
+// submits answers itself.
+type VacancyTestEnqueuer interface {
+	EnqueueCapture(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, source string) (bool, error)
+}
+
 type ApplicationHandler struct {
-	repository storage.ApplicationRepository
-	vacancies  storage.VacancyRepository
-	budgets    storage.ApplicationBudgetRepository
-	pacing     storage.ApplicationPaceRepository
-	activity   storage.ProfileActivityRepository
-	transports *ApplicationTransportRegistry
-	plans      ApplicationPlanResolver
-	jitter     ApplicationJitterSource
-	clock      Clock
-	tailoring  *ApplicationTailoringCoordinator
+	repository   storage.ApplicationRepository
+	vacancies    storage.VacancyRepository
+	budgets      storage.ApplicationBudgetRepository
+	pacing       storage.ApplicationPaceRepository
+	activity     storage.ProfileActivityRepository
+	transports   *ApplicationTransportRegistry
+	plans        ApplicationPlanResolver
+	jitter       ApplicationJitterSource
+	clock        Clock
+	tailoring    *ApplicationTailoringCoordinator
+	testAttempts storage.TestAttemptRepository
+	testChain    VacancyTestEnqueuer
 }
 
 func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, pacing storage.ApplicationPaceRepository, activity storage.ProfileActivityRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, jitter ApplicationJitterSource, clock Clock) (*ApplicationHandler, error) {
@@ -206,6 +215,38 @@ func (handler *ApplicationHandler) ConfigureTailoring(coordinator *ApplicationTa
 		return
 	}
 	handler.tailoring = coordinator
+}
+
+// ConfigureTestChain attaches the vacancy test answer chain. A recorded
+// submitted or passed attempt lets the pipeline skip a static "has_test"
+// blocker; a missing attempt schedules capture instead of failing silently.
+func (handler *ApplicationHandler) ConfigureTestChain(attempts storage.TestAttemptRepository, enqueuer VacancyTestEnqueuer) {
+	if handler == nil {
+		return
+	}
+	handler.testAttempts = attempts
+	handler.testChain = enqueuer
+}
+
+func (handler *ApplicationHandler) testContinues(ctx context.Context, application core.Application) (bool, error) {
+	if handler.testAttempts == nil {
+		return false, nil
+	}
+	attempt, found, err := handler.testAttempts.LatestTestAttempt(ctx, application.Key.Vacancy.Platform, application.Key.ProfileID, application.Key.Vacancy.ExternalID)
+	if err != nil {
+		return false, err
+	}
+	return found && attempt.Continues(), nil
+}
+
+func (handler *ApplicationHandler) enqueueTestCapture(ctx context.Context, application core.Application, source string) error {
+	if handler.testChain == nil {
+		return nil
+	}
+	if _, err := handler.testChain.EnqueueCapture(ctx, application.Key.ProfileID, application.Key.Vacancy.Platform, application.Key.Vacancy.ExternalID, source); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -298,7 +339,11 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 			return err
 		}
 		preparedResumeID := ""
-		preparation, decided := applicationPlatformPreflight(vacancy)
+		testContinues, err := handler.testContinues(ctx, application)
+		if err != nil {
+			return err
+		}
+		preparation, decided := applicationPlatformPreflight(vacancy, testContinues)
 		if !decided && plan.Mode != core.ApplicationExecutionDryRun && plan.ResumeID != "" {
 			preparation, preparedResumeID, decided, err = handler.applicationResumePreflight(ctx, application, plan.ResumeID)
 			if err != nil {
@@ -345,7 +390,15 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 			if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
 				return err
 			}
-			return handler.repository.SaveApplication(ctx, application, expectedStatus)
+			if err := handler.repository.SaveApplication(ctx, application, expectedStatus); err != nil {
+				return err
+			}
+			if preparation.Code == "vacancy_test_required" {
+				if err := handler.enqueueTestCapture(ctx, application, "application-review"); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 	}
 	switch plan.Mode {
@@ -553,7 +606,7 @@ func (handler *ApplicationHandler) loadFullVacancy(ctx context.Context, applicat
 	return vacancy, nil
 }
 
-func applicationPlatformPreflight(vacancy core.Vacancy) (applicationoperator.ApplicationPreparation, bool) {
+func applicationPlatformPreflight(vacancy core.Vacancy, testContinues bool) (applicationoperator.ApplicationPreparation, bool) {
 	if vacancy.State != core.VacancyStateOpen || vacancyAttributeBool(vacancy, "closed_for_applicants") {
 		return applicationoperator.ApplicationPreparation{
 			Outcome: applicationoperator.ApplicationSkip, Code: "vacancy_closed",
@@ -566,7 +619,7 @@ func applicationPlatformPreflight(vacancy core.Vacancy) (applicationoperator.App
 			Reason: "applicant relation got_response already exists",
 		}, true
 	}
-	if vacancyAttributeBool(vacancy, "has_test") || vacancyHasNonEmptyAttribute(vacancy, "test") {
+	if !testContinues && (vacancyAttributeBool(vacancy, "has_test") || vacancyHasNonEmptyAttribute(vacancy, "test")) {
 		return applicationoperator.ApplicationPreparation{
 			Outcome: applicationoperator.ApplicationReview, Code: "vacancy_test_required",
 			Reason: "vacancy requires a test or questionnaire",
@@ -649,6 +702,11 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		if err := handler.releaseBudget(ctx, application, now); err != nil {
 			return err
+		}
+		if operationError.Metadata["code"] == "questionnaire_required" {
+			if err := handler.enqueueTestCapture(ctx, application, "application-submit"); err != nil {
+				return err
+			}
 		}
 		return handler.restoreTailoring(ctx, application)
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded, core.ErrorUnauthorized:
