@@ -110,7 +110,8 @@ func (workflow *ApplicationTailoringWorkflow) PlanAndEnqueue(ctx context.Context
 		return ApplicationTailoringStartResult{}, err
 	}
 	candidate, err := core.NewApplicationTailoring(core.NewApplicationTailoringParams{
-		ID: core.ApplicationTailoringID(id), ApplicationID: request.Application.ID, Key: request.Application.Key,
+		ID: core.ApplicationTailoringID(id), ApplicationID: request.Application.ID,
+		Attempt: request.Application.Attempts + 1, Key: request.Application.Key,
 		ResumeID: request.ResumeID, ProcessorTag: plan.ProcessorTag, ProcessorVersion: plan.ProcessorVersion,
 		ProcessorInputDigest: plan.InputDigest, AllowedPaths: request.AllowedPaths,
 		Baseline: observation, TailoredState: tailored.State,

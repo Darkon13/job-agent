@@ -1,3 +1,4 @@
 DROP INDEX application_tailorings_status_idx;
+DROP INDEX application_tailorings_application_attempt_idx;
 DROP INDEX application_tailorings_active_profile_idx;
 DROP TABLE application_tailorings;

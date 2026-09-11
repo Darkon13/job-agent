@@ -23,7 +23,7 @@ func memoryTailoringFixture(t *testing.T, id core.ApplicationTailoringID, applic
 		t.Fatalf("new tailored: %v", err)
 	}
 	saga, err := core.NewApplicationTailoring(core.NewApplicationTailoringParams{
-		ID: id, ApplicationID: applicationID,
+		ID: id, ApplicationID: applicationID, Attempt: 1,
 		Key:      core.ApplicationKey{ProfileID: profileID, Vacancy: core.VacancyKey{Platform: "hh", ExternalID: string(applicationID)}},
 		ResumeID: "resume-1", ProcessorTag: "skills", ProcessorVersion: "v1",
 		ProcessorInputDigest: "sha256:" + strings.Repeat("0", 64),

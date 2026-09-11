@@ -31,6 +31,7 @@ const (
 type ApplicationTailoring struct {
 	ID                     ApplicationTailoringID     `json:"id"`
 	ApplicationID          ApplicationID              `json:"application_id"`
+	Attempt                int                        `json:"attempt"`
 	Key                    ApplicationKey             `json:"key"`
 	ResumeID               string                     `json:"resume_id"`
 	Status                 ApplicationTailoringStatus `json:"status"`
@@ -57,6 +58,7 @@ type ApplicationTailoring struct {
 type NewApplicationTailoringParams struct {
 	ID                   ApplicationTailoringID
 	ApplicationID        ApplicationID
+	Attempt              int
 	Key                  ApplicationKey
 	ResumeID             string
 	ProcessorTag         string
@@ -80,7 +82,7 @@ func NewApplicationTailoring(params NewApplicationTailoringParams, now time.Time
 		return ApplicationTailoring{}, errors.New("application tailoring requires non-empty baseline and target states")
 	}
 	tailoring := ApplicationTailoring{
-		ID: params.ID, ApplicationID: params.ApplicationID, Key: params.Key,
+		ID: params.ID, ApplicationID: params.ApplicationID, Attempt: params.Attempt, Key: params.Key,
 		ResumeID: strings.TrimSpace(params.ResumeID), Status: ApplicationTailoringPlanned,
 		ProcessorTag: strings.TrimSpace(params.ProcessorTag), ProcessorVersion: strings.TrimSpace(params.ProcessorVersion),
 		ProcessorInputDigest: params.ProcessorInputDigest, AllowedPaths: slices.Clone(params.AllowedPaths),
@@ -105,8 +107,8 @@ func NewApplicationTailoring(params NewApplicationTailoringParams, now time.Time
 }
 
 func (tailoring ApplicationTailoring) Validate() error {
-	if tailoring.ID == "" || tailoring.ApplicationID == "" || strings.TrimSpace(tailoring.ResumeID) == "" {
-		return errors.New("application tailoring requires id, application and resume")
+	if tailoring.ID == "" || tailoring.ApplicationID == "" || tailoring.Attempt < 1 || strings.TrimSpace(tailoring.ResumeID) == "" {
+		return errors.New("application tailoring requires id, application attempt and resume")
 	}
 	if err := tailoring.Key.Validate(); err != nil {
 		return err
@@ -322,7 +324,7 @@ func validateApplicationTailoringPaths(baselineRaw, tailoredRaw json.RawMessage,
 func applicationTailoringKey(tailoring ApplicationTailoring) string {
 	hash := sha256.New()
 	for _, value := range []string{
-		string(tailoring.ApplicationID), string(tailoring.Key.ProfileID), tailoring.Key.Vacancy.String(), tailoring.ResumeID,
+		string(tailoring.ApplicationID), fmt.Sprintf("%d", tailoring.Attempt), string(tailoring.Key.ProfileID), tailoring.Key.Vacancy.String(), tailoring.ResumeID,
 		tailoring.ProcessorTag, tailoring.ProcessorVersion, tailoring.ProcessorInputDigest,
 		tailoring.BaselineDigest, tailoring.TailoredDigest, tailoring.BaselineObservedAt.UTC().Format(time.RFC3339Nano),
 		strings.Join(tailoring.AllowedPaths, "\x00"),

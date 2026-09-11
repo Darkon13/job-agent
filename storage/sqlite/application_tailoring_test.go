@@ -40,7 +40,7 @@ func sqliteTailoringFixture(t *testing.T, store interface {
 		t.Fatalf("new tailored: %v", err)
 	}
 	saga, err := core.NewApplicationTailoring(core.NewApplicationTailoringParams{
-		ID: id, ApplicationID: applicationID, Key: application.Key, ResumeID: "resume-1",
+		ID: id, ApplicationID: applicationID, Attempt: 1, Key: application.Key, ResumeID: "resume-1",
 		ProcessorTag: "skills", ProcessorVersion: "v1", ProcessorInputDigest: "sha256:" + strings.Repeat("0", 64),
 		AllowedPaths: []string{"/resumes/resume-1/web/keySkills"}, Baseline: baseline, TailoredState: tailored.State,
 	}, now)
@@ -104,7 +104,7 @@ func TestStorePersistsTailoringAndEnforcesProfileLease(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	persisted, err := reopened.ApplicationTailoringByApplication(ctx, first.ApplicationID)
+	persisted, err := reopened.ApplicationTailoring(ctx, first.ID)
 	if err != nil || persisted.Status != core.ApplicationTailoringRestored || persisted.BaselineDigest != first.BaselineDigest {
 		t.Fatalf("persisted=%#v err=%v", persisted, err)
 	}

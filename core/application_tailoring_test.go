@@ -19,7 +19,7 @@ func applicationTailoringFixture(t *testing.T) (ApplicationTailoring, ProfileSta
 		t.Fatalf("new tailored observation: %v", err)
 	}
 	saga, err := NewApplicationTailoring(NewApplicationTailoringParams{
-		ID: "tailoring-1", ApplicationID: "application-1",
+		ID: "tailoring-1", ApplicationID: "application-1", Attempt: 1,
 		Key:      ApplicationKey{ProfileID: "primary", Vacancy: VacancyKey{Platform: "hh", ExternalID: "42"}},
 		ResumeID: "resume-1", ProcessorTag: "skills-from-vacancy", ProcessorVersion: "v1",
 		ProcessorInputDigest: profileStateDigest([]byte("input")),
@@ -84,7 +84,7 @@ func TestApplicationTailoringRejectsReadBackDriftAndRequiresRecovery(t *testing.
 func TestApplicationTailoringRequiresExactAllowedSnapshot(t *testing.T) {
 	_, baseline, tailored, now := applicationTailoringFixture(t)
 	_, err := NewApplicationTailoring(NewApplicationTailoringParams{
-		ID: "tailoring-2", ApplicationID: "application-2",
+		ID: "tailoring-2", ApplicationID: "application-2", Attempt: 1,
 		Key:      ApplicationKey{ProfileID: "primary", Vacancy: VacancyKey{Platform: "hh", ExternalID: "43"}},
 		ResumeID: "resume-1", ProcessorTag: "processor", ProcessorVersion: "v1",
 		ProcessorInputDigest: profileStateDigest([]byte("input")),

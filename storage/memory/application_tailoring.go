@@ -97,6 +97,9 @@ func (repository *Repository) SaveApplicationTailoring(ctx context.Context, cand
 		if repository.tailoringProfiles[candidate.Key.ProfileID] == candidate.ID {
 			delete(repository.tailoringProfiles, candidate.Key.ProfileID)
 		}
+		if repository.tailoringApplications[candidate.ApplicationID] == candidate.ID {
+			delete(repository.tailoringApplications, candidate.ApplicationID)
+		}
 	} else {
 		repository.tailoringProfiles[candidate.Key.ProfileID] = candidate.ID
 	}
@@ -104,7 +107,7 @@ func (repository *Repository) SaveApplicationTailoring(ctx context.Context, cand
 }
 
 func sameApplicationTailoringInputs(left, right core.ApplicationTailoring) bool {
-	return left.ApplicationID == right.ApplicationID && left.Key == right.Key &&
+	return left.ApplicationID == right.ApplicationID && left.Attempt == right.Attempt && left.Key == right.Key &&
 		left.ResumeID == right.ResumeID && left.IdempotencyKey == right.IdempotencyKey &&
 		left.ProcessorTag == right.ProcessorTag && left.ProcessorVersion == right.ProcessorVersion &&
 		left.ProcessorInputDigest == right.ProcessorInputDigest && slices.Equal(left.AllowedPaths, right.AllowedPaths) &&

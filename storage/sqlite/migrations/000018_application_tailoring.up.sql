@@ -1,6 +1,7 @@
 CREATE TABLE application_tailorings (
     id TEXT PRIMARY KEY,
-    application_id TEXT NOT NULL UNIQUE,
+    application_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK (attempt > 0),
     profile_id TEXT NOT NULL,
     platform TEXT NOT NULL,
     external_id TEXT NOT NULL,
@@ -33,6 +34,9 @@ CREATE TABLE application_tailorings (
 CREATE UNIQUE INDEX application_tailorings_active_profile_idx
     ON application_tailorings(profile_id)
     WHERE status <> 'restored';
+
+CREATE UNIQUE INDEX application_tailorings_application_attempt_idx
+    ON application_tailorings(application_id, attempt);
 
 CREATE INDEX application_tailorings_status_idx
     ON application_tailorings(status, updated_at DESC);

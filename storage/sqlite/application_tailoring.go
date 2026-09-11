@@ -14,7 +14,7 @@ import (
 	"github.com/Darkon13/job-agent/storage"
 )
 
-const applicationTailoringColumns = `id, application_id, profile_id, platform, external_id, resume_id,
+const applicationTailoringColumns = `id, application_id, attempt, profile_id, platform, external_id, resume_id,
 	status, idempotency_key, processor_tag, processor_version, processor_input_digest,
 	allowed_paths, baseline_digest, tailored_digest, baseline_remote_revision,
 	baseline_observed_at, tailored_remote_revision, baseline_state, tailored_state, apply_proposal_id,
@@ -29,8 +29,8 @@ func (store *Store) CreateApplicationTailoring(ctx context.Context, candidate co
 		return core.ApplicationTailoring{}, false, fmt.Errorf("encode application tailoring paths: %w", err)
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO application_tailorings (`+applicationTailoringColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		candidate.ID, candidate.ApplicationID, candidate.Key.ProfileID, candidate.Key.Vacancy.Platform,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		candidate.ID, candidate.ApplicationID, candidate.Attempt, candidate.Key.ProfileID, candidate.Key.Vacancy.Platform,
 		candidate.Key.Vacancy.ExternalID, candidate.ResumeID, candidate.Status, candidate.IdempotencyKey,
 		candidate.ProcessorTag, candidate.ProcessorVersion, candidate.ProcessorInputDigest, paths,
 		candidate.BaselineDigest, candidate.TailoredDigest, candidate.BaselineRemoteRevision,
@@ -83,7 +83,8 @@ func (store *Store) ApplicationTailoringByApplication(ctx context.Context, appli
 		return core.ApplicationTailoring{}, errors.New("application tailoring requires application id")
 	}
 	tailoring, err := scanApplicationTailoring(store.db.QueryRowContext(ctx,
-		`SELECT `+applicationTailoringColumns+` FROM application_tailorings WHERE application_id = ?`, applicationID))
+		`SELECT `+applicationTailoringColumns+` FROM application_tailorings
+		 WHERE application_id = ? AND status <> 'restored' ORDER BY attempt DESC LIMIT 1`, applicationID))
 	return tailoring, applicationTailoringLookupError(err)
 }
 
@@ -138,7 +139,7 @@ func scanApplicationTailoring(row rowScanner) (core.ApplicationTailoring, error)
 	var allowedPaths, baselineState, tailoredState []byte
 	var baselineObservedAt, createdAt, updatedAt int64
 	if err := row.Scan(
-		&tailoring.ID, &tailoring.ApplicationID, &tailoring.Key.ProfileID, &tailoring.Key.Vacancy.Platform,
+		&tailoring.ID, &tailoring.ApplicationID, &tailoring.Attempt, &tailoring.Key.ProfileID, &tailoring.Key.Vacancy.Platform,
 		&tailoring.Key.Vacancy.ExternalID, &tailoring.ResumeID, &tailoring.Status, &tailoring.IdempotencyKey,
 		&tailoring.ProcessorTag, &tailoring.ProcessorVersion, &tailoring.ProcessorInputDigest,
 		&allowedPaths, &tailoring.BaselineDigest, &tailoring.TailoredDigest,
@@ -163,7 +164,7 @@ func scanApplicationTailoring(row rowScanner) (core.ApplicationTailoring, error)
 }
 
 func sameSQLiteApplicationTailoringInputs(left, right core.ApplicationTailoring) bool {
-	return left.ApplicationID == right.ApplicationID && left.Key == right.Key &&
+	return left.ApplicationID == right.ApplicationID && left.Attempt == right.Attempt && left.Key == right.Key &&
 		left.ResumeID == right.ResumeID && left.IdempotencyKey == right.IdempotencyKey &&
 		left.ProcessorTag == right.ProcessorTag && left.ProcessorVersion == right.ProcessorVersion &&
 		left.ProcessorInputDigest == right.ProcessorInputDigest && slices.Equal(left.AllowedPaths, right.AllowedPaths) &&
