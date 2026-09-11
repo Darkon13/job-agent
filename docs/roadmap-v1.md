@@ -115,17 +115,21 @@
       Shared mutation lease для нескольких реплик — вне v1.
 - [x] Config builder: `include` с рекурсией, glob, cycle/depth guard; ошибки
       несут путь к файлу; ссылки внутри include-файла резолвятся от него.
-- [ ] Заморозка схемы конфига (versioned schema и миграция конфигов).
+- [x] Заморозка схемы конфига: `schema_version` (текущая 1) в главном файле;
+      неизвестная версия отклоняется.
 - [x] Request ID (`X-Request-ID`), структурный access-log (slog JSON) и
-      `/metrics` (Prometheus text: requests по классам, in-flight, uptime).
-- [ ] Метрики очередей/платформенных операций и перевод внутренних логов на
-      структурный logger.
-- [ ] Backup/restore и проверка upgrade/rollback, включая destructive guard.
-- [ ] CI (`make verify`, `go test -race`), LICENSE, release checklist.
-- [ ] Quickstart для чистого аккаунта (browser login) и runbook'и
-      восстановления: `auth_required`, `recovery_required`, failed apply, quota.
+      `/metrics` (Prometheus text: requests по классам, in-flight, uptime,
+      очередь задач по type/status/priority); runtime-логи идут через slog.
+- [x] Backup/restore: `job-agent db backup|restore` (VACUUM INTO, integrity и
+      schema verification, `--force` destructive guard, чистка stale WAL);
+      upgrade/rollback миграций покрыты тестами и runbook-ом.
+- [x] CI (`make verify` c `go test -race`, browser-worker), LICENSE, release
+      checklist с операционной проверкой в `docs/releasing.md`.
+- [x] Quickstart для чистого аккаунта и runbook восстановления
+      (`docs/quickstart.md`, `docs/runbook.md`): auth_required,
+      recovery_required, failed apply, quota, runtime lease, token, worker.
 - [ ] DoD: чистый install с нуля на пустом `data/`, `make release-check`,
-      выпуск `v1.0.0` по `docs/releasing.md`.
+      выпуск `v1.0.0` по `docs/releasing.md` (нужен реальный аккаунт).
 
 ## M6. После v1.0.0 (не блокирует релиз)
 

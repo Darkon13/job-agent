@@ -71,6 +71,13 @@
 - Наблюдаемость API: `X-Request-ID` (входящий сохраняется), структурный
   access-log через slog JSON и `/metrics` в Prometheus text (requests по
   классам, in-flight, uptime).
+- Заморозка схемы конфига: `schema_version: 1`, неизвестная версия
+  отклоняется.
+- Администрирование БД: `job-agent db backup|restore` (VACUUM INTO, integrity
+  и schema verification, `--force`, чистка stale WAL); `/metrics` показывает
+  очередь задач, runtime-логи переведены на slog.
+- LICENSE (MIT), `docs/quickstart.md` и `docs/runbook.md`; release checklist
+  дополнен операционной проверкой backup/restore и upgrade/rollback.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 
