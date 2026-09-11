@@ -47,10 +47,11 @@ func (api *AuthAPI) Handler(next http.Handler) http.Handler {
 }
 
 type authSessionRequest struct {
-	Platform            core.Platform  `json:"platform"`
-	ProfileID           core.ProfileID `json:"profile_id"`
-	CredentialReference string         `json:"credential_reference"`
-	TTL                 string         `json:"ttl,omitempty"`
+	Platform              core.Platform  `json:"platform"`
+	ProfileID             core.ProfileID `json:"profile_id"`
+	CredentialReference   string         `json:"credential_reference,omitempty"`
+	BrowserStateReference string         `json:"browser_state_reference,omitempty"`
+	TTL                   string         `json:"ttl,omitempty"`
 }
 
 type authInputRequest struct {
@@ -74,7 +75,8 @@ func (api *AuthAPI) start(response http.ResponseWriter, request *http.Request) {
 	}
 	session, err := api.controller.Start(request.Context(), auth.StartRequest{
 		Platform: body.Platform, ProfileID: body.ProfileID,
-		CredentialReference: body.CredentialReference, TTL: ttl,
+		CredentialReference: body.CredentialReference, BrowserStateReference: body.BrowserStateReference,
+		TTL: ttl,
 	})
 	if err != nil {
 		writeAuthError(response, err)

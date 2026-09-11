@@ -75,7 +75,7 @@ func TestStorePersistsAuthSessionLifecycle(t *testing.T) {
 		t.Fatalf("save storing: %v", err)
 	}
 	expected = stored.Revision
-	if err := stored.Complete(2, now.Add(5*time.Second)); err != nil {
+	if err := stored.Complete(2, "", now.Add(5*time.Second)); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	if err := store.SaveAuthSession(ctx, stored, expected); err != nil {

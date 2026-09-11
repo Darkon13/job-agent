@@ -13,7 +13,8 @@ import (
 )
 
 const authSessionColumns = `id, platform, profile_id, status, challenge, credential_reference,
-	credential_revision, failure_category, failure_message, revision, expires_at, created_at, updated_at`
+	credential_revision, browser_state_reference, browser_state_digest,
+	failure_category, failure_message, revision, expires_at, created_at, updated_at`
 
 func (store *Store) CreateAuthSession(ctx context.Context, candidate core.AuthSession) (core.AuthSession, bool, error) {
 	if err := candidate.Validate(); err != nil {
@@ -24,9 +25,10 @@ func (store *Store) CreateAuthSession(ctx context.Context, candidate core.AuthSe
 		return core.AuthSession{}, false, err
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO auth_sessions (`+authSessionColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		candidate.ID, candidate.Platform, candidate.ProfileID, candidate.Status, challenge,
-		candidate.CredentialReference, candidate.CredentialRevision, candidate.FailureCategory,
+		candidate.CredentialReference, candidate.CredentialRevision,
+		candidate.BrowserStateReference, candidate.BrowserStateDigest, candidate.FailureCategory,
 		candidate.FailureMessage, candidate.Revision, candidate.ExpiresAt.UnixNano(),
 		candidate.CreatedAt.UnixNano(), candidate.UpdatedAt.UnixNano())
 	if err != nil {
@@ -81,9 +83,11 @@ func (store *Store) SaveAuthSession(ctx context.Context, candidate core.AuthSess
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE auth_sessions SET
 		status = ?, challenge = ?, credential_reference = ?, credential_revision = ?,
+		browser_state_reference = ?, browser_state_digest = ?,
 		failure_category = ?, failure_message = ?, revision = ?, updated_at = ?
 		WHERE id = ? AND revision = ?`,
 		candidate.Status, challenge, candidate.CredentialReference, candidate.CredentialRevision,
+		candidate.BrowserStateReference, candidate.BrowserStateDigest,
 		candidate.FailureCategory, candidate.FailureMessage, candidate.Revision,
 		candidate.UpdatedAt.UnixNano(), candidate.ID, expectedRevision)
 	if err != nil {
@@ -105,8 +109,10 @@ func scanAuthSession(row rowScanner) (core.AuthSession, error) {
 	var expiresAt, createdAt, updatedAt int64
 	if err := row.Scan(
 		&session.ID, &session.Platform, &session.ProfileID, &session.Status, &challengeJSON,
-		&session.CredentialReference, &session.CredentialRevision, &session.FailureCategory,
-		&session.FailureMessage, &session.Revision, &expiresAt, &createdAt, &updatedAt,
+		&session.CredentialReference, &session.CredentialRevision,
+		&session.BrowserStateReference, &session.BrowserStateDigest,
+		&session.FailureCategory, &session.FailureMessage, &session.Revision,
+		&expiresAt, &createdAt, &updatedAt,
 	); err != nil {
 		return core.AuthSession{}, err
 	}

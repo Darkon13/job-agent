@@ -2,8 +2,13 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -63,11 +68,20 @@ type Request struct {
 	Challenge  *Challenge
 }
 
-// Outcome is either the next manual request or the exchanged credential
-// record the service must store.
+// Outcome is either the next manual request or the exchanged artifacts the
+// service must store. A login may produce OAuth credentials, browser storage
+// state, or both.
 type Outcome struct {
-	Request     *Request
-	Credentials *credentials.Record
+	Request      *Request
+	Credentials  *credentials.Record
+	BrowserState *BrowserState
+}
+
+// BrowserState is the sanitized Playwright storage state of a completed
+// browser login. The driver owns platform sanitization; the writer only
+// persists bytes atomically.
+type BrowserState struct {
+	Data json.RawMessage
 }
 
 type Driver interface {
@@ -79,11 +93,16 @@ type CredentialWriter interface {
 	Store(ctx context.Context, reference string, record credentials.Record) (uint64, error)
 }
 
+type BrowserStateWriter interface {
+	Store(ctx context.Context, reference string, data json.RawMessage) (string, error)
+}
+
 type StartRequest struct {
-	Platform            core.Platform
-	ProfileID           core.ProfileID
-	CredentialReference string
-	TTL                 time.Duration
+	Platform              core.Platform
+	ProfileID             core.ProfileID
+	CredentialReference   string
+	BrowserStateReference string
+	TTL                   time.Duration
 }
 
 // Service drives one interactive login per call. A single process-local lock
@@ -95,23 +114,24 @@ type Service struct {
 	challenges ChallengeStore
 	driver     Driver
 	writer     CredentialWriter
+	states     BrowserStateWriter
 	clock      Clock
 	ids        IDGenerator
 }
 
-func NewService(sessions storage.AuthSessionRepository, challenges ChallengeStore, driver Driver, writer CredentialWriter, clock Clock, ids IDGenerator) (*Service, error) {
-	if sessions == nil || challenges == nil || driver == nil || writer == nil || clock == nil || ids == nil {
-		return nil, errors.New("auth service requires sessions, challenges, driver, writer, clock and id generator")
+func NewService(sessions storage.AuthSessionRepository, challenges ChallengeStore, driver Driver, writer CredentialWriter, states BrowserStateWriter, clock Clock, ids IDGenerator) (*Service, error) {
+	if sessions == nil || challenges == nil || driver == nil || writer == nil || states == nil || clock == nil || ids == nil {
+		return nil, errors.New("auth service requires sessions, challenges, driver, writers, clock and id generator")
 	}
-	return &Service{sessions: sessions, challenges: challenges, driver: driver, writer: writer, clock: clock, ids: ids}, nil
+	return &Service{sessions: sessions, challenges: challenges, driver: driver, writer: writer, states: states, clock: clock, ids: ids}, nil
 }
 
 func (service *Service) Start(ctx context.Context, request StartRequest) (core.AuthSession, error) {
 	if request.Platform == "" || request.ProfileID == "" {
 		return core.AuthSession{}, errors.New("auth session requires platform and profile")
 	}
-	if strings.TrimSpace(request.CredentialReference) == "" {
-		return core.AuthSession{}, errors.New("auth session requires a credential reference")
+	if strings.TrimSpace(request.CredentialReference) == "" && strings.TrimSpace(request.BrowserStateReference) == "" {
+		return core.AuthSession{}, errors.New("auth session requires a credential or browser state reference")
 	}
 	ttl := request.TTL
 	if ttl == 0 {
@@ -129,7 +149,9 @@ func (service *Service) Start(ctx context.Context, request StartRequest) (core.A
 	}
 	session, err := core.NewAuthSession(core.NewAuthSessionParams{
 		ID: core.AuthSessionID(id), Platform: request.Platform, ProfileID: request.ProfileID,
-		CredentialReference: request.CredentialReference, ExpiresAt: now.Add(ttl),
+		CredentialReference:   request.CredentialReference,
+		BrowserStateReference: request.BrowserStateReference,
+		ExpiresAt:             now.Add(ttl),
 	}, now)
 	if err != nil {
 		return core.AuthSession{}, err
@@ -247,8 +269,8 @@ func (service *Service) Session(ctx context.Context, id core.AuthSessionID) (cor
 
 func (service *Service) apply(ctx context.Context, session core.AuthSession, outcome Outcome, now time.Time) (core.AuthSession, error) {
 	switch {
-	case outcome.Credentials != nil:
-		return service.store(ctx, session, *outcome.Credentials, now)
+	case outcome.Credentials != nil || outcome.BrowserState != nil:
+		return service.store(ctx, session, outcome, now)
 	case outcome.Request == nil:
 		return core.AuthSession{}, errors.New("auth driver returned an empty outcome")
 	case outcome.Request.Identifier:
@@ -292,12 +314,12 @@ func (service *Service) apply(ctx context.Context, session core.AuthSession, out
 	}
 }
 
-func (service *Service) store(ctx context.Context, session core.AuthSession, record credentials.Record, now time.Time) (core.AuthSession, error) {
+func (service *Service) store(ctx context.Context, session core.AuthSession, outcome Outcome, now time.Time) (core.AuthSession, error) {
 	challengeID := ""
 	if session.Challenge != nil {
 		challengeID = session.Challenge.ID
 	}
-	if session.WaitingChallenge() {
+	if session.WaitingChallenge() || session.Status == core.AuthSessionWaitingIdentifier {
 		if err := session.BeginExchange(now); err != nil {
 			return core.AuthSession{}, err
 		}
@@ -308,14 +330,32 @@ func (service *Service) store(ctx context.Context, session core.AuthSession, rec
 	if err := session.BeginStoring(now); err != nil {
 		return core.AuthSession{}, err
 	}
-	revision, err := service.writer.Store(ctx, session.CredentialReference, record)
-	if err != nil {
-		if failErr := session.Fail(core.ErrorPermanentFailure, "credential storage failed after a successful exchange", now); failErr != nil {
-			return core.AuthSession{}, failErr
+	var credentialRevision uint64
+	if outcome.Credentials != nil {
+		revision, err := service.writer.Store(ctx, session.CredentialReference, *outcome.Credentials)
+		if err != nil {
+			return service.failStorage(ctx, session, now)
 		}
-		return session, nil
+		credentialRevision = revision
 	}
-	if err := session.Complete(revision, now); err != nil {
+	var browserStateDigest string
+	if outcome.BrowserState != nil {
+		digest, err := service.states.Store(ctx, session.BrowserStateReference, outcome.BrowserState.Data)
+		if err != nil {
+			return service.failStorage(ctx, session, now)
+		}
+		browserStateDigest = digest
+	}
+	if err := session.Complete(credentialRevision, browserStateDigest, now); err != nil {
+		return core.AuthSession{}, err
+	}
+	return session, nil
+}
+
+// failStorage settles the session because the exchanged one-time artifacts
+// cannot be replayed by a retry.
+func (service *Service) failStorage(_ context.Context, session core.AuthSession, now time.Time) (core.AuthSession, error) {
+	if err := session.Fail(core.ErrorPermanentFailure, "artifact storage failed after a successful exchange", now); err != nil {
 		return core.AuthSession{}, err
 	}
 	return session, nil
@@ -381,4 +421,49 @@ func (writer *FileCredentialWriter) Store(_ context.Context, reference string, r
 		return 0, err
 	}
 	return revision, nil
+}
+
+// FileBrowserStateWriter persists sanitized Playwright storage state to the
+// configured path atomically with 0600 permissions and returns its digest.
+type FileBrowserStateWriter struct{}
+
+func (writer *FileBrowserStateWriter) Store(_ context.Context, reference string, data json.RawMessage) (string, error) {
+	path := strings.TrimSpace(reference)
+	path = strings.TrimPrefix(path, "file:")
+	if path == "" || strings.Contains(path, "://") {
+		return "", errors.New("browser state reference must be a file path")
+	}
+	if !json.Valid(data) {
+		return "", errors.New("browser state must be valid JSON")
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("browser state output must not be a symlink")
+	}
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("create browser state output: %w", err)
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return "", fmt.Errorf("protect browser state output: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return "", fmt.Errorf("write browser state output: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return "", fmt.Errorf("flush browser state output: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return "", fmt.Errorf("close browser state output: %w", err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		return "", fmt.Errorf("replace browser state output: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }

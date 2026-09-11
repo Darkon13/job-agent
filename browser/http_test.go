@@ -146,6 +146,9 @@ func TestProfileOperationsAreSerializedPerProfile(t *testing.T) {
 		default:
 			current := atomic.AddInt32(&secondaryInFlight, 1)
 			observe(current, &maximumSecondary)
+			if atomic.LoadInt32(&primaryInFlight) > 0 {
+				atomic.StoreInt32(&overlap, 1)
+			}
 			<-release
 			atomic.AddInt32(&secondaryInFlight, -1)
 		}

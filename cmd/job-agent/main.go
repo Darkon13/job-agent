@@ -17,7 +17,9 @@ import (
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
 	"github.com/Darkon13/job-agent/api/httpapi"
+	"github.com/Darkon13/job-agent/auth"
 	"github.com/Darkon13/job-agent/broker"
+	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
@@ -49,6 +51,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "startup" {
 		if err := runProfileStartup(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "auth" {
+		if err := runAuth(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -588,12 +596,66 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
+	authAPI, err := configureAuthAPI(cfg, instances, store)
+	if err != nil {
+		log.Fatalf("configure auth API: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(conversationAPI.Handler()))))), conversationWorkflow, scheduler, workers); err != nil {
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(conversationAPI.Handler())))))
+	if authAPI != nil {
+		handler = authAPI.Handler(handler)
+	}
+	if err := serve(ctx, cfg, handler, conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// configureAuthAPI wires the interactive login control plane when the browser
+// worker is configured. The credential writer runs with Force enabled because
+// the CLI enforces the explicit --force decision before creating a session.
+func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store) (*httpapi.AuthAPI, error) {
+	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
+	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
+	if baseURL == "" || token == "" {
+		log.Printf("browser worker is not configured; interactive auth API is disabled")
+		return nil, nil
+	}
+	client, err := browser.NewHTTPClient(browser.HTTPConfig{BaseURL: baseURL, Token: token})
+	if err != nil {
+		return nil, err
+	}
+	settings := make([]hh.LoginSettings, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		if !profile.Enabled || strings.TrimSpace(profile.StateFile) == "" {
+			continue
+		}
+		instance := instances[profile.Adapter]
+		if instance == nil || instance.Name() != hh.Name {
+			continue
+		}
+		settings = append(settings, hh.LoginSettings{
+			ProfileID: core.ProfileID(profile.Tag), StateFile: profile.StateFile,
+		})
+	}
+	if len(settings) == 0 {
+		log.Printf("browser worker is configured but no HH profile has a state file; interactive auth API is disabled")
+		return nil, nil
+	}
+	driver, err := hh.NewLoginDriver(client, settings)
+	if err != nil {
+		return nil, err
+	}
+	service, err := auth.NewService(
+		store, auth.NewMemoryChallengeStore(), driver,
+		&auth.FileCredentialWriter{Force: true}, &auth.FileBrowserStateWriter{},
+		workflow.SystemClock{}, workflow.RandomIDGenerator{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return httpapi.NewAuthAPI(service)
 }
 
 func jobRunDefinitions(definitions []jobscheduler.Definition) []workflow.JobRunDefinition {

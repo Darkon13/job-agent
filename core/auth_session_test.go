@@ -49,7 +49,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 	if err := session.BeginStoring(now.Add(4 * time.Second)); err != nil {
 		t.Fatalf("begin storing: %v", err)
 	}
-	if err := session.Complete(1, now.Add(5*time.Second)); err != nil {
+	if err := session.Complete(1, "", now.Add(5*time.Second)); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	if session.Status != AuthSessionCompleted || session.CredentialReference == "" || session.CredentialRevision != 1 || session.Revision != 6 {
@@ -102,7 +102,7 @@ func TestAuthSessionRejectsInvalidTransitions(t *testing.T) {
 	if err := session.BeginExchange(now.Add(time.Second)); err == nil {
 		t.Fatal("expected exchange before identifier to fail")
 	}
-	if err := session.Complete(1, now.Add(time.Second)); err == nil {
+	if err := session.Complete(1, "", now.Add(time.Second)); err == nil {
 		t.Fatal("expected complete before storing to fail")
 	}
 	if err := session.BeginIdentifier(now.Add(time.Second)); err != nil {

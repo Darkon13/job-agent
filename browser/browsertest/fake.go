@@ -33,6 +33,11 @@ type Fake struct {
 	ScreenshotData []byte
 	StorageState   json.RawMessage
 	Errors         map[string]error
+
+	// PageFunc and LocatorFunc allow callers to script per-call behavior
+	// (for example URL transitions during a login).
+	PageFunc    func(core.ProfileID) (browser.PageInfo, error)
+	LocatorFunc func(core.ProfileID, browser.LocatorRequest) error
 }
 
 var _ browser.Client = (*Fake)(nil)
@@ -116,6 +121,9 @@ func (fake *Fake) Page(_ context.Context, profileID core.ProfileID) (browser.Pag
 	if err := fake.record("page", profileID, nil); err != nil {
 		return browser.PageInfo{}, err
 	}
+	if fake.PageFunc != nil {
+		return fake.PageFunc(profileID)
+	}
 	return fake.PageResult, nil
 }
 
@@ -134,5 +142,11 @@ func (fake *Fake) Screenshot(_ context.Context, profileID core.ProfileID, reques
 }
 
 func (fake *Fake) Locator(_ context.Context, profileID core.ProfileID, request browser.LocatorRequest) error {
-	return fake.record("locator", profileID, request)
+	if err := fake.record("locator", profileID, request); err != nil {
+		return err
+	}
+	if fake.LocatorFunc != nil {
+		return fake.LocatorFunc(profileID, request)
+	}
+	return nil
 }

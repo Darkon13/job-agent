@@ -75,34 +75,38 @@ func (challenge AuthChallenge) Validate(now time.Time) error {
 // AuthSession owns one interactive login. It stores only redacted metadata:
 // identifiers, codes, tokens and images never enter the session record.
 type AuthSession struct {
-	ID                  AuthSessionID     `json:"id"`
-	Platform            Platform          `json:"platform"`
-	ProfileID           ProfileID         `json:"profile_id"`
-	Status              AuthSessionStatus `json:"status"`
-	Challenge           *AuthChallenge    `json:"challenge,omitempty"`
-	CredentialReference string            `json:"credential_reference,omitempty"`
-	CredentialRevision  uint64            `json:"credential_revision,omitempty"`
-	FailureCategory     ErrorCategory     `json:"failure_category,omitempty"`
-	FailureMessage      string            `json:"failure_message,omitempty"`
-	Revision            uint64            `json:"revision"`
-	ExpiresAt           time.Time         `json:"expires_at"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
+	ID                    AuthSessionID     `json:"id"`
+	Platform              Platform          `json:"platform"`
+	ProfileID             ProfileID         `json:"profile_id"`
+	Status                AuthSessionStatus `json:"status"`
+	Challenge             *AuthChallenge    `json:"challenge,omitempty"`
+	CredentialReference   string            `json:"credential_reference,omitempty"`
+	CredentialRevision    uint64            `json:"credential_revision,omitempty"`
+	BrowserStateReference string            `json:"browser_state_reference,omitempty"`
+	BrowserStateDigest    string            `json:"browser_state_digest,omitempty"`
+	FailureCategory       ErrorCategory     `json:"failure_category,omitempty"`
+	FailureMessage        string            `json:"failure_message,omitempty"`
+	Revision              uint64            `json:"revision"`
+	ExpiresAt             time.Time         `json:"expires_at"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 type NewAuthSessionParams struct {
-	ID                  AuthSessionID
-	Platform            Platform
-	ProfileID           ProfileID
-	CredentialReference string
-	ExpiresAt           time.Time
+	ID                    AuthSessionID
+	Platform              Platform
+	ProfileID             ProfileID
+	CredentialReference   string
+	BrowserStateReference string
+	ExpiresAt             time.Time
 }
 
 func NewAuthSession(params NewAuthSessionParams, now time.Time) (AuthSession, error) {
 	session := AuthSession{
 		ID: params.ID, Platform: params.Platform, ProfileID: params.ProfileID,
-		CredentialReference: strings.TrimSpace(params.CredentialReference),
-		Status:              AuthSessionCreated, Revision: 1, ExpiresAt: params.ExpiresAt.UTC(),
+		CredentialReference:   strings.TrimSpace(params.CredentialReference),
+		BrowserStateReference: strings.TrimSpace(params.BrowserStateReference),
+		Status:                AuthSessionCreated, Revision: 1, ExpiresAt: params.ExpiresAt.UTC(),
 		CreatedAt: now.UTC(), UpdatedAt: now.UTC(),
 	}
 	if err := session.Validate(); err != nil {
@@ -122,10 +126,10 @@ func (session AuthSession) Validate() error {
 		session.UpdatedAt.Before(session.CreatedAt) || session.ExpiresAt.IsZero() {
 		return errors.New("auth session requires revision and valid timestamps")
 	}
-	// The reference is the declared credential destination and may be set
-	// before the record is stored; the revision appears only on completion.
-	if session.Status != AuthSessionCompleted && session.CredentialRevision != 0 {
-		return errors.New("auth session credential revision is only valid for a completed session")
+	// References are declared destinations and may be set before the artifacts
+	// are stored; revisions and digests appear only on completion.
+	if session.Status != AuthSessionCompleted && (session.CredentialRevision != 0 || session.BrowserStateDigest != "") {
+		return errors.New("auth session artifact revisions are only valid for a completed session")
 	}
 	switch session.Status {
 	case AuthSessionCreated, AuthSessionWaitingIdentifier, AuthSessionExchanging, AuthSessionStoring:
@@ -149,8 +153,19 @@ func (session AuthSession) Validate() error {
 			return fmt.Errorf("auth session in status %q cannot contain a failure", session.Status)
 		}
 	case AuthSessionCompleted:
-		if session.Challenge != nil || session.CredentialReference == "" || session.CredentialRevision == 0 {
-			return errors.New("completed auth session requires a stored credential and no challenge")
+		if session.Challenge != nil {
+			return errors.New("completed auth session cannot keep a challenge")
+		}
+		credentialStored := session.CredentialReference != "" && session.CredentialRevision > 0
+		stateStored := session.BrowserStateReference != "" && validApplicationDigest(session.BrowserStateDigest)
+		if !credentialStored && !stateStored {
+			return errors.New("completed auth session requires a stored credential or browser state")
+		}
+		if session.CredentialReference == "" && session.CredentialRevision != 0 {
+			return errors.New("auth session credential revision requires a credential reference")
+		}
+		if session.BrowserStateReference == "" && session.BrowserStateDigest != "" {
+			return errors.New("auth session browser state digest requires a state reference")
 		}
 		if session.FailureCategory != "" {
 			return errors.New("completed auth session cannot contain a failure")
@@ -160,8 +175,8 @@ func (session AuthSession) Validate() error {
 			return fmt.Errorf("auth session in status %q cannot contain a result", session.Status)
 		}
 	case AuthSessionFailed:
-		if session.Challenge != nil || session.CredentialRevision != 0 {
-			return errors.New("failed auth session cannot contain a challenge or credential")
+		if session.Challenge != nil {
+			return errors.New("failed auth session cannot contain a challenge")
 		}
 		if !ValidErrorCategory(session.FailureCategory) {
 			return errors.New("failed auth session requires a known failure category")
@@ -237,7 +252,10 @@ func (session *AuthSession) RequireChallenge(challenge AuthChallenge, now time.T
 }
 
 func (session *AuthSession) BeginExchange(now time.Time) error {
-	if session == nil || !session.WaitingChallenge() {
+	if session == nil {
+		return errors.New("auth session is nil")
+	}
+	if !session.WaitingChallenge() && session.Status != AuthSessionWaitingIdentifier {
 		return fmt.Errorf("cannot begin exchange in status %q", session.statusOrEmpty())
 	}
 	if err := session.advance(now); err != nil {
@@ -252,8 +270,8 @@ func (session *AuthSession) BeginStoring(now time.Time) error {
 	if session == nil || session.Status != AuthSessionExchanging {
 		return fmt.Errorf("cannot begin storing in status %q", session.statusOrEmpty())
 	}
-	if strings.TrimSpace(session.CredentialReference) == "" {
-		return errors.New("auth session storing requires a credential reference")
+	if strings.TrimSpace(session.CredentialReference) == "" && strings.TrimSpace(session.BrowserStateReference) == "" {
+		return errors.New("auth session storing requires a credential or browser state reference")
 	}
 	if err := session.advance(now); err != nil {
 		return err
@@ -262,17 +280,32 @@ func (session *AuthSession) BeginStoring(now time.Time) error {
 	return session.Validate()
 }
 
-func (session *AuthSession) Complete(credentialRevision uint64, now time.Time) error {
+// Complete finishes the session after at least one artifact was stored. The
+// caller passes zero values for artifacts that do not apply to this login.
+func (session *AuthSession) Complete(credentialRevision uint64, browserStateDigest string, now time.Time) error {
 	if session == nil || session.Status != AuthSessionStoring {
 		return fmt.Errorf("cannot complete auth session in status %q", session.statusOrEmpty())
 	}
-	if strings.TrimSpace(session.CredentialReference) == "" || credentialRevision == 0 {
-		return errors.New("completed auth session requires a credential reference and revision")
+	browserStateDigest = strings.TrimSpace(browserStateDigest)
+	credentialStored := session.CredentialReference != "" && credentialRevision > 0
+	stateStored := session.BrowserStateReference != "" && browserStateDigest != ""
+	if !credentialStored && !stateStored {
+		return errors.New("completed auth session requires a stored credential or browser state")
+	}
+	if session.CredentialReference == "" && credentialRevision != 0 {
+		return errors.New("auth session credential revision requires a credential reference")
+	}
+	if session.BrowserStateReference == "" && browserStateDigest != "" {
+		return errors.New("auth session browser state digest requires a state reference")
+	}
+	if browserStateDigest != "" && !validApplicationDigest(browserStateDigest) {
+		return errors.New("auth session browser state digest must be sha256:<hex>")
 	}
 	if err := session.advance(now); err != nil {
 		return err
 	}
 	session.CredentialRevision = credentialRevision
+	session.BrowserStateDigest = browserStateDigest
 	session.Status = AuthSessionCompleted
 	return session.Validate()
 }

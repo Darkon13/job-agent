@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -66,11 +67,32 @@ func (writer *fakeCredentialWriter) Store(_ context.Context, reference string, r
 	return writer.revision, nil
 }
 
+type fakeBrowserStateWriter struct {
+	digest    string
+	err       error
+	calls     int
+	reference string
+	data      json.RawMessage
+}
+
+func (writer *fakeBrowserStateWriter) Store(_ context.Context, reference string, data json.RawMessage) (string, error) {
+	writer.calls++
+	writer.reference = reference
+	writer.data = data
+	if writer.err != nil {
+		return "", writer.err
+	}
+	if writer.digest == "" {
+		writer.digest = fmt.Sprintf("sha256:%064d", 0)
+	}
+	return writer.digest, nil
+}
+
 func newAuthServiceFixture(t *testing.T, driver Driver, writer CredentialWriter) (*Service, *authTestClock, *storagememory.Repository) {
 	t.Helper()
 	repository := storagememory.NewRepository()
 	clock := &authTestClock{now: time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)}
-	service, err := NewService(repository, NewMemoryChallengeStore(), driver, writer, clock, &authTestIDs{})
+	service, err := NewService(repository, NewMemoryChallengeStore(), driver, writer, &fakeBrowserStateWriter{}, clock, &authTestIDs{})
 	if err != nil {
 		t.Fatalf("new auth service: %v", err)
 	}
@@ -240,5 +262,66 @@ func TestFileCredentialWriterIncrementsRevisionAndRespectsOverwrite(t *testing.T
 	revision, err = writer.Store(ctx, "dotenv-file:"+dotenvPath, credentials.Record{AccessToken: "token"})
 	if err != nil || revision != 1 {
 		t.Fatalf("dotenv store revision=%d err=%v", revision, err)
+	}
+}
+
+func TestAuthServiceStoresBrowserStateWithoutCredentials(t *testing.T) {
+	ctx := context.Background()
+	driver := &fakeAuthDriver{startOutcome: Outcome{Request: &Request{Identifier: true}}}
+	writer := &fakeCredentialWriter{}
+	states := &fakeBrowserStateWriter{}
+	repository := storagememory.NewRepository()
+	clock := &authTestClock{now: time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)}
+	service, err := NewService(repository, NewMemoryChallengeStore(), driver, writer, states, clock, &authTestIDs{})
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	session, err := service.Start(ctx, StartRequest{
+		Platform: "hh", ProfileID: "primary", BrowserStateReference: "/tmp/hh-primary.state.json",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	driver.continueOutcome = Outcome{BrowserState: &BrowserState{Data: json.RawMessage(`{"cookies":[],"origins":[]}`)}}
+	session, err = service.Submit(ctx, session.ID, Input{Kind: InputIdentifier, Value: "user@example.com"})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if session.Status != core.AuthSessionCompleted || session.BrowserStateDigest == "" ||
+		session.CredentialRevision != 0 || session.CredentialReference != "" {
+		t.Fatalf("session = %#v", session)
+	}
+	if states.calls != 1 || states.reference != "/tmp/hh-primary.state.json" || writer.calls != 0 {
+		t.Fatalf("states=%#v writer=%#v", states, writer)
+	}
+	persisted, err := repository.AuthSession(ctx, session.ID)
+	if err != nil || persisted.Status != core.AuthSessionCompleted || persisted.BrowserStateDigest == "" {
+		t.Fatalf("persisted=%#v err=%v", persisted, err)
+	}
+}
+
+func TestAuthServiceFailsWhenBrowserStateStorageFails(t *testing.T) {
+	ctx := context.Background()
+	driver := &fakeAuthDriver{startOutcome: Outcome{Request: &Request{Identifier: true}}}
+	states := &fakeBrowserStateWriter{err: errors.New("disk full")}
+	repository := storagememory.NewRepository()
+	clock := &authTestClock{now: time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)}
+	service, err := NewService(repository, NewMemoryChallengeStore(), driver, &fakeCredentialWriter{}, states, clock, &authTestIDs{})
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	session, err := service.Start(ctx, StartRequest{
+		Platform: "hh", ProfileID: "primary", BrowserStateReference: "/tmp/hh-primary.state.json",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	driver.continueOutcome = Outcome{BrowserState: &BrowserState{Data: json.RawMessage(`{"cookies":[],"origins":[]}`)}}
+	failed, err := service.Submit(ctx, session.ID, Input{Kind: InputIdentifier, Value: "user@example.com"})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if failed.Status != core.AuthSessionFailed || failed.FailureCategory != core.ErrorPermanentFailure {
+		t.Fatalf("failed = %#v", failed)
 	}
 }

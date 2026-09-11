@@ -28,6 +28,10 @@
   матрица поддерживаемых полей.
 - `resume.publish` через applicant API: job action, durable task, worker и
   нормализация ранней публикации в `rate_limited` с `next_publish_at`.
+- Browser worker на Playwright с узким HTTP RPC: контексты профилей,
+  storage state, page-примитивы, Bearer-токен и Compose-профиль `browser`.
+- Интерактивный HH login через браузер: email → OTP/captcha, browser storage
+  state как артефакт сессии (миграция 22) и CLI `job-agent auth login|status`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

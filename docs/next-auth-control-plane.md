@@ -1,9 +1,10 @@
 # Следующая задача: auth control plane и вывод credentials
 
 Статус: `in_progress`. Credential record и JSON/dotenv reader/writer, persistent
-auth session, эфемерный challenge store, платформо-нейтральный auth service и
-HTTP endpoints реализованы; HH login driver, terminal/dashboard presenters и SSE
-ещё не начаты. Endpoints регистрируются вместе с первым driver-ом.
+auth session, эфемерный challenge store, auth service и HTTP endpoints, HH
+browser login driver и CLI `job-agent auth` реализованы. Остаются SSE и
+dashboard wizard, refresh/revoke и OAuth exchange (недоступен для новых
+соискательских приложений HH).
 
 Живой HH login, OAuth exchange, captcha и обновление токенов должны быть одним
 backend workflow. CLI и dashboard являются клиентами одной auth session, а не
@@ -174,10 +175,12 @@ per-profile lock и revision CAS; после частичного сбоя по�
 ## Порядок реализации
 
 1. ✅ Credential record, reader/writer и JSON/dotenv round-trip.
-2. ✅ Persistent auth session, challenge store, service и HTTP endpoints; SSE и
-   runtime registration ждут HH driver.
-3. HH browser login и OAuth token exchange внутри adapter-а.
-4. ⏳ Terminal presenter: рендеры Kitty, Sixel, Unicode и file готовы в
-   `presenter/`; CLI, TTY separation и API-клиент остаются.
-5. Dashboard auth wizard и SSE.
-6. Refresh/revoke/logout, restart recovery и browser E2E.
+2. ✅ Persistent auth session, challenge store, service и HTTP endpoints;
+   API монтируется при заданных `BROWSER_WORKER_URL`/`BROWSER_WORKER_TOKEN`.
+3. ✅ HH browser login driver: email → OTP/captcha через browser RPC;
+   OAuth token exchange остаётся недоступным для новых приложений HH.
+4. ✅ Terminal presenter: рендеры Kitty, Sixel, Unicode и file, CLI
+   `job-agent auth login|status` с TTY-prompts и проверкой API version.
+5. ⏳ Dashboard auth wizard и SSE.
+6. ⏳ Refresh/revoke/logout; restart recovery опирается на durable session,
+   полный browser E2E выполняется вручную через VNC.

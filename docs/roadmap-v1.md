@@ -49,12 +49,13 @@
 
 ## M2. Auth control plane
 
-- [ ] HH login driver через browser RPC: identifier → OTP/password/captcha,
-      masked destination, лимит попыток, deadline.
-- [ ] Сохранение storage state после входа, опционально OAuth exchange при
-      наличии client credentials.
-- [ ] CLI `job-agent auth login|status|import|logout`, `--presenter`,
-      `--credential-output`, разделение stdout/stderr/TTY.
+- [x] HH login driver через browser RPC: email → OTP/captcha; password branch
+      фиксируется как `unsupported`, deadline шага ограничен.
+- [x] Browser storage state как второй артефакт сессии (`BrowserStateWriter`,
+      миграция 22) и сохранение после входа.
+- [x] CLI `job-agent auth login|status` с TTY-prompts, presenter-рендерами и
+      проверкой API version.
+- [ ] `auth import|logout`, `--presenter dashboard|vnc`.
 - [ ] SSE переходов сессии и dashboard auth wizard.
 - [ ] Refresh/revoke, `auth_required`, restart recovery.
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.

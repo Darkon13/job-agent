@@ -672,8 +672,23 @@ composition root только для режимов `approval` и `submit`.
 `HH_EXPIRES_AT`. Bare path без схемы по-прежнему читается как JSON. Loader
 принимает только regular file с правами без group/other. Пакет `credentials/`
 уже умеет писать запись атомарно, выставляет `0600`, не следует по symlink и
-не перезаписывает существующий secret без явного `force`; CLI-команда
-`auth login` подключит этот writer на следующем срезе.
+не перезаписывает существующий secret без явного `force`.
+
+Интерактивный вход выполняется через локальный backend и включается, когда
+заданы `BROWSER_WORKER_URL` и `BROWSER_WORKER_TOKEN` (Compose-профиль
+`browser`). CLI входит по email и одноразовому коду, рисует captcha в терминале
+и сохраняет санитизированный browser storage state:
+
+```sh
+job-agent auth login \
+  --api http://127.0.0.1:8080 \
+  --profile primary \
+  --state-output ./data/profiles/primary.json
+job-agent auth status --api http://127.0.0.1:8080 --session <id>
+```
+
+Парольная ветка намеренно не автоматизируется, а OAuth-токены записываются
+через `--credential-output`, когда обмен доступен для аккаунта.
 
 В профиле указывается только ссылка:
 

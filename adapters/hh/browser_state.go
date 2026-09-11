@@ -48,12 +48,26 @@ func SanitizeBrowserStorageState(path string) (BrowserStateSanitizeResult, error
 	if closeErr != nil {
 		return BrowserStateSanitizeResult{}, fmt.Errorf("close browser state: %w", closeErr)
 	}
+	sanitized, result, err := SanitizeBrowserStorageStateData(data)
+	if err != nil {
+		return BrowserStateSanitizeResult{}, err
+	}
+	if err := replacePrivateFile(path, sanitized); err != nil {
+		return BrowserStateSanitizeResult{}, err
+	}
+	return result, nil
+}
+
+// SanitizeBrowserStorageStateData narrows an in-memory Playwright storage
+// state to HH-owned domains. The result is the canonical JSON that callers
+// persist.
+func SanitizeBrowserStorageStateData(data []byte) ([]byte, BrowserStateSanitizeResult, error) {
 	if len(data) > maxBrowserStateSize {
-		return BrowserStateSanitizeResult{}, errors.New("browser state exceeds size limit")
+		return nil, BrowserStateSanitizeResult{}, errors.New("browser state exceeds size limit")
 	}
 	var state rawBrowserStorageState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return BrowserStateSanitizeResult{}, fmt.Errorf("decode browser state: %w", err)
+		return nil, BrowserStateSanitizeResult{}, fmt.Errorf("decode browser state: %w", err)
 	}
 	result := BrowserStateSanitizeResult{CookiesBefore: len(state.Cookies), OriginsBefore: len(state.Origins)}
 	state.Cookies = filterBrowserStateEntries(state.Cookies, func(raw json.RawMessage) bool {
@@ -76,16 +90,13 @@ func SanitizeBrowserStorageState(path string) (BrowserStateSanitizeResult, error
 	result.CookiesAfter = len(state.Cookies)
 	result.OriginsAfter = len(state.Origins)
 	if result.CookiesAfter == 0 {
-		return BrowserStateSanitizeResult{}, errors.New("browser state contains no HH cookies")
+		return nil, BrowserStateSanitizeResult{}, errors.New("browser state contains no HH cookies")
 	}
 	encoded, err := json.Marshal(state)
 	if err != nil {
-		return BrowserStateSanitizeResult{}, fmt.Errorf("encode browser state: %w", err)
+		return nil, BrowserStateSanitizeResult{}, fmt.Errorf("encode browser state: %w", err)
 	}
-	if err := replacePrivateFile(path, encoded); err != nil {
-		return BrowserStateSanitizeResult{}, err
-	}
-	return result, nil
+	return encoded, result, nil
 }
 
 func filterBrowserStateEntries(entries []json.RawMessage, keep func(json.RawMessage) bool) []json.RawMessage {
