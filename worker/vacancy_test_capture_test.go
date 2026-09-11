@@ -31,8 +31,8 @@ func testCaptureTask(t *testing.T, profileID core.ProfileID, platform core.Platf
 		t.Fatalf("encode payload: %v", err)
 	}
 	return core.Task{
-		Type: core.TaskTestCapture, ProfileID: profileID, Payload: payload,
-		IdempotencyKey: "test.capture:" + externalID,
+		ID: "test-capture-task", Type: core.TaskTestCapture, ProfileID: profileID, Payload: payload,
+		CorrelationID: "correlation-1", IdempotencyKey: "test.capture:" + externalID,
 	}
 }
 
