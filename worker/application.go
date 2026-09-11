@@ -180,10 +180,11 @@ func (registry *ApplicationTransportRegistry) VacancyReaderCount() int {
 }
 
 // VacancyTestEnqueuer schedules the durable steps of the vacancy test answer
-// chain. The application worker only requests a capture; it never resolves or
-// submits answers itself.
+// chain. Producers only request a step; workers resolve and submit separately.
 type VacancyTestEnqueuer interface {
 	EnqueueCapture(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, source string) (bool, error)
+	EnqueueAnswer(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, answers []core.ResolvedAnswer, requestKey string) (bool, error)
+	EnqueueComplete(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, status core.TestAttemptStatus, fingerprint, requestKey string) (bool, error)
 }
 
 type ApplicationHandler struct {

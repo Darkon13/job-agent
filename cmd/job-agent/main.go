@@ -86,6 +86,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("build application models: %v", err)
 	}
+	var answerRegistry *core.AnswerBlockRegistry
+	if blocks := cfg.ResolvedAnswerBlocks(); len(blocks) > 0 {
+		answerRegistry, err = core.NewAnswerBlockRegistry(blocks...)
+		if err != nil {
+			log.Fatalf("build answer block registry: %v", err)
+		}
+	}
 	if options.migrateUp {
 		if err := storesqlite.MigrateUp(cfg.Database.Path); err != nil {
 			log.Fatalf("migrate database: %v", err)
@@ -517,6 +524,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("create vacancy test capture handler: %v", err)
 		}
+		if answerRegistry != nil {
+			testCaptureHandler.ConfigureAnswerRouting(answerRegistry, store, vacancyTestWorkflow)
+		}
 		testCaptureWorker, err := newTaskWorker(store, core.TaskTestCapture, testCaptureHandler.Handle)
 		if err != nil {
 			log.Fatalf("create vacancy test capture worker: %v", err)
@@ -528,6 +538,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("create questionnaire answer handler: %v", err)
 		}
+		questionnaireAnswerHandler.ConfigureChain(vacancyTestWorkflow)
 		questionnaireAnswerWorker, err := newTaskWorker(
 			store, core.TaskQuestionnaireAnswer, profileMutationLane.Wrap(questionnaireAnswerHandler.Handle),
 		)

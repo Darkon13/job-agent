@@ -78,9 +78,11 @@
 - [x] Producer и gate (решение: автоматически, review-фолбэк): blocked
       application → `test.capture`; запись `submitted`/`passed` attempt снимает
       статический `has_test`-блок и возвращает pipeline к submit.
-- [ ] Полное покрытие `AnswerBlock` → `questionnaire.answer`; неполное →
-      review session без submit; после успешного submit → `test.complete`;
-      ревизии answer blocks; contextual-вопросы только в manual.
+- [x] Полное покрытие vacancy-`AnswerBlock` → `questionnaire.answer`;
+      неполное → review session без submit; после успешного submit →
+      `test.complete`(`submitted`); contextual-вопросы без ответа уходят в
+      manual review.
+- [ ] Ревизии answer blocks (append-only) и worker/UI для `review.answer`.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] Review UI в dashboard; CLI review.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence

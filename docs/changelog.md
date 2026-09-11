@@ -45,6 +45,10 @@
 - Цепочка vacancy test: blocked application ставит идемпотентный
   `test.capture`; `submitted`/`passed` attempt снимает статический
   `has_test`-блок, и повторный submit продолжает pipeline.
+- Known-answer routing: `answer_sets` в конфиге, vacancy-`AnswerBlock` и
+  `UncoveredQuestions`; полное покрытие ставит `questionnaire.answer`,
+  неполное создаёт детерминированную review session без submit, успешный
+  submit фиксируется как `test.complete(submitted)`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

@@ -41,6 +41,8 @@ func TestQuestionnaireAnswerSubmitsResolvedAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
+	chain := &recordingVacancyTestChain{}
+	handler.ConfigureChain(chain)
 	payload := core.QuestionnaireAnswerPayload{
 		ProfileID: "primary", Platform: "hh", VacancyExternalID: "42",
 		Answers: []core.ResolvedAnswer{{QuestionID: "1", Text: "Five years of Go"}},
@@ -53,6 +55,9 @@ func TestQuestionnaireAnswerSubmitsResolvedAnswers(t *testing.T) {
 	}
 	if len(submitter.answers) != 1 || submitter.answers[0][0].Text != "Five years of Go" {
 		t.Fatalf("answers = %#v", submitter.answers)
+	}
+	if len(chain.completes) != 1 || chain.completes[0] != core.TestAttemptSubmitted {
+		t.Fatalf("completes = %#v", chain.completes)
 	}
 }
 

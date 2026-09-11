@@ -135,10 +135,11 @@ func TestCaptureIdempotencyKey(platform Platform, externalID string, profileID P
 // vacancy questionnaire. Resolution (known answer, model, or human review)
 // happens before the task is created.
 type QuestionnaireAnswerPayload struct {
-	ProfileID         ProfileID        `json:"profile_id"`
-	Platform          Platform         `json:"platform"`
-	VacancyExternalID string           `json:"vacancy_external_id"`
-	Answers           []ResolvedAnswer `json:"answers"`
+	ProfileID          ProfileID        `json:"profile_id"`
+	Platform           Platform         `json:"platform"`
+	VacancyExternalID  string           `json:"vacancy_external_id"`
+	Answers            []ResolvedAnswer `json:"answers"`
+	AttemptFingerprint string           `json:"attempt_fingerprint,omitempty"`
 }
 
 func (payload QuestionnaireAnswerPayload) Validate() error {
@@ -153,6 +154,11 @@ func (payload QuestionnaireAnswerPayload) Validate() error {
 	}
 	if len(payload.Answers) == 0 {
 		return errors.New("questionnaire answer requires answers")
+	}
+	if payload.AttemptFingerprint != "" {
+		if err := validateSHA256Fingerprint(payload.AttemptFingerprint); err != nil {
+			return fmt.Errorf("questionnaire answer attempt fingerprint: %w", err)
+		}
 	}
 	seen := make(map[string]struct{}, len(payload.Answers))
 	for _, answer := range payload.Answers {

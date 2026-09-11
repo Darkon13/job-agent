@@ -25,6 +25,14 @@ func (chain *recordingTestChain) EnqueueCapture(_ context.Context, profileID cor
 	return true, nil
 }
 
+func (chain *recordingTestChain) EnqueueAnswer(context.Context, core.ProfileID, core.Platform, string, []core.ResolvedAnswer, string) (bool, error) {
+	return true, nil
+}
+
+func (chain *recordingTestChain) EnqueueComplete(context.Context, core.ProfileID, core.Platform, string, core.TestAttemptStatus, string, string) (bool, error) {
+	return true, nil
+}
+
 func TestApplicationHandlerSchedulesTestCapture(t *testing.T) {
 	transport := &fakeApplicationTransport{}
 	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)

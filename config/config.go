@@ -30,6 +30,16 @@ type Config struct {
 	Models         []ModelProviderConfig        `json:"models,omitempty"`
 	Jobs           []Job                        `json:"jobs,omitempty"`
 	Server         ServerConfig                 `json:"server,omitempty"`
+	// AnswerSets lists reviewed answer block files. They are resolved relative
+	// to the config file and assembled into one runtime registry.
+	AnswerSets           []string `json:"answer_sets,omitempty"`
+	resolvedAnswerBlocks []core.AnswerBlock
+}
+
+// ResolvedAnswerBlocks returns the reviewed answer blocks loaded from
+// AnswerSets. Loading validates each file with core.ValidateAnswerBlock.
+func (c Config) ResolvedAnswerBlocks() []core.AnswerBlock {
+	return append([]core.AnswerBlock(nil), c.resolvedAnswerBlocks...)
 }
 
 type EmployerGroupConfig struct {
@@ -475,10 +485,37 @@ func Load(path string) (Config, error) {
 	if err := cfg.resolveProfileBootstrapFiles(filepath.Dir(path)); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.resolveAnswerSets(filepath.Dir(path)); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func (c *Config) resolveAnswerSets(baseDirectory string) error {
+	for _, reference := range c.AnswerSets {
+		reference = strings.TrimSpace(reference)
+		if reference == "" {
+			return errors.New("answer_sets contains an empty path")
+		}
+		path := reference
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
+		block, err := LoadAnswerBlock(path)
+		if err != nil {
+			return fmt.Errorf("answer_sets %q: %w", reference, err)
+		}
+		// Duplicate tags or ambiguous matchers are rejected when the runtime
+		// registry is built, not silently merged here.
+		if tag := block.Tag; strings.TrimSpace(tag) == "" {
+			return fmt.Errorf("answer_sets %q: block tag is required", reference)
+		}
+		c.resolvedAnswerBlocks = append(c.resolvedAnswerBlocks, block)
+	}
+	return nil
 }
 
 const maximumApplicationResumeFactsBytes = 128 << 10

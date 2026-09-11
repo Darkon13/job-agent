@@ -54,6 +54,7 @@ func (registry *VacancyTestSubmitterRegistry) Count() int {
 // created; this handler never guesses or generates them.
 type QuestionnaireAnswerHandler struct {
 	submitters *VacancyTestSubmitterRegistry
+	chain      VacancyTestEnqueuer
 }
 
 func NewQuestionnaireAnswerHandler(submitters *VacancyTestSubmitterRegistry) (*QuestionnaireAnswerHandler, error) {
@@ -61,6 +62,15 @@ func NewQuestionnaireAnswerHandler(submitters *VacancyTestSubmitterRegistry) (*Q
 		return nil, errors.New("questionnaire answer handler requires submitter registry")
 	}
 	return &QuestionnaireAnswerHandler{submitters: submitters}, nil
+}
+
+// ConfigureChain attaches the follow-up recording step. A successful submit is
+// recorded as a submitted attempt, which unblocks the application pipeline.
+func (handler *QuestionnaireAnswerHandler) ConfigureChain(chain VacancyTestEnqueuer) {
+	if handler == nil {
+		return
+	}
+	handler.chain = chain
 }
 
 func (handler *QuestionnaireAnswerHandler) Handle(ctx context.Context, task core.Task) error {
@@ -78,7 +88,15 @@ func (handler *QuestionnaireAnswerHandler) Handle(ctx context.Context, task core
 	if err != nil {
 		return err
 	}
-	return submitter.SubmitVacancyTest(ctx, payload.ProfileID, core.VacancyKey{
+	if err := submitter.SubmitVacancyTest(ctx, payload.ProfileID, core.VacancyKey{
 		Platform: payload.Platform, ExternalID: payload.VacancyExternalID,
-	}, payload.Answers)
+	}, payload.Answers); err != nil {
+		return err
+	}
+	if handler.chain == nil {
+		return nil
+	}
+	_, err = handler.chain.EnqueueComplete(ctx, payload.ProfileID, payload.Platform, payload.VacancyExternalID,
+		core.TestAttemptSubmitted, payload.AttemptFingerprint, task.IdempotencyKey)
+	return err
 }

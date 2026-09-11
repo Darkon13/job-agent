@@ -58,6 +58,9 @@ type AnswerBlockKind string
 const (
 	AnswerBlockQualification AnswerBlockKind = "qualification"
 	AnswerBlockConversation  AnswerBlockKind = "conversation"
+	// AnswerBlockVacancy is the reviewed question bank of vacancy popup tests.
+	// It is matched by platform only: such tests expose no family or level.
+	AnswerBlockVacancy AnswerBlockKind = "vacancy"
 )
 
 type AnswerBlockMatcher struct {
@@ -201,8 +204,8 @@ func ResolveAnswerBlock(questionnaire Questionnaire, block AnswerBlock) (AnswerP
 	if err := ValidateAnswerBlock(block); err != nil {
 		return AnswerPlan{}, err
 	}
-	if block.Kind != AnswerBlockQualification {
-		return AnswerPlan{}, fmt.Errorf("answer block %q is not a qualification block", block.Tag)
+	if block.Kind != AnswerBlockQualification && block.Kind != AnswerBlockVacancy {
+		return AnswerPlan{}, fmt.Errorf("answer block %q is not a qualification or vacancy block", block.Tag)
 	}
 	stored := make(map[string]StoredAnswer, len(block.Answers))
 	for _, answer := range block.Answers {
@@ -255,6 +258,44 @@ func ResolveAnswerBlock(questionnaire Questionnaire, block AnswerBlock) (AnswerP
 	return plan, nil
 }
 
+// UncoveredQuestions lists the questionnaire questions that the answer block
+// has no reviewed answer for. Matching mirrors ResolveAnswerBlock: normalized
+// question text first, then the stored fingerprint when present.
+func UncoveredQuestions(questionnaire Questionnaire, block AnswerBlock) ([]Question, error) {
+	if err := ValidateAnswerBlock(block); err != nil {
+		return nil, err
+	}
+	stored := make(map[string]StoredAnswer, len(block.Answers))
+	for _, answer := range block.Answers {
+		key := NormalizeQuestionText(answer.Question)
+		if key == "" {
+			return nil, errors.New("answer block contains an empty question")
+		}
+		if _, exists := stored[key]; exists {
+			return nil, fmt.Errorf("answer block contains duplicate question %q", answer.Question)
+		}
+		stored[key] = answer
+	}
+	var missing []Question
+	for _, question := range questionnaire.Questions {
+		answer, exists := stored[NormalizeQuestionText(question.Text)]
+		if !exists {
+			missing = append(missing, question)
+			continue
+		}
+		if answer.QuestionFingerprint != "" {
+			fingerprint, err := QuestionFingerprint(question)
+			if err != nil {
+				return nil, err
+			}
+			if fingerprint != answer.QuestionFingerprint {
+				missing = append(missing, question)
+			}
+		}
+	}
+	return missing, nil
+}
+
 // ValidateAnswerBlock validates the portable JSON object without requiring a
 // concrete platform questionnaire.
 func ValidateAnswerBlock(block AnswerBlock) error {
@@ -280,6 +321,13 @@ func ValidateAnswerBlock(block AnswerBlock) error {
 		}
 		if block.Match.Fingerprint != "" && block.Match.Topic != "" {
 			return errors.New("conversation answer block must use at most one matcher")
+		}
+	case AnswerBlockVacancy:
+		if block.Qualification != nil {
+			return errors.New("vacancy answer block must not contain qualification metadata")
+		}
+		if block.Match.Fingerprint != "" || block.Match.Topic != "" {
+			return errors.New("vacancy answer block must not use matchers")
 		}
 	default:
 		return fmt.Errorf("answer block has unsupported kind %q", block.Kind)

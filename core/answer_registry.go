@@ -9,6 +9,7 @@ type AnswerBlockRegistry struct {
 	qualificationLevel      map[string]string
 	conversationTopic       map[string]string
 	conversationFingerprint map[string]string
+	vacancy                 map[Platform]string
 }
 
 func NewAnswerBlockRegistry(blocks ...AnswerBlock) (*AnswerBlockRegistry, error) {
@@ -16,6 +17,7 @@ func NewAnswerBlockRegistry(blocks ...AnswerBlock) (*AnswerBlockRegistry, error)
 		byTag:              make(map[string]AnswerBlock, len(blocks)),
 		qualificationLevel: make(map[string]string),
 		conversationTopic:  make(map[string]string), conversationFingerprint: make(map[string]string),
+		vacancy: make(map[Platform]string),
 	}
 	for _, block := range blocks {
 		if err := ValidateAnswerBlock(block); err != nil {
@@ -32,6 +34,12 @@ func NewAnswerBlockRegistry(blocks ...AnswerBlock) (*AnswerBlockRegistry, error)
 				return nil, fmt.Errorf("qualification blocks %q and %q have the same family and level", existing, block.Tag)
 			}
 			registry.qualificationLevel[key] = block.Tag
+		}
+		if block.Kind == AnswerBlockVacancy {
+			if existing, exists := registry.vacancy[block.Platform]; exists {
+				return nil, fmt.Errorf("vacancy blocks %q and %q target the same platform", existing, block.Tag)
+			}
+			registry.vacancy[block.Platform] = block.Tag
 		}
 		if block.Kind == AnswerBlockConversation && block.Match.Topic != "" {
 			key := answerMatcherKey(block.Platform, NormalizeQuestionText(block.Match.Topic))
@@ -70,6 +78,19 @@ func (registry *AnswerBlockRegistry) Get(tag string) (AnswerBlock, bool) {
 	}
 	block, exists := registry.byTag[tag]
 	return cloneAnswerBlock(block), exists
+}
+
+// FindVacancy returns the reviewed question bank of vacancy popup tests for one
+// platform. At most one vacancy block per platform is allowed.
+func (registry *AnswerBlockRegistry) FindVacancy(platform Platform) (AnswerBlock, bool) {
+	if registry == nil || platform == "" {
+		return AnswerBlock{}, false
+	}
+	tag, exists := registry.vacancy[platform]
+	if !exists {
+		return AnswerBlock{}, false
+	}
+	return registry.Get(tag)
 }
 
 func (registry *AnswerBlockRegistry) FindConversationTopic(platform Platform, topic string) (AnswerBlock, bool) {
