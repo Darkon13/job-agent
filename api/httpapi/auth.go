@@ -26,6 +26,8 @@ type AuthController interface {
 type AuthAPI struct {
 	controller     AuthController
 	eventsInterval time.Duration
+	logout         *auth.LogoutService
+	logoutTargets  map[core.ProfileID]auth.LogoutTarget
 }
 
 func NewAuthAPI(controller AuthController) (*AuthAPI, error) {
@@ -46,8 +48,38 @@ func (api *AuthAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/sessions/{session_id}/cancel", api.cancel)
 	mux.HandleFunc("GET /api/v1/auth/sessions/{session_id}/challenge", api.challenge)
 	mux.HandleFunc("GET /api/v1/auth/sessions/{session_id}/events", api.events)
+	mux.HandleFunc("POST /api/v1/profiles/{profile}/logout", api.logoutProfile)
 	mux.Handle("/", next)
 	return mux
+}
+
+// ConfigureLogout attaches the local secret removal. Without it the logout
+// endpoint is not registered.
+func (api *AuthAPI) ConfigureLogout(service *auth.LogoutService, targets map[core.ProfileID]auth.LogoutTarget) {
+	if api == nil || service == nil {
+		return
+	}
+	api.logout = service
+	api.logoutTargets = targets
+}
+
+func (api *AuthAPI) logoutProfile(response http.ResponseWriter, request *http.Request) {
+	if api.logout == nil {
+		writeProblem(response, http.StatusNotFound, "logout is not configured")
+		return
+	}
+	profileID := core.ProfileID(request.PathValue("profile"))
+	target, exists := api.logoutTargets[profileID]
+	if !exists {
+		writeProblem(response, http.StatusNotFound, "profile has no local logout target")
+		return
+	}
+	result, err := api.logout.Logout(request.Context(), target)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
 }
 
 // events streams session revisions over SSE until the session reaches a

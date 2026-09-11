@@ -843,7 +843,23 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	if err != nil {
 		return nil, err
 	}
-	return httpapi.NewAuthAPI(service)
+	authAPI, err := httpapi.NewAuthAPI(service)
+	if err != nil {
+		return nil, err
+	}
+	logoutTargets := make(map[core.ProfileID]auth.LogoutTarget)
+	for _, profile := range cfg.Profiles {
+		if strings.TrimSpace(profile.CredentialsRef) == "" && strings.TrimSpace(profile.StateFile) == "" {
+			continue
+		}
+		logoutTargets[core.ProfileID(profile.Tag)] = auth.LogoutTarget{
+			ProfileID:             core.ProfileID(profile.Tag),
+			CredentialReference:   profile.CredentialsRef,
+			BrowserStateReference: profile.StateFile,
+		}
+	}
+	authAPI.ConfigureLogout(&auth.LogoutService{}, logoutTargets)
+	return authAPI, nil
 }
 
 func jobRunDefinitions(definitions []jobscheduler.Definition) []workflow.JobRunDefinition {

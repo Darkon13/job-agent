@@ -66,7 +66,10 @@
 - [x] Restart recovery: на старте незавершённые auth-сессии помечаются
       `failed` (`FailOpenAuthSessions`), challenge-контур в памяти не
       восстанавливается намеренно.
-- [ ] Refresh/revoke и `auth_required` lifecycle.
+- [x] `auth logout`: удаление credential record и browser storage state
+      профиля (API `POST /profiles/{profile}/logout`, CLI `auth logout`),
+      идемпотентно, платформенную сессию не трогает.
+- [ ] Refresh/revoke и `auth_required` lifecycle (живой обмен токенами).
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.
 
 ## M3. Live vacancy tests и опросники

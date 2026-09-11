@@ -45,6 +45,19 @@ func newReference(scheme, path string) (Reference, error) {
 	return Reference{Scheme: scheme, Path: path}, nil
 }
 
+// Delete removes the secret file behind a reference. A missing file is not an
+// error: logout stays idempotent.
+func Delete(value string) error {
+	reference, err := ParseReference(value)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(reference.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove credential file: %w", err)
+	}
+	return nil
+}
+
 // Load reads one credential record from a JSON or dotenv reference.
 func Load(value string) (Record, error) {
 	reference, err := ParseReference(value)

@@ -39,6 +39,8 @@ func runAuth(ctx context.Context, args []string, output io.Writer, client *http.
 		return runAuthStatus(ctx, args[1:], output, client)
 	case "import":
 		return runAuthImport(args[1:], output)
+	case "logout":
+		return runAuthLogout(ctx, args[1:], output, client)
 	default:
 		return fmt.Errorf("unknown auth command %q", args[0])
 	}
@@ -241,6 +243,37 @@ func runAuthLoginWith(ctx context.Context, args []string, output io.Writer, clie
 			return fmt.Errorf("unexpected auth session status %q", session.Status)
 		}
 	}
+}
+
+func runAuthLogout(ctx context.Context, args []string, output io.Writer, client *http.Client) error {
+	flags := flag.NewFlagSet("job-agent auth logout", flag.ContinueOnError)
+	flags.SetOutput(output)
+	apiURL := flags.String("api", "http://127.0.0.1:8080", "job-agent backend URL")
+	profile := flags.String("profile", "", "profile tag")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*profile) == "" {
+		return errors.New("usage: job-agent auth logout --profile <tag>")
+	}
+	base, err := authBaseURL(*apiURL)
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	var result struct {
+		CredentialRemoved   bool `json:"credential_removed"`
+		BrowserStateRemoved bool `json:"browser_state_removed"`
+	}
+	endpoint := base + "/api/v1/profiles/" + url.PathEscape(strings.TrimSpace(*profile)) + "/logout"
+	if err := authJSON(ctx, client, http.MethodPost, endpoint, struct{}{}, &result); err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "profile=%s credential_removed=%t browser_state_removed=%t\n",
+		strings.TrimSpace(*profile), result.CredentialRemoved, result.BrowserStateRemoved)
+	return nil
 }
 
 func runAuthStatus(ctx context.Context, args []string, output io.Writer, client *http.Client) error {

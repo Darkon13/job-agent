@@ -110,6 +110,9 @@
 - Auth restart recovery: незавершённые сессии при старте backend помечаются
   `failed` с категорией `temporary_failure` и понятным сообщением.
 - CLI `job-agent auth status --watch` следует за SSE-потоком сессии.
+- `auth logout`: `POST /api/v1/profiles/{profile}/logout` удаляет локальный
+  credential record и browser state профиля (идемпотентно, с CLI-командой);
+  платформенные токены не отзываются.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

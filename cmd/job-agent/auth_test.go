@@ -166,3 +166,19 @@ func TestAuthStatusWatchFollowsSSE(t *testing.T) {
 		t.Fatalf("output = %q", rendered)
 	}
 }
+
+func TestAuthLogoutReportsRemovedSecrets(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/profiles/{profile}/logout", func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]bool{"credential_removed": true, "browser_state_removed": true})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	var output bytes.Buffer
+	if err := runAuthLogout(context.Background(), []string{"--api", server.URL, "--profile", "primary"}, &output, server.Client()); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if !strings.Contains(output.String(), "credential_removed=true browser_state_removed=true") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
