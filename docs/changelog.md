@@ -38,6 +38,8 @@
   `_xsrf`/`uidPk`/`guid`/`startTime` и обязательным read-back результата.
 - Worker `test.capture`: наблюдаемые вопросы vacancy test попадают в
   прогрессивный тестовый каталог монотонным upsert, без запуска попытки.
+- Worker `questionnaire.answer`: отправка уже resolved ответов через
+  browser write transport (входные ответы не догадываются в worker-е).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

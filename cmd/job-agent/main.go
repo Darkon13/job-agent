@@ -175,6 +175,7 @@ func main() {
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	resumePublishers := taskworker.NewResumePublisherRegistry()
 	testCapturers := taskworker.NewVacancyTestCapturerRegistry()
+	testSubmitters := taskworker.NewVacancyTestSubmitterRegistry()
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -243,6 +244,11 @@ func main() {
 					}
 					if err := applicationTransports.Register(profileID, transport); err != nil {
 						log.Fatalf("register browser application transport for profile %q: %v", profile.Tag, err)
+					}
+					if submitter, ok := instance.(adapter.VacancyTestSubmitter); ok {
+						if err := testSubmitters.Register(profileID, submitter); err != nil {
+							log.Fatalf("register vacancy test submitter for profile %q: %v", profile.Tag, err)
+						}
 					}
 					browserApplicationsReady = true
 					log.Printf("profile %q uses explicit browser-backed application transport", profile.Tag)
@@ -511,6 +517,19 @@ func main() {
 			log.Fatalf("create vacancy test capture worker: %v", err)
 		}
 		workers = append(workers, testCaptureWorker)
+	}
+	if testSubmitters.Count() > 0 {
+		questionnaireAnswerHandler, err := taskworker.NewQuestionnaireAnswerHandler(testSubmitters)
+		if err != nil {
+			log.Fatalf("create questionnaire answer handler: %v", err)
+		}
+		questionnaireAnswerWorker, err := newTaskWorker(
+			store, core.TaskQuestionnaireAnswer, profileMutationLane.Wrap(questionnaireAnswerHandler.Handle),
+		)
+		if err != nil {
+			log.Fatalf("create questionnaire answer worker: %v", err)
+		}
+		workers = append(workers, questionnaireAnswerWorker)
 	}
 	if resumePublishers.Count() > 0 {
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)

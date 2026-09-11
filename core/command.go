@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -128,6 +129,52 @@ func TestCaptureIdempotencyKey(platform Platform, externalID string, profileID P
 	}
 	digest := sha256.Sum256([]byte(string(platform) + "\x00" + externalID + "\x00" + string(profileID)))
 	return "test.capture:" + hex.EncodeToString(digest[:]), nil
+}
+
+// QuestionnaireAnswerPayload submits already resolved runtime answers for a
+// vacancy questionnaire. Resolution (known answer, model, or human review)
+// happens before the task is created.
+type QuestionnaireAnswerPayload struct {
+	ProfileID         ProfileID        `json:"profile_id"`
+	Platform          Platform         `json:"platform"`
+	VacancyExternalID string           `json:"vacancy_external_id"`
+	Answers           []ResolvedAnswer `json:"answers"`
+}
+
+func (payload QuestionnaireAnswerPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("questionnaire answer requires profile")
+	}
+	if payload.Platform == "" {
+		return errors.New("questionnaire answer requires platform")
+	}
+	if strings.TrimSpace(payload.VacancyExternalID) == "" {
+		return errors.New("questionnaire answer requires vacancy external id")
+	}
+	if len(payload.Answers) == 0 {
+		return errors.New("questionnaire answer requires answers")
+	}
+	seen := make(map[string]struct{}, len(payload.Answers))
+	for _, answer := range payload.Answers {
+		if err := answer.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[answer.QuestionID]; duplicate {
+			return fmt.Errorf("questionnaire answer repeats question %q", answer.QuestionID)
+		}
+		seen[answer.QuestionID] = struct{}{}
+	}
+	return nil
+}
+
+func QuestionnaireAnswerIdempotencyKey(platform Platform, externalID string, profileID ProfileID, requestKey string) (string, error) {
+	externalID = strings.TrimSpace(externalID)
+	requestKey = strings.TrimSpace(requestKey)
+	if platform == "" || externalID == "" || profileID == "" || requestKey == "" {
+		return "", errors.New("questionnaire answer idempotency requires platform, vacancy, profile and request key")
+	}
+	digest := sha256.Sum256([]byte(string(platform) + "\x00" + externalID + "\x00" + string(profileID) + "\x00" + requestKey))
+	return "questionnaire.answer:" + hex.EncodeToString(digest[:]), nil
 }
 
 type ResumeTouchPayload struct {

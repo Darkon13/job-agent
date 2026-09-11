@@ -70,7 +70,9 @@
 - [ ] Adapter qualification service: sync каталога, capture, submit.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
-- [ ] Workers `questionnaire.answer`, `test.complete`, `review.answer`.
+- [x] Worker `questionnaire.answer`: submit заранее resolved ответов через
+      write transport.
+- [ ] Workers `test.complete`, `review.answer`.
 - [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;
       contextual-вопросы только в manual.
 - [ ] Опросники из чатов через тот же registry.

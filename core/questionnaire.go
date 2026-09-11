@@ -85,6 +85,24 @@ type ResolvedAnswer struct {
 	Text              string   `json:"text,omitempty"`
 }
 
+func (answer ResolvedAnswer) Validate() error {
+	if strings.TrimSpace(answer.QuestionID) == "" {
+		return errors.New("resolved answer requires question id")
+	}
+	if len(answer.SelectedOptionIDs) == 0 && strings.TrimSpace(answer.Text) == "" {
+		return fmt.Errorf("resolved answer for question %q requires text or selected options", answer.QuestionID)
+	}
+	if len(answer.SelectedOptionIDs) != 0 && strings.TrimSpace(answer.Text) != "" {
+		return fmt.Errorf("resolved answer for question %q mixes text and selected options", answer.QuestionID)
+	}
+	for _, optionID := range answer.SelectedOptionIDs {
+		if strings.TrimSpace(optionID) == "" {
+			return fmt.Errorf("resolved answer for question %q contains an empty option", answer.QuestionID)
+		}
+	}
+	return nil
+}
+
 // AnswerPlan is the strict result of matching a reviewed answer block against a
 // concrete questionnaire instance.
 type AnswerPlan struct {
