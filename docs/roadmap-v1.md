@@ -55,7 +55,8 @@
       миграция 22) и сохранение после входа.
 - [x] CLI `job-agent auth login|status` с TTY-prompts, presenter-рендерами и
       проверкой API version.
-- [ ] `auth import|logout`, `--presenter dashboard|vnc`.
+- [x] `auth import` санитизирует существующий storage state; `logout` и
+      `--presenter dashboard|vnc` остаются.
 - [ ] SSE переходов сессии и dashboard auth wizard.
 - [ ] Refresh/revoke, `auth_required`, restart recovery.
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.

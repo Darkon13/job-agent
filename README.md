@@ -685,7 +685,14 @@ job-agent auth login \
   --profile primary \
   --state-output ./data/profiles/primary.json
 job-agent auth status --api http://127.0.0.1:8080 --session <id>
+job-agent auth import \
+  --source ./exported-storage-state.json \
+  --state-output ./data/profiles/primary.json
 ```
+
+`auth import` принимает полный Playwright export, оставляет только домены
+`hh.ru`/`hhcdn.ru` и пишет файл атомарно с `0600`; существующий файл
+заменяется только с `--force`.
 
 Парольная ветка намеренно не автоматизируется, а OAuth-токены записываются
 через `--credential-output`, когда обмен доступен для аккаунта.

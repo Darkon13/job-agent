@@ -93,3 +93,48 @@ func TestAuthLoginRejectsCredentialStdout(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestAuthImportSanitizesStorageState(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "export.json")
+	state := `{"cookies":[
+		{"name":"hhtoken","domain":".hh.ru","value":"secret"},
+		{"name":"foreign","domain":".example.com","value":"drop"}
+	],"origins":[{"origin":"https://hh.ru","localStorage":[]},{"origin":"https://example.com","localStorage":[]}]}`
+	if err := os.WriteFile(source, []byte(state), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	destination := filepath.Join(directory, "profiles", "primary.json")
+	var output bytes.Buffer
+	if err := runAuthImport([]string{"--source", source, "--state-output", destination}, &output); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !strings.Contains(output.String(), "IMPORTED cookies=1 origins=1") {
+		t.Fatalf("output = %q", output.String())
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	var sanitized struct {
+		Cookies []struct {
+			Domain string `json:"domain"`
+		} `json:"cookies"`
+		Origins []struct {
+			Origin string `json:"origin"`
+		} `json:"origins"`
+	}
+	if err := json.Unmarshal(data, &sanitized); err != nil {
+		t.Fatalf("decode destination: %v", err)
+	}
+	if len(sanitized.Cookies) != 1 || sanitized.Cookies[0].Domain != ".hh.ru" || len(sanitized.Origins) != 1 {
+		t.Fatalf("sanitized state = %#v", sanitized)
+	}
+	if info, err := os.Stat(destination); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("destination permissions: %v %v", info, err)
+	}
+	if err := runAuthImport([]string{"--source", source, "--state-output", destination}, &output); err == nil ||
+		!strings.Contains(err.Error(), "--force") {
+		t.Fatalf("overwrite error = %v", err)
+	}
+}

@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Darkon13/job-agent/adapters/hh"
 	"github.com/Darkon13/job-agent/auth"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/credentials"
@@ -35,9 +37,75 @@ func runAuth(ctx context.Context, args []string, output io.Writer, client *http.
 		return runAuthLogin(ctx, args[1:], output, client)
 	case "status":
 		return runAuthStatus(ctx, args[1:], output, client)
+	case "import":
+		return runAuthImport(args[1:], output)
 	default:
 		return fmt.Errorf("unknown auth command %q", args[0])
 	}
+}
+
+// runAuthImport narrows an exported Playwright storage state to HH domains and
+// writes it to the profile state file without contacting the backend.
+func runAuthImport(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("job-agent auth import", flag.ContinueOnError)
+	flags.SetOutput(output)
+	source := flags.String("source", "", "Playwright storage state export")
+	stateOutput := flags.String("state-output", "", "destination state file")
+	force := flags.Bool("force", false, "replace an existing state file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*stateOutput) == "" {
+		return errors.New("usage: job-agent auth import --source export.json --state-output ./data/profiles/primary.json [--force]")
+	}
+	if _, err := os.Lstat(*stateOutput); err == nil && !*force {
+		return fmt.Errorf("state output %s already exists; pass --force to replace it", *stateOutput)
+	}
+	data, err := os.ReadFile(*source)
+	if err != nil {
+		return fmt.Errorf("read storage state: %w", err)
+	}
+	sanitized, result, err := hh.SanitizeBrowserStorageStateData(data)
+	if err != nil {
+		return err
+	}
+	if err := writePrivateFile(*stateOutput, sanitized); err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "IMPORTED cookies=%d origins=%d output=%s\n", result.CookiesAfter, result.OriginsAfter, *stateOutput)
+	return nil
+}
+
+func writePrivateFile(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create state output: %w", err)
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return fmt.Errorf("protect state output: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write state output: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return fmt.Errorf("flush state output: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close state output: %w", err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		return fmt.Errorf("replace state output: %w", err)
+	}
+	return nil
 }
 
 type authSessionRequest struct {
