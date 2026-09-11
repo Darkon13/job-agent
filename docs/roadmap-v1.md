@@ -76,8 +76,12 @@
       `QualificationAttemptService` порты и API
       `GET/POST /profiles/{profile}/qualifications[/sync]`. HH-транспорт
       каталога читает `/applicant/skill_verifications/methods` через browser
-      session и нормализует уровни/виды; live-подтверждение селекторов и
-      assessment runner ещё впереди.
+      session и нормализует уровни/виды. Runner `skill_verification.start`
+      отвечает на попытку из reviewed-блока, а при неизвестном вопросе
+      завершает её досрочно с fingerprint для review; уже пройденный уровень
+      не перезапускается. Осталось: live assessment transport
+      (start/current/submit/result), review-пополнение qualification-блока и
+      model fallback.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через

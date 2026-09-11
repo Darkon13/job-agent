@@ -28,5 +28,10 @@ type QualificationAttemptService interface {
 	StartQualification(ctx context.Context, profileID core.ProfileID, offeringID core.QualificationID) (QualificationSession, error)
 	CurrentQuestion(ctx context.Context, session QualificationSession) (core.Question, error)
 	SubmitAnswer(ctx context.Context, session QualificationSession, answer core.ResolvedAnswer) error
-	AttemptResult(ctx context.Context, session QualificationSession) (core.QualificationResult, error)
+	// AttemptResult returns the graded outcome; found=false while the attempt is
+	// still in progress.
+	AttemptResult(ctx context.Context, session QualificationSession) (core.QualificationResult, bool, error)
+	// FinishQualification ends an attempt early without submitting the current
+	// question. It is used when no reviewed answer is available.
+	FinishQualification(ctx context.Context, session QualificationSession) error
 }

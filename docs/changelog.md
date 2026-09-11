@@ -93,6 +93,10 @@
   `/applicant/skill_verifications/methods` через browser session, парсер
   уровней easy/medium/hard и theory/practice kinds; нераспознанная страница
   возвращается как `unsupported`, а не угадывается.
+- Qualification runner: `skill_verification.start` отвечает из reviewed-блока
+  (`ResolveQuestionAnswer` по fingerprint), неизвестный вопрос завершает
+  попытку досрочно без случайного ответа, результат пишется в attempt
+  history/best, пройденный уровень не перезапускается.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

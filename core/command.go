@@ -285,6 +285,30 @@ func SkillVerificationSyncIdempotencyKey(profileID ProfileID, requestKey string)
 	return "skill_verification.sync:" + hex.EncodeToString(digest[:]), nil
 }
 
+// SkillVerificationStartPayload starts one explicitly selected qualification
+// attempt. Starting may consume a limited or timed attempt.
+type SkillVerificationStartPayload struct {
+	ProfileID  ProfileID       `json:"profile_id"`
+	Platform   Platform        `json:"platform"`
+	OfferingID QualificationID `json:"offering_id"`
+}
+
+func (payload SkillVerificationStartPayload) Validate() error {
+	if payload.ProfileID == "" || payload.Platform == "" || payload.OfferingID == "" {
+		return errors.New("skill verification start requires profile, platform and offering")
+	}
+	return nil
+}
+
+func SkillVerificationStartIdempotencyKey(profileID ProfileID, offeringID QualificationID, requestKey string) (string, error) {
+	requestKey = strings.TrimSpace(requestKey)
+	if profileID == "" || offeringID == "" || requestKey == "" {
+		return "", errors.New("skill verification start idempotency requires profile, offering and request key")
+	}
+	digest := sha256.Sum256([]byte(string(profileID) + "\x00" + string(offeringID) + "\x00" + requestKey))
+	return "skill_verification.start:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ResumeTouchPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`

@@ -86,6 +86,9 @@ func (result QualificationResult) Reusable() bool {
 	return result.Verified && result.Status == QualificationPassed && result.AnswerBlockTag != ""
 }
 
+// Passed reports whether the attempt reached a successful status.
+func (result QualificationResult) Passed() bool { return result.Status == QualificationPassed }
+
 // PreferQualificationResult applies a one-way best-result policy. Every
 // attempt remains in history, but unverified, failed, or lower-scoring evidence
 // cannot replace a verified successful best result.
