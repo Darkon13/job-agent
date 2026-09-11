@@ -105,6 +105,8 @@
   qualification endpoints.
 - Auth SSE: `GET /api/v1/auth/sessions/{id}/events` стримит ревизии сессии и
   завершается на terminal-статусе (completed/expired/cancelled/failed).
+- Dashboard auth wizard: секция «Вход в HH» (создание сессии, SSE-подписка,
+  captcha, отправка identifier/OTP/password/captcha и отмена).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

@@ -59,7 +59,9 @@
       `--presenter dashboard|vnc` остаются.
 - [x] SSE переходов сессии: `GET /api/v1/auth/sessions/{id}/events` стримит
       ревизии до terminal-статуса.
-- [ ] Dashboard auth wizard и подписка CLI на SSE.
+- [x] Dashboard auth wizard: секция «Вход в HH» создаёт сессию, слушает SSE,
+      показывает challenge/captcha и отправляет inputs.
+- [ ] Подписка CLI `auth login` на SSE вместо polling.
 - [ ] Refresh/revoke, `auth_required`, restart recovery.
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.
 

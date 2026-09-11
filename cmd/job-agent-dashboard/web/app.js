@@ -559,3 +559,131 @@ elements.conversationFilter.addEventListener("change", () => { state.conversatio
 elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.summary?.conversations || []); });
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);
+
+(() => {
+  const startButton = document.getElementById("auth-start");
+  if (!startButton) {
+    return;
+  }
+  const profileInput = document.getElementById("auth-profile");
+  const valueInput = document.getElementById("auth-value");
+  const submitButton = document.getElementById("auth-submit");
+  const cancelButton = document.getElementById("auth-cancel");
+  const state = document.getElementById("auth-state");
+  const captcha = document.getElementById("auth-captcha");
+  const kindByStatus = {
+    waiting_identifier: "identifier",
+    waiting_otp: "otp",
+    waiting_password: "password",
+    waiting_captcha: "captcha",
+  };
+  const terminal = ["completed", "expired", "cancelled", "failed"];
+  let sessionId = "";
+  let stream = null;
+
+  const setState = (text) => { state.textContent = text; };
+
+  const renderSession = (session) => {
+    sessionId = session.id;
+    let summary = `сессия ${session.id}: ${session.status} (rev ${session.revision})`;
+    if (session.failure_message) {
+      summary += ` — ${session.failure_message}`;
+    }
+    setState(summary);
+    if (session.status === "waiting_captcha") {
+      captcha.hidden = false;
+      captcha.src = `/api/v1/auth/sessions/${encodeURIComponent(session.id)}/challenge?ts=${Date.now()}`;
+    } else {
+      captcha.hidden = true;
+      captcha.removeAttribute("src");
+    }
+    const active = kindByStatus[session.status] !== undefined;
+    submitButton.disabled = !active;
+    valueInput.disabled = !active;
+  };
+
+  const subscribe = (id) => {
+    if (stream) {
+      stream.close();
+    }
+    stream = new EventSource(`/api/v1/auth/sessions/${encodeURIComponent(id)}/events`);
+    stream.addEventListener("session", (message) => {
+      const session = JSON.parse(message.data);
+      renderSession(session);
+      if (terminal.includes(session.status)) {
+        stream.close();
+        stream = null;
+      }
+    });
+    stream.addEventListener("error", () => setState("поток прерван, обновите статус"));
+  };
+
+  startButton.addEventListener("click", async () => {
+    const profile = profileInput.value.trim();
+    if (!profile) {
+      setState("укажите профиль");
+      return;
+    }
+    setState("создание сессии…");
+    const response = await fetch("/api/v1/auth/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "hh", profile_id: profile }),
+    });
+    if (!response.ok) {
+      setState(`ошибка создания сессии: ${response.status}`);
+      return;
+    }
+    const session = await response.json();
+    renderSession(session);
+    subscribe(session.id);
+  });
+
+  submitButton.addEventListener("click", async () => {
+    if (!sessionId) {
+      setState("сначала начните вход");
+      return;
+    }
+    const value = valueInput.value.trim();
+    if (!value) {
+      return;
+    }
+    const response = await fetch(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}`);
+    if (!response.ok) {
+      setState(`ошибка статуса: ${response.status}`);
+      return;
+    }
+    const current = await response.json();
+    const kind = kindByStatus[current.status];
+    if (!kind) {
+      setState(`сессия не ждёт ввода: ${current.status}`);
+      return;
+    }
+    const submitted = await fetch(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}/inputs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, value }),
+    });
+    if (!submitted.ok) {
+      setState(`ошибка ввода: ${submitted.status}`);
+      return;
+    }
+    valueInput.value = "";
+    renderSession(await submitted.json());
+    if (!stream) {
+      subscribe(sessionId);
+    }
+  });
+
+  cancelButton.addEventListener("click", async () => {
+    if (!sessionId) {
+      return;
+    }
+    const response = await fetch(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
+    if (!response.ok) {
+      setState(`ошибка отмены: ${response.status}`);
+      return;
+    }
+    renderSession(await response.json());
+  });
+})();

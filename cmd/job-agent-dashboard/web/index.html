@@ -18,6 +18,24 @@
     </div>
   </header>
   <main>
+    <section id="auth-section" aria-labelledby="auth-title">
+      <div class="section-title">
+        <div><p class="eyebrow">АВТОРИЗАЦИЯ</p><h2 id="auth-title">Вход в HH</h2></div>
+        <span id="auth-state" class="muted">сессия не запущена</span>
+      </div>
+      <article class="panel">
+        <div class="auth-controls">
+          <label>Профиль <input id="auth-profile" type="text" value="primary" autocomplete="off"></label>
+          <button id="auth-start" type="button">Начать вход</button>
+          <button id="auth-cancel" type="button">Отменить</button>
+        </div>
+        <div class="auth-controls">
+          <input id="auth-value" type="text" placeholder="E-mail, код, пароль или captcha" autocomplete="off">
+          <button id="auth-submit" type="button">Отправить</button>
+        </div>
+        <img id="auth-captcha" alt="Captcha" hidden>
+      </article>
+    </section>
     <section aria-labelledby="overview-title">
       <div class="section-title">
         <div><p class="eyebrow">СОСТОЯНИЕ</p><h2 id="overview-title">Обзор runtime</h2></div>

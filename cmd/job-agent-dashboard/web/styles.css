@@ -134,3 +134,20 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .reply-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 @media (max-width: 850px) { .split, .chat-layout { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .conversation-list { max-height: 240px; } .topbar { align-items: flex-start; } .connection { flex-wrap: wrap; justify-content: flex-end; } .chat-actions { align-items: flex-end; flex-direction: column; } }
 @media (max-width: 700px) { .stat-grid, .activity-grid { grid-template-columns: 1fr; } .list-toolbar, .conversation-toolbar { grid-template-columns: 1fr; justify-content: stretch; } .bulk-toolbar { align-items: stretch; flex-direction: column; } .selection-control { margin-right: 0; } .section-title { align-items: flex-start; flex-direction: column; } .section-actions { width: 100%; align-items: stretch; flex-direction: column; } }
+
+.auth-controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.auth-controls input {
+  min-width: 16rem;
+}
+#auth-captcha {
+  display: block;
+  max-width: 20rem;
+  margin-top: 0.5rem;
+  background: #fff;
+  border-radius: 4px;
+}
