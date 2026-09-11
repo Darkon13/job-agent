@@ -259,6 +259,13 @@ func main() {
 					}
 					logf("profile %q can capture vacancy tests through the browser session", profile.Tag)
 				}
+				if reader, ok := instance.(adapter.QualificationCatalogReader); ok {
+					if err := qualificationReaders.Register(profileID, reader); err != nil {
+						log.Fatalf("register qualification catalog for profile %q: %v", profile.Tag, err)
+					}
+					qualificationPlatforms[profileID] = core.Platform(instance.Name())
+					logf("profile %q can sync the skill verification catalog", profile.Tag)
+				}
 				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 					profileStateReaders[profileID] = profileStateReader
 				}
@@ -321,12 +328,6 @@ func main() {
 			}
 		}
 		if apiReady {
-			if reader, ok := instance.(adapter.QualificationCatalogReader); ok {
-				if err := qualificationReaders.Register(profileID, reader); err != nil {
-					log.Fatalf("register qualification catalog for profile %q: %v", profile.Tag, err)
-				}
-				qualificationPlatforms[profileID] = core.Platform(instance.Name())
-			}
 			if transport, ok := instance.(adapter.ConversationTransport); ok && !browserConversationsReady {
 				if err := conversationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)

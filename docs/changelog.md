@@ -89,6 +89,10 @@
   `skill_verification.sync` и API
   `GET/POST /api/v1/profiles/{profile}/qualifications[/sync]`; discovery не
   запускает попытку.
+- HH skill verification catalog: чтение
+  `/applicant/skill_verifications/methods` через browser session, парсер
+  уровней easy/medium/hard и theory/practice kinds; нераспознанная страница
+  возвращается как `unsupported`, а не угадывается.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

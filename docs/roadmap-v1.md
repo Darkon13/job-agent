@@ -74,8 +74,10 @@
       (миграция 27), каталог offerings (миграция 28), worker
       `skill_verification.sync`, `QualificationCatalogReader`/
       `QualificationAttemptService` порты и API
-      `GET/POST /profiles/{profile}/qualifications[/sync]`. Осталось:
-      браузерный/assessment runner и авто-прохождение.
+      `GET/POST /profiles/{profile}/qualifications[/sync]`. HH-транспорт
+      каталога читает `/applicant/skill_verifications/methods` через browser
+      session и нормализует уровни/виды; live-подтверждение селекторов и
+      assessment runner ещё впереди.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через
