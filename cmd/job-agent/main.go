@@ -61,6 +61,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "review" {
+		if err := runReview(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	options, err := parseMainOptions(os.Args[1:])
 	if err != nil {
 		log.Fatalf("usage: %s [-migrate-up] <config.json>: %v", os.Args[0], err)
@@ -140,6 +146,10 @@ func main() {
 	vacancyTestWorkflow, err := workflow.NewVacancyTestWorkflow(store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
 		log.Fatalf("create vacancy test workflow: %v", err)
+	}
+	reviewAPI, err := httpapi.NewReviewAPI(store, vacancyTestWorkflow)
+	if err != nil {
+		log.Fatalf("create review API: %v", err)
 	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
@@ -677,7 +687,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(conversationAPI.Handler())))))
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))
 	if authAPI != nil {
 		handler = authAPI.Handler(handler)
 	}

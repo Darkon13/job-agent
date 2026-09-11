@@ -74,7 +74,6 @@
       write transport.
 - [x] Worker `test.complete`: монотонный результат попытки по профилю
       (миграция 23).
-- [ ] Worker `review.answer`.
 - [x] Producer и gate (решение: автоматически, review-фолбэк): blocked
       application → `test.capture`; запись `submitted`/`passed` attempt снимает
       статический `has_test`-блок и возвращает pipeline к submit.
@@ -86,9 +85,10 @@
       покрытии возобновляет `questionnaire.answer`, иначе выдаёт следующий
       missing prompt (runtime questionnaire хранится в review session,
       миграция 24).
-- [ ] CLI/API и dashboard review; append-only ревизии answer blocks.
+- [x] Review API + CLI: `GET /review-sessions/{id}` с текущим prompt и
+      `POST /review-sessions/{id}/answers` с Idempotency-Key.
+- [ ] Dashboard review; append-only ревизии answer blocks.
 - [ ] Опросники из чатов через тот же registry.
-- [ ] Review UI в dashboard; CLI review.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence
       записан.
 
