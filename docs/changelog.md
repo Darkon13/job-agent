@@ -107,6 +107,8 @@
   завершается на terminal-статусе (completed/expired/cancelled/failed).
 - Dashboard auth wizard: секция «Вход в HH» (создание сессии, SSE-подписка,
   captcha, отправка identifier/OTP/password/captcha и отмена).
+- Auth restart recovery: незавершённые сессии при старте backend помечаются
+  `failed` с категорией `temporary_failure` и понятным сообщением.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

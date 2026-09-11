@@ -62,7 +62,10 @@
 - [x] Dashboard auth wizard: секция «Вход в HH» создаёт сессию, слушает SSE,
       показывает challenge/captcha и отправляет inputs.
 - [ ] Подписка CLI `auth login` на SSE вместо polling.
-- [ ] Refresh/revoke, `auth_required`, restart recovery.
+- [x] Restart recovery: на старте незавершённые auth-сессии помечаются
+      `failed` (`FailOpenAuthSessions`), challenge-контур в памяти не
+      восстанавливается намеренно.
+- [ ] Refresh/revoke и `auth_required` lifecycle.
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.
 
 ## M3. Live vacancy tests и опросники

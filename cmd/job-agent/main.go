@@ -131,6 +131,11 @@ func main() {
 			logf("close database: %v", err)
 		}
 	}()
+	if recovered, err := store.FailOpenAuthSessions(context.Background(), time.Now().UTC(), "backend restarted; start a new login"); err != nil {
+		log.Fatalf("recover auth sessions: %v", err)
+	} else if recovered > 0 {
+		logf("marked %d interrupted auth sessions as failed after restart", recovered)
+	}
 	var answerResolver taskworker.AnswerBlockResolver
 	if answerRegistry != nil {
 		answerResolver, err = taskworker.NewReviewedVacancyAnswers(answerRegistry, store)
