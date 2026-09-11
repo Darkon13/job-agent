@@ -270,6 +270,78 @@ func (tailoring ApplicationTailoring) BaselineObservation() (ProfileStateObserva
 	)
 }
 
+// ApplicationTailoringChange is the redacted diff of one allowed path. String
+// arrays keep their added and removed entries so operators can see the skill
+// decision; every other value is reported as changed without its content.
+type ApplicationTailoringChange struct {
+	Path    string   `json:"path"`
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+}
+
+// RedactedChanges derives an operator-facing diff from the private snapshots.
+// It never returns the raw baseline or target values.
+func (tailoring ApplicationTailoring) RedactedChanges() ([]ApplicationTailoringChange, error) {
+	if err := tailoring.Validate(); err != nil {
+		return nil, err
+	}
+	baseline, err := decodeJSONValue(tailoring.BaselineState)
+	if err != nil {
+		return nil, err
+	}
+	tailored, err := decodeJSONValue(tailoring.TailoredState)
+	if err != nil {
+		return nil, err
+	}
+	changes := make([]ApplicationTailoringChange, 0, len(tailoring.AllowedPaths))
+	for _, path := range tailoring.AllowedPaths {
+		before, beforeExists := jsonPointerValue(baseline, path)
+		after, afterExists := jsonPointerValue(tailored, path)
+		if beforeExists == afterExists && jsonValuesEqual(before, after) {
+			continue
+		}
+		change := ApplicationTailoringChange{Path: path}
+		if beforeValues, ok := jsonStringValues(before); ok {
+			if afterValues, ok := jsonStringValues(after); ok {
+				change.Added = stringValuesDifference(afterValues, beforeValues)
+				change.Removed = stringValuesDifference(beforeValues, afterValues)
+			}
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil
+}
+
+func jsonStringValues(value any) ([]string, bool) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, text)
+	}
+	return values, true
+}
+
+func stringValuesDifference(values, other []string) []string {
+	present := make(map[string]struct{}, len(other))
+	for _, value := range other {
+		present[value] = struct{}{}
+	}
+	difference := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := present[value]; !exists {
+			difference = append(difference, value)
+		}
+	}
+	return difference
+}
+
 func (tailoring *ApplicationTailoring) advance(now time.Time) error {
 	if now.IsZero() || now.Before(tailoring.UpdatedAt) {
 		return errors.New("application tailoring update time must not move backwards")

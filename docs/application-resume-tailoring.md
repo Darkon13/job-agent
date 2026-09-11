@@ -128,7 +128,16 @@ retention policy.
 3. ✅ Переиспользовать `ProfileStatePlanner` для immutable apply/restore proposals.
 4. ✅ Связать application submit с фазами saga и обязательной компенсацией.
 5. ⏳ Подключить model processor с fallback на deterministic policy.
-6. ⏳ Показать plan, skill diff, restore/recovery status в dashboard.
+6. ✅ Показать plan, skill diff, restore/recovery status в dashboard.
+
+## Dashboard
+
+Активная saga видна в таблице откликов отдельной колонкой: фаза (`planned`,
+`applying`, `applied`, `submitting`, `restoring`), добавленные и удалённые
+навыки и причина `recovery_required`. API отдаёт только redacted diff:
+строковые массивы показывают добавленные/удалённые значения, остальные поля —
+только факт изменения без содержимого. Завершённые (`restored`) sagas в списке
+не показываются, потому что временное состояние уже снято.
 
 ## Конфигурация
 

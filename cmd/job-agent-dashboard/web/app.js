@@ -157,7 +157,7 @@ function renderApplicationObjects() {
   for (const id of state.selectedApplications) if (!existingIDs.has(id)) state.selectedApplications.delete(id);
   const items = visibleApplicationObjects();
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 9; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
   elements.applicationItems.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
     const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy || state.applicationLoading; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
@@ -166,10 +166,23 @@ function renderApplicationObjects() {
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
     if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); } else action.textContent = "—";
     const group = applicationGroup(item);
-    row.append(selection, vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
+    row.append(selection, vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), tailoringCell(item), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;
   }));
   updateApplicationSelection(items);
+}
+const tailoringStatusLabels = { planned: "Готовится", applying: "Применяется", applied: "Применено", submitting: "Перед отправкой", restoring: "Восстанавливается", restored: "Восстановлено", recovery_required: "Нужно восстановление" };
+function tailoringCell(item) {
+  const tailoring = item.tailoring;
+  if (!tailoring) return text("td", "—");
+  const cell = document.createElement("td");
+  const recovery = tailoring.status === "recovery_required";
+  const badge = text("span", tailoringStatusLabels[tailoring.status] || tailoring.status, recovery ? "tailoring-status tailoring-recovery" : "tailoring-status");
+  const changed = (tailoring.changes || []).flatMap((change) => (change.added || []).map((skill) => `+${skill}`).concat((change.removed || []).map((skill) => `-${skill}`)));
+  if (changed.length) badge.title = changed.join(", ");
+  cell.append(badge);
+  if (tailoring.recovery_reason) cell.append(text("span", tailoring.recovery_reason, "tailoring-reason"));
+  return cell;
 }
 function renderTasks(items = []) {
   const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));

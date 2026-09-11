@@ -87,6 +87,19 @@ func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *h
 				summary.PlatformObservedAt = &observedAt
 			}
 		}
+		if tailorings, ok := api.repository.(interface {
+			ApplicationTailoringByApplication(context.Context, core.ApplicationID) (core.ApplicationTailoring, error)
+		}); ok {
+			if tailoring, tailoringErr := tailorings.ApplicationTailoringByApplication(request.Context(), application.ID); tailoringErr == nil {
+				if changes, changeErr := tailoring.RedactedChanges(); changeErr == nil {
+					summary.Tailoring = &ApplicationTailoringSummary{
+						Status: tailoring.Status, ProcessorTag: tailoring.ProcessorTag,
+						ProcessorVersion: tailoring.ProcessorVersion, RecoveryReason: tailoring.RecoveryReason,
+						Changes: changes, UpdatedAt: tailoring.UpdatedAt,
+					}
+				}
+			}
+		}
 		items = append(items, summary)
 	}
 	response.Header().Set("Cache-Control", "no-store")

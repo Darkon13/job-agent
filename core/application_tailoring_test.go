@@ -94,3 +94,46 @@ func TestApplicationTailoringRequiresExactAllowedSnapshot(t *testing.T) {
 		t.Fatal("expected mismatched allowed paths to fail")
 	}
 }
+
+func TestApplicationTailoringRedactedChangesExposeSkillsOnly(t *testing.T) {
+	saga, _, _, _ := applicationTailoringFixture(t)
+	changes, err := saga.RedactedChanges()
+	if err != nil {
+		t.Fatalf("redacted changes: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Path != "/resumes/resume-1/web/keySkills" {
+		t.Fatalf("changes=%#v", changes)
+	}
+	if len(changes[0].Added) != 1 || changes[0].Added[0] != "PostgreSQL" || len(changes[0].Removed) != 0 {
+		t.Fatalf("change=%#v", changes[0])
+	}
+}
+
+func TestApplicationTailoringRedactedChangesHideTextValues(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	baseline, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"resume-1":{"about":"before"}}}`), "", now)
+	if err != nil {
+		t.Fatalf("new baseline: %v", err)
+	}
+	tailored, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"resume-1":{"about":"after"}}}`), "", now)
+	if err != nil {
+		t.Fatalf("new tailored: %v", err)
+	}
+	saga, err := NewApplicationTailoring(NewApplicationTailoringParams{
+		ID: "tailoring-3", ApplicationID: "application-3", Attempt: 1,
+		Key:      ApplicationKey{ProfileID: "primary", Vacancy: VacancyKey{Platform: "hh", ExternalID: "44"}},
+		ResumeID: "resume-1", ProcessorTag: "processor", ProcessorVersion: "v1",
+		ProcessorInputDigest: profileStateDigest([]byte("input")),
+		AllowedPaths:         []string{"/resumes/resume-1/about"}, Baseline: baseline, TailoredState: tailored.State,
+	}, now)
+	if err != nil {
+		t.Fatalf("new tailoring: %v", err)
+	}
+	changes, err := saga.RedactedChanges()
+	if err != nil {
+		t.Fatalf("redacted changes: %v", err)
+	}
+	if len(changes) != 1 || len(changes[0].Added) != 0 || len(changes[0].Removed) != 0 {
+		t.Fatalf("changes=%#v", changes)
+	}
+}

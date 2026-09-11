@@ -14,8 +14,8 @@
   автоматический GC пока недоступен; подробности в `application-cleanup.md`.
 - Временная подстройка резюме перед откликом: durable saga с baseline/target
   snapshot, apply и restore через profile state; включается
-  `applications.tailoring.skills`; подробности в
-  `application-resume-tailoring.md`.
+  `applications.tailoring.skills`; активная фаза, skill diff и recovery
+  показываются в dashboard; подробности в `application-resume-tailoring.md`.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ type runtimeRepository struct {
 	activity           []storage.ProfileActivityCount
 	activitySnapshots  []core.ProfileActivitySnapshot
 	conversations      []core.Conversation
+	tailoring          *core.ApplicationTailoring
 	err                error
 }
 
@@ -84,6 +86,13 @@ func (repository *runtimeRepository) Vacancy(_ context.Context, key core.Vacancy
 	return vacancy, repository.err
 }
 
+func (repository *runtimeRepository) ApplicationTailoringByApplication(_ context.Context, _ core.ApplicationID) (core.ApplicationTailoring, error) {
+	if repository.tailoring == nil {
+		return core.ApplicationTailoring{}, errors.New("application tailoring not found")
+	}
+	return *repository.tailoring, repository.err
+}
+
 func (repository *runtimeRepository) ListApplicationCampaigns(context.Context, int) ([]core.ApplicationCampaign, error) {
 	return repository.campaigns, repository.err
 }
@@ -108,6 +117,30 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 	now := time.Date(2026, 9, 6, 16, 0, 0, 0, time.UTC)
 	vacancy := core.Vacancy{Platform: "hh", ExternalID: "42", URL: "https://hh.ru/vacancy/42", Title: "Go developer", Employer: "Example", State: core.VacancyStateOpen, ObservedAt: now}
 	application := core.Application{ID: "application-1", Key: core.ApplicationKey{ProfileID: "primary", Vacancy: vacancy.Key()}, Status: core.ApplicationSubmitted, PreparedMessage: "private cover letter", CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
+	baseline, err := core.NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"resume-1":{"web":{"keySkills":["Go"]}}}}`), "remote-before", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("new baseline observation: %v", err)
+	}
+	tailored, err := core.NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"resume-1":{"web":{"keySkills":["Go","PostgreSQL"]}}}}`), "remote-after", now)
+	if err != nil {
+		t.Fatalf("new tailored observation: %v", err)
+	}
+	tailoring, err := core.NewApplicationTailoring(core.NewApplicationTailoringParams{
+		ID: "tailoring-1", ApplicationID: application.ID, Attempt: 1, Key: application.Key,
+		ResumeID: "resume-1", ProcessorTag: "skills-from-vacancy", ProcessorVersion: "v1",
+		ProcessorInputDigest: "sha256:" + strings.Repeat("a", 64),
+		AllowedPaths:         []string{"/resumes/resume-1/web/keySkills"},
+		Baseline:             baseline, TailoredState: tailored.State,
+	}, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("new tailoring: %v", err)
+	}
+	if err := tailoring.BeginApply("apply-proposal", now.Add(-30*time.Second)); err != nil {
+		t.Fatalf("begin apply: %v", err)
+	}
+	if err := tailoring.RecordApplied(tailored, now.Add(-20*time.Second)); err != nil {
+		t.Fatalf("record apply: %v", err)
+	}
 	repository := &runtimeRepository{
 		stats:              storage.RuntimeStats{Vacancies: 12, Applications: 4, Tasks: 3, Conversations: 1},
 		tasks:              []storage.TaskCount{{Type: core.TaskApplicationSubmit, Status: core.TaskNew, Priority: 90, Count: 3}},
@@ -130,6 +163,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 			ID: "snapshot-1", Platform: "hh", ProfileID: "primary", ResumeID: "resume-1", SearchShows: intPointer(35), Views: intPointer(1), ScoreHidden: true, ObservedAt: now,
 		}},
 		conversations: []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
+		tailoring:     &tailoring,
 	}
 	api, err := NewRuntimeAPI(repository)
 	if err != nil {
@@ -168,7 +202,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/applications?limit=20&status=submitted", nil))
-	if body := response.Body.String(); response.Code != http.StatusOK || !containsAll(body, `"id":"application-1"`, `"vacancy_title":"Go developer"`, `"has_cover_letter":true`) || strings.Contains(body, "private cover letter") || strings.Contains(body, "external_negotiation_id") {
+	if body := response.Body.String(); response.Code != http.StatusOK || !containsAll(body, `"id":"application-1"`, `"vacancy_title":"Go developer"`, `"has_cover_letter":true`, `"tailoring":{`, `"status":"applied"`, `"added":["PostgreSQL"]`) || strings.Contains(body, "private cover letter") || strings.Contains(body, "external_negotiation_id") || strings.Contains(body, "baseline_state") || strings.Contains(body, "tailored_state") {
 		t.Fatalf("application list response: %d %s", response.Code, body)
 	}
 

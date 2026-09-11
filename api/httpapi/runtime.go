@@ -74,23 +74,35 @@ type ConversationSummary struct {
 // ApplicationSummary is an operator-facing object. It intentionally omits
 // prepared messages, decision reasons and external negotiation identifiers.
 type ApplicationSummary struct {
-	ID                 core.ApplicationID          `json:"id"`
-	Platform           core.Platform               `json:"platform"`
-	ProfileID          core.ProfileID              `json:"profile_id"`
-	Status             core.ApplicationStatus      `json:"status"`
-	DecisionCode       string                      `json:"decision_code,omitempty"`
-	FailureCategory    core.ErrorCategory          `json:"failure_category,omitempty"`
-	Attempts           int                         `json:"attempts"`
-	VacancyTitle       string                      `json:"vacancy_title"`
-	Employer           string                      `json:"employer,omitempty"`
-	VacancyURL         string                      `json:"vacancy_url,omitempty"`
-	HasCoverLetter     bool                        `json:"has_cover_letter"`
-	UpdatedAt          time.Time                   `json:"updated_at"`
-	SubmittedAt        *time.Time                  `json:"submitted_at,omitempty"`
-	PlatformState      string                      `json:"platform_state,omitempty"`
-	Disposition        core.ApplicationDisposition `json:"disposition,omitempty"`
-	ViewedByOpponent   *bool                       `json:"viewed_by_opponent,omitempty"`
-	PlatformObservedAt *time.Time                  `json:"platform_observed_at,omitempty"`
+	ID                 core.ApplicationID           `json:"id"`
+	Platform           core.Platform                `json:"platform"`
+	ProfileID          core.ProfileID               `json:"profile_id"`
+	Status             core.ApplicationStatus       `json:"status"`
+	DecisionCode       string                       `json:"decision_code,omitempty"`
+	FailureCategory    core.ErrorCategory           `json:"failure_category,omitempty"`
+	Attempts           int                          `json:"attempts"`
+	VacancyTitle       string                       `json:"vacancy_title"`
+	Employer           string                       `json:"employer,omitempty"`
+	VacancyURL         string                       `json:"vacancy_url,omitempty"`
+	HasCoverLetter     bool                         `json:"has_cover_letter"`
+	UpdatedAt          time.Time                    `json:"updated_at"`
+	SubmittedAt        *time.Time                   `json:"submitted_at,omitempty"`
+	PlatformState      string                       `json:"platform_state,omitempty"`
+	Disposition        core.ApplicationDisposition  `json:"disposition,omitempty"`
+	ViewedByOpponent   *bool                        `json:"viewed_by_opponent,omitempty"`
+	PlatformObservedAt *time.Time                   `json:"platform_observed_at,omitempty"`
+	Tailoring          *ApplicationTailoringSummary `json:"tailoring,omitempty"`
+}
+
+// ApplicationTailoringSummary exposes the active temporary resume mutation
+// without leaking snapshot contents. Only skill array entries become values.
+type ApplicationTailoringSummary struct {
+	Status           core.ApplicationTailoringStatus   `json:"status"`
+	ProcessorTag     string                            `json:"processor_tag"`
+	ProcessorVersion string                            `json:"processor_version"`
+	RecoveryReason   string                            `json:"recovery_reason,omitempty"`
+	Changes          []core.ApplicationTailoringChange `json:"changes,omitempty"`
+	UpdatedAt        time.Time                         `json:"updated_at"`
 }
 
 func NewRuntimeAPI(repository RuntimeReadRepository) (*RuntimeAPI, error) {

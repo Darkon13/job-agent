@@ -50,6 +50,9 @@ td:last-child, th:last-child { text-align: right; }
 .status-needs_input, .task-waiting_confirmation, .task-retry_scheduled { color: var(--orange); }
 .status-queued, .status-waiting_invitation { color: var(--blue); }
 .status-state_unknown, .status-hidden { color: var(--muted); }
+.tailoring-status { display: inline-flex; border-radius: 5px; padding: .15rem .4rem; background: var(--surface-2); color: var(--blue); font: .75rem ui-monospace, monospace; }
+.tailoring-recovery { color: var(--red); }
+.tailoring-reason { display: block; margin-top: .2rem; color: var(--muted); font-size: .72rem; }
 .task-id { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; font: .72rem ui-monospace, monospace; }
 .task-error { min-width: 16rem; max-width: 34rem; white-space: normal; overflow-wrap: anywhere; color: var(--orange); }
 .task-actions { display: flex; justify-content: flex-end; gap: .4rem; }
