@@ -103,6 +103,8 @@
   durable попытку с Idempotency-Key.
 - CLI `job-agent qualification catalog|sync|start` как API-клиент поверх
   qualification endpoints.
+- Auth SSE: `GET /api/v1/auth/sessions/{id}/events` стримит ревизии сессии и
+  завершается на terminal-статусе (completed/expired/cancelled/failed).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

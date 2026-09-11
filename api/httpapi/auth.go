@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -22,14 +24,15 @@ type AuthController interface {
 }
 
 type AuthAPI struct {
-	controller AuthController
+	controller     AuthController
+	eventsInterval time.Duration
 }
 
 func NewAuthAPI(controller AuthController) (*AuthAPI, error) {
 	if controller == nil {
 		return nil, errors.New("auth API requires a controller")
 	}
-	return &AuthAPI{controller: controller}, nil
+	return &AuthAPI{controller: controller, eventsInterval: 500 * time.Millisecond}, nil
 }
 
 func (api *AuthAPI) Handler(next http.Handler) http.Handler {
@@ -42,8 +45,74 @@ func (api *AuthAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/sessions/{session_id}/inputs", api.submit)
 	mux.HandleFunc("POST /api/v1/auth/sessions/{session_id}/cancel", api.cancel)
 	mux.HandleFunc("GET /api/v1/auth/sessions/{session_id}/challenge", api.challenge)
+	mux.HandleFunc("GET /api/v1/auth/sessions/{session_id}/events", api.events)
 	mux.Handle("/", next)
 	return mux
+}
+
+// events streams session revisions over SSE until the session reaches a
+// terminal status. Dashboard and CLI clients follow the same stream instead of
+// polling storage.
+func (api *AuthAPI) events(response http.ResponseWriter, request *http.Request) {
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		writeProblem(response, http.StatusInternalServerError, "auth events streaming is not supported")
+		return
+	}
+	session, err := api.controller.Session(request.Context(), core.AuthSessionID(request.PathValue("session_id")))
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	response.Header().Set("Content-Type", "text/event-stream")
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Connection", "keep-alive")
+	writeEvent := func(value core.AuthSession) {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(response, "event: session\ndata: %s\n\n", payload)
+		flusher.Flush()
+	}
+	writeEvent(session)
+	if authSessionTerminal(session.Status) {
+		return
+	}
+	interval := api.eventsInterval
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	revision := session.Revision
+	for {
+		select {
+		case <-request.Context().Done():
+			return
+		case <-ticker.C:
+			next, err := api.controller.Session(request.Context(), session.ID)
+			if err != nil {
+				return
+			}
+			if next.Revision != revision {
+				writeEvent(next)
+				revision = next.Revision
+			}
+			if authSessionTerminal(next.Status) {
+				return
+			}
+		}
+	}
+}
+
+func authSessionTerminal(status core.AuthSessionStatus) bool {
+	switch status {
+	case core.AuthSessionCompleted, core.AuthSessionExpired, core.AuthSessionCancelled, core.AuthSessionFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 type authSessionRequest struct {

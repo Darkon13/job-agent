@@ -57,7 +57,9 @@
       проверкой API version.
 - [x] `auth import` санитизирует существующий storage state; `logout` и
       `--presenter dashboard|vnc` остаются.
-- [ ] SSE переходов сессии и dashboard auth wizard.
+- [x] SSE переходов сессии: `GET /api/v1/auth/sessions/{id}/events` стримит
+      ревизии до terminal-статуса.
+- [ ] Dashboard auth wizard и подписка CLI на SSE.
 - [ ] Refresh/revoke, `auth_required`, restart recovery.
 - [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.
 
