@@ -240,6 +240,11 @@ func (service *Service) ChallengePayload(ctx context.Context, id core.AuthSessio
 	return service.challenges.Get(ctx, session.Challenge.ID, service.clock.Now().UTC())
 }
 
+// Session returns the durable, redacted session record.
+func (service *Service) Session(ctx context.Context, id core.AuthSessionID) (core.AuthSession, error) {
+	return service.sessions.AuthSession(ctx, id)
+}
+
 func (service *Service) apply(ctx context.Context, session core.AuthSession, outcome Outcome, now time.Time) (core.AuthSession, error) {
 	switch {
 	case outcome.Credentials != nil:

@@ -1,13 +1,29 @@
 # Следующая задача: auth control plane и вывод credentials
 
 Статус: `in_progress`. Credential record и JSON/dotenv reader/writer, persistent
-auth session, эфемерный challenge store и платформо-нейтральный auth service
-уже реализованы; HTTP/SSE API, HH login driver и presenters ещё не начаты.
+auth session, эфемерный challenge store, платформо-нейтральный auth service и
+HTTP endpoints реализованы; HH login driver, terminal/dashboard presenters и SSE
+ещё не начаты. Endpoints регистрируются вместе с первым driver-ом.
 
 Живой HH login, OAuth exchange, captcha и обновление токенов должны быть одним
 backend workflow. CLI и dashboard являются клиентами одной auth session, а не
 двумя независимыми реализациями входа. Исследованный HH flow описан в
 [`hh-auth-flow.md`](hh-auth-flow.md).
+
+## HTTP API
+
+```text
+POST /api/v1/auth/sessions
+GET  /api/v1/auth/sessions/{session_id}
+POST /api/v1/auth/sessions/{session_id}/inputs
+POST /api/v1/auth/sessions/{session_id}/cancel
+GET  /api/v1/auth/sessions/{session_id}/challenge
+```
+
+`inputs` принимает `{"kind":"identifier|otp|password|captcha","value":"..."}`;
+`challenge` отдаёт PNG или URL как raw body с media type и `no-store`.
+Отправка лишнего шага возвращает `409`, незнакомая сессия — `404`. Сессия в
+ответе redacted: токены, коды и изображения в JSON не попадают.
 
 ## Credential storage
 
@@ -158,8 +174,8 @@ per-profile lock и revision CAS; после частичного сбоя по�
 ## Порядок реализации
 
 1. ✅ Credential record, reader/writer и JSON/dotenv round-trip.
-2. ✅ Persistent auth session, challenge store и платформо-нейтральный service;
-   HTTP/SSE endpoints остаются.
+2. ✅ Persistent auth session, challenge store, service и HTTP endpoints; SSE и
+   runtime registration ждут HH driver.
 3. HH browser login и OAuth token exchange внутри adapter-а.
 4. Terminal presenter: TTY separation, Kitty, Sixel и fallback.
 5. Dashboard auth wizard и SSE.

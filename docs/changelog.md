@@ -20,6 +20,9 @@
 - Credential record в пакете `credentials`: чтение JSON и dotenv
   (`file:`/`dotenv-file:`), атомарная запись `0600` без symlink и случайной
   перезаписи; HH adapter читает refresh-совместимую запись.
+- Auth control plane: durable auth session с revision CAS, эфемерный в памяти
+  challenge store с TTL и HTTP endpoints для identifier/OTP/password/captcha,
+  отмены и чтения redacted-состояния.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.
