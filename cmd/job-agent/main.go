@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -719,6 +720,9 @@ func main() {
 	if apiToken != "" {
 		handler = httpapi.BearerAuth(apiToken, handler)
 	}
+	handler = httpapi.NewMetricsAPI().Handler(handler)
+	handler = httpapi.RequestID(handler)
+	handler = httpapi.AccessLog(slog.New(slog.NewJSONHandler(os.Stderr, nil)), handler)
 	if authAPI != nil {
 		handler = authAPI.Handler(handler)
 	}

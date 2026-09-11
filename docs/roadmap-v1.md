@@ -116,7 +116,10 @@
 - [x] Config builder: `include` с рекурсией, glob, cycle/depth guard; ошибки
       несут путь к файлу; ссылки внутри include-файла резолвятся от него.
 - [ ] Заморозка схемы конфига (versioned schema и миграция конфигов).
-- [ ] Метрики, структурные логи, request/correlation ID.
+- [x] Request ID (`X-Request-ID`), структурный access-log (slog JSON) и
+      `/metrics` (Prometheus text: requests по классам, in-flight, uptime).
+- [ ] Метрики очередей/платформенных операций и перевод внутренних логов на
+      структурный logger.
 - [ ] Backup/restore и проверка upgrade/rollback, включая destructive guard.
 - [ ] CI (`make verify`, `go test -race`), LICENSE, release checklist.
 - [ ] Quickstart для чистого аккаунта (browser login) и runbook'и

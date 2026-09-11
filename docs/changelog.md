@@ -68,6 +68,9 @@
 - Config builder: top-level `include` с glob, depth-first merge, cycle/depth
   guard и ошибками с путём к файлу; файловые ссылки внутри include резолвятся
   относительно объявившего их файла.
+- Наблюдаемость API: `X-Request-ID` (входящий сохраняется), структурный
+  access-log через slog JSON и `/metrics` в Prometheus text (requests по
+  классам, in-flight, uptime).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 
