@@ -103,6 +103,7 @@ var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 var _ adapter.ApplicationStateObserver = (*Adapter)(nil)
 var _ adapter.ResumePublisher = (*Adapter)(nil)
 var _ adapter.VacancyTestCapturer = (*Adapter)(nil)
+var _ adapter.VacancyTestSubmitter = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -378,6 +379,16 @@ func (a *Adapter) CaptureVacancyTest(ctx context.Context, profileID core.Profile
 		return core.Questionnaire{}, operationError(core.ErrorUnsupported, "vacancies.test.capture", "HH profile has no browser read session", nil)
 	}
 	return browserClient.CaptureVacancyTest(ctx, profileID, key)
+}
+
+func (a *Adapter) SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
+	a.mu.RLock()
+	browserClient := a.browserApplicationClients[profileID]
+	a.mu.RUnlock()
+	if browserClient == nil {
+		return operationError(core.ErrorUnsupported, "vacancies.test.submit", "HH profile has no browser application session", nil)
+	}
+	return browserClient.SubmitVacancyTest(ctx, profileID, key, answers)
 }
 
 func (a *Adapter) PublishResume(ctx context.Context, command adapter.ResumePublishCommand) (adapter.ResumePublishResult, error) {

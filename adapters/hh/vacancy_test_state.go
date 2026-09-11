@@ -59,18 +59,14 @@ type vacancyTaskSolution struct {
 // response popup. Short-lived submission context (xsrf, guid, startTime) stays
 // inside the adapter and is never persisted in the questionnaire.
 func ParseVacancyTestQuestionnaire(document []byte) (core.Questionnaire, error) {
-	raw, err := extractInitialStateByMarkers(document, vacancyTestStateMarkers...)
+	_, test, err := parseVacancyTestState(document)
 	if err != nil {
 		return core.Questionnaire{}, err
 	}
-	var state vacancyResponseState
-	if err := json.Unmarshal([]byte(html.UnescapeString(string(raw))), &state); err != nil {
-		return core.Questionnaire{}, fmt.Errorf("decode HH vacancy test state: %w", err)
-	}
-	test, ok := selectVacancyTest(state)
-	if !ok {
-		return core.Questionnaire{}, errors.New("HH vacancy response does not contain a test")
-	}
+	return vacancyTestQuestionnaire(test)
+}
+
+func vacancyTestQuestionnaire(test vacancyTest) (core.Questionnaire, error) {
 	questionnaire := core.Questionnaire{Title: strings.TrimSpace(test.Description)}
 	for _, task := range test.Tasks {
 		question, err := vacancyTaskQuestion(task)
@@ -88,6 +84,22 @@ func ParseVacancyTestQuestionnaire(document []byte) (core.Questionnaire, error) 
 		}
 	}
 	return questionnaire, nil
+}
+
+func parseVacancyTestState(document []byte) (vacancyResponseState, vacancyTest, error) {
+	raw, err := extractInitialStateByMarkers(document, vacancyTestStateMarkers...)
+	if err != nil {
+		return vacancyResponseState{}, vacancyTest{}, err
+	}
+	var state vacancyResponseState
+	if err := json.Unmarshal([]byte(html.UnescapeString(string(raw))), &state); err != nil {
+		return vacancyResponseState{}, vacancyTest{}, fmt.Errorf("decode HH vacancy test state: %w", err)
+	}
+	test, ok := selectVacancyTest(state)
+	if !ok {
+		return vacancyResponseState{}, vacancyTest{}, errors.New("HH vacancy response does not contain a test")
+	}
+	return state, test, nil
 }
 
 func selectVacancyTest(state vacancyResponseState) (vacancyTest, bool) {

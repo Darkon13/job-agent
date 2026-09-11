@@ -34,6 +34,8 @@
   state как артефакт сессии (миграция 22) и CLI `job-agent auth login|status`.
 - Извлечение вопросов vacancy test из popup initial state в
   `core.Questionnaire` (вопросы, варианты, open-text и code-задачи).
+- Отправка open-text ответов vacancy test через popup-форму с проверкой
+  `_xsrf`/`uidPk`/`guid`/`startTime` и обязательным read-back результата.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

@@ -65,7 +65,8 @@
 
 - [x] Capture vacancy test: popup initial state → `core.Questionnaire`
       (browser read channel, без хранения xsrf/guid).
-- [ ] Submit ответов и read-back результата.
+- [x] Submit ответов и read-back результата (open-text tasks; choice/code
+      отклоняются как unsupported до live-проверки их полей).
 - [ ] Adapter qualification service: sync каталога, capture, submit.
 - [ ] Workers `test.capture`, `questionnaire.answer`, `test.complete`,
       `review.answer`.
