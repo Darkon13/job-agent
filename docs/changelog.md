@@ -49,6 +49,10 @@
   `UncoveredQuestions`; полное покрытие ставит `questionnaire.answer`,
   неполное создаёт детерминированную review session без submit, успешный
   submit фиксируется как `test.complete(submitted)`.
+- Worker `review.answer` и миграция 24: runtime questionnaire хранится в
+  review session; человеческий выбор записывается с CAS, при полном покрытии
+  цепочка возобновляет `questionnaire.answer`, иначе выдаётся следующий
+  missing prompt.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

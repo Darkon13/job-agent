@@ -193,6 +193,13 @@ func ResolveQuestionAnswer(question Question, block AnswerBlock) (ResolvedAnswer
 	return ResolvedAnswer{}, fmt.Errorf("answer block %q has no reviewed answer for question fingerprint %s", block.Tag, fingerprint)
 }
 
+// ResolveStoredAnswer resolves one runtime question from a reviewed answer.
+// Unlike ResolveQuestionAnswer it does not require a portable block and is used
+// for human review selections whose question is already at hand.
+func ResolveStoredAnswer(question Question, answer StoredAnswer) (ResolvedAnswer, error) {
+	return resolveStoredAnswer(question, answer)
+}
+
 // ResolveAnswerBlock strictly maps user-supplied answer text to runtime question
 // and option IDs. It rejects missing, extra, duplicate, changed, or ambiguous
 // content instead of guessing.

@@ -89,6 +89,20 @@ func VacancyTestDefinitionID(platform Platform, externalID string) TestDefinitio
 	return TestDefinitionID(string(platform) + ":vacancy:" + strings.TrimSpace(externalID))
 }
 
+// VacancyExternalIDFromTestDefinitionID extracts the vacancy external id from a
+// definition identity created by VacancyTestDefinitionID.
+func VacancyExternalIDFromTestDefinitionID(platform Platform, id TestDefinitionID) (string, bool) {
+	prefix := string(platform) + ":vacancy:"
+	if platform == "" || !strings.HasPrefix(string(id), prefix) {
+		return "", false
+	}
+	externalID := strings.TrimPrefix(string(id), prefix)
+	if strings.TrimSpace(externalID) == "" {
+		return "", false
+	}
+	return externalID, true
+}
+
 // NewProgressiveTestDefinition creates a catalog entry before an attempt starts
 // and therefore does not require any questions to be known.
 func NewProgressiveTestDefinition(platform Platform, externalID, title string, qualification *QualificationDescriptor, now time.Time) (TestDefinition, error) {

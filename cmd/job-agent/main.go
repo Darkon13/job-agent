@@ -556,6 +556,18 @@ func main() {
 		log.Fatalf("create test complete worker: %v", err)
 	}
 	workers = append(workers, testCompleteWorker)
+	reviewAnswerHandler, err := taskworker.NewReviewAnswerHandler(store, taskworker.SystemClock{})
+	if err != nil {
+		log.Fatalf("create review answer handler: %v", err)
+	}
+	if answerRegistry != nil {
+		reviewAnswerHandler.ConfigureContinuation(answerRegistry, vacancyTestWorkflow)
+	}
+	reviewAnswerWorker, err := newTaskWorker(store, core.TaskReviewAnswer, reviewAnswerHandler.Handle)
+	if err != nil {
+		log.Fatalf("create review answer worker: %v", err)
+	}
+	workers = append(workers, reviewAnswerWorker)
 	if resumePublishers.Count() > 0 {
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
 		if err != nil {

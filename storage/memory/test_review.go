@@ -116,7 +116,7 @@ func (repository *Repository) CreateReviewSession(ctx context.Context, candidate
 	if _, exists := repository.tests[candidate.TestDefinitionID]; !exists {
 		return false, errors.New("review session references unknown test definition")
 	}
-	repository.reviews[candidate.ID] = candidate
+	repository.reviews[candidate.ID] = cloneReviewSession(candidate)
 	return true, nil
 }
 
@@ -130,7 +130,7 @@ func (repository *Repository) ReviewSession(ctx context.Context, id core.ReviewS
 	if !exists {
 		return core.ReviewSession{}, errors.New("review session not found")
 	}
-	return session, nil
+	return cloneReviewSession(session), nil
 }
 
 func (repository *Repository) ReviewPrompt(ctx context.Context, id core.ReviewPromptID) (core.ReviewPrompt, error) {
@@ -169,7 +169,7 @@ func (repository *Repository) SaveReviewPrompt(ctx context.Context, session core
 		return storage.ErrRevisionConflict
 	}
 	repository.prompts[prompt.ID] = cloneReviewPrompt(prompt)
-	repository.reviews[session.ID] = session
+	repository.reviews[session.ID] = cloneReviewSession(session)
 	return nil
 }
 
@@ -248,6 +248,18 @@ func cloneReviewPrompt(source core.ReviewPrompt) core.ReviewPrompt {
 func cloneReviewSelection(source core.ReviewSelection) core.ReviewSelection {
 	result := source
 	result.SelectedOptions = append([]string(nil), source.SelectedOptions...)
+	return result
+}
+
+func cloneReviewSession(source core.ReviewSession) core.ReviewSession {
+	result := source
+	if len(source.Questionnaire.Questions) != 0 {
+		result.Questionnaire = core.Questionnaire{Title: source.Questionnaire.Title, Questions: make([]core.Question, len(source.Questionnaire.Questions))}
+		for index, question := range source.Questionnaire.Questions {
+			result.Questionnaire.Questions[index] = question
+			result.Questionnaire.Questions[index].Options = append([]core.QuestionOption(nil), question.Options...)
+		}
+	}
 	return result
 }
 

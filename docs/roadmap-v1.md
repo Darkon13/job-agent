@@ -82,7 +82,11 @@
       неполное → review session без submit; после успешного submit →
       `test.complete`(`submitted`); contextual-вопросы без ответа уходят в
       manual review.
-- [ ] Ревизии answer blocks (append-only) и worker/UI для `review.answer`.
+- [x] Worker `review.answer`: CAS-запись человеческого выбора; при полном
+      покрытии возобновляет `questionnaire.answer`, иначе выдаёт следующий
+      missing prompt (runtime questionnaire хранится в review session,
+      миграция 24).
+- [ ] CLI/API и dashboard review; append-only ревизии answer blocks.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] Review UI в dashboard; CLI review.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence

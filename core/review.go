@@ -38,6 +38,10 @@ type ReviewSession struct {
 	Revision         uint64              `json:"revision"`
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`
+	// Questionnaire is the runtime questionnaire of the observed attempt.
+	// Runtime task/option IDs stay inside the session and never leak into
+	// portable AnswerBlocks. Older sessions may omit it.
+	Questionnaire Questionnaire `json:"questionnaire,omitempty"`
 }
 
 // ReviewPrompt is delivered unchanged to REST/SSE, Telegram, or CLI clients.
@@ -70,6 +74,11 @@ func (session ReviewSession) Validate() error {
 	}
 	if session.Revision == 0 || session.CreatedAt.IsZero() || session.UpdatedAt.Before(session.CreatedAt) {
 		return errors.New("review session has invalid revision or timestamps")
+	}
+	if len(session.Questionnaire.Questions) != 0 {
+		if err := validateQuestionnaire(session.Questionnaire); err != nil {
+			return fmt.Errorf("review session questionnaire: %w", err)
+		}
 	}
 	switch session.Status {
 	case ReviewPending, ReviewWaiting, ReviewAnswered, ReviewCompleted, ReviewCancelled, ReviewUnsupported, ReviewExpired:

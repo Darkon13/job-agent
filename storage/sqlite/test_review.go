@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -155,11 +156,15 @@ func (store *Store) CreateReviewSession(ctx context.Context, session core.Review
 	if session.Status != core.ReviewPending || session.Revision != 1 {
 		return false, errors.New("review repository accepts only initialized pending sessions")
 	}
+	questionnaire, err := json.Marshal(session.Questionnaire)
+	if err != nil {
+		return false, fmt.Errorf("encode review session questionnaire: %w", err)
+	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO review_sessions
-		(id, test_definition_id, platform, profile_id, correlation_id, status, revision, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.TestDefinitionID, session.Platform,
+		(id, test_definition_id, platform, profile_id, correlation_id, status, revision, created_at, updated_at, questionnaire)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.TestDefinitionID, session.Platform,
 		session.ProfileID, session.CorrelationID, session.Status, session.Revision,
-		session.CreatedAt.UnixNano(), session.UpdatedAt.UnixNano())
+		session.CreatedAt.UnixNano(), session.UpdatedAt.UnixNano(), questionnaire)
 	if err != nil {
 		return false, fmt.Errorf("create review session %s: %w", session.ID, err)
 	}
@@ -182,13 +187,19 @@ func (store *Store) ReviewSession(ctx context.Context, id core.ReviewSessionID) 
 		return core.ReviewSession{}, errors.New("review session id is required")
 	}
 	row := store.db.QueryRowContext(ctx, `SELECT test_definition_id, platform, profile_id, correlation_id,
-		status, revision, created_at, updated_at FROM review_sessions WHERE id = ?`, id)
+		status, revision, created_at, updated_at, questionnaire FROM review_sessions WHERE id = ?`, id)
 	var session core.ReviewSession
 	var createdAt, updatedAt int64
+	var questionnaire []byte
 	session.ID = id
 	if err := row.Scan(&session.TestDefinitionID, &session.Platform, &session.ProfileID, &session.CorrelationID,
-		&session.Status, &session.Revision, &createdAt, &updatedAt); err != nil {
+		&session.Status, &session.Revision, &createdAt, &updatedAt, &questionnaire); err != nil {
 		return core.ReviewSession{}, err
+	}
+	if len(bytes.TrimSpace(questionnaire)) != 0 && string(bytes.TrimSpace(questionnaire)) != "{}" {
+		if err := json.Unmarshal(questionnaire, &session.Questionnaire); err != nil {
+			return core.ReviewSession{}, fmt.Errorf("decode review session questionnaire: %w", err)
+		}
 	}
 	session.CreatedAt = time.Unix(0, createdAt).UTC()
 	session.UpdatedAt = time.Unix(0, updatedAt).UTC()

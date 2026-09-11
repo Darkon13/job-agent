@@ -160,10 +160,10 @@ func (handler *VacancyTestCaptureHandler) routeAnswers(ctx context.Context, payl
 	if handler.reviews == nil {
 		return nil
 	}
-	return handler.recordReview(ctx, payload, definition, missing[0], now, task)
+	return handler.recordReview(ctx, payload, definition, questionnaire, missing[0], now, task)
 }
 
-func (handler *VacancyTestCaptureHandler) recordReview(ctx context.Context, payload core.TestCapturePayload, definition core.TestDefinition, question core.Question, now time.Time, task core.Task) error {
+func (handler *VacancyTestCaptureHandler) recordReview(ctx context.Context, payload core.TestCapturePayload, definition core.TestDefinition, questionnaire core.Questionnaire, question core.Question, now time.Time, task core.Task) error {
 	sessionID, promptID := vacancyReviewIDs(definition, payload.ProfileID)
 	correlationID := task.CorrelationID
 	if correlationID == "" {
@@ -173,6 +173,7 @@ func (handler *VacancyTestCaptureHandler) recordReview(ctx context.Context, payl
 	if err != nil {
 		return err
 	}
+	session.Questionnaire = questionnaire
 	prompt := core.ReviewPrompt{
 		ID: promptID, SessionID: session.ID, Revision: session.Revision, Question: question, CreatedAt: now,
 	}

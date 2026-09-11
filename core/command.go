@@ -219,6 +219,50 @@ func TestCompleteIdempotencyKey(platform Platform, externalID string, profileID 
 	return "test.complete:" + hex.EncodeToString(digest[:]), nil
 }
 
+// ReviewAnswerPayload carries one human selection for the current review
+// prompt. It is append-only and uses optimistic concurrency, so a stale client
+// never overwrites a newer answer.
+type ReviewAnswerPayload struct {
+	SessionID        ReviewSessionID `json:"session_id"`
+	PromptID         ReviewPromptID  `json:"prompt_id"`
+	ExpectedRevision uint64          `json:"expected_revision"`
+	SelectedOptions  []string        `json:"selected_options,omitempty"`
+	Text             string          `json:"text,omitempty"`
+	Source           string          `json:"source"`
+}
+
+func (payload ReviewAnswerPayload) Validate() error {
+	if payload.SessionID == "" || payload.PromptID == "" {
+		return errors.New("review answer requires session and prompt")
+	}
+	if payload.ExpectedRevision == 0 {
+		return errors.New("review answer requires expected revision")
+	}
+	if strings.TrimSpace(payload.Source) == "" {
+		return errors.New("review answer requires source")
+	}
+	if payload.Text == "" && len(payload.SelectedOptions) == 0 {
+		return errors.New("review answer requires text or selected options")
+	}
+	if payload.Text != "" && len(payload.SelectedOptions) != 0 {
+		return errors.New("review answer mixes text and selected options")
+	}
+	for _, option := range payload.SelectedOptions {
+		if strings.TrimSpace(option) == "" {
+			return errors.New("review answer contains an empty option")
+		}
+	}
+	return nil
+}
+
+func ReviewAnswerIdempotencyKey(sessionID ReviewSessionID, promptID ReviewPromptID, revision uint64) (string, error) {
+	if sessionID == "" || promptID == "" || revision == 0 {
+		return "", errors.New("review answer idempotency requires session, prompt and revision")
+	}
+	digest := sha256.Sum256([]byte(string(sessionID) + "\x00" + string(promptID) + "\x00" + fmt.Sprint(revision)))
+	return "review.answer:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ResumeTouchPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`
