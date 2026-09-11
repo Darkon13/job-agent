@@ -189,6 +189,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("create qualification workflow: %v", err)
 	}
+	resumeUpdateWorkflow, err := workflow.NewResumeUpdateWorkflow(store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	if err != nil {
+		log.Fatalf("create resume update workflow: %v", err)
+	}
+	resumeAPI.ConfigureUpdate(resumeUpdateWorkflow)
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -656,6 +661,15 @@ func main() {
 	}
 	workers = append(workers, reviewAnswerWorker)
 	if resumePublishers.Count() > 0 {
+		resumeUpdateHandler, err := taskworker.NewResumeUpdateHandler(profileStatePlanner, profileStateReaders, profileStateWriters, resumePublishers)
+		if err != nil {
+			log.Fatalf("create resume update handler: %v", err)
+		}
+		resumeUpdateWorker, err := newTaskWorker(store, core.TaskResumeUpdate, profileMutationLane.Wrap(resumeUpdateHandler.Handle))
+		if err != nil {
+			log.Fatalf("create resume update worker: %v", err)
+		}
+		workers = append(workers, resumeUpdateWorker)
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
 		if err != nil {
 			log.Fatalf("create resume publish handler: %v", err)

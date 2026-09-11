@@ -110,8 +110,10 @@
 - Auth restart recovery: незавершённые сессии при старте backend помечаются
   `failed` с категорией `temporary_failure` и понятным сообщением.
 - CLI `job-agent auth status --watch` следует за SSE-потоком сессии.
-- Resume update: durable `resume.update` (payload, idempotency key, workflow)
-  и worker plan→apply→read-back→publish; no-change план не публикует.
+- Resume update: durable `resume.update` (payload, idempotency key, workflow),
+  worker plan→apply→read-back→publish, API
+  `POST /api/v1/profiles/{profile}/resumes/{resume}/update` и main-проводка;
+  no-change план не публикует.
 - `auth logout`: `POST /api/v1/profiles/{profile}/logout` удаляет локальный
   credential record и browser state профиля (идемпотентно, с CLI-командой);
   платформенные токены не отзываются.
