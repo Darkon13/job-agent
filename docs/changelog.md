@@ -101,6 +101,8 @@
   человеческие ответы дописываются ревизией в qualification-блок family/level;
   `POST /api/v1/profiles/{profile}/qualifications/{offering}/start` ставит
   durable попытку с Idempotency-Key.
+- CLI `job-agent qualification catalog|sync|start` как API-клиент поверх
+  qualification endpoints.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

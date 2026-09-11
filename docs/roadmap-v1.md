@@ -81,9 +81,10 @@
       завершает её досрочно с fingerprint для review; уже пройденный уровень
       не перезапускается. Review-ответы расширяют qualification-блок
       (`AnswerBlockTag` в review session, append-only ревизии), старт попытки
-      доступен через `POST /profiles/{profile}/qualifications/{offering}/start`.
-      Осталось: live assessment transport (start/current/submit/result) и
-      model fallback.
+      доступен через `POST /profiles/{profile}/qualifications/{offering}/start`
+      и CLI `job-agent qualification catalog|sync|start`. Осталось: live
+      assessment transport (start/current/submit/result) и model fallback для
+      неизвестных вопросов (контракт prompt/validator ещё не зафиксирован).
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через

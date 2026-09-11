@@ -69,6 +69,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "qualification" {
+		if err := runQualification(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "db" {
 		if err := runDB(context.Background(), os.Args[2:], os.Stdout); err != nil {
 			log.Fatal(err)
