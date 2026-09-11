@@ -177,6 +177,7 @@ per-profile lock и revision CAS; после частичного сбоя по�
 2. ✅ Persistent auth session, challenge store, service и HTTP endpoints; SSE и
    runtime registration ждут HH driver.
 3. HH browser login и OAuth token exchange внутри adapter-а.
-4. Terminal presenter: TTY separation, Kitty, Sixel и fallback.
+4. ⏳ Terminal presenter: рендеры Kitty, Sixel, Unicode и file готовы в
+   `presenter/`; CLI, TTY separation и API-клиент остаются.
 5. Dashboard auth wizard и SSE.
 6. Refresh/revoke/logout, restart recovery и browser E2E.

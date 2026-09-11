@@ -26,6 +26,8 @@
 - HH search: `similar_resume`, `similar_vacancy` и `related_vacancy` через API и
   `similar_resume` через browser `/search/vacancy?resume=`; у source появилась
   матрица поддерживаемых полей.
+- Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
+  Unicode half-block preview и приватный PNG-файл как fallback.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.
