@@ -41,6 +41,18 @@ func (reader profileStateReaderStub) ReadProfileState(ctx context.Context, reque
 	return reader(ctx, request)
 }
 
+type profileStateWriterStub struct{}
+
+func (profileStateWriterStub) ApplyProfileState(context.Context, core.ProfileStateProposal) (adapter.ProfileStateApplyResult, error) {
+	return adapter.ProfileStateApplyResult{}, nil
+}
+
+type resumePublisherStub struct{}
+
+func (resumePublisherStub) PublishResume(context.Context, adapter.ResumePublishCommand) (adapter.ResumePublishResult, error) {
+	return adapter.ResumePublishResult{}, nil
+}
+
 type profileActivityObserverStub struct{}
 
 func (profileActivityObserverStub) ObserveProfileActivity(context.Context, core.ProfileID, string) (adapter.ProfileActivityObservation, error) {
@@ -260,6 +272,57 @@ func TestProfileStateReconcileDefinitionsRequireReadAndWriteCapabilities(t *test
 	disabled, err := profileStateReconcileDefinitions(cfg, []core.ProfileStateResource{resource}, nil, map[core.ProfileID]core.Platform{"primary": "hh"})
 	if err != nil || len(disabled) != 0 {
 		t.Fatalf("definition without reader = %#v err=%v", disabled, err)
+	}
+}
+
+func TestResumeUpdateDefinitionsRequireReadWriteAndPublishCapabilities(t *testing.T) {
+	resource, err := core.NewProfileStateResource("primary-about", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"Backend"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	cfg := appconfig.Config{
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Resume: "resume-1", Enabled: true}},
+		Jobs: []appconfig.Job{{
+			Tag: "refresh-about", Enabled: true,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 10 * * *", Timezone: "UTC"}},
+			Action:   appconfig.JobAction{Type: appconfig.JobActionResumeUpdate, Profile: "primary", Resource: resource.Tag},
+		}},
+	}
+	reader := profileStateReaderStub(func(context.Context, adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation("primary", resource.State, "", time.Now().UTC())
+	})
+	readers := map[core.ProfileID]adapter.ProfileStateReader{"primary": reader}
+	writers := taskworker.NewProfileStateWriterRegistry()
+	if err := writers.Register("primary", profileStateWriterStub{}); err != nil {
+		t.Fatalf("register writer: %v", err)
+	}
+	publishers := taskworker.NewResumePublisherRegistry()
+	platforms := map[core.ProfileID]core.Platform{"primary": "hh"}
+	definitions, err := resumeUpdateDefinitions(cfg, []core.ProfileStateResource{resource}, readers, writers, publishers, platforms)
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions = %#v err=%v", definitions, err)
+	}
+	if definitions[0].ActionType != core.TaskResumeUpdate || definitions[0].ProfileID != "primary" || definitions[0].Platform != "hh" {
+		t.Fatalf("definition = %#v", definitions[0])
+	}
+	var payload core.ResumeUpdatePayload
+	if err := json.Unmarshal(definitions[0].Payload, &payload); err != nil || payload.ResourceTag != resource.Tag || payload.ResumeID != "resume-1" || payload.Publish {
+		t.Fatalf("payload = %#v err=%v", payload, err)
+	}
+	cfg.Jobs[0].Action.Publish = true
+	withoutPublisher, err := resumeUpdateDefinitions(cfg, []core.ProfileStateResource{resource}, readers, writers, publishers, platforms)
+	if err != nil || len(withoutPublisher) != 0 {
+		t.Fatalf("publish without publisher = %#v err=%v", withoutPublisher, err)
+	}
+	if err := publishers.Register("primary", resumePublisherStub{}); err != nil {
+		t.Fatalf("register publisher: %v", err)
+	}
+	publishing, err := resumeUpdateDefinitions(cfg, []core.ProfileStateResource{resource}, readers, writers, publishers, platforms)
+	if err != nil || len(publishing) != 1 {
+		t.Fatalf("publishing definitions = %#v err=%v", publishing, err)
+	}
+	if err := json.Unmarshal(publishing[0].Payload, &payload); err != nil || !payload.Publish {
+		t.Fatalf("publishing payload = %#v err=%v", payload, err)
 	}
 }
 

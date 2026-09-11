@@ -122,6 +122,25 @@
       }
     },
     {
+      "tag": "update-primary-about",
+      "enabled": false,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 10 * * 1",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "resume.update",
+        "profile": "primary",
+        "resource": "primary-backend-about",
+        "publish": false
+      }
+    },
+    {
       "tag": "touch-primary-resume",
       "enabled": true,
       "triggers": [

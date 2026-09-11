@@ -113,12 +113,17 @@
 - Resume update: durable `resume.update` (payload, idempotency key, workflow),
   worker plan→apply→read-back→publish, API
   `POST /api/v1/profiles/{profile}/resumes/{resume}/update` и main-проводка;
-  no-change план не публикует.
+  no-change план пропускает apply, но явно запрошенный publish повторяется.
 - `auth logout`: `POST /api/v1/profiles/{profile}/logout` удаляет локальный
   credential record и browser state профиля (идемпотентно, с CLI-командой);
   платформенные токены не отзываются.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
+- Плановый `resume.update`: job action с `resource` и optional `publish`,
+  cron-триггер и те же durable plan/apply/read-back/publish semantics без
+  подтверждения; при platform cooldown задача ждёт `Retry-After`, а scheduler
+  не создаёт дубликат активного запуска. Worker `resume.update` регистрируется
+  при наличии writer, без publisher допускается только apply.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

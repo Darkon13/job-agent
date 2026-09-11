@@ -44,6 +44,13 @@ func (registry *ProfileStateWriterRegistry) Resolve(profileID core.ProfileID) (a
 	return writer, nil
 }
 
+func (registry *ProfileStateWriterRegistry) Has(profileID core.ProfileID) bool {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	_, exists := registry.writers[profileID]
+	return exists
+}
+
 func (registry *ProfileStateWriterRegistry) Count() int {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()

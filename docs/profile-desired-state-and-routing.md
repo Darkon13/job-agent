@@ -115,6 +115,26 @@ immutable proposal и идемпотентно ставит apply; при уже
 внешнего изменения нет. Отдельный registry переиспользуемых `actions` и
 универсальный `/actions/{tag}/runs` остаются следующим обобщением.
 
+Плановое обновление резюме использует отдельный job action:
+
+```json
+{
+  "tag": "refresh-primary-about",
+  "enabled": true,
+  "triggers": [{"type": "cron", "expression": "0 10 * * *", "timezone": "Europe/Moscow", "misfire": "run_once"}],
+  "concurrency": "forbid",
+  "action": {"type": "resume.update", "profile": "primary", "resource": "primary-backend-profile", "publish": false}
+}
+```
+
+Cron создаёт обычный durable `resume.update` task: worker читает declared
+resource, строит immutable proposal, применяет его с обязательным read-back и
+при `publish: true` повторяет публикацию до успеха. Подтверждение не требуется:
+если платформа отвечает cooldown-ом, задача перепланируется на
+`Retry-After`/`next_publish_at`, а scheduler не создаёт второй запуск, пока
+первый активен. `resume`, если не задан, берётся из профиля; профиль без
+reader/writer, а для `publish: true` и без publisher, job пропускает.
+
 ## Processor — преобразователь, а не обязательно AI
 
 Processor получает типизированные данные и возвращает преобразованные данные с provenance. Минимальный контракт:

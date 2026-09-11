@@ -629,6 +629,47 @@ func TestResumePublishJobValidation(t *testing.T) {
 	}
 }
 
+func TestResumeUpdateJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{
+			{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true},
+			{Tag: "secondary", Adapter: "hh-main", Resume: "resume-2", Enabled: true},
+		},
+		Resources: []ProfileStateResourceConfig{{
+			Tag: "primary-about", Type: ResourceTypeProfileState, Profile: "primary",
+			Ownership: "declared_fields", State: json.RawMessage(`{"resumes":{"resume-1":{"about":"Backend"}}}`),
+		}},
+		Jobs: []Job{{
+			Tag: "refresh-primary-about", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "0 10 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionResumeUpdate, Profile: "primary", Resource: "primary-about"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid resume update job: %v", err)
+	}
+	config.Jobs[0].Action.Resource = "missing"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown resource to fail")
+	}
+	config.Jobs[0].Action.Resource = "primary-about"
+	config.Jobs[0].Action.Publish = true
+	if err := config.Validate(); err != nil {
+		t.Fatalf("publish should fall back to the profile resume: %v", err)
+	}
+	config.Profiles[0].Resume = ""
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected publish without resume to fail")
+	}
+	config.Profiles[0].Resume = "resume-1"
+	config.Jobs[0].Action.Profile = "secondary"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected a resource of another profile to fail")
+	}
+}
+
 func TestConversationFollowUpSelectionJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

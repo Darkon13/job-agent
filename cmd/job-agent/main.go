@@ -660,7 +660,7 @@ func main() {
 		log.Fatalf("create review answer worker: %v", err)
 	}
 	workers = append(workers, reviewAnswerWorker)
-	if resumePublishers.Count() > 0 {
+	if profileStateWriters.Count() > 0 {
 		resumeUpdateHandler, err := taskworker.NewResumeUpdateHandler(profileStatePlanner, profileStateReaders, profileStateWriters, resumePublishers)
 		if err != nil {
 			log.Fatalf("create resume update handler: %v", err)
@@ -670,6 +670,8 @@ func main() {
 			log.Fatalf("create resume update worker: %v", err)
 		}
 		workers = append(workers, resumeUpdateWorker)
+	}
+	if resumePublishers.Count() > 0 {
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
 		if err != nil {
 			log.Fatalf("create resume publish handler: %v", err)
@@ -753,6 +755,13 @@ func main() {
 		log.Fatalf("build profile state scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, profileStateDefinitions...)
+	resumeUpdateDefinitions, err := resumeUpdateDefinitions(
+		cfg, profileStateResources, profileStateReaders, profileStateWriters, resumePublishers, profileStatePlatforms,
+	)
+	if err != nil {
+		log.Fatalf("build resume update scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, resumeUpdateDefinitions...)
 	definitions = append(definitions, campaignDefinitions...)
 	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
@@ -1497,6 +1506,64 @@ func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+// resumeUpdateDefinitions schedules declared resume state reconciliation with
+// an optional publish. A profile whose reader, writer or (when publishing)
+// publisher is unavailable is skipped rather than failing startup.
+func resumeUpdateDefinitions(
+	cfg appconfig.Config,
+	resources []core.ProfileStateResource,
+	readers map[core.ProfileID]adapter.ProfileStateReader,
+	writers *taskworker.ProfileStateWriterRegistry,
+	publishers *taskworker.ResumePublisherRegistry,
+	platforms map[core.ProfileID]core.Platform,
+) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	resourcesByTag := make(map[string]core.ProfileStateResource, len(resources))
+	for _, resource := range resources {
+		resourcesByTag[resource.Tag] = resource
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionResumeUpdate {
+			continue
+		}
+		resource, exists := resourcesByTag[job.Action.Resource]
+		if !exists {
+			return nil, fmt.Errorf("job %q references unknown profile state resource %q", job.Tag, job.Action.Resource)
+		}
+		profileID := resource.ProfileID
+		platform, writable := platforms[profileID]
+		if readers[profileID] == nil || !writable || !writers.Has(profileID) {
+			continue
+		}
+		if job.Action.Publish && !publishers.Has(profileID) {
+			continue
+		}
+		resumeID := job.Action.Resume
+		if resumeID == "" {
+			resumeID = profiles[job.Action.Profile].Resume
+		}
+		payload, err := json.Marshal(core.ResumeUpdatePayload{
+			ProfileID: profileID, ResourceTag: resource.Tag, ResumeID: resumeID, Publish: job.Action.Publish,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskResumeUpdate, Platform: platform, ProfileID: profileID,
 				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

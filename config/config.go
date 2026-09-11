@@ -111,6 +111,7 @@ type ProfileStateResourceConfig struct {
 const (
 	JobActionResumeTouch                = "resume.touch"
 	JobActionResumePublish              = "resume.publish"
+	JobActionResumeUpdate               = "resume.update"
 	JobActionApplicationCampaign        = "application.campaign"
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
@@ -162,6 +163,7 @@ type JobAction struct {
 	Resource         string                               `json:"resource,omitempty"`
 	Profile          string                               `json:"profile,omitempty"`
 	Resume           string                               `json:"resume,omitempty"`
+	Publish          bool                                 `json:"publish,omitempty"`
 	Profiles         []string                             `json:"profiles,omitempty"`
 	Routes           []string                             `json:"routes,omitempty"`
 	TargetSuccessful int                                  `json:"target_successful,omitempty"`
@@ -1353,6 +1355,30 @@ func (c Config) Validate() error {
 			}
 			if resume == "" {
 				return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+			}
+		case JobActionResumeUpdate:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			resourceTag := strings.TrimSpace(job.Action.Resource)
+			if resourceTag == "" {
+				return fmt.Errorf("job %q resume.update requires resource", job.Tag)
+			}
+			resourceProfile, exists := resources[resourceTag]
+			if !exists {
+				return fmt.Errorf("job %q references unknown profile state resource %q", job.Tag, job.Action.Resource)
+			}
+			if resourceProfile != core.ProfileID(job.Action.Profile) {
+				return fmt.Errorf("job %q resource %q belongs to another profile", job.Tag, resourceTag)
+			}
+			if job.Action.Publish {
+				resume := job.Action.Resume
+				if resume == "" {
+					resume = profileConfigs[job.Action.Profile].Resume
+				}
+				if resume == "" {
+					return fmt.Errorf("job %q resume.update with publish requires resume", job.Tag)
+				}
 			}
 		case JobActionConversationSync:
 			if _, exists := profiles[job.Action.Profile]; !exists {

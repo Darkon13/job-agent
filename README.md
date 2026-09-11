@@ -559,8 +559,8 @@ Campaign routes должны использовать один adapter и вкл
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
 `next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
-`resume.publish`, `profile.activity.observe`, `conversation.follow_up.select`,
-`profile_state.reconcile` или
+`resume.publish`, `resume.update`, `profile.activity.observe`,
+`conversation.follow_up.select`, `profile_state.reconcile` или
 `application.campaign` tasks. После простоя пропущенные интервалы схлопываются
 в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает
 lease во время ожидания. Реальный HH transport читает
@@ -572,6 +572,17 @@ lease во время ожидания. Реальный HH transport читае
 только с browser-cookie publish возвращает `Unsupported`.
 Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
 transport, чтобы не копить заведомо невыполнимые действия.
+
+Action
+`{"type":"resume.update","profile":"primary","resource":"<tag>","publish":false}`
+по расписанию сверяет объявленный desired state резюме с платформой:
+plan → apply → read-back, а при `publish: true` дополнительно публикует резюме.
+Подтверждение для планового обновления не требуется. Если платформа ещё не
+разрешает операцию (cooldown, `Retry-After`, `next_publish_at`), durable task не
+завершается с ошибкой, а перепланируется на первый разрешённый момент; пока
+задача активна, scheduler не создаёт по ней дубликат. `resume`, если не задан,
+берётся из профиля; при `publish: true` он обязателен, а профиль без
+зарегистрированного publisher job просто не активирует.
 
 Job может задать числовой `priority` в диапазоне от `-1000` до `1000`; по
 умолчанию используется `0`. Worker сначала выбирает больший priority, затем

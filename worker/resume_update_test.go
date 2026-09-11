@@ -48,13 +48,13 @@ func (publisher *fakeResumeUpdatePublisher) PublishResume(_ context.Context, com
 	return adapter.ResumePublishResult{}, nil
 }
 
-func resumeUpdateFixture(t *testing.T, created bool, publish bool) (*ResumeUpdateHandler, *fakeResumeStateWriter, *fakeResumeUpdatePublisher) {
+func resumeUpdateFixture(t *testing.T, status core.ProfileStateProposalStatus) (*ResumeUpdateHandler, *fakeResumeStateWriter, *fakeResumeUpdatePublisher) {
 	t.Helper()
 	resource := core.ProfileStateResource{Tag: "primary-resume", ProfileID: "primary"}
 	planner := fakeResumePlanner{
 		resource: resource,
-		proposal: core.ProfileStateProposal{ID: "proposal-1", ResourceTag: resource.Tag, ProfileID: "primary"},
-		created:  created,
+		proposal: core.ProfileStateProposal{ID: "proposal-1", ResourceTag: resource.Tag, ProfileID: "primary", Status: status},
+		created:  true,
 	}
 	writer := &fakeResumeStateWriter{}
 	writers := NewProfileStateWriterRegistry()
@@ -88,7 +88,7 @@ func resumeUpdateTask(t *testing.T, publish bool) core.Task {
 }
 
 func TestResumeUpdateAppliesAndPublishes(t *testing.T) {
-	handler, writer, publisher := resumeUpdateFixture(t, true, true)
+	handler, writer, publisher := resumeUpdateFixture(t, core.ProfileStateProposalPlanned)
 	if err := handler.Handle(context.Background(), resumeUpdateTask(t, true)); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -101,8 +101,8 @@ func TestResumeUpdateAppliesAndPublishes(t *testing.T) {
 }
 
 func TestResumeUpdateNoChangeSkipsApplyAndPublish(t *testing.T) {
-	handler, writer, publisher := resumeUpdateFixture(t, false, true)
-	if err := handler.Handle(context.Background(), resumeUpdateTask(t, true)); err != nil {
+	handler, writer, publisher := resumeUpdateFixture(t, core.ProfileStateProposalNoChanges)
+	if err := handler.Handle(context.Background(), resumeUpdateTask(t, false)); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	if writer.applies != 0 || len(publisher.commands) != 0 {
@@ -110,8 +110,30 @@ func TestResumeUpdateNoChangeSkipsApplyAndPublish(t *testing.T) {
 	}
 }
 
+// A publish retry re-plans the already applied state as no_changes. The
+// requested publish must still be attempted so a rate-limited raise is
+// deferred and repeated instead of being silently dropped.
+func TestResumeUpdateNoChangeStillPublishesWhenRequested(t *testing.T) {
+	handler, writer, publisher := resumeUpdateFixture(t, core.ProfileStateProposalNoChanges)
+	if err := handler.Handle(context.Background(), resumeUpdateTask(t, true)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if writer.applies != 0 {
+		t.Fatalf("writer applies = %d, want 0", writer.applies)
+	}
+	if len(publisher.commands) != 1 || publisher.commands[0].ResumeID != "resume-1" {
+		t.Fatalf("published=%#v", publisher.commands)
+	}
+	if err := handler.Handle(context.Background(), resumeUpdateTask(t, false)); err != nil {
+		t.Fatalf("handle without publish: %v", err)
+	}
+	if len(publisher.commands) != 1 {
+		t.Fatalf("publish without request = %#v", publisher.commands)
+	}
+}
+
 func TestResumeUpdateRejectsUndeclaredResource(t *testing.T) {
-	handler, _, _ := resumeUpdateFixture(t, true, false)
+	handler, _, _ := resumeUpdateFixture(t, core.ProfileStateProposalPlanned)
 	task := resumeUpdateTask(t, false)
 	task.Payload = []byte(`{"profile_id":"primary","resource_tag":"missing"}`)
 	if err := handler.Handle(context.Background(), task); err == nil {

@@ -128,11 +128,12 @@
 
 - [ ] `resume.create`/`resume.update` как desired state с deterministic/model
       processor, semantic diff и approval policy. Готовы durable
-      `resume.update` (payload + idempotency + workflow) и worker
+      `resume.update` (payload + idempotency + workflow), worker
       «plan → apply → read-back → optional publish», API
-      `POST /profiles/{profile}/resumes/{resume}/update` с Idempotency-Key и
-      main-проводка. Остались approval policy, dashboard-редактор и история
-      ревизий.
+      `POST /profiles/{profile}/resumes/{resume}/update` с Idempotency-Key,
+      main-проводка и плановый job action `resume.update` с optional publish:
+      approval не требуется, задача ждёт `Retry-After`/`next_publish_at`.
+      Остались dashboard-редактор и история ревизий.
 - [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
 - [x] Алиасы (`resume_aliases`, резолв в `profile.resume` и job actions) и
       каталог targets (`GET /api/v1/profiles/{profile}/resumes`).

@@ -59,19 +59,18 @@ func (handler *ResumeUpdateHandler) Handle(ctx context.Context, task core.Task) 
 			Message: "profile has no profile state reader",
 		}
 	}
-	proposal, created, err := handler.planner.ReadAndPlan(ctx, payload.ResourceTag, reader)
+	proposal, _, err := handler.planner.ReadAndPlan(ctx, payload.ResourceTag, reader)
 	if err != nil {
 		return err
 	}
-	if !created {
-		return nil
-	}
-	writer, err := handler.writers.Resolve(payload.ProfileID)
-	if err != nil {
-		return err
-	}
-	if _, err := writer.ApplyProfileState(ctx, proposal); err != nil {
-		return err
+	if proposal.Status == core.ProfileStateProposalPlanned {
+		writer, err := handler.writers.Resolve(payload.ProfileID)
+		if err != nil {
+			return err
+		}
+		if _, err := writer.ApplyProfileState(ctx, proposal); err != nil {
+			return err
+		}
 	}
 	if !payload.Publish {
 		return nil
