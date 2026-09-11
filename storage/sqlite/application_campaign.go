@@ -222,8 +222,11 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 		a.preparation_provenance, a.created_at, a.updated_at, a.prepared_at, a.submitted_at
 		FROM application_campaign_items i
 		JOIN applications a ON a.id = i.application_id
+		JOIN vacancies v ON v.platform = a.platform AND v.external_id = a.external_id
 		WHERE i.campaign_id = ?
-		ORDER BY i.route_index, i.discovered_at, i.application_id`, id)
+		ORDER BY i.route_index,
+			COALESCE(v.published_at, v.observed_at) DESC,
+			v.observed_at DESC, i.discovered_at DESC, i.application_id`, id)
 	if err != nil {
 		return nil, fmt.Errorf("list campaign application states %s: %w", id, err)
 	}

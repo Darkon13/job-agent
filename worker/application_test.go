@@ -462,6 +462,30 @@ func TestApplicationHandlerRestoresReadyStateForRetry(t *testing.T) {
 	}
 }
 
+func TestApplicationHandlerDefersPlatformQuotaUntilConfiguredNextDay(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorQuotaExceeded, Operation: "applications.submit", Message: "HH application quota is exhausted",
+	}}
+	handler, repository, task, clock := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	err := handler.Handle(context.Background(), task)
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) || operationError.RetryAfter == nil {
+		t.Fatalf("handler error = %#v", err)
+	}
+	local := clock.Now().In(time.FixedZone("MSK", 3*60*60))
+	wantReset := time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, local.Location()).UTC()
+	if !operationError.RetryAfter.Equal(wantReset) {
+		t.Fatalf("retry_after=%s, want next configured day %s", operationError.RetryAfter, wantReset)
+	}
+	application, loadErr := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	reservation, exists := repository.ApplicationBudget(application.ID)
+	if loadErr != nil || application.Status != core.ApplicationReady || !exists || reservation.State != core.ApplicationBudgetReleased {
+		t.Fatalf("application=%#v budget=%#v exists=%v err=%v", application, reservation, exists, loadErr)
+	}
+}
+
 func TestApplicationHandlerTreatsAlreadyAppliedAsIdempotentSuccess(t *testing.T) {
 	transport := &fakeApplicationTransport{}
 	transport.result = adapter.ApplicationSubmitResult{AlreadyApplied: true}

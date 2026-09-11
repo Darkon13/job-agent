@@ -99,3 +99,70 @@ func TestStorePersistsApplicationCampaignAndLinks(t *testing.T) {
 		t.Fatalf("stats=%#v err=%v", stats, err)
 	}
 }
+
+func TestListCampaignApplicationStatesOrdersFreshestWithinRoute(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	campaign, err := core.NewApplicationCampaign(core.NewApplicationCampaignParams{
+		ID: "campaign-freshness", JobTag: "daily", Profiles: []core.ProfileID{"primary"},
+		Routes: []core.SearchID{"primary", "fallback"}, TargetSuccessful: 10,
+		MaxInFlight: 2, CorrelationID: "correlation-freshness",
+	}, now)
+	if err != nil {
+		t.Fatalf("new campaign: %v", err)
+	}
+	if _, _, err := store.CreateApplicationCampaign(ctx, campaign); err != nil {
+		t.Fatalf("create campaign: %v", err)
+	}
+
+	add := func(applicationID, vacancyID string, routeIndex int, publishedAt time.Time) {
+		t.Helper()
+		vacancy := core.Vacancy{
+			Platform: "hh", ExternalID: vacancyID, Title: vacancyID,
+			State: core.VacancyStateOpen, PublishedAt: &publishedAt, ObservedAt: now,
+		}
+		if _, err := store.UpsertVacancy(ctx, vacancy); err != nil {
+			t.Fatalf("store vacancy %s: %v", vacancyID, err)
+		}
+		application, err := core.NewApplication(core.ApplicationID(applicationID), core.ApplicationKey{
+			ProfileID: "primary", Vacancy: vacancy.Key(),
+		}, now)
+		if err != nil {
+			t.Fatalf("new application %s: %v", applicationID, err)
+		}
+		if _, _, err := store.CreateApplication(ctx, application); err != nil {
+			t.Fatalf("create application %s: %v", applicationID, err)
+		}
+		item := core.CampaignApplication{
+			CampaignID: campaign.ID, RouteIndex: routeIndex,
+			ApplicationID: application.ID, DiscoveredAt: now,
+		}
+		if _, err := store.LinkCampaignApplication(ctx, item); err != nil {
+			t.Fatalf("link application %s: %v", applicationID, err)
+		}
+	}
+
+	add("primary-old", "primary-old", 0, now.Add(-48*time.Hour))
+	add("primary-new", "primary-new", 0, now.Add(-time.Hour))
+	add("fallback-newest", "fallback-newest", 1, now)
+
+	states, err := store.ListCampaignApplicationStates(ctx, campaign.ID)
+	if err != nil {
+		t.Fatalf("list campaign states: %v", err)
+	}
+	want := []core.ApplicationID{"primary-new", "primary-old", "fallback-newest"}
+	if len(states) != len(want) {
+		t.Fatalf("states=%d, want %d", len(states), len(want))
+	}
+	for index, applicationID := range want {
+		if states[index].Application.ID != applicationID {
+			t.Fatalf("states[%d]=%q, want %q", index, states[index].Application.ID, applicationID)
+		}
+	}
+}

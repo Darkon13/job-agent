@@ -133,6 +133,43 @@ func TestApplicationCampaignHandlerLimitsInFlightAndStopsAtTarget(t *testing.T) 
 	}
 }
 
+func TestApplicationCampaignHandlerSchedulesFreshestCandidateFirst(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	oldPublished := now.Add(-48 * time.Hour)
+	newPublished := now.Add(-time.Hour)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	searcher := &fakeSearcher{page: core.SearchPage{Done: true, Vacancies: []core.Vacancy{
+		{Platform: "hh", ExternalID: "old", Title: "Old", State: core.VacancyStateOpen, PublishedAt: &oldPublished, ObservedAt: now},
+		{Platform: "hh", ExternalID: "new", Title: "New", State: core.VacancyStateOpen, PublishedAt: &newPublished, ObservedAt: now},
+	}}}
+	handler, err := NewApplicationCampaignHandler(repository, repository, repository, queue, fixedClock{now}, &sequentialIDs{}, time.Second)
+	if err != nil {
+		t.Fatalf("new campaign handler: %v", err)
+	}
+	if err := handler.Register(ApplicationCampaignRoute{
+		SearchID: "primary", Platform: "hh", SearchProfileID: "profile", Query: json.RawMessage(`{}`), Searcher: searcher,
+	}); err != nil {
+		t.Fatalf("register route: %v", err)
+	}
+	start := campaignStartTask(t, now, []core.ProfileID{"profile"}, []core.SearchID{"primary"}, 1, 1)
+	if err := handler.Handle(ctx, start); err != nil {
+		t.Fatalf("start campaign: %v", err)
+	}
+	tasks := applicationTasks(queue.Tasks())
+	if len(tasks) != 1 {
+		t.Fatalf("application tasks=%d, want 1", len(tasks))
+	}
+	var payload core.ApplicationSubmitPayload
+	if err := json.Unmarshal(tasks[0].Payload, &payload); err != nil {
+		t.Fatalf("decode application task: %v", err)
+	}
+	if payload.Key.Vacancy.ExternalID != "new" {
+		t.Fatalf("scheduled vacancy=%q, want freshest candidate", payload.Key.Vacancy.ExternalID)
+	}
+}
+
 func TestApplicationCampaignHandlerAdvancesFallbackAndExhausts(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)

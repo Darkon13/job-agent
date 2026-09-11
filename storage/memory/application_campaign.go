@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
@@ -182,12 +183,28 @@ func (repository *Repository) ListCampaignApplicationStates(ctx context.Context,
 		if states[i].Link.RouteIndex != states[j].Link.RouteIndex {
 			return states[i].Link.RouteIndex < states[j].Link.RouteIndex
 		}
+		leftFreshness := repository.applicationVacancyFreshness(states[i].Application)
+		rightFreshness := repository.applicationVacancyFreshness(states[j].Application)
+		if !leftFreshness.Equal(rightFreshness) {
+			return leftFreshness.After(rightFreshness)
+		}
 		if !states[i].Link.DiscoveredAt.Equal(states[j].Link.DiscoveredAt) {
-			return states[i].Link.DiscoveredAt.Before(states[j].Link.DiscoveredAt)
+			return states[i].Link.DiscoveredAt.After(states[j].Link.DiscoveredAt)
 		}
 		return states[i].Link.ApplicationID < states[j].Link.ApplicationID
 	})
 	return states, nil
+}
+
+func (repository *Repository) applicationVacancyFreshness(application core.Application) time.Time {
+	vacancy, exists := repository.vacancies[application.Key.Vacancy]
+	if !exists {
+		return time.Time{}
+	}
+	if vacancy.PublishedAt != nil {
+		return *vacancy.PublishedAt
+	}
+	return vacancy.ObservedAt
 }
 
 func (repository *Repository) applicationsByID(id core.ApplicationID) (core.Application, bool) {

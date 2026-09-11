@@ -371,17 +371,17 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	}
 	transport, err := handler.transports.Resolve(application.Key.ProfileID)
 	if err != nil {
-		return handler.finishFailure(ctx, application, err)
+		return handler.finishFailure(ctx, application, plan, err)
 	}
 	result, err := transport.SubmitApplication(ctx, adapter.ApplicationSubmitCommand{
 		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy,
 		ResumeID: preparedResumeID(application, plan), Message: application.PreparedMessage, IdempotencyKey: task.IdempotencyKey,
 	})
 	if err != nil {
-		return handler.finishFailure(ctx, application, err)
+		return handler.finishFailure(ctx, application, plan, err)
 	}
 	if result.ExternalNegotiationID == "" && !result.Applied && !result.AlreadyApplied {
-		return handler.finishFailure(ctx, application, errors.New("application transport returned empty negotiation id"))
+		return handler.finishFailure(ctx, application, plan, errors.New("application transport returned empty negotiation id"))
 	}
 	application.ExternalNegotiationID = result.ExternalNegotiationID
 	if err := application.Transition(core.ApplicationSubmitted, handler.clock.Now()); err != nil {
@@ -557,11 +557,21 @@ func vacancyHasString(vacancy core.Vacancy, key, expected string) bool {
 	return false
 }
 
-func (handler *ApplicationHandler) finishFailure(ctx context.Context, application core.Application, cause error) error {
+func (handler *ApplicationHandler) finishFailure(ctx context.Context, application core.Application, plan ApplicationPlan, cause error) error {
 	now := handler.clock.Now()
 	var operationError *core.OperationError
 	if !errors.As(cause, &operationError) || operationError.Validate() != nil {
 		operationError = &core.OperationError{Category: core.ErrorPermanentFailure, Operation: "applications.submit", Message: cause.Error()}
+	} else {
+		copy := *operationError
+		operationError = &copy
+	}
+	if operationError.Category == core.ErrorQuotaExceeded && operationError.RetryAfter == nil {
+		_, resetAt, err := applicationBudgetWindow(plan, now)
+		if err != nil {
+			return err
+		}
+		operationError.RetryAfter = &resetAt
 	}
 	switch operationError.Category {
 	case core.ErrorAmbiguousResult:
@@ -655,19 +665,27 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 }
 
 func (handler *ApplicationHandler) reserveBudget(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
-	location, err := time.LoadLocation(plan.Timezone)
+	windowStart, windowEnd, err := applicationBudgetWindow(plan, now)
 	if err != nil {
 		return err
 	}
-	localNow := now.In(location)
-	localStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
-	windowStart := localStart.UTC()
-	windowEnd := localStart.AddDate(0, 0, 1).UTC()
 	_, err = handler.budgets.ReserveApplicationBudget(ctx, core.ReserveApplicationBudgetParams{
 		ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
 		WindowStart: windowStart, WindowEnd: windowEnd, Limit: plan.DailyLimit, Now: now,
 	})
 	return normalizeBudgetError("applications.budget.reserve", application.Key.Vacancy.Platform, err)
+}
+
+func applicationBudgetWindow(plan ApplicationPlan, now time.Time) (time.Time, time.Time, error) {
+	location, err := time.LoadLocation(plan.Timezone)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	localNow := now.In(location)
+	localStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	windowStart := localStart.UTC()
+	windowEnd := localStart.AddDate(0, 0, 1).UTC()
+	return windowStart, windowEnd, nil
 }
 
 func (handler *ApplicationHandler) commitBudget(ctx context.Context, application core.Application, now time.Time) error {

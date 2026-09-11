@@ -507,13 +507,25 @@ worker не могут одновременно завершить один от
 `application.campaign` — короткий повторяемый workflow, а не один длинный
 handler. Каждый tick читает одну страницу route либо сверяет уже созданные
 отклики, сохраняет revision и ставит следующий tick с новым idempotency key.
-Вся страница сохраняется как campaign items, но одновременно в
+Вся страница сохраняется как campaign items; внутри route кандидаты выдаются
+по `published_at DESC` с fallback на время наблюдения, поэтому сначала
+обрабатываются самые свежие вакансии. Но одновременно в
 `application.submit` выдаётся не больше `max_in_flight` задач; оставшиеся items
 остаются `planned`, поэтому хвост страницы не теряется. После завершения
 активных откликов campaign либо продолжает cursor, либо переходит к следующему
 route. Она останавливается на `target_successful` или после исчерпания всех
 fallback routes. Сбой после сохранения cursor, но до enqueue следующего tick,
 восстанавливается повтором старой задачи без повторного продвижения страницы.
+
+`limit_exceeded` переносит готовую задачу на начало следующего настроенного
+дневного окна, если HH не сообщил точный `Retry-After`; ответ платформы всегда
+имеет приоритет над локальным fallback. [Официальный HH error
+contract](https://github.com/hhru/api/blob/master/docs/errors.md#переписка-откликиприглашения)
+описывает сам `negotiations/limit_exceeded`, но не обещает время reset, поэтому
+граница задаётся `profile.applications.timezone`, а не зашивается в adapter.
+
+Целевой workflow временной подстройки резюме перед одним откликом и точного
+restore описан в [docs/application-resume-tailoring.md](docs/application-resume-tailoring.md).
 Если `application.submit` уже отложена по `Retry-After`, campaign также ставит
 следующую проверку на её `available_at`, а не создаёт revision каждые несколько
 секунд до сброса квоты.
