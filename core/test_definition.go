@@ -83,6 +83,12 @@ func (definition TestDefinition) Validate() error {
 	return nil
 }
 
+// VacancyTestDefinitionID derives the catalog identity of a vacancy test from
+// its platform and vacancy external id.
+func VacancyTestDefinitionID(platform Platform, externalID string) TestDefinitionID {
+	return TestDefinitionID(string(platform) + ":vacancy:" + strings.TrimSpace(externalID))
+}
+
 // NewProgressiveTestDefinition creates a catalog entry before an attempt starts
 // and therefore does not require any questions to be known.
 func NewProgressiveTestDefinition(platform Platform, externalID, title string, qualification *QualificationDescriptor, now time.Time) (TestDefinition, error) {

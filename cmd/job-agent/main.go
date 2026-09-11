@@ -531,6 +531,15 @@ func main() {
 		}
 		workers = append(workers, questionnaireAnswerWorker)
 	}
+	testCompleteHandler, err := taskworker.NewTestCompleteHandler(store, taskworker.SystemClock{})
+	if err != nil {
+		log.Fatalf("create test complete handler: %v", err)
+	}
+	testCompleteWorker, err := newTaskWorker(store, core.TaskTestComplete, testCompleteHandler.Handle)
+	if err != nil {
+		log.Fatalf("create test complete worker: %v", err)
+	}
+	workers = append(workers, testCompleteWorker)
 	if resumePublishers.Count() > 0 {
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
 		if err != nil {

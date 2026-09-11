@@ -40,6 +40,8 @@
   прогрессивный тестовый каталог монотонным upsert, без запуска попытки.
 - Worker `questionnaire.answer`: отправка уже resolved ответов через
   browser write transport (входные ответы не догадываются в worker-е).
+- Worker `test.complete` и миграция 23: монотонный результат vacancy test по
+  профилю, где `passed` не понижается поздним `failed`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

@@ -116,7 +116,7 @@ func (handler *VacancyTestCaptureHandler) progressiveDefinition(ctx context.Cont
 		return core.TestDefinition{}, err
 	}
 	externalID := "vacancy:" + payload.VacancyExternalID
-	id := core.TestDefinitionID(string(payload.Platform) + ":" + externalID)
+	id := core.VacancyTestDefinitionID(payload.Platform, payload.VacancyExternalID)
 	for _, definition := range definitions {
 		if definition.ID == id {
 			return definition, nil

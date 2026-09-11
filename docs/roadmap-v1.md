@@ -26,7 +26,7 @@
 
 - [x] Зафиксировать решения и границу v1.0.0 (этот документ).
 - [x] Обновить критерии готовности в `docs/releasing.md`.
-- [ ] Починить устаревшие факты в `docs/project-status.md` (схема 21, publish).
+- [x] Починить устаревшие факты в `docs/project-status.md` (схема 23, publish).
 - [ ] Зафиксировать открытые архитектурные решения: RPC формат (HTTP JSON),
       storage, queue, config includes (см. M5).
 
@@ -72,7 +72,9 @@
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через
       write transport.
-- [ ] Workers `test.complete`, `review.answer`.
+- [x] Worker `test.complete`: монотонный результат попытки по профилю
+      (миграция 23).
+- [ ] Worker `review.answer`.
 - [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;
       contextual-вопросы только в manual.
 - [ ] Опросники из чатов через тот же registry.

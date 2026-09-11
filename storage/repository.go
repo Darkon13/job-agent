@@ -211,6 +211,14 @@ type ReviewRepository interface {
 	ReviewSelections(ctx context.Context, sessionID core.ReviewSessionID) ([]core.ReviewSelection, error)
 }
 
+// TestAttemptRepository stores the latest vacancy test outcome per profile.
+// Attempts are monotonic: a passed attempt is never downgraded by a later
+// failure, and retries with the same fingerprint do not inflate the counter.
+type TestAttemptRepository interface {
+	SaveTestAttempt(ctx context.Context, attempt core.TestAttempt) error
+	LatestTestAttempt(ctx context.Context, platform core.Platform, profileID core.ProfileID, externalID string) (core.TestAttempt, bool, error)
+}
+
 type ConversationFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID

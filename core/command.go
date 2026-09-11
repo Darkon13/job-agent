@@ -177,6 +177,42 @@ func QuestionnaireAnswerIdempotencyKey(platform Platform, externalID string, pro
 	return "questionnaire.answer:" + hex.EncodeToString(digest[:]), nil
 }
 
+// TestCompletePayload records the platform outcome of a finished vacancy test.
+// It never re-submits answers.
+type TestCompletePayload struct {
+	ProfileID          ProfileID         `json:"profile_id"`
+	Platform           Platform          `json:"platform"`
+	VacancyExternalID  string            `json:"vacancy_external_id"`
+	Status             TestAttemptStatus `json:"status"`
+	AttemptFingerprint string            `json:"attempt_fingerprint,omitempty"`
+}
+
+func (payload TestCompletePayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("test completion requires profile")
+	}
+	if payload.Platform == "" {
+		return errors.New("test completion requires platform")
+	}
+	if strings.TrimSpace(payload.VacancyExternalID) == "" {
+		return errors.New("test completion requires vacancy external id")
+	}
+	if payload.Status != TestAttemptPassed && payload.Status != TestAttemptFailed {
+		return fmt.Errorf("test completion has unsupported status %q", payload.Status)
+	}
+	return nil
+}
+
+func TestCompleteIdempotencyKey(platform Platform, externalID string, profileID ProfileID, requestKey string) (string, error) {
+	externalID = strings.TrimSpace(externalID)
+	requestKey = strings.TrimSpace(requestKey)
+	if platform == "" || externalID == "" || profileID == "" || requestKey == "" {
+		return "", errors.New("test completion idempotency requires platform, vacancy, profile and request key")
+	}
+	digest := sha256.Sum256([]byte(string(platform) + "\x00" + externalID + "\x00" + string(profileID) + "\x00" + requestKey))
+	return "test.complete:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ResumeTouchPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`
