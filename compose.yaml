@@ -23,10 +23,34 @@ services:
       JOB_AGENT_SERVER_LISTEN: 0.0.0.0:8080
       JOB_AGENT_SERVER_EXPOSURE: private
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      BROWSER_WORKER_URL: ${BROWSER_WORKER_URL:-http://browser-worker:8088}
+      BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
     volumes: *runtime-volumes
     expose:
       - "8080"
+    restart: unless-stopped
+
+  # Opt-in Playwright service (compose profile "browser"). The backend only
+  # uses it for browser-only operations; until then the default profile stays
+  # backend-only.
+  browser-worker:
+    profiles: ["browser"]
+    build:
+      context: ./browser-worker
+    environment:
+      # The worker refuses to start with an empty token, so the default
+      # backend-only profile stays safe while `--profile browser` needs the
+      # variable explicitly.
+      BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
+      BROWSER_WORKER_HOST: 0.0.0.0
+      BROWSER_WORKER_DATA_DIR: /data/browser-profiles
+      BROWSER_WORKER_HEADLESS: ${BROWSER_WORKER_HEADLESS:-1}
+    user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
+    volumes:
+      - ${JOB_AGENT_DATA_DIR:-./data}:/data
+    expose:
+      - "8088"
     restart: unless-stopped
 
   dashboard:

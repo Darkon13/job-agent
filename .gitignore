@@ -9,3 +9,5 @@
 /.vscode/
 *.log
 *.local.json
+node_modules/
+browser-worker/dist/

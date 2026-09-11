@@ -32,17 +32,18 @@
 
 ## M1. Browser worker и RPC
 
-- [ ] `docs/browser-rpc.md`: операции, DTO, ошибки, таймауты, security,
+- [x] `docs/browser-rpc.md`: операции, DTO, ошибки, таймауты, security,
       per-profile context, bounded page pool, VNC fallback.
-- [ ] Go-пакет `browser/`: типизированный клиент, per-profile lock, маппинг
-      ошибок в core-категории, retry/восстановление.
-- [ ] `browser/browsertest`: in-memory fake для контрактных тестов.
-- [ ] TS-сервис `browser-worker/`: Playwright, один Chromium, persistent
-      contexts, health/readiness, структурные логи, Bearer-токен.
-- [ ] Compose-сервис `browser-worker` + volume для contexts и storage state.
-- [ ] Операции v1: `health`, `ensure`, `storage_state`, `goto`, `screenshot`,
-      `click`, `fill`, `press`, `wait`, `content`, `cookies`, `close`.
-- [ ] DoD: контрактные тесты Go↔fake, unit-тесты worker, VNC E2E smoke.
+- [x] Go-пакет `browser/`: типизированный клиент, per-profile lock, маппинг
+      ошибок в core-категории, проверка протокола.
+- [x] `browser/browsertest`: in-memory fake для контрактных тестов.
+- [x] TS-сервис `browser-worker/`: Playwright, контексты профилей, health и
+      readiness, Bearer-токен, graceful shutdown.
+- [x] Compose-сервис `browser-worker` (профиль `browser`) + volume contexts.
+- [x] Операции v1: `health`, `ensure`, `storage_state`, `goto`, `screenshot`,
+      `click`, `fill`, `press`, `wait`, `content`, `page`, `close`.
+- [ ] DoD: worker unit-тесты и VNC E2E smoke; подключение клиента к backend
+      (M2) с `BROWSER_WORKER_URL`/`BROWSER_WORKER_TOKEN`.
 
 ## M2. Auth control plane
 

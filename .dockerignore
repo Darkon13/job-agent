@@ -7,3 +7,6 @@ docs/project-status.md
 *.db
 *.db-shm
 *.db-wal
+node_modules
+browser-worker/node_modules
+browser-worker/dist
