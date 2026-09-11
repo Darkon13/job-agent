@@ -16,6 +16,8 @@ type ReviewedVacancyAnswers struct {
 	revisions storage.AnswerBlockRevisionRepository
 }
 
+var _ AnswerBlockResolver = (*ReviewedVacancyAnswers)(nil)
+
 func NewReviewedVacancyAnswers(registry *core.AnswerBlockRegistry, revisions storage.AnswerBlockRevisionRepository) (*ReviewedVacancyAnswers, error) {
 	if registry == nil || revisions == nil {
 		return nil, errors.New("reviewed vacancy answers require registry and revisions repository")
@@ -26,6 +28,41 @@ func NewReviewedVacancyAnswers(registry *core.AnswerBlockRegistry, revisions sto
 func (resolver *ReviewedVacancyAnswers) FindVacancy(ctx context.Context, platform core.Platform) (core.AnswerBlock, bool, error) {
 	base, found := resolver.registry.FindVacancy(platform)
 	latest, exists, err := resolver.revisions.LatestAnswerBlockRevision(ctx, VacancyReviewedBlockTag(platform, base, found))
+	if err != nil {
+		return core.AnswerBlock{}, false, err
+	}
+	if !exists {
+		return base, found, nil
+	}
+	stored := latest.Block()
+	if !found {
+		return stored, true, nil
+	}
+	merged, err := core.MergeAnswerBlocks(base, stored)
+	if err != nil {
+		return core.AnswerBlock{}, false, err
+	}
+	return merged, true, nil
+}
+
+// FindQualificationLevel returns the reviewed qualification block of one
+// family/level with the latest appended revision applied.
+func (resolver *ReviewedVacancyAnswers) FindQualificationLevel(ctx context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error) {
+	base, found := resolver.registry.FindQualificationLevel(platform, familyID, levelID)
+	if !found {
+		return core.AnswerBlock{}, false, nil
+	}
+	block, found, err := resolver.Get(ctx, base.Tag)
+	if err != nil {
+		return core.AnswerBlock{}, false, err
+	}
+	return block, found, nil
+}
+
+// Get returns a reviewed block by tag, merging the latest appended revision.
+func (resolver *ReviewedVacancyAnswers) Get(ctx context.Context, tag string) (core.AnswerBlock, bool, error) {
+	base, found := resolver.registry.Get(tag)
+	latest, exists, err := resolver.revisions.LatestAnswerBlockRevision(ctx, tag)
 	if err != nil {
 		return core.AnswerBlock{}, false, err
 	}

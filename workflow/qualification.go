@@ -61,3 +61,41 @@ func (workflow *QualificationWorkflow) EnqueueSync(ctx context.Context, profileI
 	}
 	return existing, false, nil
 }
+
+// EnqueueStart schedules one explicitly selected attempt. Starting consumes a
+// limited or timed attempt, so it is never scheduled by discovery.
+func (workflow *QualificationWorkflow) EnqueueStart(ctx context.Context, profileID core.ProfileID, platform core.Platform, offeringID core.QualificationID, requestKey string) (core.Task, bool, error) {
+	key, err := core.SkillVerificationStartIdempotencyKey(profileID, offeringID, requestKey)
+	if err != nil {
+		return core.Task{}, false, err
+	}
+	payload, err := json.Marshal(core.SkillVerificationStartPayload{ProfileID: profileID, Platform: platform, OfferingID: offeringID})
+	if err != nil {
+		return core.Task{}, false, fmt.Errorf("encode skill verification start task: %w", err)
+	}
+	id, err := workflow.ids.NewID("task")
+	if err != nil {
+		return core.Task{}, false, err
+	}
+	correlationID, err := workflow.ids.NewID("correlation")
+	if err != nil {
+		return core.Task{}, false, err
+	}
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: core.TaskID(id), Type: core.TaskSkillVerificationStart, IdempotencyKey: key,
+		Source: "qualification-api", Platform: platform, ProfileID: profileID,
+		CorrelationID: core.CorrelationID(correlationID), Payload: payload,
+	}, workflow.clock.Now())
+	if err != nil {
+		return core.Task{}, false, err
+	}
+	created, err := workflow.tasks.Enqueue(ctx, task)
+	if err != nil || created {
+		return task, created, err
+	}
+	existing, err := workflow.tasks.TaskByIdempotencyKey(ctx, key)
+	if err != nil {
+		return core.Task{}, false, fmt.Errorf("load idempotent skill verification start task: %w", err)
+	}
+	return existing, false, nil
+}

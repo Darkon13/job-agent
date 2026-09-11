@@ -184,3 +184,70 @@ func TestReviewAnswerRejectsStaleRevision(t *testing.T) {
 		t.Fatalf("answers = %#v", chain.answers)
 	}
 }
+
+func TestReviewAnswerExtendsQualificationBlock(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	descriptor := core.QualificationDescriptor{FamilyID: "go", FamilyName: "Go", LevelID: "medium", LevelName: "Средний"}
+	question := core.Question{ID: "runtime-1", Text: "Explain experience", Kind: core.QuestionText}
+	fingerprint, err := core.QuestionFingerprint(question)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	definition, err := core.NewProgressiveTestDefinition("hh", "go-medium", "Go", &descriptor, now)
+	if err != nil {
+		t.Fatalf("definition: %v", err)
+	}
+	if _, err := repository.UpsertTestDefinition(ctx, definition); err != nil {
+		t.Fatalf("store definition: %v", err)
+	}
+	session, err := core.NewReviewSession("review-1", definition, "primary", "correlation-1", now)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	session.Questionnaire = core.Questionnaire{Title: "Go", Questions: []core.Question{question}}
+	session.AnswerBlockTag = "hh-go-medium"
+	if _, err := repository.CreateReviewSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	prompt := core.ReviewPrompt{ID: "review-1-prompt-1", SessionID: session.ID, Revision: 1, Question: question, CreatedAt: now}
+	if err := session.WaitForAnswer(prompt, now); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if err := repository.SaveReviewPrompt(ctx, session, prompt, 1); err != nil {
+		t.Fatalf("save prompt: %v", err)
+	}
+	block := core.AnswerBlock{
+		Tag: "hh-go-medium", Name: "Go medium", Kind: core.AnswerBlockQualification,
+		Platform: "hh", Qualification: &descriptor,
+		Answers: []core.StoredAnswer{{Question: question.Text, QuestionFingerprint: fingerprint, Text: "From block"}},
+	}
+	registry, err := core.NewAnswerBlockRegistry(block)
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	handler, err := NewReviewAnswerHandler(repository, fixedClock{now: now.Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	handler.ConfigureContinuation(resolver, repository, nil)
+	err = handler.Handle(ctx, reviewAnswerTask(t, core.ReviewAnswerPayload{
+		SessionID: "review-1", PromptID: prompt.ID, ExpectedRevision: 1,
+		Text: "Human answer", Source: "cli",
+	}))
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	latest, exists, err := repository.LatestAnswerBlockRevision(ctx, "hh-go-medium")
+	if err != nil || !exists {
+		t.Fatalf("latest revision: exists=%v err=%v", exists, err)
+	}
+	if latest.Revision != 1 || len(latest.Answers) != 1 || latest.Answers[0].Text != "Human answer" || latest.Answers[0].QuestionFingerprint != fingerprint {
+		t.Fatalf("revision = %#v", latest)
+	}
+}

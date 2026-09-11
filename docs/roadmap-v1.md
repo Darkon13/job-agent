@@ -79,8 +79,10 @@
       session и нормализует уровни/виды. Runner `skill_verification.start`
       отвечает на попытку из reviewed-блока, а при неизвестном вопросе
       завершает её досрочно с fingerprint для review; уже пройденный уровень
-      не перезапускается. Осталось: live assessment transport
-      (start/current/submit/result), review-пополнение qualification-блока и
+      не перезапускается. Review-ответы расширяют qualification-блок
+      (`AnswerBlockTag` в review session, append-only ревизии), старт попытки
+      доступен через `POST /profiles/{profile}/qualifications/{offering}/start`.
+      Осталось: live assessment transport (start/current/submit/result) и
       model fallback.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).

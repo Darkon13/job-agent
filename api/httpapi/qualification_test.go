@@ -82,3 +82,24 @@ func TestQualificationAPIListAndSync(t *testing.T) {
 		t.Fatalf("replay = %#v err=%v", repeated, err)
 	}
 }
+
+func TestQualificationAPIStartEnqueuesAttempt(t *testing.T) {
+	handler, _ := newQualificationAPI(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/profiles/primary/qualifications/hh:offer-1/start", nil)
+	request.Header.Set("Idempotency-Key", "start-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start status = %d body=%s", response.Code, response.Body.String())
+	}
+	var task taskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &task); err != nil || !task.Created || task.TaskID == "" {
+		t.Fatalf("task = %#v err=%v", task, err)
+	}
+	replay := httptest.NewRecorder()
+	handler.ServeHTTP(replay, request)
+	var repeated taskResponse
+	if err := json.Unmarshal(replay.Body.Bytes(), &repeated); err != nil || repeated.Created || repeated.TaskID != task.TaskID {
+		t.Fatalf("replay = %#v err=%v", repeated, err)
+	}
+}

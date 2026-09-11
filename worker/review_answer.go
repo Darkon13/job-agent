@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -15,10 +16,18 @@ import (
 // prompt and, when the reviewed answers now cover the whole questionnaire,
 // resumes the automatic submit chain. A stale revision never overwrites a
 // newer answer.
+// AnswerBlockResolver resolves reviewed blocks by vacancy platform, by tag or
+// by qualification family/level.
+type AnswerBlockResolver interface {
+	FindVacancy(ctx context.Context, platform core.Platform) (core.AnswerBlock, bool, error)
+	FindQualificationLevel(ctx context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error)
+	Get(ctx context.Context, tag string) (core.AnswerBlock, bool, error)
+}
+
 type ReviewAnswerHandler struct {
 	reviews   storage.ReviewRepository
 	clock     Clock
-	resolver  VacancyAnswerBlockResolver
+	resolver  AnswerBlockResolver
 	revisions storage.AnswerBlockRevisionRepository
 	chain     VacancyTestEnqueuer
 }
@@ -34,7 +43,7 @@ func NewReviewAnswerHandler(reviews storage.ReviewRepository, clock Clock) (*Rev
 // revision store and the task chain. The selection is always recorded;
 // continuation only happens when the session carries the observed
 // questionnaire and a vacancy block exists.
-func (handler *ReviewAnswerHandler) ConfigureContinuation(resolver VacancyAnswerBlockResolver, revisions storage.AnswerBlockRevisionRepository, chain VacancyTestEnqueuer) {
+func (handler *ReviewAnswerHandler) ConfigureContinuation(resolver AnswerBlockResolver, revisions storage.AnswerBlockRevisionRepository, chain VacancyTestEnqueuer) {
 	if handler == nil {
 		return
 	}
@@ -84,14 +93,14 @@ func (handler *ReviewAnswerHandler) appendRevision(ctx context.Context, session 
 	if handler.resolver == nil {
 		return nil
 	}
-	base, found, err := handler.resolver.FindVacancy(ctx, session.Platform)
+	base, tag, err := handler.reviewedBlock(ctx, session)
 	if err != nil {
 		return err
 	}
-	name, kind := "Reviewed vacancy answers", core.AnswerBlockVacancy
-	if found {
-		name, kind = base.Name, base.Kind
+	if len(base.Answers) == 0 {
+		return nil
 	}
+	name, kind := base.Name, base.Kind
 	fingerprint, err := core.QuestionFingerprint(prompt.Question)
 	if err != nil {
 		return err
@@ -113,7 +122,6 @@ func (handler *ReviewAnswerHandler) appendRevision(ctx context.Context, session 
 	if !replaced {
 		answers = append(answers, human)
 	}
-	tag := VacancyReviewedBlockTag(session.Platform, base, found)
 	latest, exists, err := handler.revisions.LatestAnswerBlockRevision(ctx, tag)
 	if err != nil {
 		return err
@@ -140,6 +148,12 @@ func (handler *ReviewAnswerHandler) appendRevision(ctx context.Context, session 
 
 func (handler *ReviewAnswerHandler) continueChain(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, selection core.ReviewSelection, now time.Time) error {
 	if handler.resolver == nil || handler.chain == nil || len(session.Questionnaire.Questions) == 0 {
+		return nil
+	}
+	// A qualification session extends its family/level block; the next
+	// skill_verification.start attempt replays it, so no vacancy questionnaire
+	// answer is enqueued here.
+	if session.AnswerBlockTag != "" {
 		return nil
 	}
 	block, found, err := handler.resolver.FindVacancy(ctx, session.Platform)
@@ -184,6 +198,29 @@ func (handler *ReviewAnswerHandler) continueChain(ctx context.Context, session c
 		return nil
 	}
 	return handler.reviews.SaveReviewPrompt(ctx, session, nextPrompt, session.Revision)
+}
+
+// reviewedBlock returns the block human answers extend: the explicit session
+// tag for qualification sessions, otherwise the platform vacancy block.
+func (handler *ReviewAnswerHandler) reviewedBlock(ctx context.Context, session core.ReviewSession) (core.AnswerBlock, string, error) {
+	if tag := strings.TrimSpace(session.AnswerBlockTag); tag != "" {
+		block, found, err := handler.resolver.Get(ctx, tag)
+		if err != nil {
+			return core.AnswerBlock{}, "", err
+		}
+		if !found {
+			return core.AnswerBlock{Tag: tag, Name: tag, Kind: core.AnswerBlockQualification, Platform: session.Platform}, tag, nil
+		}
+		return block, tag, nil
+	}
+	block, found, err := handler.resolver.FindVacancy(ctx, session.Platform)
+	if err != nil {
+		return core.AnswerBlock{}, "", err
+	}
+	if !found {
+		return core.AnswerBlock{}, "", nil
+	}
+	return block, VacancyReviewedBlockTag(session.Platform, block, true), nil
 }
 
 func (handler *ReviewAnswerHandler) resolvedAnswers(questionnaire core.Questionnaire, block core.AnswerBlock, humanQuestion core.Question, selection core.ReviewSelection) ([]core.ResolvedAnswer, error) {

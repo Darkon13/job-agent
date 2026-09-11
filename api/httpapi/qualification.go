@@ -31,6 +31,7 @@ func (api *QualificationAPI) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/profiles/{profile}/qualifications", api.list)
 	mux.HandleFunc("POST /api/v1/profiles/{profile}/qualifications/sync", api.sync)
+	mux.HandleFunc("POST /api/v1/profiles/{profile}/qualifications/{offering}/start", api.start)
 	mux.Handle("/", next)
 	return mux
 }
@@ -48,6 +49,26 @@ func (api *QualificationAPI) list(response http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(response, http.StatusOK, listResponse[core.QualificationOffering]{Items: offerings})
+}
+
+func (api *QualificationAPI) start(response http.ResponseWriter, request *http.Request) {
+	key, ok := requireIdempotencyKey(response, request)
+	if !ok {
+		return
+	}
+	profileID := core.ProfileID(request.PathValue("profile"))
+	platform, exists := api.platforms[profileID]
+	if !exists {
+		writeProblem(response, http.StatusNotFound, "profile has no qualification catalog")
+		return
+	}
+	offeringID := core.QualificationID(request.PathValue("offering"))
+	task, created, err := api.workflow.EnqueueStart(request.Context(), profileID, platform, offeringID, key)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	writeJSON(response, http.StatusAccepted, taskResponse{TaskID: task.ID, Created: created})
 }
 
 func (api *QualificationAPI) sync(response http.ResponseWriter, request *http.Request) {

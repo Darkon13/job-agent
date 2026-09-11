@@ -2,9 +2,12 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +40,12 @@ func (registry *QualificationAttemptRegistry) Register(profileID core.ProfileID,
 	return nil
 }
 
+func (registry *QualificationAttemptRegistry) Count() int {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	return len(registry.services)
+}
+
 func (registry *QualificationAttemptRegistry) Resolve(profileID core.ProfileID) (adapter.QualificationAttemptService, error) {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
@@ -51,9 +60,9 @@ func (registry *QualificationAttemptRegistry) Resolve(profileID core.ProfileID) 
 }
 
 // QualificationAnswerBlocks provides the reviewed question bank of one
-// platform qualification family/level.
+// platform qualification family/level, including appended human revisions.
 type QualificationAnswerBlocks interface {
-	FindQualificationLevel(platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool)
+	FindQualificationLevel(ctx context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error)
 }
 
 // QualificationStartHandler runs an explicitly started qualification attempt
@@ -66,6 +75,7 @@ type QualificationStartHandler struct {
 	results  storage.QualificationRepository
 	tests    storage.TestCatalogRepository
 	blocks   QualificationAnswerBlocks
+	reviews  storage.ReviewRepository
 	clock    Clock
 }
 
@@ -73,11 +83,11 @@ type QualificationAttemptRegistryReader interface {
 	Resolve(profileID core.ProfileID) (adapter.QualificationAttemptService, error)
 }
 
-func NewQualificationStartHandler(registry QualificationAttemptRegistryReader, catalog storage.QualificationCatalogRepository, results storage.QualificationRepository, tests storage.TestCatalogRepository, blocks QualificationAnswerBlocks, clock Clock) (*QualificationStartHandler, error) {
+func NewQualificationStartHandler(registry QualificationAttemptRegistryReader, catalog storage.QualificationCatalogRepository, results storage.QualificationRepository, tests storage.TestCatalogRepository, blocks QualificationAnswerBlocks, reviews storage.ReviewRepository, clock Clock) (*QualificationStartHandler, error) {
 	if registry == nil || catalog == nil || results == nil || tests == nil || blocks == nil || clock == nil {
 		return nil, errors.New("qualification start handler requires registry, catalog, results, test catalog, blocks and clock")
 	}
-	return &QualificationStartHandler{registry: registry, catalog: catalog, results: results, tests: tests, blocks: blocks, clock: clock}, nil
+	return &QualificationStartHandler{registry: registry, catalog: catalog, results: results, tests: tests, blocks: blocks, reviews: reviews, clock: clock}, nil
 }
 
 func (handler *QualificationStartHandler) Handle(ctx context.Context, task core.Task) error {
@@ -109,7 +119,10 @@ func (handler *QualificationStartHandler) Handle(ctx context.Context, task core.
 		// reusable for other profiles and for a renewed offering.
 		return nil
 	}
-	block, found := handler.blocks.FindQualificationLevel(payload.Platform, offering.Qualification.FamilyID, offering.Qualification.LevelID)
+	block, found, err := handler.blocks.FindQualificationLevel(ctx, payload.Platform, offering.Qualification.FamilyID, offering.Qualification.LevelID)
+	if err != nil {
+		return err
+	}
 	if !found {
 		return qualificationStartError("no reviewed answer block for this level; run a reviewed attempt first")
 	}
@@ -117,10 +130,10 @@ func (handler *QualificationStartHandler) Handle(ctx context.Context, task core.
 	if err != nil {
 		return err
 	}
-	return handler.runAttempt(ctx, service, payload, offering, block)
+	return handler.runAttempt(ctx, service, payload, offering, block, task.CorrelationID)
 }
 
-func (handler *QualificationStartHandler) runAttempt(ctx context.Context, service adapter.QualificationAttemptService, payload core.SkillVerificationStartPayload, offering core.QualificationOffering, block core.AnswerBlock) error {
+func (handler *QualificationStartHandler) runAttempt(ctx context.Context, service adapter.QualificationAttemptService, payload core.SkillVerificationStartPayload, offering core.QualificationOffering, block core.AnswerBlock, correlationID core.CorrelationID) error {
 	now := handler.clock.Now()
 	session, err := service.StartQualification(ctx, payload.ProfileID, payload.OfferingID)
 	if err != nil {
@@ -144,6 +157,11 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 		}
 		resolved, err := core.ResolveQuestionAnswer(question, block)
 		if err != nil {
+			if handler.reviews != nil {
+				if reviewErr := handler.recordReview(ctx, payload, offering, definition, question, fingerprint, block.Tag, correlationID); reviewErr != nil {
+					return reviewErr
+				}
+			}
 			if finishErr := service.FinishQualification(ctx, session); finishErr != nil {
 				return finishErr
 			}
@@ -173,6 +191,39 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 		return err
 	}
 	return qualificationStartError("qualification attempt exceeded the question bound")
+}
+
+// recordReview stores a durable review session for the unknown question. Human
+// answers extend the block named by AnswerBlockTag, and a later start attempt
+// replays them.
+func (handler *QualificationStartHandler) recordReview(ctx context.Context, payload core.SkillVerificationStartPayload, offering core.QualificationOffering, definition core.TestDefinition, question core.Question, fingerprint string, blockTag string, correlationID core.CorrelationID) error {
+	now := handler.clock.Now()
+	sessionID, promptID := qualificationReviewIDs(definition, payload.ProfileID, fingerprint)
+	session, err := core.NewReviewSession(sessionID, definition, payload.ProfileID, correlationID, now)
+	if err != nil {
+		return err
+	}
+	session.Questionnaire = core.Questionnaire{Title: definition.Title, Questions: []core.Question{question}}
+	if tag := strings.TrimSpace(blockTag); tag != "" {
+		session.AnswerBlockTag = tag
+	} else {
+		session.AnswerBlockTag = string(offering.Platform) + "-" + offering.Qualification.FamilyID + "-" + offering.Qualification.LevelID + "-reviewed"
+	}
+	prompt := core.ReviewPrompt{ID: promptID, SessionID: session.ID, Revision: session.Revision, Question: question, CreatedAt: now}
+	created, err := handler.reviews.CreateReviewSession(ctx, session)
+	if err != nil || !created {
+		return err
+	}
+	if err := session.WaitForAnswer(prompt, now); err != nil {
+		return err
+	}
+	return handler.reviews.SaveReviewPrompt(ctx, session, prompt, session.Revision)
+}
+
+func qualificationReviewIDs(definition core.TestDefinition, profileID core.ProfileID, fingerprint string) (core.ReviewSessionID, core.ReviewPromptID) {
+	digest := sha256.Sum256([]byte(string(definition.ID) + "\x00" + string(profileID) + "\x00" + fingerprint))
+	sessionID := core.ReviewSessionID("review-" + hex.EncodeToString(digest[:]))
+	return sessionID, core.ReviewPromptID(string(sessionID) + "-prompt-1")
 }
 
 func (handler *QualificationStartHandler) progressiveDefinition(ctx context.Context, offering core.QualificationOffering, now time.Time) (core.TestDefinition, error) {

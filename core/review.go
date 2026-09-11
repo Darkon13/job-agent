@@ -42,6 +42,9 @@ type ReviewSession struct {
 	// Runtime task/option IDs stay inside the session and never leak into
 	// portable AnswerBlocks. Older sessions may omit it.
 	Questionnaire Questionnaire `json:"questionnaire,omitempty"`
+	// AnswerBlockTag names the reviewed block human answers extend. Vacancy
+	// sessions leave it empty and use the platform vacancy block.
+	AnswerBlockTag string `json:"answer_block_tag,omitempty"`
 }
 
 // ReviewPrompt is delivered unchanged to REST/SSE, Telegram, or CLI clients.

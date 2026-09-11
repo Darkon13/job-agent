@@ -97,6 +97,10 @@
   (`ResolveQuestionAnswer` по fingerprint), неизвестный вопрос завершает
   попытку досрочно без случайного ответа, результат пишется в attempt
   history/best, пройденный уровень не перезапускается.
+- Qualification review loop: review session несёт `answer_block_tag` и
+  человеческие ответы дописываются ревизией в qualification-блок family/level;
+  `POST /api/v1/profiles/{profile}/qualifications/{offering}/start` ставит
+  durable попытку с Idempotency-Key.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

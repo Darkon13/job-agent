@@ -17,6 +17,14 @@ func (blocks staticVacancyBlocks) FindVacancy(_ context.Context, platform core.P
 	return block, exists, nil
 }
 
+func (blocks staticVacancyBlocks) Get(context.Context, string) (core.AnswerBlock, bool, error) {
+	return core.AnswerBlock{}, false, nil
+}
+
+func (blocks staticVacancyBlocks) FindQualificationLevel(context.Context, core.Platform, string, string) (core.AnswerBlock, bool, error) {
+	return core.AnswerBlock{}, false, nil
+}
+
 type recordingVacancyTestChain struct {
 	answers   [][]core.ResolvedAnswer
 	completes []core.TestAttemptStatus

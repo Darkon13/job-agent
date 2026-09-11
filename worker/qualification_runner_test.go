@@ -9,6 +9,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 )
 
@@ -97,10 +98,11 @@ func qualificationRunnerFixture(t *testing.T, blockQuestions int) (*Qualificatio
 		Tag: "hh-go-medium", Name: "Go medium", Kind: core.AnswerBlockQualification,
 		Platform: "hh", Qualification: &descriptor, Answers: answers,
 	}
-	blocks, err := core.NewAnswerBlockRegistry(block)
+	registry, err := core.NewAnswerBlockRegistry(block)
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
+	blocks := staticQualificationBlocks{registry: registry}
 	service := &fakeQualificationAttemptService{questions: questions, result: core.QualificationResult{
 		Status: core.QualificationPassed, Score: &score, MaxScore: &maxScore,
 		Verified: true, AnswerBlockTag: "hh-go-medium", CompletedAt: now,
@@ -109,7 +111,7 @@ func qualificationRunnerFixture(t *testing.T, blockQuestions int) (*Qualificatio
 	if err := attempts.Register("primary", service); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	handler, err := NewQualificationStartHandler(attempts, repository, repository, repository, blocks, fixedClock{now: now})
+	handler, err := NewQualificationStartHandler(attempts, repository, repository, repository, blocks, repository, fixedClock{now: now})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -178,10 +180,49 @@ func TestQualificationStartSkipsPassedLevel(t *testing.T) {
 	}
 }
 
+type staticQualificationBlocks struct {
+	registry *core.AnswerBlockRegistry
+}
+
+func (blocks staticQualificationBlocks) FindQualificationLevel(_ context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error) {
+	block, found := blocks.registry.FindQualificationLevel(platform, familyID, levelID)
+	return block, found, nil
+}
+
 func requireQualificationCategory(t *testing.T, err error, category core.ErrorCategory) {
 	t.Helper()
 	var operationErr *core.OperationError
 	if !errors.As(err, &operationErr) || operationErr.Category != category {
 		t.Fatalf("error = %v, want category %s", err, category)
+	}
+}
+
+func TestQualificationStartCreatesReviewForUnknownQuestion(t *testing.T) {
+	handler, service, repository, _ := qualificationRunnerFixture(t, 1)
+	err := handler.Handle(context.Background(), qualificationStartTask(t))
+	requireQualificationCategory(t, err, core.ErrorValidationRequired)
+	if service.finishCalls != 1 {
+		t.Fatalf("finishCalls = %d", service.finishCalls)
+	}
+	definitions, err := repository.ListTestDefinitions(context.Background(), storage.TestDefinitionFilter{Platform: "hh", FamilyID: "go", LevelID: "medium"})
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("definitions = %#v err=%v", definitions, err)
+	}
+	question := core.Question{ID: "runtime-2", Text: "Describe a project", Kind: core.QuestionText}
+	fingerprint, err := core.QuestionFingerprint(question)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	sessionID, promptID := qualificationReviewIDs(definitions[0], "primary", fingerprint)
+	session, err := repository.ReviewSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("review session: %v", err)
+	}
+	if session.Status != core.ReviewWaiting || session.AnswerBlockTag != "hh-go-medium" || len(session.Questionnaire.Questions) != 1 {
+		t.Fatalf("session = %#v", session)
+	}
+	prompt, err := repository.ReviewPrompt(context.Background(), promptID)
+	if err != nil || prompt.Question.Text != "Describe a project" {
+		t.Fatalf("prompt = %#v err=%v", prompt, err)
 	}
 }

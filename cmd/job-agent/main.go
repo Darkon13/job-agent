@@ -125,7 +125,7 @@ func main() {
 			logf("close database: %v", err)
 		}
 	}()
-	var answerResolver taskworker.VacancyAnswerBlockResolver
+	var answerResolver taskworker.AnswerBlockResolver
 	if answerRegistry != nil {
 		answerResolver, err = taskworker.NewReviewedVacancyAnswers(answerRegistry, store)
 		if err != nil {
@@ -225,6 +225,7 @@ func main() {
 	testCapturers := taskworker.NewVacancyTestCapturerRegistry()
 	testSubmitters := taskworker.NewVacancyTestSubmitterRegistry()
 	qualificationReaders := taskworker.NewQualificationCatalogRegistry()
+	qualificationAttempts := taskworker.NewQualificationAttemptRegistry()
 	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
@@ -265,6 +266,11 @@ func main() {
 					}
 					qualificationPlatforms[profileID] = core.Platform(instance.Name())
 					logf("profile %q can sync the skill verification catalog", profile.Tag)
+				}
+				if service, ok := instance.(adapter.QualificationAttemptService); ok && answerResolver != nil {
+					if err := qualificationAttempts.Register(profileID, service); err != nil {
+						log.Fatalf("register qualification attempt service for profile %q: %v", profile.Tag, err)
+					}
 				}
 				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 					profileStateReaders[profileID] = profileStateReader
@@ -612,6 +618,19 @@ func main() {
 			log.Fatalf("create qualification sync worker: %v", err)
 		}
 		workers = append(workers, qualificationSyncWorker)
+	}
+	if qualificationAttempts.Count() > 0 && answerResolver != nil {
+		qualificationStartHandler, err := taskworker.NewQualificationStartHandler(
+			qualificationAttempts, store, store, store, answerResolver, store, taskworker.SystemClock{},
+		)
+		if err != nil {
+			log.Fatalf("create qualification start handler: %v", err)
+		}
+		qualificationStartWorker, err := newTaskWorker(store, core.TaskSkillVerificationStart, qualificationStartHandler.Handle)
+		if err != nil {
+			log.Fatalf("create qualification start worker: %v", err)
+		}
+		workers = append(workers, qualificationStartWorker)
 	}
 	reviewAnswerHandler, err := taskworker.NewReviewAnswerHandler(store, taskworker.SystemClock{})
 	if err != nil {
