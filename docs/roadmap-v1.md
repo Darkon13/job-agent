@@ -75,8 +75,11 @@
 - [x] Worker `test.complete`: монотонный результат попытки по профилю
       (миграция 23).
 - [ ] Worker `review.answer`.
-- [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;
-      contextual-вопросы только в manual.
+- [ ] Цепочка ответа (решение: автоматически, review-фолбэк): blocked
+      application → `test.capture`; полное покрытие `AnswerBlock` →
+      `questionnaire.answer`; неполное → review session без submit; после
+      успешного submit → `test.complete` и возврат application в submit;
+      ревизии answer blocks; contextual-вопросы только в manual.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] Review UI в dashboard; CLI review.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence
