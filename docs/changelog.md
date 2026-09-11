@@ -36,6 +36,8 @@
   `core.Questionnaire` (вопросы, варианты, open-text и code-задачи).
 - Отправка open-text ответов vacancy test через popup-форму с проверкой
   `_xsrf`/`uidPk`/`guid`/`startTime` и обязательным read-back результата.
+- Worker `test.capture`: наблюдаемые вопросы vacancy test попадают в
+  прогрессивный тестовый каталог монотонным upsert, без запуска попытки.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

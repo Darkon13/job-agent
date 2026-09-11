@@ -100,6 +100,36 @@ type ResumePublishPayload struct {
 	ResumeID  string    `json:"resume_id"`
 }
 
+// TestCapturePayload discovers the questionnaire shown by a vacancy response
+// popup. Capturing never starts an attempt and never submits answers.
+type TestCapturePayload struct {
+	ProfileID         ProfileID `json:"profile_id"`
+	Platform          Platform  `json:"platform"`
+	VacancyExternalID string    `json:"vacancy_external_id"`
+}
+
+func (payload TestCapturePayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("test capture requires profile")
+	}
+	if payload.Platform == "" {
+		return errors.New("test capture requires platform")
+	}
+	if strings.TrimSpace(payload.VacancyExternalID) == "" {
+		return errors.New("test capture requires vacancy external id")
+	}
+	return nil
+}
+
+func TestCaptureIdempotencyKey(platform Platform, externalID string, profileID ProfileID) (string, error) {
+	externalID = strings.TrimSpace(externalID)
+	if platform == "" || externalID == "" || profileID == "" {
+		return "", errors.New("test capture idempotency requires platform, vacancy and profile")
+	}
+	digest := sha256.Sum256([]byte(string(platform) + "\x00" + externalID + "\x00" + string(profileID)))
+	return "test.capture:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ResumeTouchPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`

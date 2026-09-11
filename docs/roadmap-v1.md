@@ -68,8 +68,9 @@
 - [x] Submit ответов и read-back результата (open-text tasks; choice/code
       отклоняются как unsupported до live-проверки их полей).
 - [ ] Adapter qualification service: sync каталога, capture, submit.
-- [ ] Workers `test.capture`, `questionnaire.answer`, `test.complete`,
-      `review.answer`.
+- [x] Worker `test.capture`: browser capture → прогрессивный тестовый
+      каталог (монотонный upsert, без попытки и submit).
+- [ ] Workers `questionnaire.answer`, `test.complete`, `review.answer`.
 - [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;
       contextual-вопросы только в manual.
 - [ ] Опросники из чатов через тот же registry.

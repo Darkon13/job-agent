@@ -174,6 +174,7 @@ func main() {
 	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	resumePublishers := taskworker.NewResumePublisherRegistry()
+	testCapturers := taskworker.NewVacancyTestCapturerRegistry()
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -201,6 +202,12 @@ func main() {
 				runtime.BrowserReader = reader
 				profiles[profileID] = runtime
 				log.Printf("profile %q has a browser-backed read session", profile.Tag)
+				if capturer, ok := instance.(adapter.VacancyTestCapturer); ok {
+					if err := testCapturers.Register(profileID, capturer); err != nil {
+						log.Fatalf("register vacancy test capturer for profile %q: %v", profile.Tag, err)
+					}
+					log.Printf("profile %q can capture vacancy tests through the browser session", profile.Tag)
+				}
 				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 					profileStateReaders[profileID] = profileStateReader
 				}
@@ -493,6 +500,17 @@ func main() {
 			log.Fatalf("create resume touch worker: %v", err)
 		}
 		workers = append(workers, resumeWorker)
+	}
+	if testCapturers.Count() > 0 {
+		testCaptureHandler, err := taskworker.NewVacancyTestCaptureHandler(testCapturers, store, taskworker.SystemClock{})
+		if err != nil {
+			log.Fatalf("create vacancy test capture handler: %v", err)
+		}
+		testCaptureWorker, err := newTaskWorker(store, core.TaskTestCapture, testCaptureHandler.Handle)
+		if err != nil {
+			log.Fatalf("create vacancy test capture worker: %v", err)
+		}
+		workers = append(workers, testCaptureWorker)
 	}
 	if resumePublishers.Count() > 0 {
 		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
