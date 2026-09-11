@@ -1,7 +1,8 @@
 # Следующая задача: auth control plane и вывод credentials
 
-Статус: `in_progress`. Credential record и JSON/dotenv reader/writer уже
-реализованы; auth session, adapter login и presenters ещё не начаты.
+Статус: `in_progress`. Credential record и JSON/dotenv reader/writer, persistent
+auth session, эфемерный challenge store и платформо-нейтральный auth service
+уже реализованы; HTTP/SSE API, HH login driver и presenters ещё не начаты.
 
 Живой HH login, OAuth exchange, captcha и обновление токенов должны быть одним
 backend workflow. CLI и dashboard являются клиентами одной auth session, а не
@@ -140,10 +141,25 @@ per-profile lock и revision CAS; после частичного сбоя по�
    `auth_required`; остальные профили продолжают работать.
 9. CLI/dashboard сверяют API contract version перед продолжением auth flow.
 
+## Auth service
+
+Пакет `auth/` управляет сессией и ручными шагами:
+
+- `Service.Start` создаёт durable session и просит driver первый шаг;
+- `Service.Submit` принимает identifier, OTP, password или captcha, переводит
+  сессию через `waiting_*` → `exchanging` → `storing` → `completed`;
+- ошибка driver с нормализованной категорией завершает только эту сессию
+  статусом `failed`;
+- при сбое записи secret после успешного exchange сессия честно помечается
+  failed, потому что повтор не может восстановить одноразовый ответ;
+- `Service.ChallengePayload` отдаёт PNG/URL из `MemoryChallengeStore`; payload
+  удаляется при смене шага, отмене и завершении и живёт только в памяти.
+
 ## Порядок реализации
 
 1. ✅ Credential record, reader/writer и JSON/dotenv round-trip.
-2. Persistent auth session и challenge API без platform-specific UI.
+2. ✅ Persistent auth session, challenge store и платформо-нейтральный service;
+   HTTP/SSE endpoints остаются.
 3. HH browser login и OAuth token exchange внутри adapter-а.
 4. Terminal presenter: TTY separation, Kitty, Sixel и fallback.
 5. Dashboard auth wizard и SSE.

@@ -69,7 +69,7 @@ func (store *Store) SaveAuthSession(ctx context.Context, candidate core.AuthSess
 	if err != nil {
 		return err
 	}
-	if candidate.Revision != expectedRevision+1 {
+	if candidate.Revision <= expectedRevision {
 		return storage.ErrRevisionConflict
 	}
 	if !sameSQLiteAuthSessionInputs(stored, candidate) {

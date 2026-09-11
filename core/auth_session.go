@@ -91,16 +91,18 @@ type AuthSession struct {
 }
 
 type NewAuthSessionParams struct {
-	ID        AuthSessionID
-	Platform  Platform
-	ProfileID ProfileID
-	ExpiresAt time.Time
+	ID                  AuthSessionID
+	Platform            Platform
+	ProfileID           ProfileID
+	CredentialReference string
+	ExpiresAt           time.Time
 }
 
 func NewAuthSession(params NewAuthSessionParams, now time.Time) (AuthSession, error) {
 	session := AuthSession{
 		ID: params.ID, Platform: params.Platform, ProfileID: params.ProfileID,
-		Status: AuthSessionCreated, Revision: 1, ExpiresAt: params.ExpiresAt.UTC(),
+		CredentialReference: strings.TrimSpace(params.CredentialReference),
+		Status:              AuthSessionCreated, Revision: 1, ExpiresAt: params.ExpiresAt.UTC(),
 		CreatedAt: now.UTC(), UpdatedAt: now.UTC(),
 	}
 	if err := session.Validate(); err != nil {
@@ -120,19 +122,18 @@ func (session AuthSession) Validate() error {
 		session.UpdatedAt.Before(session.CreatedAt) || session.ExpiresAt.IsZero() {
 		return errors.New("auth session requires revision and valid timestamps")
 	}
-	if session.CredentialReference != "" && session.CredentialRevision == 0 {
-		return errors.New("auth session credential reference requires a revision")
-	}
-	if session.CredentialReference == "" && session.CredentialRevision != 0 {
-		return errors.New("auth session credential revision requires a reference")
+	// The reference is the declared credential destination and may be set
+	// before the record is stored; the revision appears only on completion.
+	if session.Status != AuthSessionCompleted && session.CredentialRevision != 0 {
+		return errors.New("auth session credential revision is only valid for a completed session")
 	}
 	switch session.Status {
 	case AuthSessionCreated, AuthSessionWaitingIdentifier, AuthSessionExchanging, AuthSessionStoring:
 		if session.Challenge != nil {
 			return fmt.Errorf("auth session in status %q cannot keep a challenge", session.Status)
 		}
-		if session.CredentialReference != "" || session.FailureCategory != "" {
-			return fmt.Errorf("auth session in status %q cannot contain a result", session.Status)
+		if session.FailureCategory != "" {
+			return fmt.Errorf("auth session in status %q cannot contain a failure", session.Status)
 		}
 	case AuthSessionWaitingOTP, AuthSessionWaitingPassword, AuthSessionWaitingCaptcha:
 		if session.Challenge == nil {
@@ -144,22 +145,22 @@ func (session AuthSession) Validate() error {
 		if !challengeKindMatchesStatus(session.Challenge.Kind, session.Status) {
 			return errors.New("auth challenge kind does not match session status")
 		}
-		if session.CredentialReference != "" || session.FailureCategory != "" {
-			return fmt.Errorf("auth session in status %q cannot contain a result", session.Status)
+		if session.FailureCategory != "" {
+			return fmt.Errorf("auth session in status %q cannot contain a failure", session.Status)
 		}
 	case AuthSessionCompleted:
-		if session.Challenge != nil || session.CredentialReference == "" {
+		if session.Challenge != nil || session.CredentialReference == "" || session.CredentialRevision == 0 {
 			return errors.New("completed auth session requires a stored credential and no challenge")
 		}
 		if session.FailureCategory != "" {
 			return errors.New("completed auth session cannot contain a failure")
 		}
 	case AuthSessionExpired, AuthSessionCancelled:
-		if session.Challenge != nil || session.CredentialReference != "" || session.FailureCategory != "" {
+		if session.Challenge != nil || session.FailureCategory != "" {
 			return fmt.Errorf("auth session in status %q cannot contain a result", session.Status)
 		}
 	case AuthSessionFailed:
-		if session.Challenge != nil || session.CredentialReference != "" {
+		if session.Challenge != nil || session.CredentialRevision != 0 {
 			return errors.New("failed auth session cannot contain a challenge or credential")
 		}
 		if !ValidErrorCategory(session.FailureCategory) {
@@ -251,6 +252,9 @@ func (session *AuthSession) BeginStoring(now time.Time) error {
 	if session == nil || session.Status != AuthSessionExchanging {
 		return fmt.Errorf("cannot begin storing in status %q", session.statusOrEmpty())
 	}
+	if strings.TrimSpace(session.CredentialReference) == "" {
+		return errors.New("auth session storing requires a credential reference")
+	}
 	if err := session.advance(now); err != nil {
 		return err
 	}
@@ -258,18 +262,16 @@ func (session *AuthSession) BeginStoring(now time.Time) error {
 	return session.Validate()
 }
 
-func (session *AuthSession) Complete(credentialReference string, credentialRevision uint64, now time.Time) error {
+func (session *AuthSession) Complete(credentialRevision uint64, now time.Time) error {
 	if session == nil || session.Status != AuthSessionStoring {
 		return fmt.Errorf("cannot complete auth session in status %q", session.statusOrEmpty())
 	}
-	credentialReference = strings.TrimSpace(credentialReference)
-	if credentialReference == "" || credentialRevision == 0 {
+	if strings.TrimSpace(session.CredentialReference) == "" || credentialRevision == 0 {
 		return errors.New("completed auth session requires a credential reference and revision")
 	}
 	if err := session.advance(now); err != nil {
 		return err
 	}
-	session.CredentialReference = credentialReference
 	session.CredentialRevision = credentialRevision
 	session.Status = AuthSessionCompleted
 	return session.Validate()

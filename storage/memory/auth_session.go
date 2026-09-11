@@ -56,7 +56,7 @@ func (repository *Repository) SaveAuthSession(ctx context.Context, candidate cor
 	if !exists {
 		return storage.ErrAuthSessionNotFound
 	}
-	if stored.Revision != expectedRevision || candidate.Revision != expectedRevision+1 {
+	if stored.Revision != expectedRevision || candidate.Revision <= expectedRevision {
 		return storage.ErrRevisionConflict
 	}
 	if !sameAuthSessionInputs(stored, candidate) {

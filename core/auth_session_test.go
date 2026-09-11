@@ -11,7 +11,9 @@ func newAuthSessionFixture(t *testing.T) (AuthSession, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	session, err := NewAuthSession(NewAuthSessionParams{
-		ID: "auth-1", Platform: "hh", ProfileID: "primary", ExpiresAt: now.Add(15 * time.Minute),
+		ID: "auth-1", Platform: "hh", ProfileID: "primary",
+		CredentialReference: "file:/run/secrets/hh-primary.json",
+		ExpiresAt:           now.Add(15 * time.Minute),
 	}, now)
 	if err != nil {
 		t.Fatalf("new auth session: %v", err)
@@ -47,7 +49,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 	if err := session.BeginStoring(now.Add(4 * time.Second)); err != nil {
 		t.Fatalf("begin storing: %v", err)
 	}
-	if err := session.Complete("file:/run/secrets/hh-primary.json", 1, now.Add(5*time.Second)); err != nil {
+	if err := session.Complete(1, now.Add(5*time.Second)); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	if session.Status != AuthSessionCompleted || session.CredentialReference == "" || session.CredentialRevision != 1 || session.Revision != 6 {
@@ -100,7 +102,7 @@ func TestAuthSessionRejectsInvalidTransitions(t *testing.T) {
 	if err := session.BeginExchange(now.Add(time.Second)); err == nil {
 		t.Fatal("expected exchange before identifier to fail")
 	}
-	if err := session.Complete("file:/x", 1, now.Add(time.Second)); err == nil {
+	if err := session.Complete(1, now.Add(time.Second)); err == nil {
 		t.Fatal("expected complete before storing to fail")
 	}
 	if err := session.BeginIdentifier(now.Add(time.Second)); err != nil {
@@ -188,7 +190,8 @@ func TestAuthSessionValidateRejectsInconsistentRecords(t *testing.T) {
 		t.Fatal("expected credential revision without reference to fail")
 	}
 	late, err := NewAuthSession(NewAuthSessionParams{
-		ID: "auth-2", Platform: "hh", ProfileID: "primary", ExpiresAt: now,
+		ID: "auth-2", Platform: "hh", ProfileID: "primary",
+		CredentialReference: "file:/run/secrets/hh-primary.json", ExpiresAt: now,
 	}, now)
 	if err == nil {
 		t.Fatal("expected session expiry equal to creation to fail")
