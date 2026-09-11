@@ -63,8 +63,10 @@
 
 ## M3. Live vacancy tests и опросники
 
-- [ ] Adapter qualification service через browser RPC: sync каталога, capture,
-      fingerprint, submit, read-back результата.
+- [x] Capture vacancy test: popup initial state → `core.Questionnaire`
+      (browser read channel, без хранения xsrf/guid).
+- [ ] Submit ответов и read-back результата.
+- [ ] Adapter qualification service: sync каталога, capture, submit.
 - [ ] Workers `test.capture`, `questionnaire.answer`, `test.complete`,
       `review.answer`.
 - [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;

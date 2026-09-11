@@ -220,6 +220,12 @@ type ResumePublisher interface {
 	PublishResume(ctx context.Context, command ResumePublishCommand) (ResumePublishResult, error)
 }
 
+// VacancyTestCapturer reads the questionnaire of a vacancy before applying. It
+// never submits answers and never persists short-lived submission context.
+type VacancyTestCapturer interface {
+	CaptureVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Questionnaire, error)
+}
+
 type ResumeTouchCommand struct {
 	ProfileID      core.ProfileID
 	ResumeID       string

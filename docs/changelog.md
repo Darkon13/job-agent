@@ -32,6 +32,8 @@
   storage state, page-примитивы, Bearer-токен и Compose-профиль `browser`.
 - Интерактивный HH login через браузер: email → OTP/captcha, browser storage
   state как артефакт сессии (миграция 22) и CLI `job-agent auth login|status`.
+- Извлечение вопросов vacancy test из popup initial state в
+  `core.Questionnaire` (вопросы, варианты, open-text и code-задачи).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

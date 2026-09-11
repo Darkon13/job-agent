@@ -102,6 +102,7 @@ var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 var _ adapter.ApplicationStateObserver = (*Adapter)(nil)
 var _ adapter.ResumePublisher = (*Adapter)(nil)
+var _ adapter.VacancyTestCapturer = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -367,6 +368,16 @@ func validateHHSearchTime(field, value string) error {
 		}
 	}
 	return fmt.Errorf("hh %s must be an ISO-8601 date or timestamp", field)
+}
+
+func (a *Adapter) CaptureVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Questionnaire, error) {
+	a.mu.RLock()
+	browserClient := a.browserClients[profileID]
+	a.mu.RUnlock()
+	if browserClient == nil {
+		return core.Questionnaire{}, operationError(core.ErrorUnsupported, "vacancies.test.capture", "HH profile has no browser read session", nil)
+	}
+	return browserClient.CaptureVacancyTest(ctx, profileID, key)
 }
 
 func (a *Adapter) PublishResume(ctx context.Context, command adapter.ResumePublishCommand) (adapter.ResumePublishResult, error) {
