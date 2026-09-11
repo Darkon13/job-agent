@@ -88,6 +88,7 @@ type ProfileStateResourceConfig struct {
 
 const (
 	JobActionResumeTouch                = "resume.touch"
+	JobActionResumePublish              = "resume.publish"
 	JobActionApplicationCampaign        = "application.campaign"
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
@@ -1091,7 +1092,7 @@ func (c Config) Validate() error {
 			}
 		}
 		switch job.Action.Type {
-		case JobActionResumeTouch, JobActionProfileActivityObserve:
+		case JobActionResumeTouch, JobActionResumePublish, JobActionProfileActivityObserve:
 			if _, exists := profiles[job.Action.Profile]; !exists {
 				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
 			}

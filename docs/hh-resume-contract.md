@@ -20,6 +20,13 @@ HTML-формы вручную. Источники: локальный OpenAPI s
 Старые `POST /resumes` и `PUT /resumes/{resume_id}` помечены deprecated и нужны
 только как fallback совместимости.
 
+`POST /resumes/{resume_id}/publish` реализован в HH API-клиенте для OAuth
+профилей: успешный ответ `204` завершает `resume.publish` job, `400` с
+`next_publish_at` в теле переводится в `rate_limited` с точным `Retry-After`,
+`429` учитывает заголовок, а `401/403`, `404` и `5xx` нормализуются в
+существующие категории. Browser-cookie профиль без API-сессии publish не
+выполняет и получает `Unsupported`.
+
 Create profile принимает entry context (`default`, `vacancy_response`, варианты
 onboarding), optional `vacancy_id`, координаты, `clone_resume_id`,
 `update_profile` и дополнительные wizard properties.

@@ -140,6 +140,24 @@
       }
     },
     {
+      "tag": "publish-primary-resume",
+      "enabled": false,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "30 9 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {"min": "1m", "max": "10m"}
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "resume.publish",
+        "profile": "primary"
+      }
+    },
+    {
       "tag": "observe-primary-activity",
       "enabled": true,
       "triggers": [

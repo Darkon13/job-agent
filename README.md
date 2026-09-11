@@ -559,14 +559,17 @@ Campaign routes должны использовать один adapter и вкл
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
 `next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
-`profile.activity.observe`, `conversation.follow_up.select`,
+`resume.publish`, `profile.activity.observe`, `conversation.follow_up.select`,
 `profile_state.reconcile` или
 `application.campaign` tasks. После простоя пропущенные интервалы схлопываются
 в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает
 lease во время ожидания. Реальный HH transport читает
 `canTouch`/`nextTouchAt` из server-rendered profile state и возвращает
-`Retry-After`; четырёхчасовой интервал не зашит в core. Первая публикация
-(`resume.publish`) остаётся отдельной операцией.
+`Retry-After`; четырёхчасовой интервал не зашит в core. Публикация
+(`resume.publish`) выполняется через applicant API `POST /resumes/{id}/publish`
+для OAuth-профилей: успех возвращает `204`, а ранняя попытка с
+`next_publish_at` нормализуется в `rate_limited` с `Retry-After`. Для профиля
+только с browser-cookie publish возвращает `Unsupported`.
 Как и для откликов, scheduler не активирует job профиля до регистрации рабочего
 transport, чтобы не копить заведомо невыполнимые действия.
 

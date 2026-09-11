@@ -101,6 +101,7 @@ var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
 var _ adapter.ApplicationStateObserver = (*Adapter)(nil)
+var _ adapter.ResumePublisher = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -237,6 +238,7 @@ func (a *Adapter) Capabilities() []core.Capability {
 		core.CapabilityConversationMarkRead,
 		core.CapabilityResumeRead,
 		core.CapabilityResumeUpdate,
+		core.CapabilityResumePublish,
 	}
 }
 
@@ -365,6 +367,16 @@ func validateHHSearchTime(field, value string) error {
 		}
 	}
 	return fmt.Errorf("hh %s must be an ISO-8601 date or timestamp", field)
+}
+
+func (a *Adapter) PublishResume(ctx context.Context, command adapter.ResumePublishCommand) (adapter.ResumePublishResult, error) {
+	a.mu.RLock()
+	client := a.clients[command.ProfileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return adapter.ResumePublishResult{}, operationError(core.ErrorUnsupported, "resumes.publish", "HH profile has no API session for resume publish", nil)
+	}
+	return client.PublishResume(ctx, command)
 }
 
 func (query SearchQuery) hasModernWorkFields() bool {

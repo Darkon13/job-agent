@@ -26,6 +26,8 @@
 - HH search: `similar_resume`, `similar_vacancy` и `related_vacancy` через API и
   `similar_resume` через browser `/search/vacancy?resume=`; у source появилась
   матрица поддерживаемых полей.
+- `resume.publish` через applicant API: job action, durable task, worker и
+  нормализация ранней публикации в `rate_limited` с `next_publish_at`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

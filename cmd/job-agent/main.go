@@ -165,6 +165,7 @@ func main() {
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
+	resumePublishers := taskworker.NewResumePublisherRegistry()
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -336,6 +337,13 @@ func main() {
 				}
 			}
 		}
+		if apiReady {
+			if publisher, ok := instance.(adapter.ResumePublisher); ok {
+				if err := resumePublishers.Register(profileID, publisher); err != nil {
+					log.Fatalf("register resume publisher for profile %q: %v", profile.Tag, err)
+				}
+			}
+		}
 	}
 	profileStateApplyWorkflow, err := workflow.NewProfileStateApplyWorkflow(
 		store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileStatePlatforms,
@@ -478,6 +486,19 @@ func main() {
 		}
 		workers = append(workers, resumeWorker)
 	}
+	if resumePublishers.Count() > 0 {
+		resumePublishHandler, err := taskworker.NewResumePublishHandler(resumePublishers)
+		if err != nil {
+			log.Fatalf("create resume publish handler: %v", err)
+		}
+		resumePublishWorker, err := newTaskWorker(
+			store, core.TaskResumePublish, profileMutationLane.Wrap(resumePublishHandler.Handle),
+		)
+		if err != nil {
+			log.Fatalf("create resume publish worker: %v", err)
+		}
+		workers = append(workers, resumePublishWorker)
+	}
 	if activityObservers.Count() > 0 {
 		activityHandler, err := taskworker.NewProfileActivityObserveHandler(store, activityObservers)
 		if err != nil {
@@ -517,6 +538,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
+	resumePublishDefinitions, err := resumePublishDefinitions(cfg, instances, resumePublishers)
+	if err != nil {
+		log.Fatalf("build resume publish scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, resumePublishDefinitions...)
 	activityDefinitions, err := profileActivityDefinitions(cfg, instances, activityObservers)
 	if err != nil {
 		log.Fatalf("build profile activity scheduled jobs: %v", err)
@@ -1105,6 +1131,42 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, publishers *taskworker.ResumePublisherRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionResumePublish {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled || !publishers.Has(profileID) {
+			continue
+		}
+		resumeID := job.Action.Resume
+		if resumeID == "" {
+			resumeID = profile.Resume
+		}
+		payload, err := json.Marshal(core.ResumePublishPayload{ProfileID: profileID, ResumeID: resumeID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

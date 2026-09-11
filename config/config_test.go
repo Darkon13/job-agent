@@ -608,6 +608,27 @@ func TestResumeTouchJobValidation(t *testing.T) {
 	}
 }
 
+func TestResumePublishJobValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true}},
+		Jobs: []Job{{
+			Tag: "publish-primary", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "30 9 * * *", Timezone: "Europe/Moscow", Misfire: "run_once", Jitter: JitterConfig{Min: "1m", Max: "10m"}}},
+			Action:   JobAction{Type: JobActionResumePublish, Profile: "primary"},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid resume publish job: %v", err)
+	}
+	config.Profiles[0].Resume = ""
+	config.Jobs[0].Action.Resume = ""
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected publish without resume to fail")
+	}
+}
+
 func TestConversationFollowUpSelectionJobValidation(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
