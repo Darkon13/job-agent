@@ -167,6 +167,7 @@ func main() {
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
+	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels)
 		if err != nil {
@@ -277,13 +278,33 @@ func main() {
 			if err != nil {
 				log.Fatalf("resolve application pacing for profile %q: %v", profile.Tag, err)
 			}
-			applicationPlans[profileID] = taskworker.ApplicationPlan{
+			applicationPlan := taskworker.ApplicationPlan{
 				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
 				Message: profile.Applications.Message, Preparer: preparer,
 				DailyLimit:      profile.Applications.EffectiveDailyLimit(instance.Name()),
 				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
 				Timezone: profile.Applications.LocationName(),
 			}
+			if skills, enabled := profile.Applications.TailoringSkills(); enabled {
+				if _, hasReader := profileStateReaders[profileID]; !hasReader {
+					log.Fatalf("profile %q application tailoring requires a profile state reader", profile.Tag)
+				}
+				if _, resolveErr := profileStateWriters.Resolve(profileID); resolveErr != nil {
+					log.Fatalf("profile %q application tailoring requires a profile state writer", profile.Tag)
+				}
+				processor, procErr := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
+				if procErr != nil {
+					log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, procErr)
+				}
+				tailoringPlan := taskworker.ApplicationTailoringPlan{
+					Processor:       processor,
+					AllowedPaths:    []string{applicationoperator.ResumeSkillsPath(profile.Resume)},
+					EmployerMatcher: employerMatcher,
+				}
+				applicationTailoringPlans[profileID] = tailoringPlan
+				applicationPlan.Tailoring = &tailoringPlan
+			}
+			applicationPlans[profileID] = applicationPlan
 		}
 		if toucher, ok := instance.(adapter.ResumeToucher); ok {
 			if err := resumeTouchers.Register(profileID, toucher); err != nil {
@@ -391,6 +412,15 @@ func main() {
 		}
 		workers = append(workers, profileStateWorker)
 	}
+	var applicationTailoringCoordinator *taskworker.ApplicationTailoringCoordinator
+	if len(applicationTailoringPlans) > 0 {
+		applicationTailoringCoordinator, err = taskworker.NewApplicationTailoringCoordinator(
+			store, store, profileStateReaders, profileStateWriters, taskworker.SystemClock{}, workflow.RandomIDGenerator{},
+		)
+		if err != nil {
+			log.Fatalf("create application tailoring coordinator: %v", err)
+		}
+	}
 	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
 			store, store, store, store, store, applicationTransports, applicationPlans,
@@ -399,6 +429,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("create application handler: %v", err)
 		}
+		applicationHandler.ConfigureTailoring(applicationTailoringCoordinator)
 		applicationWorker, err := newTaskWorkerBlockedBy(
 			store, core.TaskApplicationSubmit, core.TaskProfileStateApply,
 			profileMutationLane.Wrap(applicationHandler.Handle),

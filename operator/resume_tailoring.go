@@ -159,7 +159,7 @@ func (processor *AddVacancySkillsProcessor) Plan(ctx context.Context, input Resu
 	if err := ctx.Err(); err != nil {
 		return ResumeTailoringPlan{}, err
 	}
-	path := resumeSkillsPath(input.ResumeID)
+	path := ResumeSkillsPath(input.ResumeID)
 	if !slices.Contains(input.AllowedPaths, path) {
 		return ResumeTailoringPlan{}, fmt.Errorf("resume tailoring skill path %q is not allowed", path)
 	}
@@ -244,7 +244,7 @@ func observedResumeSkills(observation core.ProfileStateObservation, path string)
 	return values, nil
 }
 
-func resumeSkillsPath(resumeID string) string {
+func ResumeSkillsPath(resumeID string) string {
 	return "/resumes/" + escapeResumeTailoringPointer(strings.TrimSpace(resumeID)) + "/web/keySkills"
 }
 

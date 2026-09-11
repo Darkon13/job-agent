@@ -122,10 +122,34 @@ retention policy.
 
 ## Порядок реализации
 
-1. Ввести durable `ApplicationTailoring` и per-profile mutation lease.
-2. Добавить config policy, typed processor input/output и deterministic
+1. ✅ Ввести durable `ApplicationTailoring` и per-profile mutation lease.
+2. ✅ Добавить config policy, typed processor input/output и deterministic
    `add_vacancy_skills`.
-3. Переиспользовать `ProfileStatePlanner` для immutable apply/restore proposals.
-4. Связать application submit с фазами saga и обязательной компенсацией.
-5. Подключить model processor с fallback на deterministic policy.
-6. Показать plan, skill diff, restore/recovery status в dashboard.
+3. ✅ Переиспользовать `ProfileStatePlanner` для immutable apply/restore proposals.
+4. ✅ Связать application submit с фазами saga и обязательной компенсацией.
+5. ⏳ Подключить model processor с fallback на deterministic policy.
+6. ⏳ Показать plan, skill diff, restore/recovery status в dashboard.
+
+## Конфигурация
+
+Tailoring включается явно в профиле и работает только в режиме `submit`:
+
+```json
+{
+  "tag": "primary",
+  "resume": "1234567890abcdef",
+  "applications": {
+    "mode": "submit",
+    "tailoring": {
+      "skills": {"enabled": true, "maximum": 30}
+    }
+  }
+}
+```
+
+`maximum` — верхняя граница навыков в резюме; processor добавляет допустимые
+`key_skills` вакансии, не удаляя существующие, и отклоняет план, если лимит
+превышен. Разрешённый путь выводится из `resume` профиля
+(`/resumes/{resume}/web/keySkills`), поэтому пользователь не задаёт JSON Pointer
+вручную. Без блока `tailoring` handler работает как раньше.
+

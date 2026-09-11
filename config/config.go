@@ -266,17 +266,18 @@ type ConversationPolicy struct {
 }
 
 type ApplicationPolicy struct {
-	Mode                  string                    `json:"mode,omitempty"`
-	Message               string                    `json:"message,omitempty"`
-	MessageTemplate       string                    `json:"message_template,omitempty"`
-	MessageTemplateFile   string                    `json:"message_template_file,omitempty"`
-	Model                 *ApplicationModelPolicy   `json:"model,omitempty"`
-	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
-	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
-	DailyLimit            int                       `json:"daily_limit,omitempty"`
-	SubmitJitter          JitterConfig              `json:"submit_jitter,omitempty"`
-	Timezone              string                    `json:"timezone,omitempty"`
-	AllowVisibilityChange bool                      `json:"allow_visibility_change,omitempty"`
+	Mode                  string                      `json:"mode,omitempty"`
+	Message               string                      `json:"message,omitempty"`
+	MessageTemplate       string                      `json:"message_template,omitempty"`
+	MessageTemplateFile   string                      `json:"message_template_file,omitempty"`
+	Model                 *ApplicationModelPolicy     `json:"model,omitempty"`
+	EmployerRules         []ApplicationEmployerRule   `json:"employer_rules,omitempty"`
+	Qualification         ApplicationQualification    `json:"qualification,omitempty"`
+	DailyLimit            int                         `json:"daily_limit,omitempty"`
+	SubmitJitter          JitterConfig                `json:"submit_jitter,omitempty"`
+	Timezone              string                      `json:"timezone,omitempty"`
+	AllowVisibilityChange bool                        `json:"allow_visibility_change,omitempty"`
+	Tailoring             *ApplicationTailoringPolicy `json:"tailoring,omitempty"`
 	resolvedTemplate      string
 	resolvedMessagePool   *ApplicationMessagePool
 }
@@ -317,6 +318,22 @@ type ApplicationMessagePool struct {
 type ApplicationQualification struct {
 	IncludeAny []string `json:"include_any,omitempty"`
 	ExcludeAny []string `json:"exclude_any,omitempty"`
+}
+
+type ApplicationTailoringPolicy struct {
+	Skills *ApplicationTailoringSkillsPolicy `json:"skills,omitempty"`
+}
+
+type ApplicationTailoringSkillsPolicy struct {
+	Enabled bool `json:"enabled,omitempty"`
+	Maximum int  `json:"maximum,omitempty"`
+}
+
+func (policy ApplicationPolicy) TailoringSkills() (ApplicationTailoringSkillsPolicy, bool) {
+	if policy.Tailoring == nil || policy.Tailoring.Skills == nil || !policy.Tailoring.Skills.Enabled {
+		return ApplicationTailoringSkillsPolicy{}, false
+	}
+	return *policy.Tailoring.Skills, true
 }
 
 func (policy ApplicationPolicy) ExecutionMode() string {
@@ -897,6 +914,17 @@ func (c Config) Validate() error {
 		if profile.Applications.Timezone != "" {
 			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
+			}
+		}
+		if skills, enabled := profile.Applications.TailoringSkills(); enabled {
+			if profile.Applications.ExecutionMode() != ApplicationModeSubmit {
+				return fmt.Errorf("profile %q application tailoring requires submit mode", profile.Tag)
+			}
+			if strings.TrimSpace(profile.Resume) == "" {
+				return fmt.Errorf("profile %q application tailoring requires a resume", profile.Tag)
+			}
+			if skills.Maximum < 1 {
+				return fmt.Errorf("profile %q application tailoring skills require a positive maximum", profile.Tag)
 			}
 		}
 		messageSources := 0

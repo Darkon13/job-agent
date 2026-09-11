@@ -12,6 +12,10 @@
   при открытии и блокировка повторного «Прочитать всё».
 - Наблюдатель статусов HH через OAuth/API. Для browser-cookie профилей
   автоматический GC пока недоступен; подробности в `application-cleanup.md`.
+- Временная подстройка резюме перед откликом: durable saga с baseline/target
+  snapshot, apply и restore через profile state; включается
+  `applications.tailoring.skills`; подробности в
+  `application-resume-tailoring.md`.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

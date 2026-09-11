@@ -25,6 +25,7 @@ type ApplicationPlan struct {
 	SubmitJitterMin time.Duration
 	SubmitJitterMax time.Duration
 	Timezone        string
+	Tailoring       *ApplicationTailoringPlan
 }
 
 func (plan ApplicationPlan) Validate() error {
@@ -188,6 +189,7 @@ type ApplicationHandler struct {
 	plans      ApplicationPlanResolver
 	jitter     ApplicationJitterSource
 	clock      Clock
+	tailoring  *ApplicationTailoringCoordinator
 }
 
 func NewApplicationHandler(repository storage.ApplicationRepository, vacancies storage.VacancyRepository, budgets storage.ApplicationBudgetRepository, pacing storage.ApplicationPaceRepository, activity storage.ProfileActivityRepository, transports *ApplicationTransportRegistry, plans ApplicationPlanResolver, jitter ApplicationJitterSource, clock Clock) (*ApplicationHandler, error) {
@@ -195,6 +197,15 @@ func NewApplicationHandler(repository storage.ApplicationRepository, vacancies s
 		return nil, errors.New("application handler requires all dependencies")
 	}
 	return &ApplicationHandler{repository: repository, vacancies: vacancies, budgets: budgets, pacing: pacing, activity: activity, transports: transports, plans: plans, jitter: jitter, clock: clock}, nil
+}
+
+// ConfigureTailoring attaches the optional temporary resume tailoring saga.
+// Without it the handler keeps the plain prepare/submit/reconcile behavior.
+func (handler *ApplicationHandler) ConfigureTailoring(coordinator *ApplicationTailoringCoordinator) {
+	if handler == nil {
+		return
+	}
+	handler.tailoring = coordinator
 }
 
 func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) error {
@@ -216,20 +227,26 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		if err := handler.commitBudget(ctx, application, handler.clock.Now()); err != nil {
 			return err
 		}
-		return handler.recordSubmitted(ctx, application)
+		if err := handler.recordSubmitted(ctx, application); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
 	}
 	if application.Status == core.ApplicationPendingReconcile {
 		return handler.reconcile(ctx, application)
 	}
 	if application.Status == core.ApplicationFailed {
-		return handler.releaseBudget(ctx, application, handler.clock.Now())
+		if err := handler.releaseBudget(ctx, application, handler.clock.Now()); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
 	}
 	if application.Status == core.ApplicationWaitingValidation {
 		if err := handler.releaseBudget(ctx, application, handler.clock.Now()); err != nil {
 			return err
 		}
 		if application.PreparedAt != nil {
-			return nil
+			return handler.restoreTailoring(ctx, application)
 		}
 	}
 	if application.Status == core.ApplicationSkipped || application.Status == core.ApplicationDryRun || application.Status == core.ApplicationWaitingApproval {
@@ -363,11 +380,23 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		}
 		return err
 	}
+	if err := handler.applyTailoring(ctx, application, plan); err != nil {
+		if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+			return saveErr
+		}
+		if releaseErr := handler.releaseBudget(ctx, application, now); releaseErr != nil {
+			return releaseErr
+		}
+		return err
+	}
 	if err := application.Transition(core.ApplicationSubmitting, now); err != nil {
 		return err
 	}
 	if err := handler.repository.SaveApplication(ctx, application, expectedStatus); err != nil {
 		return err
+	}
+	if err := handler.beginTailoringSubmit(ctx, application, plan); err != nil {
+		return handler.finishFailure(ctx, application, plan, err)
 	}
 	transport, err := handler.transports.Resolve(application.Key.ProfileID)
 	if err != nil {
@@ -393,7 +422,36 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err := handler.commitBudget(ctx, application, handler.clock.Now()); err != nil {
 		return err
 	}
-	return handler.recordSubmitted(ctx, application)
+	if err := handler.recordSubmitted(ctx, application); err != nil {
+		return err
+	}
+	return handler.restoreTailoring(ctx, application)
+}
+
+func (handler *ApplicationHandler) applyTailoring(ctx context.Context, application core.Application, plan ApplicationPlan) error {
+	if handler.tailoring == nil || plan.Tailoring == nil {
+		return nil
+	}
+	vacancy, err := handler.vacancies.Vacancy(ctx, application.Key.Vacancy)
+	if err != nil {
+		return err
+	}
+	_, err = handler.tailoring.Apply(ctx, application, vacancy, *plan.Tailoring, preparedResumeID(application, plan))
+	return err
+}
+
+func (handler *ApplicationHandler) beginTailoringSubmit(ctx context.Context, application core.Application, plan ApplicationPlan) error {
+	if handler.tailoring == nil || plan.Tailoring == nil {
+		return nil
+	}
+	return handler.tailoring.BeginSubmit(ctx, application.ID)
+}
+
+func (handler *ApplicationHandler) restoreTailoring(ctx context.Context, application core.Application) error {
+	if handler.tailoring == nil {
+		return nil
+	}
+	return handler.tailoring.Restore(ctx, application.ID)
 }
 
 func (handler *ApplicationHandler) acquirePacing(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
@@ -589,7 +647,10 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
 			return err
 		}
-		return handler.releaseBudget(ctx, application, now)
+		if err := handler.releaseBudget(ctx, application, now); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded, core.ErrorUnauthorized:
 		if err := application.Transition(core.ApplicationReady, now); err != nil {
 			return err
@@ -598,6 +659,9 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 			return err
 		}
 		if err := handler.releaseBudget(ctx, application, now); err != nil {
+			return err
+		}
+		if err := handler.restoreTailoring(ctx, application); err != nil {
 			return err
 		}
 		return operationError
@@ -609,6 +673,9 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 			return err
 		}
 		if err := handler.releaseBudget(ctx, application, now); err != nil {
+			return err
+		}
+		if err := handler.restoreTailoring(ctx, application); err != nil {
 			return err
 		}
 		return operationError
@@ -649,7 +716,10 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 		if err := handler.commitBudget(ctx, application, now); err != nil {
 			return err
 		}
-		return handler.recordSubmitted(ctx, application)
+		if err := handler.recordSubmitted(ctx, application); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
 	}
 	failure := &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: "applications.reconcile", Platform: application.Key.Vacancy.Platform,
@@ -661,7 +731,10 @@ func (handler *ApplicationHandler) reconcile(ctx context.Context, application co
 	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationPendingReconcile); err != nil {
 		return err
 	}
-	return handler.releaseBudget(ctx, application, now)
+	if err := handler.releaseBudget(ctx, application, now); err != nil {
+		return err
+	}
+	return handler.restoreTailoring(ctx, application)
 }
 
 func (handler *ApplicationHandler) reserveBudget(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
