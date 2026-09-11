@@ -59,6 +59,9 @@
 - Append-only ревизии answer blocks (миграция 25): ответ человека сохраняется
   ревизией и переиспользуется в следующих capture через композит
   `ReviewedVacancyAnswers`; повтор идентичного ответа ревизию не создаёт.
+- Bearer-токен API: `server.api_token_env` включает проверку заголовка
+  `Authorization` (health-пробы открыты), не-loopback bind разрешён только с
+  токеном; dashboard проксирует запросы со своим `JOB_AGENT_API_TOKEN`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

@@ -490,3 +490,20 @@ func TestConfigureApplicationCampaignsAcceptsReadOnlyBrowserProfile(t *testing.T
 		t.Fatalf("jobs=%d definitions=%d", jobs, len(definitions))
 	}
 }
+
+func TestResolveAPITokenReadsConfiguredEnv(t *testing.T) {
+	environment := map[string]string{"JOB_AGENT_API_TOKEN": "secret"}
+	lookup := func(name string) (string, bool) {
+		value, exists := environment[name]
+		return value, exists
+	}
+	if token, err := resolveAPIToken("", lookup); err != nil || token != "" {
+		t.Fatalf("empty env name: token=%q err=%v", token, err)
+	}
+	if token, err := resolveAPIToken("JOB_AGENT_API_TOKEN", lookup); err != nil || token != "secret" {
+		t.Fatalf("configured token: token=%q err=%v", token, err)
+	}
+	if _, err := resolveAPIToken("MISSING_TOKEN", lookup); err == nil {
+		t.Fatal("expected missing environment variable to fail")
+	}
+}

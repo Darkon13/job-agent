@@ -107,7 +107,9 @@
 
 ## M5. Hardening для v1.0.0
 
-- [ ] Bearer-токен для API и dashboard; обновить deployment-документацию.
+- [x] Bearer-токен для API (`server.api_token_env`) и dashboard
+      (`JOB_AGENT_API_TOKEN`, внедряется proxy server-side); health-пробы
+      остаются открытыми, loopback-контракт сохранён без токена.
 - [ ] Shared mutation lease в SQLite либо явный single-replica guard.
 - [ ] Config builder: include/glob и точные ошибки с путём к файлу; заморозка
       схемы конфига.

@@ -193,6 +193,7 @@ func (configured ConversationFollowUpSelectionConfig) Payload(profileID core.Pro
 type ServerConfig struct {
 	Listen                     string `json:"listen,omitempty"`
 	Exposure                   string `json:"exposure,omitempty"`
+	APITokenEnv                string `json:"api_token_env,omitempty"`
 	FollowUpReconcileInterval  string `json:"follow_up_reconcile_interval,omitempty"`
 	SchedulerReconcileInterval string `json:"scheduler_reconcile_interval,omitempty"`
 }
@@ -836,18 +837,21 @@ func (c Config) Validate() error {
 	}
 	switch c.Server.ExposureMode() {
 	case ServerExposureLoopback:
-		if host == "localhost" {
+		if host == "localhost" || c.Server.APITokenEnv != "" {
 			break
 		}
 		ip := net.ParseIP(host)
 		if ip == nil || !ip.IsLoopback() {
-			return fmt.Errorf("server listen must use a loopback address when exposure is %q", ServerExposureLoopback)
+			return fmt.Errorf("server listen must use a loopback address when exposure is %q unless api_token_env is set", ServerExposureLoopback)
 		}
 	case ServerExposurePrivate:
 		// Private exposure is intended only for an un-published container network.
 		// The separately deployed dashboard is the single ingress endpoint.
 	default:
 		return fmt.Errorf("server exposure must be %q or %q", ServerExposureLoopback, ServerExposurePrivate)
+	}
+	if value := strings.TrimSpace(c.Server.APITokenEnv); value != "" && strings.ContainsAny(value, " \t=") {
+		return fmt.Errorf("server api_token_env must be an environment variable name")
 	}
 	if c.Server.FollowUpReconcileInterval != "" {
 		interval, err := time.ParseDuration(c.Server.FollowUpReconcileInterval)

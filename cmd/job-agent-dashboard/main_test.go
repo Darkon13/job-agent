@@ -19,7 +19,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 		_, _ = response.Write([]byte(`{"stats":{"tasks":2}}`))
 	}))
 	defer upstream.Close()
-	handler, err := newDashboardHandler(upstream.URL)
+	handler, err := newDashboardHandler(upstream.URL, "")
 	if err != nil {
 		t.Fatalf("new dashboard handler: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 func TestDashboardRejectsUnsafeUpstream(t *testing.T) {
 	for _, value := range []string{"", "file:///tmp/api", "http://user:secret@example.test", "http://example.test/api", "http://example.test?token=secret"} {
-		if _, err := newDashboardHandler(value); err == nil {
+		if _, err := newDashboardHandler(value, ""); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
 		}
 	}
@@ -57,7 +57,7 @@ func TestDashboardRejectsUnsafeUpstream(t *testing.T) {
 func TestDashboardHealthReportsBuildVersion(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()
-	handler, err := newDashboardHandler(upstream.URL)
+	handler, err := newDashboardHandler(upstream.URL, "")
 	if err != nil {
 		t.Fatalf("new dashboard handler: %v", err)
 	}
@@ -65,5 +65,26 @@ func TestDashboardHealthReportsBuildVersion(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/dashboard-healthz", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ok"`) || !strings.Contains(response.Body.String(), `"version":"`+buildinfo.Current().Version+`"`) {
 		t.Fatalf("health response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDashboardProxyInjectsAPIToken(t *testing.T) {
+	var authorization string
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+	handler, err := newDashboardHandler(upstream.URL, "secret-token")
+	if err != nil {
+		t.Fatalf("new dashboard handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if authorization != "Bearer secret-token" {
+		t.Fatalf("authorization = %q", authorization)
 	}
 }

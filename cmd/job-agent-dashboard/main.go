@@ -45,7 +45,7 @@ func run(ctx context.Context, args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	handler, err := newDashboardHandler(*upstream)
+	handler, err := newDashboardHandler(*upstream, envOr("JOB_AGENT_API_TOKEN", ""))
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
-func newDashboardHandler(upstreamValue string) (http.Handler, error) {
+func newDashboardHandler(upstreamValue, apiToken string) (http.Handler, error) {
 	upstream, err := url.Parse(upstreamValue)
 	if err != nil {
 		return nil, fmt.Errorf("parse API upstream: %w", err)
@@ -90,15 +90,22 @@ func newDashboardHandler(upstreamValue string) (http.Handler, error) {
 		response.WriteHeader(http.StatusBadGateway)
 		_, _ = response.Write([]byte(`{"error":"job-agent API is unavailable"}`))
 	}
+	apiProxy := http.Handler(proxy)
+	if token := strings.TrimSpace(apiToken); token != "" {
+		apiProxy = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			request.Header.Set("Authorization", "Bearer "+token)
+			proxy.ServeHTTP(response, request)
+		})
+	}
 	webRoot, err := fs.Sub(dashboardFiles, "web")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded dashboard: %w", err)
 	}
 	static := http.FileServer(http.FS(webRoot))
 	mux := http.NewServeMux()
-	mux.Handle("/api/", proxy)
-	mux.Handle("/healthz", proxy)
-	mux.Handle("/readyz", proxy)
+	mux.Handle("/api/", apiProxy)
+	mux.Handle("/healthz", apiProxy)
+	mux.Handle("/readyz", apiProxy)
 	mux.HandleFunc("GET /dashboard-healthz", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(struct {

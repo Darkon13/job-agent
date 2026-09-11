@@ -84,6 +84,10 @@ func main() {
 	if err := applyServerEnvironment(&cfg, os.LookupEnv); err != nil {
 		log.Fatalf("apply server environment: %v", err)
 	}
+	apiToken, err := resolveAPIToken(cfg.Server.APITokenEnv, os.LookupEnv)
+	if err != nil {
+		log.Fatalf("resolve API token: %v", err)
+	}
 	employerMatcher, err := cfg.BuildEmployerGroupMatcher()
 	if err != nil {
 		log.Fatalf("build employer groups: %v", err)
@@ -695,6 +699,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))
+	if apiToken != "" {
+		handler = httpapi.BearerAuth(apiToken, handler)
+	}
 	if authAPI != nil {
 		handler = authAPI.Handler(handler)
 	}
@@ -820,6 +827,24 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 		return mainOptions{}, errors.New("exactly one config path is required")
 	}
 	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
+}
+
+// resolveAPIToken reads the configured bearer token environment variable. An
+// empty name keeps the API unprotected, which is only valid together with a
+// loopback bind.
+func resolveAPIToken(envName string, lookupEnv func(string) (string, bool)) (string, error) {
+	envName = strings.TrimSpace(envName)
+	if envName == "" {
+		return "", nil
+	}
+	if lookupEnv == nil {
+		return "", errors.New("api token resolution requires lookup function")
+	}
+	value, exists := lookupEnv(envName)
+	if !exists || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("server api token environment variable %s is not set", envName)
+	}
+	return value, nil
 }
 
 func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (string, bool)) error {

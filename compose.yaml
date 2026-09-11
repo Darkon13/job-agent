@@ -22,6 +22,9 @@ services:
     environment:
       JOB_AGENT_SERVER_LISTEN: 0.0.0.0:8080
       JOB_AGENT_SERVER_EXPOSURE: private
+      # Set and reference via server.api_token_env to protect the private
+      # container network endpoint with a bearer token.
+      JOB_AGENT_API_TOKEN: ${JOB_AGENT_API_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       BROWSER_WORKER_URL: ${BROWSER_WORKER_URL:-http://browser-worker:8088}
       BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
@@ -59,6 +62,9 @@ services:
     environment:
       JOB_AGENT_DASHBOARD_LISTEN: 0.0.0.0:8081
       JOB_AGENT_API_URL: http://job-agent:8080
+      # Forwarded to the backend as Authorization: Bearer <token>. Keep the
+      # token in the dashboard process environment, never in the browser.
+      JOB_AGENT_API_TOKEN: ${JOB_AGENT_API_TOKEN:-}
     depends_on:
       job-agent:
         condition: service_started
