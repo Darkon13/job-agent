@@ -2,12 +2,16 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Darkon13/job-agent/storage"
 )
 
 func TestRequestIDPreservesAndGeneratesIDs(t *testing.T) {
@@ -59,7 +63,7 @@ func TestAccessLogWritesStructuredLine(t *testing.T) {
 }
 
 func TestMetricsAPICountsStatusClasses(t *testing.T) {
-	api := NewMetricsAPI()
+	api := NewMetricsAPI(nil)
 	handler := api.Handler(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/ok":
@@ -89,5 +93,32 @@ func TestMetricsAPICountsStatusClasses(t *testing.T) {
 		if !strings.Contains(rendered, fragment) {
 			t.Fatalf("metrics miss %q:\n%s", fragment, rendered)
 		}
+	}
+}
+
+type stubTaskCounts struct {
+	counts []storage.TaskCount
+	err    error
+}
+
+func (stub stubTaskCounts) TaskCounts(context.Context) ([]storage.TaskCount, error) {
+	return stub.counts, stub.err
+}
+
+func TestMetricsAPIExposesTaskQueue(t *testing.T) {
+	api := NewMetricsAPI(stubTaskCounts{counts: []storage.TaskCount{
+		{Type: "application.submit", Status: "new", Priority: 0, Count: 2},
+	}})
+	handler := api.Handler(http.NotFoundHandler())
+	body := httptest.NewRecorder()
+	handler.ServeHTTP(body, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(body.Body.String(), `job_agent_tasks{type="application.submit",status="new",priority="0"} 2`) {
+		t.Fatalf("metrics = %s", body.Body.String())
+	}
+	failing := NewMetricsAPI(stubTaskCounts{err: errors.New("storage down")})
+	body = httptest.NewRecorder()
+	failing.Handler(http.NotFoundHandler()).ServeHTTP(body, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(body.Body.String(), "job_agent_task_counts_error 1") {
+		t.Fatalf("metrics = %s", body.Body.String())
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Darkon13/job-agent/storage"
 )
 
 type requestIDKey struct{}
@@ -70,18 +72,24 @@ func (recorder *statusRecorder) WriteHeader(status int) {
 	recorder.ResponseWriter.WriteHeader(status)
 }
 
+// TaskCountProvider exposes the operator-safe queue summary for metrics.
+type TaskCountProvider interface {
+	TaskCounts(ctx context.Context) ([]storage.TaskCount, error)
+}
+
 // MetricsAPI exposes small process counters in Prometheus text format. It is a
 // wrapper so the counters observe the whole chain, including rejected requests.
 type MetricsAPI struct {
 	started   time.Time
+	tasks     TaskCountProvider
 	inFlight  atomic.Int64
 	status2xx atomic.Uint64
 	status4xx atomic.Uint64
 	status5xx atomic.Uint64
 }
 
-func NewMetricsAPI() *MetricsAPI {
-	return &MetricsAPI{started: time.Now().UTC()}
+func NewMetricsAPI(tasks TaskCountProvider) *MetricsAPI {
+	return &MetricsAPI{started: time.Now().UTC(), tasks: tasks}
 }
 
 func (api *MetricsAPI) Handler(next http.Handler) http.Handler {
@@ -111,7 +119,7 @@ func (api *MetricsAPI) middleware(next http.Handler) http.Handler {
 	})
 }
 
-func (api *MetricsAPI) serveMetrics(response http.ResponseWriter, _ *http.Request) {
+func (api *MetricsAPI) serveMetrics(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	fmt.Fprintf(response, "# HELP job_agent_http_requests_total HTTP requests handled.\n")
 	fmt.Fprintf(response, "# TYPE job_agent_http_requests_total counter\n")
@@ -124,4 +132,20 @@ func (api *MetricsAPI) serveMetrics(response http.ResponseWriter, _ *http.Reques
 	fmt.Fprintf(response, "# HELP job_agent_uptime_seconds Process uptime.\n")
 	fmt.Fprintf(response, "# TYPE job_agent_uptime_seconds gauge\n")
 	fmt.Fprintf(response, "job_agent_uptime_seconds %d\n", int64(time.Since(api.started).Seconds()))
+	if api.tasks == nil {
+		return
+	}
+	counts, err := api.tasks.TaskCounts(request.Context())
+	if err != nil {
+		fmt.Fprintf(response, "# HELP job_agent_task_counts_error Queue summary could not be read.\n")
+		fmt.Fprintf(response, "# TYPE job_agent_task_counts_error gauge\n")
+		fmt.Fprintf(response, "job_agent_task_counts_error 1\n")
+		return
+	}
+	fmt.Fprintf(response, "# HELP job_agent_tasks Queued tasks by type, status and priority.\n")
+	fmt.Fprintf(response, "# TYPE job_agent_tasks gauge\n")
+	for _, count := range counts {
+		fmt.Fprintf(response, "job_agent_tasks{type=%q,status=%q,priority=\"%d\"} %d\n",
+			count.Type, count.Status, count.Priority, count.Count)
+	}
 }

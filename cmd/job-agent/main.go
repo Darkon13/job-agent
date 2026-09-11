@@ -38,6 +38,7 @@ type mainOptions struct {
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if buildinfo.Requested(os.Args[1:]) {
 		if err := buildinfo.Write("job-agent", os.Stdout); err != nil {
 			log.Fatal(err)
@@ -64,6 +65,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "review" {
 		if err := runReview(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "db" {
+		if err := runDB(context.Background(), os.Args[2:], os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -115,7 +122,7 @@ func main() {
 	}
 	defer func() {
 		if err := store.Close(); err != nil {
-			log.Printf("close database: %v", err)
+			logf("close database: %v", err)
 		}
 	}()
 	var answerResolver taskworker.VacancyAnswerBlockResolver
@@ -147,7 +154,7 @@ func main() {
 	}
 	for profileID, runtime := range profiles {
 		if runtime.Status == core.ProfileAuthRequired {
-			log.Printf("profile %q requires authentication; profile workers are disabled", profileID)
+			logf("profile %q requires authentication; profile workers are disabled", profileID)
 		}
 	}
 
@@ -235,12 +242,12 @@ func main() {
 				}
 				runtime.BrowserReader = reader
 				profiles[profileID] = runtime
-				log.Printf("profile %q has a browser-backed read session", profile.Tag)
+				logf("profile %q has a browser-backed read session", profile.Tag)
 				if capturer, ok := instance.(adapter.VacancyTestCapturer); ok {
 					if err := testCapturers.Register(profileID, capturer); err != nil {
 						log.Fatalf("register vacancy test capturer for profile %q: %v", profile.Tag, err)
 					}
-					log.Printf("profile %q can capture vacancy tests through the browser session", profile.Tag)
+					logf("profile %q can capture vacancy tests through the browser session", profile.Tag)
 				}
 				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 					profileStateReaders[profileID] = profileStateReader
@@ -264,7 +271,7 @@ func main() {
 					log.Fatalf("register browser conversation transport for profile %q: %v", profile.Tag, err)
 				}
 				browserConversationsReady = true
-				log.Printf("profile %q has a browser-backed conversation session", profile.Tag)
+				logf("profile %q has a browser-backed conversation session", profile.Tag)
 			}
 			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
 				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
@@ -284,7 +291,7 @@ func main() {
 						}
 					}
 					browserApplicationsReady = true
-					log.Printf("profile %q uses explicit browser-backed application transport", profile.Tag)
+					logf("profile %q uses explicit browser-backed application transport", profile.Tag)
 				}
 			}
 		}
@@ -320,7 +327,7 @@ func main() {
 				}
 			}
 		} else if runtime.BrowserReader == nil {
-			log.Printf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
+			logf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 		}
 		applicationReady := apiReady || browserApplicationsReady || runtime.BrowserReader != nil && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun
 		if applicationReady {
@@ -712,7 +719,7 @@ func main() {
 	}
 	defer func() {
 		if err := store.ReleaseRuntimeInstance(context.Background(), instanceID); err != nil {
-			log.Printf("release runtime instance lease: %v", err)
+			logf("release runtime instance lease: %v", err)
 		}
 	}()
 	go renewRuntimeInstance(ctx, store, instanceID, runtimeInstanceLeaseTTL)
@@ -720,9 +727,9 @@ func main() {
 	if apiToken != "" {
 		handler = httpapi.BearerAuth(apiToken, handler)
 	}
-	handler = httpapi.NewMetricsAPI().Handler(handler)
+	handler = httpapi.NewMetricsAPI(store).Handler(handler)
 	handler = httpapi.RequestID(handler)
-	handler = httpapi.AccessLog(slog.New(slog.NewJSONHandler(os.Stderr, nil)), handler)
+	handler = httpapi.AccessLog(slog.Default(), handler)
 	if authAPI != nil {
 		handler = authAPI.Handler(handler)
 	}
@@ -738,7 +745,7 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
 	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
 	if baseURL == "" || token == "" {
-		log.Printf("browser worker is not configured; interactive auth API is disabled")
+		logf("browser worker is not configured; interactive auth API is disabled")
 		return nil, nil
 	}
 	client, err := browser.NewHTTPClient(browser.HTTPConfig{BaseURL: baseURL, Token: token})
@@ -759,7 +766,7 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 		})
 	}
 	if len(settings) == 0 {
-		log.Printf("browser worker is configured but no HH profile has a state file; interactive auth API is disabled")
+		logf("browser worker is configured but no HH profile has a state file; interactive auth API is disabled")
 		return nil, nil
 	}
 	driver, err := hh.NewLoginDriver(client, settings)
@@ -801,11 +808,11 @@ func reconcileConfiguredProfileBootstraps(
 		}
 		profileID := core.ProfileID(profile.Tag)
 		if !profile.Enabled {
-			log.Printf("profile bootstrap for %q is disabled with the profile", profile.Tag)
+			logf("profile bootstrap for %q is disabled with the profile", profile.Tag)
 			continue
 		}
 		if profiles[profileID].Status == core.ProfileAuthRequired {
-			log.Printf("profile bootstrap for %q is waiting for authentication", profile.Tag)
+			logf("profile bootstrap for %q is waiting for authentication", profile.Tag)
 			continue
 		}
 		resource, resolved := profile.Bootstrap.ResolvedResource()
@@ -826,13 +833,13 @@ func reconcileConfiguredProfileBootstraps(
 		}
 		switch {
 		case !result.ConditionMatched:
-			log.Printf("profile bootstrap for %q skipped: at least one declared field is already populated", profile.Tag)
+			logf("profile bootstrap for %q skipped: at least one declared field is already populated", profile.Tag)
 		case result.Proposal.Status == core.ProfileStateProposalNoChanges:
-			log.Printf("profile bootstrap for %q has no changes", profile.Tag)
+			logf("profile bootstrap for %q has no changes", profile.Tag)
 		case result.TaskCreated:
-			log.Printf("profile bootstrap for %q queued apply task %q", profile.Tag, result.Task.ID)
+			logf("profile bootstrap for %q queued apply task %q", profile.Tag, result.Task.ID)
 		default:
-			log.Printf("profile bootstrap for %q reused apply task %q in status %q", profile.Tag, result.Task.ID, result.Task.Status)
+			logf("profile bootstrap for %q reused apply task %q in status %q", profile.Tag, result.Task.ID, result.Task.Status)
 		}
 	}
 	return nil
@@ -865,15 +872,21 @@ func renewRuntimeInstance(ctx context.Context, store *storesqlite.Store, owner s
 		case <-ticker.C:
 			renewed, err := store.RenewRuntimeInstance(ctx, owner, time.Now().UTC())
 			if err != nil {
-				log.Printf("renew runtime instance lease: %v", err)
+				logf("renew runtime instance lease: %v", err)
 				continue
 			}
 			if !renewed {
-				log.Printf("runtime instance lease is no longer owned by this process")
+				logf("runtime instance lease is no longer owned by this process")
 				return
 			}
 		}
 	}
+}
+
+// logf keeps existing operational messages while emitting them through the
+// default structured logger.
+func logf(format string, args ...any) {
+	slog.Info(fmt.Sprintf(format, args...))
 }
 
 // resolveAPIToken reads the configured bearer token environment variable. An
@@ -1102,7 +1115,7 @@ func configureSearchRuns(
 			}
 		}
 		if searchProfileID == "" || len(targetProfiles) == 0 {
-			log.Printf("search %q is disabled until one of its profiles is authorized", search.Tag)
+			logf("search %q is disabled until one of its profiles is authorized", search.Tag)
 			continue
 		}
 		searchWorkflow, err := workflow.NewSearchWorkflow(instance, store, store, store, clock, ids)
@@ -1160,7 +1173,7 @@ func configureApplicationCampaigns(
 		for _, value := range job.Action.Profiles {
 			runtime := profiles[core.ProfileID(value)]
 			if !runtime.canReadVacancies() {
-				log.Printf("application campaign %q is disabled until profile %q has read access", job.Tag, value)
+				logf("application campaign %q is disabled until profile %q has read access", job.Tag, value)
 				runnable = false
 			}
 		}
@@ -1185,7 +1198,7 @@ func configureApplicationCampaigns(
 				}
 			}
 			if searchProfileID == "" {
-				log.Printf("application campaign route %q is disabled until one of its profiles has read access", search.Tag)
+				logf("application campaign route %q is disabled until one of its profiles has read access", search.Tag)
 				runnable = false
 				continue
 			}
@@ -1302,7 +1315,7 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		}(instance)
 	}
 	go func() {
-		log.Printf("job-agent API listening on http://%s", server.Addr)
+		logf("job-agent API listening on http://%s", server.Addr)
 		result <- server.ListenAndServe()
 	}()
 
@@ -1631,11 +1644,11 @@ func reconcileFollowUps(ctx context.Context, interval time.Duration, conversatio
 		case now := <-ticker.C:
 			result, err := conversationWorkflow.ReconcileDueFollowUps(ctx, now.UTC())
 			if err != nil {
-				log.Printf("reconcile follow-ups: %v", err)
+				logf("reconcile follow-ups: %v", err)
 				continue
 			}
 			if result.TasksCreated > 0 {
-				log.Printf("reconciled %d due follow-ups, created %d tasks", result.Due, result.TasksCreated)
+				logf("reconciled %d due follow-ups, created %d tasks", result.Due, result.TasksCreated)
 			}
 		}
 	}
@@ -1650,7 +1663,7 @@ func reconcileJobs(ctx context.Context, interval time.Duration, scheduler *jobsc
 			return
 		case <-ticker.C:
 			if _, err := scheduler.ReconcileDue(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("reconcile scheduled jobs: %v", err)
+				logf("reconcile scheduled jobs: %v", err)
 			}
 		}
 	}
