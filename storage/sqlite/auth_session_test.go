@@ -14,7 +14,9 @@ import (
 func sqliteAuthSession(t *testing.T, id core.AuthSessionID, now time.Time) core.AuthSession {
 	t.Helper()
 	session, err := core.NewAuthSession(core.NewAuthSessionParams{
-		ID: id, Platform: "hh", ProfileID: "primary", ExpiresAt: now.Add(15 * time.Minute),
+		ID: id, Platform: "hh", ProfileID: "primary",
+		CredentialReference: "file:/run/secrets/hh-primary.json",
+		ExpiresAt:           now.Add(15 * time.Minute),
 	}, now)
 	if err != nil {
 		t.Fatalf("new auth session: %v", err)
@@ -73,7 +75,7 @@ func TestStorePersistsAuthSessionLifecycle(t *testing.T) {
 		t.Fatalf("save storing: %v", err)
 	}
 	expected = stored.Revision
-	if err := stored.Complete("file:/run/secrets/hh-primary.json", 2, now.Add(5*time.Second)); err != nil {
+	if err := stored.Complete(2, now.Add(5*time.Second)); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	if err := store.SaveAuthSession(ctx, stored, expected); err != nil {
@@ -156,7 +158,9 @@ func TestStoreRejectsConflictingAndMissingAuthSessions(t *testing.T) {
 		t.Fatal("expected conflicting session inputs to fail")
 	}
 	changed, err := core.NewAuthSession(core.NewAuthSessionParams{
-		ID: "auth-3", Platform: "hh", ProfileID: "primary", ExpiresAt: now.Add(30 * time.Minute),
+		ID: "auth-3", Platform: "hh", ProfileID: "primary",
+		CredentialReference: "file:/run/secrets/hh-primary.json",
+		ExpiresAt:           now.Add(30 * time.Minute),
 	}, now)
 	if err != nil {
 		t.Fatalf("new session: %v", err)

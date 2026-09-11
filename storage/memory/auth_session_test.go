@@ -13,7 +13,9 @@ import (
 func memoryAuthSession(t *testing.T, id core.AuthSessionID, now time.Time) core.AuthSession {
 	t.Helper()
 	session, err := core.NewAuthSession(core.NewAuthSessionParams{
-		ID: id, Platform: "hh", ProfileID: "primary", ExpiresAt: now.Add(15 * time.Minute),
+		ID: id, Platform: "hh", ProfileID: "primary",
+		CredentialReference: "file:/run/secrets/hh-primary.json",
+		ExpiresAt:           now.Add(15 * time.Minute),
 	}, now)
 	if err != nil {
 		t.Fatalf("new auth session: %v", err)
