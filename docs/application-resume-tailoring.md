@@ -127,8 +127,18 @@ retention policy.
    `add_vacancy_skills`.
 3. ✅ Переиспользовать `ProfileStatePlanner` для immutable apply/restore proposals.
 4. ✅ Связать application submit с фазами saga и обязательной компенсацией.
-5. ⏳ Подключить model processor с fallback на deterministic policy.
+5. ✅ Подключить model processor с fallback на deterministic policy.
 6. ✅ Показать plan, skill diff, restore/recovery status в dashboard.
+
+## Model processor
+
+Если в `tailoring.skills.model` задан провайдер, processor просит модель выбрать
+подмножество `key_skills` вакансии, которое помещается в лимит. Модель не
+редактирует резюме: её решения проверяются по исходным навыкам и вакансии,
+неизвестные значения и превышение лимита отклоняются, после чего используется
+детерминированный `add_vacancy_skills`. Провайдер повторно использует
+зарегистрированный `models[]` и structured output; при timeout, rate limit,
+provider failure или невалидном ответе срабатывает deterministic fallback.
 
 ## Dashboard
 
@@ -150,7 +160,16 @@ Tailoring включается явно в профиле и работает т
   "applications": {
     "mode": "submit",
     "tailoring": {
-      "skills": {"enabled": true, "maximum": 30}
+      "skills": {
+        "enabled": true,
+        "maximum": 30,
+        "model": {
+          "provider": "openai-main",
+          "prompt_version": "v1",
+          "instruction": "Prefer the skills most relevant to the vacancy.",
+          "timeout": "30s"
+        }
+      }
     }
   }
 }
@@ -160,5 +179,7 @@ Tailoring включается явно в профиле и работает т
 `key_skills` вакансии, не удаляя существующие, и отклоняет план, если лимит
 превышен. Разрешённый путь выводится из `resume` профиля
 (`/resumes/{resume}/web/keySkills`), поэтому пользователь не задаёт JSON Pointer
-вручную. Без блока `tailoring` handler работает как раньше.
+вручную. Блок `model` необязателен и ссылается на зарегистрированный
+`models[]`; без него работает только детерминированная политика. Без блока
+`tailoring` handler работает как раньше.
 

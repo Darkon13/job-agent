@@ -88,6 +88,34 @@ func TestApplicationPolicyDefaultsToDryRunAndGuardsLiveMode(t *testing.T) {
 	}
 }
 
+func TestApplicationTailoringRequiresSubmitResumeAndKnownModelProvider(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Resume: "resume-1", Applications: ApplicationPolicy{
+			Mode: ApplicationModeSubmit, Timezone: "Europe/Moscow", DailyLimit: 7,
+			Tailoring: &ApplicationTailoringPolicy{Skills: &ApplicationTailoringSkillsPolicy{Enabled: true, Maximum: 30}},
+		}}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid tailoring config: %v", err)
+	}
+	config.Profiles[0].Applications.Tailoring.Skills.Model = &ApplicationModelPolicy{
+		Provider: "openai-main", PromptVersion: "v1", Instruction: "Prefer relevant skills", Timeout: "30s",
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown tailoring model provider to fail")
+	}
+	config.Models = []ModelProviderConfig{{Tag: "openai-main", Type: ModelProviderOpenAIResponses, Model: "gpt-test"}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("tailoring model with provider: %v", err)
+	}
+	config.Profiles[0].Applications.Mode = ApplicationModeDryRun
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected tailoring in dry_run to fail")
+	}
+}
+
 func TestApplicationPolicyRejectsAmbiguousMessageAndDuplicateTerms(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

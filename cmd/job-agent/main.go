@@ -285,19 +285,19 @@ func main() {
 				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
 				Timezone: profile.Applications.LocationName(),
 			}
-			if skills, enabled := profile.Applications.TailoringSkills(); enabled {
+			tailoringProcessor, tailoringErr := applicationTailoringProcessor(profile, applicationModels)
+			if tailoringErr != nil {
+				log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, tailoringErr)
+			}
+			if tailoringProcessor != nil {
 				if _, hasReader := profileStateReaders[profileID]; !hasReader {
 					log.Fatalf("profile %q application tailoring requires a profile state reader", profile.Tag)
 				}
 				if _, resolveErr := profileStateWriters.Resolve(profileID); resolveErr != nil {
 					log.Fatalf("profile %q application tailoring requires a profile state writer", profile.Tag)
 				}
-				processor, procErr := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
-				if procErr != nil {
-					log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, procErr)
-				}
 				tailoringPlan := taskworker.ApplicationTailoringPlan{
-					Processor:       processor,
+					Processor:       tailoringProcessor,
 					AllowedPaths:    []string{applicationoperator.ResumeSkillsPath(profile.Resume)},
 					EmployerMatcher: employerMatcher,
 				}
@@ -784,6 +784,37 @@ func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applic
 		})
 	}
 	return pool
+}
+
+func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ResumeTailoringProcessor, error) {
+	skills, enabled := profile.Applications.TailoringSkills()
+	if !enabled {
+		return nil, nil
+	}
+	deterministic, err := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
+	if err != nil {
+		return nil, err
+	}
+	if skills.Model == nil {
+		return deterministic, nil
+	}
+	provider := strings.TrimSpace(skills.Model.Provider)
+	candidate := models[provider]
+	if candidate == nil {
+		return nil, fmt.Errorf("application tailoring model references unavailable provider %q", provider)
+	}
+	tailoringModel, ok := candidate.(applicationoperator.ResumeTailoringModel)
+	if !ok {
+		return nil, fmt.Errorf("application tailoring model provider %q does not support skill selection", provider)
+	}
+	timeout, err := time.ParseDuration(skills.Model.Timeout)
+	if err != nil || timeout <= 0 {
+		return nil, fmt.Errorf("application tailoring model provider %q has invalid timeout %q", provider, skills.Model.Timeout)
+	}
+	return applicationoperator.NewModelResumeTailoringProcessor(applicationoperator.ModelResumeTailoringConfig{
+		Tag: provider, PromptVersion: skills.Model.PromptVersion, Instruction: skills.Model.Instruction,
+		MaximumSkills: skills.Maximum, Timeout: timeout, Model: tailoringModel, Fallback: deterministic,
+	})
 }
 
 func configureSearchRuns(

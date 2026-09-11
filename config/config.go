@@ -325,8 +325,9 @@ type ApplicationTailoringPolicy struct {
 }
 
 type ApplicationTailoringSkillsPolicy struct {
-	Enabled bool `json:"enabled,omitempty"`
-	Maximum int  `json:"maximum,omitempty"`
+	Enabled bool                    `json:"enabled,omitempty"`
+	Maximum int                     `json:"maximum,omitempty"`
+	Model   *ApplicationModelPolicy `json:"model,omitempty"`
 }
 
 func (policy ApplicationPolicy) TailoringSkills() (ApplicationTailoringSkillsPolicy, bool) {
@@ -925,6 +926,11 @@ func (c Config) Validate() error {
 			}
 			if skills.Maximum < 1 {
 				return fmt.Errorf("profile %q application tailoring skills require a positive maximum", profile.Tag)
+			}
+			if skills.Model != nil {
+				if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), skills.Model, modelProviders); err != nil {
+					return err
+				}
 			}
 		}
 		messageSources := 0
