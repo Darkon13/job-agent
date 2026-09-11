@@ -26,6 +26,7 @@ var (
 	_ storage.ApplicationReadRepository         = (*Store)(nil)
 	_ storage.ApplicationBudgetRepository       = (*Store)(nil)
 	_ storage.ApplicationPaceRepository         = (*Store)(nil)
+	_ storage.ApplicationTailoringRepository    = (*Store)(nil)
 	_ storage.ConversationRepository            = (*Store)(nil)
 	_ storage.ProfileStateProposalRepository    = (*Store)(nil)
 	_ storage.ProfileActivityRepository         = (*Store)(nil)
@@ -390,6 +391,7 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		{"applications", &stats.Applications}, {"tasks", &stats.Tasks},
 		{"application_campaigns", &stats.ApplicationCampaigns},
 		{"application_campaign_items", &stats.CampaignApplications},
+		{"application_tailorings", &stats.ApplicationTailorings},
 		{"test_definitions", &stats.TestDefinitions}, {"review_sessions", &stats.ReviewSessions},
 		{"review_selections", &stats.ReviewSelections},
 		{"conversations", &stats.Conversations}, {"conversation_messages", &stats.Messages},

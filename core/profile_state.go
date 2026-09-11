@@ -237,6 +237,31 @@ func (observation ProfileStateObservation) Validate() error {
 	return nil
 }
 
+// ValueAt returns one observed value as canonical JSON. A missing path is
+// reported separately from an explicit JSON null so callers can preserve the
+// exact pre-mutation state when building compensating workflows.
+func (observation ProfileStateObservation) ValueAt(path string) (json.RawMessage, bool, error) {
+	if err := observation.Validate(); err != nil {
+		return nil, false, err
+	}
+	if !strings.HasPrefix(path, "/") {
+		return nil, false, fmt.Errorf("profile state path %q is not a JSON Pointer", path)
+	}
+	state, err := decodeJSONValue(observation.State)
+	if err != nil {
+		return nil, false, err
+	}
+	value, exists := jsonPointerValue(state, path)
+	if !exists {
+		return nil, false, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode observed profile state value at %s: %w", path, err)
+	}
+	return encoded, true, nil
+}
+
 // PathsEmpty reports whether every requested field is safe for an initial
 // bootstrap. Missing fields, nulls, empty strings and empty containers count as
 // empty. Scalar zero values are deliberately treated as populated because they

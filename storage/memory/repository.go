@@ -20,6 +20,7 @@ var (
 	_ storage.ApplicationReadRepository         = (*Repository)(nil)
 	_ storage.ApplicationBudgetRepository       = (*Repository)(nil)
 	_ storage.ApplicationPaceRepository         = (*Repository)(nil)
+	_ storage.ApplicationTailoringRepository    = (*Repository)(nil)
 	_ storage.TestCatalogRepository             = (*Repository)(nil)
 	_ storage.ReviewRepository                  = (*Repository)(nil)
 	_ storage.ConversationRepository            = (*Repository)(nil)
@@ -50,6 +51,9 @@ type Repository struct {
 	applications          map[core.ApplicationKey]core.Application
 	applicationBudgets    map[core.ApplicationID]core.ApplicationBudgetReservation
 	applicationPacing     map[core.ApplicationID]core.ApplicationPaceReservation
+	applicationTailorings map[core.ApplicationTailoringID]core.ApplicationTailoring
+	tailoringApplications map[core.ApplicationID]core.ApplicationTailoringID
+	tailoringProfiles     map[core.ProfileID]core.ApplicationTailoringID
 	tests                 map[core.TestDefinitionID]core.TestDefinition
 	reviews               map[core.ReviewSessionID]core.ReviewSession
 	prompts               map[core.ReviewPromptID]core.ReviewPrompt
@@ -75,6 +79,9 @@ func NewRepository() *Repository {
 		applications:          make(map[core.ApplicationKey]core.Application),
 		applicationBudgets:    make(map[core.ApplicationID]core.ApplicationBudgetReservation),
 		applicationPacing:     make(map[core.ApplicationID]core.ApplicationPaceReservation),
+		applicationTailorings: make(map[core.ApplicationTailoringID]core.ApplicationTailoring),
+		tailoringApplications: make(map[core.ApplicationID]core.ApplicationTailoringID),
+		tailoringProfiles:     make(map[core.ProfileID]core.ApplicationTailoringID),
 		tests:                 make(map[core.TestDefinitionID]core.TestDefinition),
 		reviews:               make(map[core.ReviewSessionID]core.ReviewSession),
 		prompts:               make(map[core.ReviewPromptID]core.ReviewPrompt),

@@ -13,6 +13,7 @@ type ProfileStateProposalID string
 type SearchID string
 type ApplicationID string
 type ApplicationCampaignID string
+type ApplicationTailoringID string
 type TaskID string
 type EventID string
 type CorrelationID string

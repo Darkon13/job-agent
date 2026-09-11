@@ -8,7 +8,11 @@ import (
 	"github.com/Darkon13/job-agent/core"
 )
 
-var ErrRevisionConflict = errors.New("repository revision conflict")
+var (
+	ErrRevisionConflict             = errors.New("repository revision conflict")
+	ErrProfileMutationLocked        = errors.New("profile already has an active mutation workflow")
+	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
+)
 
 // RuntimeStats is an aggregate view intended for health checks and operator
 // dashboards. It deliberately contains counts only and never task payloads,
@@ -20,6 +24,7 @@ type RuntimeStats struct {
 	Applications          int `json:"applications"`
 	ApplicationCampaigns  int `json:"application_campaigns"`
 	CampaignApplications  int `json:"campaign_applications"`
+	ApplicationTailorings int `json:"application_tailorings"`
 	Tasks                 int `json:"tasks"`
 	TestDefinitions       int `json:"test_definitions"`
 	ReviewSessions        int `json:"review_sessions"`
@@ -145,6 +150,13 @@ type ApplicationPaceRepository interface {
 	// AcquireApplicationPace returns allowed=false with a future ScheduledAt
 	// when the task must be released and retried without performing a submit.
 	AcquireApplicationPace(ctx context.Context, params core.AcquireApplicationPaceParams) (reservation core.ApplicationPaceReservation, allowed bool, err error)
+}
+
+type ApplicationTailoringRepository interface {
+	CreateApplicationTailoring(ctx context.Context, candidate core.ApplicationTailoring) (stored core.ApplicationTailoring, created bool, err error)
+	ApplicationTailoring(ctx context.Context, id core.ApplicationTailoringID) (core.ApplicationTailoring, error)
+	ApplicationTailoringByApplication(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationTailoring, error)
+	SaveApplicationTailoring(ctx context.Context, candidate core.ApplicationTailoring, expectedRevision uint64) error
 }
 
 type ProfileStateProposalFilter struct {

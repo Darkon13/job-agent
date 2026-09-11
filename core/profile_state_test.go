@@ -184,6 +184,30 @@ func TestProfileStateObservationChecksBootstrapPathsConservatively(t *testing.T)
 	}
 }
 
+func TestProfileStateObservationValueAtDistinguishesMissingAndNull(t *testing.T) {
+	observation, err := NewProfileStateObservation("primary", json.RawMessage(`{
+		"profile":{"middle_name":null},
+		"resumes":{"backend":{"skills":["Go"]}}
+	}`), "", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	value, exists, err := observation.ValueAt("/resumes/backend/skills")
+	if err != nil || !exists || string(value) != `["Go"]` {
+		t.Fatalf("skills=%s exists=%v err=%v", value, exists, err)
+	}
+	value, exists, err = observation.ValueAt("/profile/middle_name")
+	if err != nil || !exists || string(value) != "null" {
+		t.Fatalf("middle name=%s exists=%v err=%v", value, exists, err)
+	}
+	if value, exists, err = observation.ValueAt("/profile/missing"); err != nil || exists || value != nil {
+		t.Fatalf("missing=%s exists=%v err=%v", value, exists, err)
+	}
+	if _, _, err := observation.ValueAt("profile/middle_name"); err == nil {
+		t.Fatal("expected invalid JSON pointer to fail")
+	}
+}
+
 func TestProfileStateChangeEscapesJSONPointer(t *testing.T) {
 	now := time.Now().UTC()
 	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"profile":{"a/b~c":true}}`))
