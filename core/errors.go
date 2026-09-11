@@ -61,11 +61,7 @@ func (err *OperationError) Validate() error {
 	if err == nil {
 		return errors.New("operation error is nil")
 	}
-	switch err.Category {
-	case ErrorUnsupported, ErrorUnauthorized, ErrorRateLimited, ErrorQuotaExceeded,
-		ErrorValidationRequired, ErrorTemporaryFailure, ErrorPermanentFailure,
-		ErrorConfirmationRequired, ErrorAmbiguousResult, ErrorConflict:
-	default:
+	if !ValidErrorCategory(err.Category) {
 		return fmt.Errorf("unknown error category %q", err.Category)
 	}
 	if err.Operation == "" {
@@ -75,6 +71,19 @@ func (err *OperationError) Validate() error {
 		return errors.New("retry_after is only valid for rate_limited or quota_exceeded errors")
 	}
 	return nil
+}
+
+// ValidErrorCategory reports whether the value is one of the normalized
+// adapter and workflow error categories.
+func ValidErrorCategory(category ErrorCategory) bool {
+	switch category {
+	case ErrorUnsupported, ErrorUnauthorized, ErrorRateLimited, ErrorQuotaExceeded,
+		ErrorValidationRequired, ErrorTemporaryFailure, ErrorPermanentFailure,
+		ErrorConfirmationRequired, ErrorAmbiguousResult, ErrorConflict:
+		return true
+	default:
+		return false
+	}
 }
 
 func ErrorIsCategory(err error, category ErrorCategory) bool {

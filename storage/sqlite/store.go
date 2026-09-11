@@ -29,6 +29,7 @@ var (
 	_ storage.ApplicationBudgetRepository        = (*Store)(nil)
 	_ storage.ApplicationPaceRepository          = (*Store)(nil)
 	_ storage.ApplicationTailoringRepository     = (*Store)(nil)
+	_ storage.AuthSessionRepository              = (*Store)(nil)
 	_ storage.ConversationRepository             = (*Store)(nil)
 	_ storage.ProfileStateProposalRepository     = (*Store)(nil)
 	_ storage.ProfileActivityRepository          = (*Store)(nil)

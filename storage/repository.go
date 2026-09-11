@@ -12,6 +12,7 @@ var (
 	ErrRevisionConflict             = errors.New("repository revision conflict")
 	ErrProfileMutationLocked        = errors.New("profile already has an active mutation workflow")
 	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
+	ErrAuthSessionNotFound          = errors.New("auth session not found")
 	ErrApplicationRemoved           = errors.New("application was removed from the working set")
 )
 
@@ -169,6 +170,12 @@ type ApplicationTailoringRepository interface {
 	ApplicationTailoring(ctx context.Context, id core.ApplicationTailoringID) (core.ApplicationTailoring, error)
 	ApplicationTailoringByApplication(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationTailoring, error)
 	SaveApplicationTailoring(ctx context.Context, candidate core.ApplicationTailoring, expectedRevision uint64) error
+}
+
+type AuthSessionRepository interface {
+	CreateAuthSession(ctx context.Context, candidate core.AuthSession) (stored core.AuthSession, created bool, err error)
+	AuthSession(ctx context.Context, id core.AuthSessionID) (core.AuthSession, error)
+	SaveAuthSession(ctx context.Context, candidate core.AuthSession, expectedRevision uint64) error
 }
 
 type ProfileStateProposalFilter struct {

@@ -38,7 +38,7 @@ func TestGCMigrationPreservesExistingBudgetAcrossRollbackAndUpgrade(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Steps(-2); err != nil {
+	if err := m.Steps(18 - int(storesqlite.LatestSchemaVersion)); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Up(); err != nil {
@@ -78,7 +78,7 @@ func TestGCMigrationPreservesExistingBudgetAcrossRollbackAndUpgrade(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Steps(-2); err == nil {
+	if err := m.Steps(18 - int(storesqlite.LatestSchemaVersion)); err == nil {
 		t.Fatal("destructive rollback was allowed after GC")
 	}
 	_ = m.Close()
