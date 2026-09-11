@@ -67,7 +67,10 @@
       (browser read channel, без хранения xsrf/guid).
 - [x] Submit ответов и read-back результата (open-text tasks; choice/code
       отклоняются как unsupported до live-проверки их полей).
-- [ ] Adapter qualification service: sync каталога, capture, submit.
+- [ ] Skill verification easy/medium/hard: sync каталога, прогон с capture
+      вариантов ответа, выбор правильных (known/model/human review), запись
+      reusable answer block per family/level и автоматическое прохождение
+      последующих попыток через job-agent.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через
@@ -101,7 +104,8 @@
 - [ ] `resume.create`/`resume.update` как desired state с deterministic/model
       processor, semantic diff и approval policy.
 - [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
-- [ ] Алиасы и каталог resume targets.
+- [x] Алиасы (`resume_aliases`, резолв в `profile.resume` и job actions) и
+      каталог targets (`GET /api/v1/profiles/{profile}/resumes`).
 - [ ] Dashboard-редактор резюме и история ревизий.
 - [ ] DoD: создание резюме из bootstrap-файла и безопасный update с publish.
 

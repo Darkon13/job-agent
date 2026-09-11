@@ -260,6 +260,7 @@ type Profile struct {
 	Tag                 string             `json:"tag"`
 	Adapter             string             `json:"adapter"`
 	Resume              string             `json:"resume,omitempty"`
+	ResumeAliases       map[string]string  `json:"resume_aliases,omitempty"`
 	ResumeFactsFile     string             `json:"resume_facts_file,omitempty"`
 	CredentialsRef      string             `json:"credentials_ref,omitempty"`
 	StateFile           string             `json:"state_file,omitempty"`
@@ -489,6 +490,9 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := cfg.resolveResumeAliases(); err != nil {
+		return Config{}, err
+	}
 	baseDirectory := filepath.Dir(absolute)
 	if err := cfg.resolveApplicationMessageFiles(baseDirectory); err != nil {
 		return Config{}, err
@@ -509,6 +513,68 @@ func Load(path string) (Config, error) {
 }
 
 const maximumConfigIncludeDepth = 16
+
+// resolveResumeAliases replaces user-facing resume aliases with platform resume
+// IDs. profile.resume may be an alias; a job action resolves through its
+// explicit profile.
+func (c *Config) resolveResumeAliases() error {
+	byProfile := make(map[core.ProfileID]map[string]string, len(c.Profiles))
+	for index := range c.Profiles {
+		profile := &c.Profiles[index]
+		if len(profile.ResumeAliases) == 0 {
+			continue
+		}
+		clean := make(map[string]string, len(profile.ResumeAliases))
+		for alias, id := range profile.ResumeAliases {
+			alias = strings.TrimSpace(alias)
+			id = strings.TrimSpace(id)
+			if alias == "" || id == "" {
+				return fmt.Errorf("profile %q resume_aliases requires non-empty alias and resume id", profile.Tag)
+			}
+			clean[alias] = id
+		}
+		profile.ResumeAliases = clean
+		profileID := core.ProfileID(profile.Tag)
+		byProfile[profileID] = clean
+		if resolved, exists := clean[strings.TrimSpace(profile.Resume)]; exists {
+			profile.Resume = resolved
+		}
+	}
+	for index := range c.Jobs {
+		job := &c.Jobs[index]
+		reference := strings.TrimSpace(job.Action.Resume)
+		if reference == "" {
+			continue
+		}
+		profileID := core.ProfileID(strings.TrimSpace(job.Action.Profile))
+		if resolved, exists := byProfile[profileID][reference]; exists {
+			job.Action.Resume = resolved
+		}
+	}
+	return nil
+}
+
+// ResumeTargets builds the per-profile resume catalog for the control API.
+func (c Config) ResumeTargets() map[core.ProfileID][]core.ResumeTarget {
+	targets := make(map[core.ProfileID][]core.ResumeTarget, len(c.Profiles))
+	for _, profile := range c.Profiles {
+		profileID := core.ProfileID(profile.Tag)
+		list := make([]core.ResumeTarget, 0, len(profile.ResumeAliases)+1)
+		if id := strings.TrimSpace(profile.Resume); id != "" {
+			list = append(list, core.ResumeTarget{ID: id, Primary: true})
+		}
+		names := make([]string, 0, len(profile.ResumeAliases))
+		for alias := range profile.ResumeAliases {
+			names = append(names, alias)
+		}
+		sort.Strings(names)
+		for _, alias := range names {
+			list = append(list, core.ResumeTarget{ID: profile.ResumeAliases[alias], Alias: alias})
+		}
+		targets[profileID] = list
+	}
+	return targets
+}
 
 // loadConfigFile reads one config file, merges its includes depth-first, and
 // returns the combined object. The main file owns database and server; every

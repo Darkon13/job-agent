@@ -78,6 +78,9 @@
   очередь задач, runtime-логи переведены на slog.
 - LICENSE (MIT), `docs/quickstart.md` и `docs/runbook.md`; release checklist
   дополнен операционной проверкой backup/restore и upgrade/rollback.
+- Resume aliases: `resume_aliases` резолвятся в `profile.resume` и job actions
+  при загрузке конфига; `GET /api/v1/profiles/{profile}/resumes` отдаёт
+  каталог targets (primary + aliases).
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

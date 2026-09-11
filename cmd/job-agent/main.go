@@ -170,6 +170,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create review API: %v", err)
 	}
+	resumeAPI, err := httpapi.NewResumeAPI(cfg.ResumeTargets())
+	if err != nil {
+		log.Fatalf("create resume API: %v", err)
+	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -723,7 +727,7 @@ func main() {
 		}
 	}()
 	go renewRuntimeInstance(ctx, store, instanceID, runtimeInstanceLeaseTTL)
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(reviewAPI.Handler(conversationAPI.Handler())))))))
 	if apiToken != "" {
 		handler = httpapi.BearerAuth(apiToken, handler)
 	}
