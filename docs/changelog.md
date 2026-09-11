@@ -23,6 +23,9 @@
 - Auth control plane: durable auth session с revision CAS, эфемерный в памяти
   challenge store с TTL и HTTP endpoints для identifier/OTP/password/captcha,
   отмены и чтения redacted-состояния.
+- HH search: `similar_resume`, `similar_vacancy` и `related_vacancy` через API и
+  `similar_resume` через browser `/search/vacancy?resume=`; у source появилась
+  матрица поддерживаемых полей.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

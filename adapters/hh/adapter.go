@@ -259,12 +259,28 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 		if query.Vacancy != "" {
 			return errors.New("hh similar_resume search must not specify vacancy")
 		}
-	case SearchSourceSimilarVacancy, SearchSourceRelatedVacancy:
+		if query.hasModernWorkFields() {
+			return errors.New("hh similar_resume search does not support employment_form, work_schedule_by_days, working_hours or work_format")
+		}
+	case SearchSourceSimilarVacancy:
 		if query.Vacancy == "" {
-			return fmt.Errorf("hh %s search requires vacancy", query.Source)
+			return errors.New("hh similar_vacancy search requires vacancy")
 		}
 		if query.Resume != "" {
-			return fmt.Errorf("hh %s search must not specify resume", query.Source)
+			return errors.New("hh similar_vacancy search must not specify resume")
+		}
+		if query.hasModernWorkFields() {
+			return errors.New("hh similar_vacancy search does not support employment_form, work_schedule_by_days, working_hours or work_format")
+		}
+	case SearchSourceRelatedVacancy:
+		if query.Vacancy == "" {
+			return errors.New("hh related_vacancy search requires vacancy")
+		}
+		if query.Resume != "" {
+			return errors.New("hh related_vacancy search must not specify resume")
+		}
+		if query.hasSearchFilters() {
+			return errors.New("hh related_vacancy search accepts only pagination")
 		}
 	default:
 		return fmt.Errorf("unsupported hh search source %q", query.Source)
@@ -351,6 +367,25 @@ func validateHHSearchTime(field, value string) error {
 	return fmt.Errorf("hh %s must be an ISO-8601 date or timestamp", field)
 }
 
+func (query SearchQuery) hasModernWorkFields() bool {
+	return len(query.EmploymentForm) != 0 || len(query.WorkScheduleByDays) != 0 ||
+		len(query.WorkingHours) != 0 || len(query.WorkFormat) != 0
+}
+
+func (query SearchQuery) hasSearchFilters() bool {
+	return query.Text != "" || len(query.SearchField) != 0 || len(query.Experience) != 0 ||
+		len(query.Employment) != 0 || len(query.Schedule) != 0 || len(query.Area) != 0 ||
+		len(query.Metro) != 0 || len(query.ProfessionalRole) != 0 || len(query.Industry) != 0 ||
+		len(query.EmployerID) != 0 || len(query.ExcludedEmployerID) != 0 || query.Currency != "" ||
+		query.Salary != nil || len(query.Label) != 0 || query.OnlyWithSalary ||
+		query.Period != nil || query.DateFrom != "" || query.DateTo != "" ||
+		query.TopLat != nil || query.BottomLat != nil || query.LeftLng != nil || query.RightLng != nil ||
+		query.OrderBy != "" || query.SortPointLat != nil || query.SortPointLng != nil ||
+		query.Clusters || query.DescribeArguments || query.NoMagic || query.Premium ||
+		query.ResponsesCount || len(query.PartTime) != 0 || query.AcceptTemporary != nil ||
+		query.ExcludedText != "" || len(query.Education) != 0 || query.hasModernWorkFields()
+}
+
 func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json.RawMessage, cursor string) (core.SearchPage, error) {
 	if err := a.ValidateSearch(raw); err != nil {
 		return core.SearchPage{}, err
@@ -359,20 +394,39 @@ func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json
 	if err := json.Unmarshal(raw, &query); err != nil {
 		return core.SearchPage{}, fmt.Errorf("decode hh search query: %w", err)
 	}
-	if query.Source != SearchSourceGlobal {
-		return core.SearchPage{}, hhUnsupported("vacancies.search." + string(query.Source))
-	}
+	operation := "vacancies.search." + string(query.Source)
 	a.mu.RLock()
 	client := a.clients[profileID]
 	browserClient := a.browserClients[profileID]
 	a.mu.RUnlock()
-	if client != nil {
-		return client.SearchGlobal(ctx, query, cursor)
+	switch query.Source {
+	case SearchSourceGlobal:
+		if client != nil {
+			return client.SearchGlobal(ctx, query, cursor)
+		}
+		if browserClient != nil {
+			return browserClient.SearchGlobal(ctx, query, cursor)
+		}
+	case SearchSourceSimilarResume:
+		if client != nil {
+			return client.SearchSimilarResume(ctx, query, cursor)
+		}
+		if browserClient != nil {
+			return browserClient.SearchSimilarResume(ctx, query, cursor)
+		}
+	case SearchSourceSimilarVacancy:
+		if client != nil {
+			return client.SearchSimilarVacancy(ctx, query, cursor)
+		}
+	case SearchSourceRelatedVacancy:
+		if client != nil {
+			return client.SearchRelatedVacancy(ctx, query, cursor)
+		}
 	}
-	if browserClient != nil {
-		return browserClient.SearchGlobal(ctx, query, cursor)
+	if client == nil && browserClient == nil {
+		return core.SearchPage{}, operationError(core.ErrorUnauthorized, operation, "HH profile has no bound read session", nil)
 	}
-	return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH profile has no bound read session", nil)
+	return core.SearchPage{}, hhUnsupported(operation)
 }
 
 func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error) {

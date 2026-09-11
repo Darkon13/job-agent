@@ -71,7 +71,30 @@ type namedItem struct {
 }
 
 func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
-	page, err := decodeSearchCursor(cursor)
+	parameters := encodeGlobalSearchQuery(query)
+	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/vacancies"
+	return client.searchVacancies(ctx, "vacancies.search.global", endpoint, parameters, query, cursor)
+}
+
+func (client *ReadClient) SearchSimilarResume(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
+	parameters := encodeClassicSearchQuery(query)
+	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/resumes/" + url.PathEscape(strings.TrimSpace(query.Resume)) + "/similar_vacancies"
+	return client.searchVacancies(ctx, "vacancies.search.similar_resume", endpoint, parameters, query, cursor)
+}
+
+func (client *ReadClient) SearchSimilarVacancy(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
+	parameters := encodeClassicSearchQuery(query)
+	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/vacancies/" + url.PathEscape(strings.TrimSpace(query.Vacancy)) + "/similar_vacancies"
+	return client.searchVacancies(ctx, "vacancies.search.similar_vacancy", endpoint, parameters, query, cursor)
+}
+
+func (client *ReadClient) SearchRelatedVacancy(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
+	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/vacancies/" + url.PathEscape(strings.TrimSpace(query.Vacancy)) + "/related_vacancies"
+	return client.searchVacancies(ctx, "vacancies.search.related_vacancy", endpoint, make(url.Values), query, cursor)
+}
+
+func (client *ReadClient) searchVacancies(ctx context.Context, operation, endpoint string, parameters url.Values, query SearchQuery, cursor string) (core.SearchPage, error) {
+	page, err := decodeSearchCursor(operation, cursor)
 	if err != nil {
 		return core.SearchPage{}, err
 	}
@@ -86,15 +109,13 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 	if err != nil {
 		return core.SearchPage{}, err
 	}
-	parameters := encodeGlobalSearchQuery(query)
 	pageSize := query.PageSize
 	if pageSize == 0 {
 		pageSize = searchPageSize
 	}
 	parameters.Set("page", strconv.Itoa(page))
 	parameters.Set("per_page", strconv.Itoa(pageSize))
-	endpoint := strings.TrimRight(client.apiBaseURL, "/") + "/vacancies?" + parameters.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+parameters.Encode(), nil)
 	if err != nil {
 		return core.SearchPage{}, fmt.Errorf("create HH vacancy search request: %w", err)
 	}
@@ -111,20 +132,20 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return core.SearchPage{}, ctxErr
 		}
-		return core.SearchPage{}, operationError(core.ErrorTemporaryFailure, "vacancies.search.global", "HH vacancy search request failed", err)
+		return core.SearchPage{}, operationError(core.ErrorTemporaryFailure, operation, "HH vacancy search request failed", err)
 	}
 	defer response.Body.Close()
-	if err := classifySearchResponse(response); err != nil {
+	if err := classifySearchResponse(operation, response); err != nil {
 		return core.SearchPage{}, err
 	}
 
 	var result vacancySearchResponse
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxSearchAPIResponse))
 	if err := decoder.Decode(&result); err != nil {
-		return core.SearchPage{}, operationError(core.ErrorTemporaryFailure, "vacancies.search.global", "HH returned an invalid vacancy search response", err)
+		return core.SearchPage{}, operationError(core.ErrorTemporaryFailure, operation, "HH returned an invalid vacancy search response", err)
 	}
 	if result.Page != page || result.PerPage != pageSize || result.Pages < 0 || result.Found < 0 {
-		return core.SearchPage{}, operationError(core.ErrorPermanentFailure, "vacancies.search.global", "HH returned inconsistent vacancy pagination", nil)
+		return core.SearchPage{}, operationError(core.ErrorPermanentFailure, operation, "HH returned inconsistent vacancy pagination", nil)
 	}
 
 	observedAt := time.Now().UTC()
@@ -152,35 +173,35 @@ func (client *ReadClient) SearchGlobal(ctx context.Context, query SearchQuery, c
 	return core.SearchPage{Vacancies: vacancies, NextCursor: nextCursor, Done: done}, nil
 }
 
-func decodeSearchCursor(cursor string) (int, error) {
+func decodeSearchCursor(operation, cursor string) (int, error) {
 	if cursor == "" {
 		return 0, nil
 	}
 	page, err := strconv.Atoi(cursor)
 	if err != nil || page < 0 || page >= searchMaximumDepth/searchPageSize {
-		return 0, operationError(core.ErrorPermanentFailure, "vacancies.search.global", "invalid or exhausted HH search cursor", err)
+		return 0, operationError(core.ErrorPermanentFailure, operation, "invalid or exhausted HH search cursor", err)
 	}
 	return page, nil
 }
 
-func classifySearchResponse(response *http.Response) error {
+func classifySearchResponse(operation string, response *http.Response) error {
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		return nil
 	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
 		drain(response.Body)
-		return operationError(core.ErrorUnauthorized, "vacancies.search.global", "HH credentials are expired, revoked or invalid", nil)
+		return operationError(core.ErrorUnauthorized, operation, "HH credentials are expired, revoked or invalid", nil)
 	case response.StatusCode == http.StatusTooManyRequests:
 		drain(response.Body)
-		failure := operationError(core.ErrorRateLimited, "vacancies.search.global", "HH vacancy search was rate limited", nil)
+		failure := operationError(core.ErrorRateLimited, operation, "HH vacancy search was rate limited", nil)
 		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
 		return failure
 	case response.StatusCode >= 500:
 		drain(response.Body)
-		return operationError(core.ErrorTemporaryFailure, "vacancies.search.global", fmt.Sprintf("HH returned status %d", response.StatusCode), nil)
+		return operationError(core.ErrorTemporaryFailure, operation, fmt.Sprintf("HH returned status %d", response.StatusCode), nil)
 	default:
 		drain(response.Body)
-		return operationError(core.ErrorPermanentFailure, "vacancies.search.global", fmt.Sprintf("HH rejected vacancy search with status %d", response.StatusCode), nil)
+		return operationError(core.ErrorPermanentFailure, operation, fmt.Sprintf("HH rejected vacancy search with status %d", response.StatusCode), nil)
 	}
 }
 
@@ -281,7 +302,19 @@ func parseHHTime(value string) (*time.Time, error) {
 	return nil, fmt.Errorf("invalid HH timestamp %q", value)
 }
 
+// encodeGlobalSearchQuery includes the newer employment and work-format
+// fields documented only for the global search endpoint.
 func encodeGlobalSearchQuery(query SearchQuery) url.Values {
+	return encodeSearchQuery(query, true)
+}
+
+// encodeClassicSearchQuery targets the similar/related endpoints whose
+// documented field set predates the newer work fields.
+func encodeClassicSearchQuery(query SearchQuery) url.Values {
+	return encodeSearchQuery(query, false)
+}
+
+func encodeSearchQuery(query SearchQuery, includeModernFields bool) url.Values {
 	values := make(url.Values)
 	setString(values, "text", query.Text)
 	addStrings(values, "search_field", query.SearchField)
@@ -315,12 +348,14 @@ func encodeGlobalSearchQuery(query SearchQuery) url.Values {
 	setTrue(values, "responses_count_enabled", query.ResponsesCount)
 	addStrings(values, "part_time", query.PartTime)
 	setBool(values, "accept_temporary", query.AcceptTemporary)
-	addStrings(values, "employment_form", query.EmploymentForm)
-	addStrings(values, "work_schedule_by_days", query.WorkScheduleByDays)
-	addStrings(values, "working_hours", query.WorkingHours)
-	addStrings(values, "work_format", query.WorkFormat)
 	setString(values, "excluded_text", query.ExcludedText)
 	addStrings(values, "education", query.Education)
+	if includeModernFields {
+		addStrings(values, "employment_form", query.EmploymentForm)
+		addStrings(values, "work_schedule_by_days", query.WorkScheduleByDays)
+		addStrings(values, "working_hours", query.WorkingHours)
+		addStrings(values, "work_format", query.WorkFormat)
+	}
 	return values
 }
 

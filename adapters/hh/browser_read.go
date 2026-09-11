@@ -59,7 +59,15 @@ func NewBrowserReadClient(profileID core.ProfileID, stateFile, userAgent string,
 }
 
 func (client *BrowserReadClient) SearchGlobal(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
-	pageNumber, err := decodeSearchCursor(cursor)
+	return client.searchWeb(ctx, query, cursor, "")
+}
+
+func (client *BrowserReadClient) SearchSimilarResume(ctx context.Context, query SearchQuery, cursor string) (core.SearchPage, error) {
+	return client.searchWeb(ctx, query, cursor, strings.TrimSpace(query.Resume))
+}
+
+func (client *BrowserReadClient) searchWeb(ctx context.Context, query SearchQuery, cursor, resume string) (core.SearchPage, error) {
+	pageNumber, err := decodeSearchCursor("vacancies.search.browser", cursor)
 	if err != nil {
 		return core.SearchPage{}, err
 	}
@@ -76,6 +84,9 @@ func (client *BrowserReadClient) SearchGlobal(ctx context.Context, query SearchQ
 	}
 
 	parameters := encodeGlobalSearchQuery(query)
+	if resume != "" {
+		parameters.Set("resume", resume)
+	}
 	parameters.Set("page", fmt.Sprint(pageNumber))
 	parameters.Set("items_on_page", fmt.Sprint(pageSize))
 	endpoint := strings.TrimRight(client.webBaseURL, "/") + "/search/vacancy?" + parameters.Encode()

@@ -73,6 +73,28 @@ func TestBrowserSearchReadsBoundedVacancyCardsWithoutBearerToken(t *testing.T) {
 	}
 }
 
+func TestBrowserSimilarResumeSearchSetsResumeParam(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/search/vacancy" || request.URL.Query().Get("resume") != "resume-42" || request.URL.Query().Get("text") != "Go" {
+			t.Errorf("unexpected similar resume URL: %s", request.URL.String())
+		}
+		_, _ = response.Write([]byte(`<html><body>
+			<article data-qa="vacancy-serp__vacancy">
+				<a data-qa="serp-item__title" href="/vacancy/42">Go developer</a>
+			</article>
+		</body></html>`))
+	}))
+	page, err := client.SearchSimilarResume(context.Background(), SearchQuery{
+		Source: SearchSourceSimilarResume, Resume: "resume-42", Text: "Go", PageSize: 20, MaxPages: 1,
+	}, "")
+	if err != nil {
+		t.Fatalf("browser similar resume search: %v", err)
+	}
+	if !page.Done || len(page.Vacancies) != 1 || page.Vacancies[0].ExternalID != "42" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+}
+
 func TestBrowserReadLoadsFullVacancyTextAndSkills(t *testing.T) {
 	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/vacancy/42" {

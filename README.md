@@ -130,8 +130,11 @@ HH adapter выбирает один из двух read-каналов. При �
 регистрируется как `ApplicationTransport`, поэтому физически не может отправить
 отклик. Оба канала нормализуют вакансию и строго отклоняют неизвестные либо
 структурно некорректные search-поля. `429 Retry-After` переводит page task в
-отложенный retry и освобождает worker lease. Пока реализован только
-`source=global`.
+отложенный retry и освобождает worker lease. Реализованы `source=global`,
+`similar_resume`, `similar_vacancy` и `related_vacancy`; API-канал исполняет все
+четыре, browser-канал — `global` и `similar_resume` через
+`/search/vacancy?resume=`. Новые employment/work-поля принимаются только для
+`global`, а `related_vacancy` допускает только пагинацию.
 
 Для постоянного состояния доступен SQLite store: он реализует те же
 repository/broker-порты и сохраняет vacancies, discoveries, applications,
