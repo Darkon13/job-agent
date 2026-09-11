@@ -109,6 +109,7 @@
   captcha, отправка identifier/OTP/password/captcha и отмена).
 - Auth restart recovery: незавершённые сессии при старте backend помечаются
   `failed` с категорией `temporary_failure` и понятным сообщением.
+- CLI `job-agent auth status --watch` следует за SSE-потоком сессии.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

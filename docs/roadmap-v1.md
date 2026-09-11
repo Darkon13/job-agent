@@ -61,7 +61,8 @@
       ревизии до terminal-статуса.
 - [x] Dashboard auth wizard: секция «Вход в HH» создаёт сессию, слушает SSE,
       показывает challenge/captcha и отправляет inputs.
-- [ ] Подписка CLI `auth login` на SSE вместо polling.
+- [x] CLI `auth status --watch` подписывается на SSE и печатает ревизии до
+      terminal-статуса.
 - [x] Restart recovery: на старте незавершённые auth-сессии помечаются
       `failed` (`FailOpenAuthSessions`), challenge-контур в памяти не
       восстанавливается намеренно.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -136,5 +137,32 @@ func TestAuthImportSanitizesStorageState(t *testing.T) {
 	if err := runAuthImport([]string{"--source", source, "--state-output", destination}, &output); err == nil ||
 		!strings.Contains(err.Error(), "--force") {
 		t.Fatalf("overwrite error = %v", err)
+	}
+}
+
+func TestAuthStatusWatchFollowsSSE(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/auth/sessions/{id}/events", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := response.(http.Flusher)
+		if !ok {
+			t.Error("flusher is not supported")
+			return
+		}
+		fmt.Fprintf(response, "event: session\ndata: {\"id\":\"auth-1\",\"profile_id\":\"primary\",\"status\":\"waiting_otp\",\"revision\":1}\n\n")
+		flusher.Flush()
+		fmt.Fprintf(response, "event: session\ndata: {\"id\":\"auth-1\",\"profile_id\":\"primary\",\"status\":\"completed\",\"revision\":2}\n\n")
+		flusher.Flush()
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	var output bytes.Buffer
+	err := runAuthStatus(context.Background(), []string{"--api", server.URL, "--session", "auth-1", "--watch"}, &output, server.Client())
+	if err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "status=waiting_otp") || !strings.Contains(rendered, "status=completed") {
+		t.Fatalf("output = %q", rendered)
 	}
 }

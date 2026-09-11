@@ -248,15 +248,19 @@ func runAuthStatus(ctx context.Context, args []string, output io.Writer, client 
 	flags.SetOutput(output)
 	apiURL := flags.String("api", "http://127.0.0.1:8080", "job-agent backend URL")
 	sessionID := flags.String("session", "", "auth session id")
+	watch := flags.Bool("watch", false, "follow session transitions until terminal status")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*sessionID) == "" {
-		return errors.New("usage: job-agent auth status --session <id>")
+		return errors.New("usage: job-agent auth status --session <id> [--watch]")
 	}
 	base, err := authBaseURL(*apiURL)
 	if err != nil {
 		return err
+	}
+	if *watch {
+		return watchAuthSession(ctx, client, base, strings.TrimSpace(*sessionID), output)
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -274,6 +278,63 @@ func runAuthStatus(ctx context.Context, args []string, output io.Writer, client 
 		fmt.Fprintf(output, "failure=%s %s\n", session.FailureCategory, session.FailureMessage)
 	}
 	return nil
+}
+
+// watchAuthSession follows the SSE stream of one session. It prints every
+// revision and returns when the session reaches a terminal status.
+func watchAuthSession(ctx context.Context, client *http.Client, base, sessionID string, output io.Writer) error {
+	if client == nil {
+		client = &http.Client{}
+	}
+	endpoint := base + "/api/v1/auth/sessions/" + url.PathEscape(sessionID) + "/events"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept", "text/event-stream")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(response.Body, maximumAuthJSONResponse))
+		return authResponseError(response.StatusCode, data)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var data string
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "data: "):
+			data = strings.TrimPrefix(line, "data: ")
+		case line == "" && data != "":
+			var session core.AuthSession
+			if err := json.Unmarshal([]byte(data), &session); err != nil {
+				return fmt.Errorf("decode auth event: %w", err)
+			}
+			fmt.Fprintf(output, "id=%s profile=%s status=%s revision=%d\n",
+				session.ID, session.ProfileID, session.Status, session.Revision)
+			if session.FailureCategory != "" {
+				fmt.Fprintf(output, "failure=%s %s\n", session.FailureCategory, session.FailureMessage)
+			}
+			if authTerminalStatus(session.Status) {
+				return nil
+			}
+			data = ""
+		}
+	}
+	return scanner.Err()
+}
+
+func authTerminalStatus(status core.AuthSessionStatus) bool {
+	switch status {
+	case core.AuthSessionCompleted, core.AuthSessionExpired, core.AuthSessionCancelled, core.AuthSessionFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func authBaseURL(value string) (string, error) {
