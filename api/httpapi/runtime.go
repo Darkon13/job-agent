@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/buildinfo"
@@ -15,6 +13,7 @@ import (
 )
 
 type RuntimeReadRepository interface {
+	storage.ApplicationQueryRepository
 	Stats(context.Context) (storage.RuntimeStats, error)
 	TaskCounts(context.Context) ([]storage.TaskCount, error)
 	ApplicationCounts(context.Context) ([]storage.ApplicationCount, error)
@@ -75,19 +74,23 @@ type ConversationSummary struct {
 // ApplicationSummary is an operator-facing object. It intentionally omits
 // prepared messages, decision reasons and external negotiation identifiers.
 type ApplicationSummary struct {
-	ID              core.ApplicationID     `json:"id"`
-	Platform        core.Platform          `json:"platform"`
-	ProfileID       core.ProfileID         `json:"profile_id"`
-	Status          core.ApplicationStatus `json:"status"`
-	DecisionCode    string                 `json:"decision_code,omitempty"`
-	FailureCategory core.ErrorCategory     `json:"failure_category,omitempty"`
-	Attempts        int                    `json:"attempts"`
-	VacancyTitle    string                 `json:"vacancy_title"`
-	Employer        string                 `json:"employer,omitempty"`
-	VacancyURL      string                 `json:"vacancy_url,omitempty"`
-	HasCoverLetter  bool                   `json:"has_cover_letter"`
-	UpdatedAt       time.Time              `json:"updated_at"`
-	SubmittedAt     *time.Time             `json:"submitted_at,omitempty"`
+	ID                 core.ApplicationID          `json:"id"`
+	Platform           core.Platform               `json:"platform"`
+	ProfileID          core.ProfileID              `json:"profile_id"`
+	Status             core.ApplicationStatus      `json:"status"`
+	DecisionCode       string                      `json:"decision_code,omitempty"`
+	FailureCategory    core.ErrorCategory          `json:"failure_category,omitempty"`
+	Attempts           int                         `json:"attempts"`
+	VacancyTitle       string                      `json:"vacancy_title"`
+	Employer           string                      `json:"employer,omitempty"`
+	VacancyURL         string                      `json:"vacancy_url,omitempty"`
+	HasCoverLetter     bool                        `json:"has_cover_letter"`
+	UpdatedAt          time.Time                   `json:"updated_at"`
+	SubmittedAt        *time.Time                  `json:"submitted_at,omitempty"`
+	PlatformState      string                      `json:"platform_state,omitempty"`
+	Disposition        core.ApplicationDisposition `json:"disposition,omitempty"`
+	ViewedByOpponent   *bool                       `json:"viewed_by_opponent,omitempty"`
+	PlatformObservedAt *time.Time                  `json:"platform_observed_at,omitempty"`
 }
 
 func NewRuntimeAPI(repository RuntimeReadRepository) (*RuntimeAPI, error) {
@@ -212,46 +215,6 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		ActivitySnapshots: activitySnapshots,
 		Conversations:     conversationSummaries,
 	})
-}
-
-func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *http.Request) {
-	limit := 100
-	if value := strings.TrimSpace(request.URL.Query().Get("limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 200 {
-			writeProblem(response, http.StatusBadRequest, "application limit must be between 1 and 200")
-			return
-		}
-		limit = parsed
-	}
-	filter := storage.ApplicationFilter{
-		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
-		Status:    core.ApplicationStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
-		Limit:     limit,
-	}
-	applications, err := api.repository.ListApplications(request.Context(), filter)
-	if err != nil {
-		writeProblem(response, http.StatusInternalServerError, "load applications")
-		return
-	}
-	items := make([]ApplicationSummary, 0, len(applications))
-	for _, application := range applications {
-		vacancy, err := api.repository.Vacancy(request.Context(), application.Key.Vacancy)
-		if err != nil {
-			writeProblem(response, http.StatusInternalServerError, "load application vacancy")
-			return
-		}
-		items = append(items, ApplicationSummary{
-			ID: application.ID, Platform: application.Key.Vacancy.Platform, ProfileID: application.Key.ProfileID,
-			Status: application.Status, DecisionCode: application.DecisionCode,
-			FailureCategory: application.FailureCategory, Attempts: application.Attempts,
-			VacancyTitle: vacancy.Title, Employer: vacancy.Employer, VacancyURL: vacancy.URL,
-			HasCoverLetter: strings.TrimSpace(application.PreparedMessage) != "",
-			UpdatedAt:      application.UpdatedAt, SubmittedAt: application.SubmittedAt,
-		})
-	}
-	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusOK, listResponse[ApplicationSummary]{Items: items})
 }
 
 func applicationCampaignSummary(campaign core.ApplicationCampaign, states []core.CampaignApplicationState) ApplicationCampaignSummary {

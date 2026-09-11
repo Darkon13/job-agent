@@ -149,6 +149,9 @@ func (workflow *SearchWorkflow) planApplication(
 		return false, false, err
 	}
 	stored, applicationCreated, err := workflow.applications.CreateApplication(ctx, candidate)
+	if errors.Is(err, storage.ErrApplicationRemoved) {
+		return false, false, nil
+	}
 	if err != nil {
 		return false, false, fmt.Errorf("create application %s/%s: %w", profileID, vacancy, err)
 	}

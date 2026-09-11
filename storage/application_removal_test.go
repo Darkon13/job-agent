@@ -1,0 +1,203 @@
+package storage_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
+	"github.com/Darkon13/job-agent/storage/memory"
+	"github.com/Darkon13/job-agent/storage/sqlite"
+)
+
+type gcStore interface {
+	storage.VacancyRepository
+	storage.ApplicationRepository
+	storage.ApplicationReadRepository
+	storage.ApplicationRemovalRepository
+	storage.ApplicationPlatformStateRepository
+	storage.ApplicationBudgetRepository
+	storage.ApplicationPaceRepository
+	storage.ApplicationCampaignRepository
+	storage.ConversationRepository
+	storage.ApplicationQueryRepository
+}
+
+func gcStores(t *testing.T, run func(*testing.T, gcStore)) {
+	t.Helper()
+	t.Run("memory", func(t *testing.T) { run(t, memory.NewRepository()) })
+	t.Run("sqlite", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "gc.db")
+		if err := sqlite.MigrateUp(path); err != nil {
+			t.Fatal(err)
+		}
+		repository, err := sqlite.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = repository.Close() })
+		run(t, repository)
+	})
+}
+
+func gcApplication(t *testing.T, repository gcStore, id, employer string, at time.Time) core.Application {
+	t.Helper()
+	ctx := context.Background()
+	vacancy := core.Vacancy{Platform: "hh", ExternalID: id, Title: "Go developer", Employer: employer, State: core.VacancyStateOpen, ObservedAt: at}
+	if _, err := repository.UpsertVacancy(ctx, vacancy); err != nil {
+		t.Fatal(err)
+	}
+	application, err := core.NewApplication(core.ApplicationID(id), core.ApplicationKey{ProfileID: "primary", Vacancy: vacancy.Key()}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.CreateApplication(ctx, application); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []core.ApplicationStatus{core.ApplicationPreparing, core.ApplicationReady, core.ApplicationSubmitting, core.ApplicationSubmitted} {
+		previous := application.Status
+		if err := application.Transition(status, application.UpdatedAt.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveApplication(ctx, application, previous); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return application
+}
+
+func TestApplicationGCProtectsAccountingHistoryAndConversations(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+		a := gcApplication(t, repository, "a", "Sber", now.Add(-time.Hour))
+		b := gcApplication(t, repository, "b", "Other", now.Add(-time.Hour))
+		budget := core.ReserveApplicationBudgetParams{ApplicationID: a.ID, ProfileID: "primary", Platform: "hh", WindowStart: now.Truncate(24 * time.Hour), WindowEnd: now.Truncate(24 * time.Hour).Add(24 * time.Hour), Limit: 1, Now: now}
+		if _, err := repository.ReserveApplicationBudget(ctx, budget); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.CommitApplicationBudget(ctx, a.ID, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.AcquireApplicationPace(ctx, core.AcquireApplicationPaceParams{ApplicationID: a.ID, ProfileID: "primary", Platform: "hh", Interval: 25 * time.Second, Now: now}); err != nil {
+			t.Fatal(err)
+		}
+		conversation, err := core.NewConversation("chat", "hh", "primary", "external-chat", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conversation.ApplicationID = a.ID
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{ID: "m", ConversationID: "chat", Direction: core.MessageOutgoing, Kind: core.MessageText, Status: core.MessageSent, Text: "hello", OccurredAt: now}, now); err != nil {
+			t.Fatal(err)
+		}
+		campaign, err := core.NewApplicationCampaign(core.NewApplicationCampaignParams{ID: "campaign", JobTag: "daily", Profiles: []core.ProfileID{"primary"}, Routes: []core.SearchID{"main"}, TargetSuccessful: 1, MaxInFlight: 1, CorrelationID: "correlation"}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateApplicationCampaign(ctx, campaign); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.LinkCampaignApplication(ctx, core.CampaignApplication{CampaignID: campaign.ID, ApplicationID: a.ID, DiscoveredAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		manual := core.ApplicationRemoval{Reason: core.ApplicationRemovalManual}
+		if _, _, err := repository.RemoveApplication(ctx, a.ID, manual, now); err == nil {
+			t.Fatal("deleted a running campaign item")
+		}
+		revision := campaign.Revision
+		if err := campaign.Stop(core.ApplicationCampaignTargetReached, "done", now); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveApplicationCampaign(ctx, campaign, revision); err != nil {
+			t.Fatal(err)
+		}
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, manual, now); err != nil || !removed {
+			t.Fatalf("remove: %v %v", removed, err)
+		}
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, manual, now); err != nil || removed {
+			t.Fatalf("retry: %v %v", removed, err)
+		}
+		if _, err := repository.ApplicationByID(ctx, a.ID); err == nil {
+			t.Fatal("application content survived GC")
+		}
+		if messages, err := repository.ConversationMessages(ctx, "chat"); err != nil || len(messages) != 1 {
+			t.Fatalf("chat lost: %v %v", messages, err)
+		}
+		if states, err := repository.ListCampaignApplicationStates(ctx, campaign.ID); err != nil || len(states) != 1 || states[0].Application.Status != core.ApplicationSubmitted {
+			t.Fatalf("history lost: %v %v", states, err)
+		}
+		budget.ApplicationID = b.ID
+		if _, err := repository.ReserveApplicationBudget(ctx, budget); !core.ErrorIsCategory(err, core.ErrorQuotaExceeded) {
+			t.Fatalf("GC reset quota: %v", err)
+		}
+		if pace, allowed, err := repository.AcquireApplicationPace(ctx, core.AcquireApplicationPaceParams{ApplicationID: b.ID, ProfileID: "primary", Platform: "hh", Interval: 25 * time.Second, Now: now}); err != nil || allowed || !pace.ScheduledAt.Equal(now.Add(25*time.Second)) {
+			t.Fatalf("GC reset pacing: %v %v %v", pace, allowed, err)
+		}
+		a, _ = core.NewApplication("replacement", a.Key, now)
+		if _, _, err := repository.CreateApplication(ctx, a); !errors.Is(err, storage.ErrApplicationRemoved) {
+			t.Fatalf("GC reset dedup: %v", err)
+		}
+	})
+}
+
+func TestApplicationGCRechecksObservationInsideWriteTransaction(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+		a := gcApplication(t, repository, "a", "Sber", now.Add(-30*24*time.Hour))
+		state := core.ApplicationPlatformState{ApplicationID: a.ID, ExternalNegotiationID: "n", PlatformState: "invitation", Disposition: core.ApplicationDispositionInvited, ObservedAt: now}
+		if err := repository.SaveApplicationPlatformState(ctx, state); err != nil {
+			t.Fatal(err)
+		}
+		request := core.ApplicationRemoval{Reason: core.ApplicationRemovalRetentionStale, StaleBefore: now.Add(-14 * 24 * time.Hour), ObservedAt: now.Add(-time.Minute)}
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, request, now); err != nil || removed {
+			t.Fatalf("deleted new invitation: %v %v", removed, err)
+		}
+		request.ObservedAt = now
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, request, now); err != nil || removed {
+			t.Fatalf("deleted invitation: %v %v", removed, err)
+		}
+		state.Disposition = core.ApplicationDispositionPending
+		state.PlatformState = "response"
+		if err := repository.SaveApplicationPlatformState(ctx, state); err != nil {
+			t.Fatal(err)
+		}
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, request, now.Add(6*time.Minute)); err != nil || removed {
+			t.Fatalf("accepted stale observation: %v %v", removed, err)
+		}
+		if _, removed, err := repository.RemoveApplication(ctx, a.ID, request, now); err != nil || !removed {
+			t.Fatalf("eligible object: %v %v", removed, err)
+		}
+	})
+}
+
+func TestApplicationQueryFiltersWholeDatasetBeforePagination(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+		for i := 0; i < 205; i++ {
+			employer := "Other"
+			if i < 3 {
+				employer = "Сбер"
+			}
+			gcApplication(t, repository, fmt.Sprintf("%03d", i), employer, now.Add(time.Duration(i)*time.Minute))
+		}
+		query := storage.ApplicationQuery{Employer: "СБЕР", Group: "state_unknown", Sort: "updated_asc", Limit: 2}
+		page, err := repository.QueryApplications(ctx, query)
+		if err != nil || page.Total != 3 || len(page.IDs) != 2 || page.IDs[0] != "000" {
+			t.Fatalf("first page: %v %v", page, err)
+		}
+		query.Offset = 2
+		page, err = repository.QueryApplications(ctx, query)
+		if err != nil || page.Total != 3 || len(page.IDs) != 1 || page.IDs[0] != "002" {
+			t.Fatalf("second page: %v %v", page, err)
+		}
+	})
+}

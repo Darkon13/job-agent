@@ -214,14 +214,21 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 	if _, err := store.ApplicationCampaign(ctx, id); err != nil {
 		return nil, err
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT
+	rows, err := store.db.QueryContext(ctx, `WITH outcomes AS (
+		SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+			failure_category, failure_message, decision_code, decision_reason, prepared_resume_id,
+			prepared_message, preparation_provenance, created_at, updated_at, prepared_at, submitted_at FROM applications
+		UNION ALL
+		SELECT application_id, profile_id, platform, external_id, status, 0, '', '', '', '', '', '', '', '{}',
+			removed_at, removed_at, NULL, NULL FROM application_tombstones
+	) SELECT
 		i.route_index, i.application_id, i.discovered_at,
 		a.profile_id, a.platform, a.external_id, a.status, a.attempts,
 		a.external_negotiation_id, a.failure_category, a.failure_message,
 		a.decision_code, a.decision_reason, a.prepared_resume_id, a.prepared_message,
 		a.preparation_provenance, a.created_at, a.updated_at, a.prepared_at, a.submitted_at
 		FROM application_campaign_items i
-		JOIN applications a ON a.id = i.application_id
+		JOIN outcomes a ON a.id = i.application_id
 		JOIN vacancies v ON v.platform = a.platform AND v.external_id = a.external_id
 		WHERE i.campaign_id = ?
 		ORDER BY i.route_index,

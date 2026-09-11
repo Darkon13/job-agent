@@ -13,6 +13,8 @@ const (
 	TaskVacancySearchPage          TaskType = "vacancy.search_page"
 	TaskApplicationCampaign        TaskType = "application.campaign"
 	TaskApplicationSubmit          TaskType = "application.submit"
+	TaskApplicationRemove          TaskType = "application.remove"
+	TaskApplicationRetention       TaskType = "application.retention"
 	TaskQuestionnaireAnswer        TaskType = "questionnaire.answer"
 	TaskTestComplete               TaskType = "test.complete"
 	TaskTestCapture                TaskType = "test.capture"

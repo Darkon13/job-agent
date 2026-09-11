@@ -170,6 +170,27 @@ type ApplicationTransport interface {
 	SubmitApplication(ctx context.Context, command ApplicationSubmitCommand) (ApplicationSubmitResult, error)
 }
 
+type ApplicationStateObservation struct {
+	ExternalNegotiationID string
+	ExternalVacancyID     string
+	PlatformState         string
+	Disposition           core.ApplicationDisposition
+	ViewedByOpponent      *bool
+	PlatformUpdatedAt     *time.Time
+}
+
+type ApplicationStateObservationResult struct {
+	Applications []ApplicationStateObservation
+	ObservedAt   time.Time
+}
+
+// ApplicationStateObserver reads the applicant-visible state of all current
+// response objects. Retention must use a complete fresh result, never infer an
+// invitation or rejection from chat text.
+type ApplicationStateObserver interface {
+	ObserveApplicationStates(ctx context.Context, profileID core.ProfileID) (ApplicationStateObservationResult, error)
+}
+
 type ApplicationReconcileCommand struct {
 	ProfileID core.ProfileID
 	Vacancy   core.VacancyKey

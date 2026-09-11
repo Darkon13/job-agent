@@ -100,6 +100,7 @@ var _ adapter.ProfileStateWriter = (*Adapter)(nil)
 var _ adapter.SuitableResumeReader = (*Adapter)(nil)
 var _ adapter.ApplicationTransport = (*Adapter)(nil)
 var _ adapter.ApplicationReconciler = (*Adapter)(nil)
+var _ adapter.ApplicationStateObserver = (*Adapter)(nil)
 
 func New(raw json.RawMessage) (adapter.Adapter, error) {
 	var cfg Config
@@ -484,6 +485,16 @@ func (a *Adapter) ReconcileApplication(ctx context.Context, command adapter.Appl
 		return browserClient.ReconcileApplication(ctx, command)
 	}
 	return adapter.ApplicationReconcileResult{}, operationError(core.ErrorUnauthorized, "applications.reconcile", "HH profile has no bound application session", nil)
+}
+
+func (a *Adapter) ObserveApplicationStates(ctx context.Context, profileID core.ProfileID) (adapter.ApplicationStateObservationResult, error) {
+	a.mu.RLock()
+	client := a.clients[profileID]
+	a.mu.RUnlock()
+	if client == nil {
+		return adapter.ApplicationStateObservationResult{}, operationError(core.ErrorUnauthorized, "applications.observe", "HH profile has no bound API session", nil)
+	}
+	return client.ObserveApplicationStates(ctx, profileID)
 }
 
 func hhUnsupported(operation string) error {

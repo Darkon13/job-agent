@@ -84,6 +84,27 @@
   ],
   "jobs": [
     {
+      "tag": "cleanup-primary-applications",
+      "enabled": false,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 3 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "application.retention",
+        "profile": "primary",
+        "retention": {
+          "stale_after": "336h",
+          "remove_rejected": true
+        }
+      }
+    },
+    {
       "tag": "reconcile-primary-about",
       "enabled": false,
       "triggers": [

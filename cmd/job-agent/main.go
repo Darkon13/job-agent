@@ -138,6 +138,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("create task API: %v", err)
 	}
+	applicationRemovalWorkflow, err := workflow.NewApplicationRemovalWorkflow(
+		store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{},
+	)
+	if err != nil {
+		log.Fatalf("create application removal workflow: %v", err)
+	}
+	applicationAPI, err := httpapi.NewApplicationAPI(applicationRemovalWorkflow)
+	if err != nil {
+		log.Fatalf("create application API: %v", err)
+	}
 	profileStateResources, err := cfg.BuildProfileStateResources()
 	if err != nil {
 		log.Fatalf("build profile state resources: %v", err)
@@ -153,6 +163,7 @@ func main() {
 	profileStatePlatforms := make(map[core.ProfileID]core.Platform)
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
+	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
@@ -245,6 +256,11 @@ func main() {
 			if transport, ok := instance.(adapter.ApplicationTransport); ok {
 				if err := applicationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+				}
+			}
+			if observer, ok := instance.(adapter.ApplicationStateObserver); ok {
+				if err := applicationStateObservers.Register(profileID, observer); err != nil {
+					log.Fatalf("register application state observer for profile %q: %v", profile.Tag, err)
 				}
 			}
 		} else if runtime.BrowserReader == nil {
@@ -392,6 +408,32 @@ func main() {
 		}
 		workers = append(workers, applicationWorker)
 	}
+	applicationRemovalHandler, err := taskworker.NewApplicationRemovalHandler(
+		store, store, store, applicationStateObservers, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create application removal handler: %v", err)
+	}
+	applicationRemovalWorker, err := newTaskWorker(
+		store, core.TaskApplicationRemove, profileMutationLane.Wrap(applicationRemovalHandler.Handle),
+	)
+	if err != nil {
+		log.Fatalf("create application removal worker: %v", err)
+	}
+	workers = append(workers, applicationRemovalWorker)
+	applicationRetentionHandler, err := taskworker.NewApplicationRetentionHandler(
+		store, applicationStateObservers, applicationRemovalWorkflow, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create application retention handler: %v", err)
+	}
+	applicationRetentionWorker, err := newTaskWorker(
+		store, core.TaskApplicationRetention, applicationRetentionHandler.Handle,
+	)
+	if err != nil {
+		log.Fatalf("create application retention worker: %v", err)
+	}
+	workers = append(workers, applicationRetentionWorker)
 	if resumeTouchers.Count() > 0 {
 		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -459,6 +501,11 @@ func main() {
 		log.Fatalf("build conversation follow-up selection jobs: %v", err)
 	}
 	definitions = append(definitions, followUpSelectionDefinitions...)
+	retentionDefinitions, err := applicationRetentionDefinitions(cfg, instances, applicationStateObservers)
+	if err != nil {
+		log.Fatalf("build application retention scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, retentionDefinitions...)
 	profileStateDefinitions, err := profileStateReconcileDefinitions(
 		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 	)
@@ -487,7 +534,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, cfg, runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(conversationAPI.Handler())))), conversationWorkflow, scheduler, workers); err != nil {
+	if err := serve(ctx, cfg, runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(conversationAPI.Handler()))))), conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -1106,6 +1153,41 @@ func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances ma
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskConversationFollowUpSelect, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func applicationRetentionDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, observers *taskworker.ApplicationStateObserverRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationRetention || job.Action.Retention == nil {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled {
+			continue
+		}
+		if !observers.Has(profileID) {
+			return nil, fmt.Errorf("job %q: application retention requires an authorized application state observer; HH currently needs OAuth/API credentials", job.Tag)
+		}
+		payload, err := json.Marshal(job.Action.Retention.Payload(profileID))
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskApplicationRetention, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

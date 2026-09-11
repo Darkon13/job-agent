@@ -19,22 +19,24 @@ import (
 )
 
 var (
-	_ storage.VacancyRepository                 = (*Store)(nil)
-	_ storage.SearchRunRepository               = (*Store)(nil)
-	_ storage.ApplicationCampaignRepository     = (*Store)(nil)
-	_ storage.ApplicationRepository             = (*Store)(nil)
-	_ storage.ApplicationReadRepository         = (*Store)(nil)
-	_ storage.ApplicationBudgetRepository       = (*Store)(nil)
-	_ storage.ApplicationPaceRepository         = (*Store)(nil)
-	_ storage.ApplicationTailoringRepository    = (*Store)(nil)
-	_ storage.ConversationRepository            = (*Store)(nil)
-	_ storage.ProfileStateProposalRepository    = (*Store)(nil)
-	_ storage.ProfileActivityRepository         = (*Store)(nil)
-	_ storage.ProfileActivitySnapshotRepository = (*Store)(nil)
-	_ storage.FailedTaskRepository              = (*Store)(nil)
-	_ broker.TaskQueue                          = (*Store)(nil)
-	_ broker.TaskStore                          = (*Store)(nil)
-	_ broker.TaskControlStore                   = (*Store)(nil)
+	_ storage.VacancyRepository                  = (*Store)(nil)
+	_ storage.SearchRunRepository                = (*Store)(nil)
+	_ storage.ApplicationCampaignRepository      = (*Store)(nil)
+	_ storage.ApplicationRepository              = (*Store)(nil)
+	_ storage.ApplicationReadRepository          = (*Store)(nil)
+	_ storage.ApplicationRemovalRepository       = (*Store)(nil)
+	_ storage.ApplicationPlatformStateRepository = (*Store)(nil)
+	_ storage.ApplicationBudgetRepository        = (*Store)(nil)
+	_ storage.ApplicationPaceRepository          = (*Store)(nil)
+	_ storage.ApplicationTailoringRepository     = (*Store)(nil)
+	_ storage.ConversationRepository             = (*Store)(nil)
+	_ storage.ProfileStateProposalRepository     = (*Store)(nil)
+	_ storage.ProfileActivityRepository          = (*Store)(nil)
+	_ storage.ProfileActivitySnapshotRepository  = (*Store)(nil)
+	_ storage.FailedTaskRepository               = (*Store)(nil)
+	_ broker.TaskQueue                           = (*Store)(nil)
+	_ broker.TaskStore                           = (*Store)(nil)
+	_ broker.TaskControlStore                    = (*Store)(nil)
 )
 
 var ErrSchemaNotReady = errors.New("sqlite schema is not ready; run job-agent-migrate up")
@@ -161,6 +163,15 @@ func (store *Store) CreateApplication(ctx context.Context, candidate core.Applic
 	if err := candidate.Key.Validate(); err != nil {
 		return core.Application{}, false, err
 	}
+	var removed int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_tombstones
+		WHERE profile_id = ? AND platform = ? AND external_id = ?`, candidate.Key.ProfileID,
+		candidate.Key.Vacancy.Platform, candidate.Key.Vacancy.ExternalID).Scan(&removed); err != nil {
+		return core.Application{}, false, fmt.Errorf("check application tombstone: %w", err)
+	}
+	if removed != 0 {
+		return core.Application{}, false, storage.ErrApplicationRemoved
+	}
 	preparationProvenance, err := marshalApplicationPreparationProvenance(candidate.PreparationProvenance)
 	if err != nil {
 		return core.Application{}, false, err
@@ -186,6 +197,96 @@ func (store *Store) CreateApplication(ctx context.Context, candidate core.Applic
 		return core.Application{}, false, fmt.Errorf("load stored application: %w", err)
 	}
 	return stored, created, nil
+}
+
+func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID, request core.ApplicationRemoval, removedAt time.Time) (core.ApplicationTombstone, bool, error) {
+	if id == "" || removedAt.IsZero() {
+		return core.ApplicationTombstone{}, false, errors.New("application removal requires id and time")
+	}
+	if err := request.Reason.Validate(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("begin application removal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	application, err := scanApplication(tx.QueryRowContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
+		preparation_provenance, created_at, updated_at, prepared_at, submitted_at FROM applications WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		var tombstone core.ApplicationTombstone
+		var removedAtUnix int64
+		err = tx.QueryRowContext(ctx, `SELECT application_id, profile_id, platform, external_id, reason, removed_at, status
+			FROM application_tombstones WHERE application_id = ?`, id).Scan(&tombstone.ApplicationID,
+			&tombstone.Key.ProfileID, &tombstone.Key.Vacancy.Platform, &tombstone.Key.Vacancy.ExternalID,
+			&tombstone.Reason, &removedAtUnix, &tombstone.Status)
+		if err != nil {
+			return core.ApplicationTombstone{}, false, fmt.Errorf("load application removal target: %w", err)
+		}
+		tombstone.RemovedAt = time.Unix(0, removedAtUnix).UTC()
+		return tombstone, false, tombstone.Validate()
+	}
+	if err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("load application removal target: %w", err)
+	}
+	switch application.Status {
+	case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval, core.ApplicationSubmitted,
+		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed:
+	default:
+		return core.ApplicationTombstone{}, false, fmt.Errorf("application %s is still active in status %s", id, application.Status)
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_campaign_items item
+		JOIN application_campaigns campaign ON campaign.campaign_id = item.campaign_id
+		WHERE item.application_id = ? AND campaign.status = 'running'`, id).Scan(&active); err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("check application campaign: %w", err)
+	}
+	if active != 0 {
+		return core.ApplicationTombstone{}, false, errors.New("application belongs to a running campaign")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_tailorings
+		WHERE application_id = ? AND status <> 'restored'`, id).Scan(&active); err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("check application tailoring: %w", err)
+	}
+	if active != 0 {
+		return core.ApplicationTombstone{}, false, errors.New("application has an active resume tailoring saga")
+	}
+	if request.Reason != core.ApplicationRemovalManual {
+		state, err := scanApplicationPlatformState(tx.QueryRowContext(ctx, `SELECT application_id, external_negotiation_id, platform_state,
+			disposition, viewed_by_opponent, platform_updated_at, observed_at FROM application_platform_states WHERE application_id = ?`, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.ApplicationTombstone{}, false, nil
+		}
+		if err != nil {
+			return core.ApplicationTombstone{}, false, err
+		}
+		if !request.Eligible(application, state, removedAt) {
+			return core.ApplicationTombstone{}, false, nil
+		}
+	}
+	tombstone := core.ApplicationTombstone{ApplicationID: application.ID, Key: application.Key, Reason: request.Reason, RemovedAt: removedAt.UTC(), Status: application.Status}
+	if err := tombstone.Validate(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_tombstones
+		(application_id, profile_id, platform, external_id, reason, removed_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tombstone.ApplicationID, tombstone.Key.ProfileID, tombstone.Key.Vacancy.Platform,
+		tombstone.Key.Vacancy.ExternalID, tombstone.Reason, tombstone.RemovedAt.UnixNano(), tombstone.Status); err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("store application tombstone: %w", err)
+	}
+	for _, statement := range []string{
+		`DELETE FROM application_tailorings WHERE application_id = ?`,
+		`DELETE FROM applications WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, id); err != nil {
+			return core.ApplicationTombstone{}, false, fmt.Errorf("remove application state: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return core.ApplicationTombstone{}, false, fmt.Errorf("commit application removal: %w", err)
+	}
+	return tombstone, true, nil
 }
 
 func (store *Store) Enqueue(ctx context.Context, task core.Task) (bool, error) {

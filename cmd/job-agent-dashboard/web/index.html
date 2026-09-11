@@ -39,26 +39,46 @@
     <section id="applications-section" aria-labelledby="applications-title">
       <div class="section-title">
         <div><p class="eyebrow">ОБЪЕКТЫ</p><h2 id="applications-title">Отклики</h2></div>
-        <span id="application-filter-state" class="muted">Последние 100</span>
+        <span id="application-filter-state" class="muted">Загрузка откликов…</span>
       </div>
       <div id="application-filters" class="filter-grid" aria-label="Фильтр откликов по состоянию"></div>
       <article class="panel">
         <div class="list-toolbar">
           <label for="application-search">Поиск</label>
           <input id="application-search" type="search" placeholder="Вакансия, компания или профиль">
+          <label for="application-sort">Сортировка</label>
+          <select id="application-sort">
+            <option value="updated_desc">Сначала новые</option>
+            <option value="updated_asc">Сначала старые</option>
+            <option value="employer_asc">По компании</option>
+            <option value="title_asc">По вакансии</option>
+          </select>
           <button id="application-reset" class="secondary compact" type="button">Сбросить</button>
+          <button id="application-prev" class="secondary compact" type="button" disabled>Назад</button>
+          <button id="application-next" class="secondary compact" type="button" disabled>Далее</button>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>Вакансия</th><th>Компания</th><th>Профиль</th><th>Состояние</th><th>Причина</th><th>Обновлён</th><th>Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
+        <div class="bulk-toolbar">
+          <label class="selection-control"><input id="application-select-all" type="checkbox"> Выбрать видимые</label>
+          <span id="application-selection-state" class="muted">Ничего не выбрано</span>
+          <select id="application-bulk-action" disabled>
+            <option value="">Действие…</option>
+            <option value="remove">Убрать из рабочего списка</option>
+          </select>
+          <button id="application-run-action" class="secondary compact" type="button" disabled>Выполнить</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th class="selection-column">Выбор</th><th>Вакансия</th><th>Компания</th><th>Профиль</th><th>Состояние</th><th>Причина</th><th>Обновлён</th><th>Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
       </article>
     </section>
-    <section class="split" aria-label="Очередь и доступные действия">
+    <section aria-labelledby="jobs-title">
       <article class="panel">
-        <div class="panel-heading"><h2>Очередь</h2><span class="tag">durable</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Действие</th><th>Состояние</th><th>Приоритет</th><th>Количество</th></tr></thead><tbody id="tasks"></tbody></table></div>
+        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация из конфигурации</h2><p class="panel-description">Jobs запускаются по расписанию либо вручную. Flow описывает этапы действия; результаты запусков рассылки показаны отдельно ниже.</p></div><span class="tag">jobs</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Job</th><th>Действие</th><th>Платформа</th><th>Профиль</th><th>Приоритет</th><th>Flow</th><th>Запуск</th></tr></thead><tbody id="jobs"></tbody></table></div>
       </article>
+    </section>
+    <section aria-labelledby="tasks-title">
       <article class="panel">
-        <div class="panel-heading"><h2>Доступные действия</h2><span class="tag">jobs</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Job</th><th>Тип</th><th>Платформа</th><th>Профиль</th><th>Приоритет</th><th>Действие</th></tr></thead><tbody id="jobs"></tbody></table></div>
+        <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Это сгруппированные экземпляры задач, а не статистика jobs: job или действие пользователя создаёт task, worker забирает его и меняет состояние.</p></div><span class="tag">durable</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Действие</th><th>Состояние</th><th>Приоритет</th><th>Количество экземпляров</th></tr></thead><tbody id="tasks"></tbody></table></div>
       </article>
     </section>
     <section aria-labelledby="campaigns-title">
@@ -90,6 +110,22 @@
       <div class="section-title">
         <div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div>
         <div class="section-actions"><span id="conversation-bulk-state" class="muted"></span><button id="mark-all-read" class="secondary" type="button" disabled>Прочитать все</button></div>
+      </div>
+      <div class="conversation-toolbar">
+        <input id="conversation-search" type="search" placeholder="Вакансия, компания или профиль">
+        <select id="conversation-filter">
+          <option value="">Все диалоги</option>
+          <option value="unread">Только непрочитанные</option>
+          <option value="active">Активные</option>
+          <option value="rejected">Отказы</option>
+          <option value="closed">Закрытые</option>
+        </select>
+        <select id="conversation-sort">
+          <option value="updated_desc">Сначала новые</option>
+          <option value="updated_asc">Сначала старые</option>
+          <option value="unread_desc">Сначала непрочитанные</option>
+          <option value="employer_asc">По компании</option>
+        </select>
       </div>
       <div class="chat-layout">
         <nav id="conversations" class="conversation-list" aria-label="Список диалогов"></nav>

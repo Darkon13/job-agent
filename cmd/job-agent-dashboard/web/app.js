@@ -1,20 +1,29 @@
-const state = { summary: null, selectedConversation: null, jobs: [], applicationObjects: [], applicationFilter: "", applicationQuery: "", markAllReadBusy: false, profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set() };
+const state = {
+  applicationOffset: 0, applicationTotal: 0, applicationGroups: {}, applicationRequest: 0, applicationLoading: false,
+  summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
+  applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
+  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false,
+  profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
+};
 const elements = Object.fromEntries([
-  "application-filters", "application-items", "application-filter-state", "application-search", "application-reset", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
-  "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить кампанию откликов", "application.submit": "Отправить отклик",
+  "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистить устаревшие отклики",
   "questionnaire.answer": "Ответить на анкету", "test.complete": "Пройти тест", "test.capture": "Сохранить вопросы теста", "review.answer": "Сохранить проверенный ответ",
   "conversation.reply": "Ответить в чате", "conversation.send": "Отправить сообщение", "conversation.follow_up": "Отправить напоминание", "conversation.follow_up.select": "Выбрать чат для напоминания",
   "conversation.discover": "Обновить список чатов", "conversation.mark_read": "Пометить чат прочитанным", "conversation.sync": "Загрузить сообщения чата", "vacancy.inspect": "Открыть и изучить вакансию",
-  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Снять показатели активности",
+  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить активность резюме",
   "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
   "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
 };
-const applicationGroupLabels = { queued: "В очереди", sent: "Отправлено", needs_input: "Нужно участие", not_sent: "Не отправлено" };
+const applicationGroupLabels = {
+  queued: "В очереди", sent: "Отправлено", needs_input: "Нужно участие", waiting_invitation: "Ожидает приглашения",
+  invited: "Приглашение", rejected: "Отказ", state_unknown: "Состояние не синхронизировано", hidden: "Скрыт", not_sent: "Не отправлено",
+};
 const queuedApplicationStatuses = new Set(["new", "preparing", "ready", "submitting", "pending_reconciliation"]);
 const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
 const taskStatusLabels = { new: "Ожидает", processing: "Выполняется", waiting_confirmation: "Нужно решение", retry_scheduled: "Повтор запланирован", completed: "Завершена", failed: "Ошибка", dismissed: "Закрыта" };
@@ -34,12 +43,26 @@ function total(items, predicate = () => true) { return items.filter(predicate).r
 function safeExternalURL(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : ""; } catch (_) { return ""; } }
 function compactID(value) { const id = String(value || ""); return id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id || "—"; }
 function applicationGroup(item) {
-  if (item.status === "submitted" || item.decision_code === "already_applied") return "sent";
+  if (item.status === "submitted" || item.decision_code === "already_applied") {
+    if (Object.prototype.hasOwnProperty.call(item, "count")) return "sent";
+    switch (item.disposition) {
+    case "pending": return "waiting_invitation";
+    case "invited": return "invited";
+    case "rejected": return "rejected";
+    case "hidden": return "hidden";
+    default: return "state_unknown";
+    }
+  }
   if (item.status === "waiting_validation" && inputDecisionCodes.has(item.decision_code)) return "needs_input";
   if (queuedApplicationStatuses.has(item.status)) return "queued";
   return "not_sent";
 }
+function applicationIsSent(item) { return ["waiting_invitation", "invited", "rejected", "state_unknown", "hidden"].includes(applicationGroup(item)); }
 function applicationReason(item) {
+  if (item.disposition === "invited") return "HH перевёл отклик в «Приглашение» — автоматическая очистка запрещена";
+  if (item.disposition === "rejected") return "HH подтвердил отказ — объект подходит для автоматической очистки";
+  if (item.disposition === "pending") return item.viewed_by_opponent === true ? "Работодатель посмотрел отклик, но приглашения нет" : "Приглашения ещё нет";
+  if ((item.status === "submitted" || item.decision_code === "already_applied") && !item.disposition) return "Состояние отклика ещё не синхронизировано с HH";
   if (item.decision_code && item.decision_code !== "qualified") return decisionLabels[item.decision_code] || item.decision_code;
   if (item.failure_category) return failureLabels[item.failure_category] || `Ошибка: ${item.failure_category}`;
   switch (item.status) {
@@ -60,7 +83,7 @@ function applicationReason(item) {
 function renderStats(summary = {}) {
   const applications = summary.applications || [];
   const metrics = [
-    { value: total(applications, (item) => applicationGroup(item) === "sent"), label: "Отклики отправлены", filter: "sent" },
+    { value: total(applications, (item) => item.status === "submitted" || item.decision_code === "already_applied"), label: "Отклики отправлены", filter: "sent" },
     { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
     { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
     { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
@@ -75,37 +98,78 @@ function renderStats(summary = {}) {
 }
 
 function applicationMatchesFilter(item) {
-  if (state.applicationFilter && applicationGroup(item) !== state.applicationFilter) return false;
+  if (state.applicationFilter === "sent" && !applicationIsSent(item)) return false;
+  if (state.applicationFilter && state.applicationFilter !== "sent" && applicationGroup(item) !== state.applicationFilter) return false;
   const query = state.applicationQuery.trim().toLocaleLowerCase("ru");
   return !query || [item.vacancy_title, item.employer, item.profile_id, item.decision_code, applicationReason(item)].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
 }
 function setApplicationFilter(value) {
   state.applicationFilter = state.applicationFilter === value ? "" : value;
-  renderApplicationFilters(state.summary?.applications || []); renderApplicationObjects();
+  state.applicationOffset = 0; state.selectedApplications.clear(); refreshApplications();
   document.querySelector("#applications-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 function renderApplicationFilters(items = []) {
-  const grouped = new Map();
-  for (const item of items) { const group = applicationGroup(item); grouped.set(group, (grouped.get(group) || 0) + Number(item.count || 0)); }
-  const filters = [["", "Все", total(items)], ...["queued", "sent", "needs_input", "not_sent"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
+  const grouped = new Map(Object.entries(state.applicationGroups));
+  const filters = [["", "Все", grouped.get("") || 0], ...["queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
   elements.applicationFilters.replaceChildren(...filters.map(([value, label, count]) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `filter-card${state.applicationFilter === value ? " active" : ""}`;
     button.append(text("strong", String(count)), text("span", label)); button.addEventListener("click", () => setApplicationFilter(value)); return button;
   }));
 }
+function visibleApplicationObjects() { return state.applicationObjects; }
+function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed"].includes(item.status); }
+function applicationListURL() {
+  return "/api/v1/applications?" + new URLSearchParams({limit: "200", offset: String(state.applicationOffset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter});
+}
+async function refreshApplications() {
+  const generation = ++state.applicationRequest;
+  state.applicationLoading = true; updateApplicationSelection();
+  try {
+    const data = await request(applicationListURL());
+    if (generation !== state.applicationRequest) return;
+    state.applicationObjects = data.items || []; state.applicationTotal = data.total || 0; state.applicationGroups = data.groups || {};
+    if (state.applicationOffset >= state.applicationTotal && state.applicationOffset > 0) { state.applicationOffset = 0; return refreshApplications(); }
+    renderApplicationFilters(); renderApplicationObjects();
+  } catch (error) { if (generation === state.applicationRequest) state.applicationActionMessage = error.message; }
+  finally {
+    if (generation === state.applicationRequest) {
+      state.applicationLoading = false; renderApplicationObjects();
+      elements.applicationPrev.disabled = state.applicationOffset === 0;
+      elements.applicationNext.disabled = state.applicationOffset + 200 >= state.applicationTotal;
+    }
+  }
+}
+function changeApplicationQuery() {
+  state.applicationOffset = 0; state.selectedApplications.clear(); state.applicationActionMessage = ""; return refreshApplications();
+}
+function updateApplicationSelection(items = visibleApplicationObjects()) {
+  const visibleIDs = items.filter(applicationCanRemove).map((item) => item.id);
+  elements.applicationSelectAll.disabled = state.applicationLoading || state.applicationActionBusy || !visibleIDs.length;
+  const selectedVisible = visibleIDs.filter((id) => state.selectedApplications.has(id)).length;
+  elements.applicationSelectAll.checked = visibleIDs.length > 0 && selectedVisible === visibleIDs.length;
+  elements.applicationSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIDs.length;
+  elements.applicationSelectionState.textContent = state.applicationActionMessage || (state.selectedApplications.size ? `Выбрано: ${state.selectedApplications.size}` : "Ничего не выбрано");
+  elements.applicationBulkAction.disabled = state.selectedApplications.size === 0 || state.applicationActionBusy || state.applicationLoading;
+  elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy || state.applicationLoading;
+}
 function renderApplicationObjects() {
-  const items = state.applicationObjects.filter(applicationMatchesFilter);
-  elements.applicationFilterState.textContent = `${items.length} из ${state.applicationObjects.length} последних откликов`;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 7; row.append(cell); elements.applicationItems.replaceChildren(row); return; }
+  const existingIDs = new Set(state.applicationObjects.map((item) => item.id));
+  for (const id of state.selectedApplications) if (!existingIDs.has(id)) state.selectedApplications.delete(id);
+  const items = visibleApplicationObjects();
+  elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
   elements.applicationItems.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
+    const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy || state.applicationLoading; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
+    checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
     if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); } else action.textContent = "—";
     const group = applicationGroup(item);
-    row.append(vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
+    row.append(selection, vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;
   }));
+  updateApplicationSelection(items);
 }
 function renderTasks(items = []) {
   const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));
@@ -115,13 +179,14 @@ function renderTasks(items = []) {
   }));
 }
 function renderJobs(items = []) {
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell); elements.jobs.replaceChildren(row); return; }
   elements.jobs.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
+    const flow = item.task_type === "application.campaign" ? "Поиск → очередь откликов → отправка → результат" : item.task_type === "application.retention" ? "Синхронизация → отбор по сроку/отказу → повторная проверка → локальная очистка" : `Очередь → ${taskTypeLabel(item.task_type)} → результат`;
     const action = document.createElement("td");
     const run = text("button", "Запустить", "secondary compact"); run.type = "button"; run.disabled = state.jobBusy.has(item.tag);
     run.addEventListener("click", () => runJob(item)); action.append(run);
-    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), action);
+    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), text("td", flow), action);
     return row;
   }));
 }
@@ -169,23 +234,43 @@ function renderActivityObservations(items = []) {
     if (seen.has(key)) continue;
     seen.add(key); latest.push(item);
   }
-  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Показатели ещё не снимались. Запустите job «Снять показатели активности».", "empty panel")); return; }
+  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Показатели ещё не снимались. Запустите job «Обновить активность резюме».", "empty panel")); return; }
   elements.activityObservations.replaceChildren(...latest.map((item) => {
     const card = document.createElement("article"); card.className = "panel activity-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
     const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", item.profile_id), resume);
     heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
     const metrics = document.createElement("div"); metrics.className = "activity-metrics";
-    [["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
+    const score = item.score === null || item.score === undefined ? "—" : `${item.score}%`;
+    [["Активность", score, ""], ["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
       const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
     });
-    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}${item.score_hidden ? " · общая шкала скрыта HH" : ""}`, "muted")); return card;
+    const scoreState = item.score === null || item.score === undefined ? " · точный процент не найден в ответе HH" : "";
+    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}${item.score_hidden ? " · шкала скрыта экспериментом HH" : scoreState}`, "muted")); return card;
   }));
+}
+function visibleConversations(items = []) {
+  const query = state.conversationQuery.trim().toLocaleLowerCase("ru");
+  const filtered = items.filter((item) => {
+    if (state.conversationFilter === "unread" && !item.unread_count) return false;
+    if (state.conversationFilter && state.conversationFilter !== "unread" && item.status !== state.conversationFilter) return false;
+    return !query || [item.vacancy_title, item.employer, item.profile_id, conversationStatusLabels[item.status]].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
+  });
+  const stringCompare = (left, right) => String(left || "").localeCompare(String(right || ""), "ru", { sensitivity: "base" });
+  return filtered.sort((left, right) => {
+    switch (state.conversationSort) {
+    case "updated_asc": return new Date(left.updated_at) - new Date(right.updated_at);
+    case "unread_desc": return Number(right.unread_count || 0) - Number(left.unread_count || 0) || new Date(right.updated_at) - new Date(left.updated_at);
+    case "employer_asc": return stringCompare(left.employer, right.employer) || new Date(right.updated_at) - new Date(left.updated_at);
+    default: return new Date(right.updated_at) - new Date(left.updated_at);
+    }
+  });
 }
 function renderConversations(items = []) {
   updateMarkAllRead(items);
-  if (!items.length) { elements.conversations.replaceChildren(text("p", "Диалогов пока нет", "empty")); return; }
-  elements.conversations.replaceChildren(...items.map((item) => {
+  const visible = visibleConversations(items);
+  if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
+  elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
     const heading = document.createElement("span"); heading.className = "conversation-heading"; heading.append(text("strong", conversationLabel(item)));
     if (item.unread_count) heading.append(text("span", String(item.unread_count), "unread-badge"));
@@ -195,12 +280,25 @@ function renderConversations(items = []) {
 }
 function updateMarkAllRead(items = []) {
   const unread = items.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
+  const pending = (state.summary?.tasks || []).some((item) => item.type === "conversation.mark_read" && ["new", "processing", "retry_scheduled", "waiting_confirmation"].includes(item.status));
   elements.markAllRead.textContent = unread ? `Прочитать все (${unread})` : "Все прочитано";
-  elements.markAllRead.disabled = state.markAllReadBusy || unread === 0;
+  elements.markAllRead.disabled = state.markAllReadBusy || pending || unread === 0;
+  if (pending) elements.conversationBulkState.textContent = "Прочтение уже выполняется";
 }
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
-  elements.messages.replaceChildren(...items.map((item) => { const article = document.createElement("article"); article.className = `message ${item.direction || ""}`; article.append(text("p", item.text || `[${item.kind}]`), text("time", formatDate(item.occurred_at))); return article; })); elements.messages.scrollTop = elements.messages.scrollHeight;
+  elements.messages.replaceChildren(...items.map((item) => {
+    const article = document.createElement("article"); article.className = `message ${item.direction || ""}`;
+    article.append(text("p", item.text || `[${item.kind}]`));
+    if ((item.options || []).length) {
+      const options = document.createElement("div"); options.className = "message-options";
+      for (const option of item.options) options.append(text("div", option.text, "message-option"));
+      article.append(options);
+    }
+    const meta = document.createElement("div"); meta.className = "message-meta";
+    meta.append(text("span", item.direction === "outgoing" ? "Вы" : "Собеседник"), text("span", item.status === "queued" ? "В очереди" : formatDate(item.occurred_at)));
+    article.append(meta); return article;
+  })); elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
 function renderProfileResources() {
@@ -358,10 +456,10 @@ async function runJob(job) {
 async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
   try {
-    const [summary, failures, jobs, applications] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/applications?limit=200")]);
-    state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || []; state.applicationObjects = applications.items || [];
+    const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
+    state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
-    renderStats(summary); renderApplicationFilters(summary.applications || []); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }
@@ -377,18 +475,40 @@ async function selectConversation(conversation) {
   state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${conversation.profile_id} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
-  try { const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`); renderMessages(result.items || []); } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
+  try {
+    const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
+    if (state.selectedConversation?.id !== conversation.id) return;
+    state.selectedMessages = result.items || []; renderMessages(state.selectedMessages);
+  } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
+  if (conversation.unread_count && !state.conversationReadBusy.has(conversation.id)) {
+    state.conversationReadBusy.add(conversation.id); elements.actionState.textContent = "Помечаю открытый диалог прочитанным…";
+    try {
+      const key = `dashboard-open:${conversation.id}:${conversation.revision}`;
+      await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/mark-read`, undefined, key);
+      elements.actionState.textContent = "Диалог будет помечен прочитанным";
+      await refreshSummary();
+    } catch (error) { elements.actionState.textContent = error.message; }
+    finally { state.conversationReadBusy.delete(conversation.id); }
+  }
 }
 function newIdempotencyKey() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   const suffix = Math.random().toString(36).slice(2);
   return `dashboard-${Date.now()}-${suffix}`;
 }
-async function enqueue(path, body) { const headers = { "Idempotency-Key": newIdempotencyKey() }; if (body !== undefined) headers["Content-Type"] = "application/json"; return request(path, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
+async function enqueue(path, body, idempotencyKey = newIdempotencyKey()) { const headers = { "Idempotency-Key": idempotencyKey }; if (body !== undefined) headers["Content-Type"] = "application/json"; return request(path, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) }); }
 
 elements.replyForm.addEventListener("submit", async (event) => {
-  event.preventDefault(); const value = elements.reply.value.trim(); if (!state.selectedConversation || !value) return; elements.send.disabled = true; elements.actionState.textContent = "Создаю задачу…";
-  try { const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`, { content: { text: value } }); elements.reply.value = ""; elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`; await refreshSummary(); } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
+  event.preventDefault(); const value = elements.reply.value.trim(); if (!state.selectedConversation || !value) return; const conversationID = state.selectedConversation.id; elements.send.disabled = true; elements.actionState.textContent = "Создаю задачу…";
+  try {
+    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`, { content: { text: value } });
+    elements.reply.value = ""; elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`;
+    if (state.selectedConversation?.id === conversationID) {
+      state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: value, occurred_at: new Date().toISOString() }];
+      renderMessages(state.selectedMessages);
+    }
+    await refreshSummary();
+  } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
 });
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true; updateMarkAllRead(state.summary?.conversations || []); elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
@@ -399,7 +519,30 @@ elements.markAllRead.addEventListener("click", async () => {
   } catch (error) { elements.conversationBulkState.textContent = error.message; }
   finally { state.markAllReadBusy = false; updateMarkAllRead(state.summary?.conversations || []); }
 });
-elements.applicationSearch.addEventListener("input", () => { state.applicationQuery = elements.applicationSearch.value; renderApplicationObjects(); });
-elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; elements.applicationSearch.value = ""; renderApplicationFilters(state.summary?.applications || []); renderApplicationObjects(); });
+let applicationSearchTimer;
+elements.applicationSearch.addEventListener("input", () => { clearTimeout(applicationSearchTimer); state.applicationQuery = elements.applicationSearch.value; state.applicationRequest++; state.applicationLoading = true; updateApplicationSelection(); applicationSearchTimer = setTimeout(changeApplicationQuery, 250); });
+elements.applicationSort.addEventListener("change", () => { state.applicationSort = elements.applicationSort.value; changeApplicationQuery(); });
+elements.applicationSelectAll.addEventListener("change", () => { for (const item of visibleApplicationObjects().filter(applicationCanRemove)) { if (elements.applicationSelectAll.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); } renderApplicationObjects(); });
+elements.applicationBulkAction.addEventListener("change", () => updateApplicationSelection());
+elements.applicationRunAction.addEventListener("click", async () => {
+  const ids = [...state.selectedApplications];
+  if (!ids.length || elements.applicationBulkAction.value !== "remove" || state.applicationActionBusy) return;
+  state.applicationActionBusy = true; updateApplicationSelection();
+  elements.applicationSelectionState.textContent = `Создаю задачи: ${ids.length}…`;
+  try {
+    const result = await enqueue("/api/v1/applications/remove", { application_ids: ids });
+    state.selectedApplications.clear(); elements.applicationBulkAction.value = "";
+    const failures = (result.results || []).filter((item) => item.error);
+    state.applicationActionMessage = `Создано задач: ${result.created}. Уже в очереди: ${(result.tasks || []).length - result.created}.${failures.length ? ` Не поставлены: ${failures.length} — объекты недоступны или ещё обрабатываются.` : ""}`;
+    await refreshSummary();
+  } catch (error) { state.applicationActionMessage = error.message; }
+  finally { state.applicationActionBusy = false; updateApplicationSelection(); }
+});
+elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.selectedApplications.clear(); state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; elements.applicationBulkAction.value = ""; changeApplicationQuery(); });
+elements.applicationPrev.addEventListener("click", () => { state.applicationOffset = Math.max(0, state.applicationOffset - 200); state.selectedApplications.clear(); refreshApplications(); });
+elements.applicationNext.addEventListener("click", () => { state.applicationOffset += 200; state.selectedApplications.clear(); refreshApplications(); });
+elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; renderConversations(state.summary?.conversations || []); });
+elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; renderConversations(state.summary?.conversations || []); });
+elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.summary?.conversations || []); });
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);

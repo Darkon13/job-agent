@@ -175,7 +175,16 @@ func (repository *Repository) ListCampaignApplicationStates(ctx context.Context,
 		}
 		application, exists := repository.applicationsByID(item.ApplicationID)
 		if !exists {
-			return nil, errors.New("campaign application target not found")
+			for _, tombstone := range repository.applicationTombstones {
+				if tombstone.ApplicationID == item.ApplicationID {
+					application = core.Application{ID: tombstone.ApplicationID, Key: tombstone.Key, Status: tombstone.Status}
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				return nil, errors.New("campaign application target not found")
+			}
 		}
 		states = append(states, core.CampaignApplicationState{Link: item, Application: application})
 	}

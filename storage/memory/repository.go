@@ -4,29 +4,33 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
 )
 
 var (
-	_ storage.VacancyRepository                 = (*Repository)(nil)
-	_ storage.SearchRunRepository               = (*Repository)(nil)
-	_ storage.ApplicationCampaignRepository     = (*Repository)(nil)
-	_ storage.ApplicationRepository             = (*Repository)(nil)
-	_ storage.ApplicationReadRepository         = (*Repository)(nil)
-	_ storage.ApplicationBudgetRepository       = (*Repository)(nil)
-	_ storage.ApplicationPaceRepository         = (*Repository)(nil)
-	_ storage.ApplicationTailoringRepository    = (*Repository)(nil)
-	_ storage.TestCatalogRepository             = (*Repository)(nil)
-	_ storage.ReviewRepository                  = (*Repository)(nil)
-	_ storage.ConversationRepository            = (*Repository)(nil)
-	_ storage.ProfileStateProposalRepository    = (*Repository)(nil)
-	_ storage.ProfileActivityRepository         = (*Repository)(nil)
-	_ storage.ProfileActivitySnapshotRepository = (*Repository)(nil)
+	_ storage.VacancyRepository                  = (*Repository)(nil)
+	_ storage.SearchRunRepository                = (*Repository)(nil)
+	_ storage.ApplicationCampaignRepository      = (*Repository)(nil)
+	_ storage.ApplicationRepository              = (*Repository)(nil)
+	_ storage.ApplicationReadRepository          = (*Repository)(nil)
+	_ storage.ApplicationRemovalRepository       = (*Repository)(nil)
+	_ storage.ApplicationPlatformStateRepository = (*Repository)(nil)
+	_ storage.ApplicationBudgetRepository        = (*Repository)(nil)
+	_ storage.ApplicationPaceRepository          = (*Repository)(nil)
+	_ storage.ApplicationTailoringRepository     = (*Repository)(nil)
+	_ storage.TestCatalogRepository              = (*Repository)(nil)
+	_ storage.ReviewRepository                   = (*Repository)(nil)
+	_ storage.ConversationRepository             = (*Repository)(nil)
+	_ storage.ProfileStateProposalRepository     = (*Repository)(nil)
+	_ storage.ProfileActivityRepository          = (*Repository)(nil)
+	_ storage.ProfileActivitySnapshotRepository  = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -49,6 +53,8 @@ type Repository struct {
 	campaignApplications  map[campaignApplicationKey]core.CampaignApplication
 	discoveries           map[discoveryKey]core.VacancyDiscovery
 	applications          map[core.ApplicationKey]core.Application
+	applicationTombstones map[core.ApplicationKey]core.ApplicationTombstone
+	applicationStates     map[core.ApplicationID]core.ApplicationPlatformState
 	applicationBudgets    map[core.ApplicationID]core.ApplicationBudgetReservation
 	applicationPacing     map[core.ApplicationID]core.ApplicationPaceReservation
 	applicationTailorings map[core.ApplicationTailoringID]core.ApplicationTailoring
@@ -77,6 +83,8 @@ func NewRepository() *Repository {
 		campaignApplications:  make(map[campaignApplicationKey]core.CampaignApplication),
 		discoveries:           make(map[discoveryKey]core.VacancyDiscovery),
 		applications:          make(map[core.ApplicationKey]core.Application),
+		applicationTombstones: make(map[core.ApplicationKey]core.ApplicationTombstone),
+		applicationStates:     make(map[core.ApplicationID]core.ApplicationPlatformState),
 		applicationBudgets:    make(map[core.ApplicationID]core.ApplicationBudgetReservation),
 		applicationPacing:     make(map[core.ApplicationID]core.ApplicationPaceReservation),
 		applicationTailorings: make(map[core.ApplicationTailoringID]core.ApplicationTailoring),
@@ -219,11 +227,84 @@ func (repository *Repository) CreateApplication(ctx context.Context, candidate c
 	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if _, removed := repository.applicationTombstones[candidate.Key]; removed {
+		return core.Application{}, false, storage.ErrApplicationRemoved
+	}
 	if stored, exists := repository.applications[candidate.Key]; exists {
 		return stored, false, nil
 	}
 	repository.applications[candidate.Key] = candidate
 	return candidate, true, nil
+}
+
+func (repository *Repository) ApplicationTombstone(ctx context.Context, id core.ApplicationID) (core.ApplicationTombstone, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	for _, tombstone := range repository.applicationTombstones {
+		if tombstone.ApplicationID == id {
+			return tombstone, true, nil
+		}
+	}
+	return core.ApplicationTombstone{}, false, nil
+}
+
+func (repository *Repository) RemoveApplication(ctx context.Context, id core.ApplicationID, request core.ApplicationRemoval, removedAt time.Time) (core.ApplicationTombstone, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	if id == "" || removedAt.IsZero() {
+		return core.ApplicationTombstone{}, false, errors.New("application removal requires id and time")
+	}
+	if err := request.Reason.Validate(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	application, exists := repository.applicationsByID(id)
+	if !exists {
+		for _, tombstone := range repository.applicationTombstones {
+			if tombstone.ApplicationID == id {
+				return tombstone, false, nil
+			}
+		}
+		return core.ApplicationTombstone{}, false, errors.New("application not found")
+	}
+	switch application.Status {
+	case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval, core.ApplicationSubmitted,
+		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed:
+	default:
+		return core.ApplicationTombstone{}, false, fmt.Errorf("application %s is still active in status %s", id, application.Status)
+	}
+	for _, item := range repository.campaignApplications {
+		if item.ApplicationID != id {
+			continue
+		}
+		if repository.applicationCampaigns[item.CampaignID].Status == core.ApplicationCampaignRunning {
+			return core.ApplicationTombstone{}, false, errors.New("application belongs to a running campaign")
+		}
+	}
+	if !request.Eligible(application, repository.applicationStates[id], removedAt) {
+		return core.ApplicationTombstone{}, false, nil
+	}
+	if tailoringID, exists := repository.tailoringApplications[id]; exists {
+		tailoring := repository.applicationTailorings[tailoringID]
+		if tailoring.Status != core.ApplicationTailoringRestored {
+			return core.ApplicationTombstone{}, false, errors.New("application has an active resume tailoring saga")
+		}
+		delete(repository.applicationTailorings, tailoringID)
+		delete(repository.tailoringApplications, id)
+	}
+	delete(repository.applicationStates, id)
+	delete(repository.applications, application.Key)
+	tombstone := core.ApplicationTombstone{ApplicationID: id, Key: application.Key, Reason: request.Reason, RemovedAt: removedAt.UTC(), Status: application.Status}
+	if err := tombstone.Validate(); err != nil {
+		return core.ApplicationTombstone{}, false, err
+	}
+	repository.applicationTombstones[application.Key] = tombstone
+	return tombstone, true, nil
 }
 
 func (repository *Repository) Application(ctx context.Context, key core.ApplicationKey) (core.Application, error) {
@@ -309,6 +390,66 @@ func (repository *Repository) ListApplications(ctx context.Context, filter stora
 	return result, nil
 }
 
+func (repository *Repository) SaveApplicationPlatformState(ctx context.Context, candidate core.ApplicationPlatformState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, exists := repository.applicationsByID(candidate.ApplicationID); !exists {
+		return errors.New("application not found")
+	}
+	if existing, exists := repository.applicationStates[candidate.ApplicationID]; exists && existing.ObservedAt.After(candidate.ObservedAt) {
+		return nil
+	}
+	repository.applicationStates[candidate.ApplicationID] = cloneApplicationPlatformState(candidate)
+	return nil
+}
+
+func (repository *Repository) ApplicationPlatformState(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationPlatformState, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ApplicationPlatformState{}, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	state, exists := repository.applicationStates[applicationID]
+	if !exists {
+		return core.ApplicationPlatformState{}, errors.New("application platform state not found")
+	}
+	return cloneApplicationPlatformState(state), nil
+}
+
+func (repository *Repository) ListApplicationsForRetention(ctx context.Context, profileID core.ProfileID) ([]core.Application, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if profileID == "" {
+		return nil, errors.New("application retention requires profile")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.Application, 0)
+	for _, application := range repository.applications {
+		if application.Key.ProfileID == profileID && application.Status == core.ApplicationSubmitted {
+			result = append(result, application)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i].SubmittedAt, result[j].SubmittedAt
+		if (left == nil) != (right == nil) {
+			return left == nil
+		}
+		if left == nil || left.Equal(*right) {
+			return result[i].ID < result[j].ID
+		}
+		return left.Before(*right)
+	})
+	return result, nil
+}
+
 func (repository *Repository) Applications() []core.Application {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
@@ -353,4 +494,16 @@ func cloneSearchRun(run core.SearchRun) core.SearchRun {
 	run.TargetProfiles = append([]core.ProfileID(nil), run.TargetProfiles...)
 	run.Query = append([]byte(nil), run.Query...)
 	return run
+}
+
+func cloneApplicationPlatformState(state core.ApplicationPlatformState) core.ApplicationPlatformState {
+	if state.ViewedByOpponent != nil {
+		value := *state.ViewedByOpponent
+		state.ViewedByOpponent = &value
+	}
+	if state.PlatformUpdatedAt != nil {
+		value := *state.PlatformUpdatedAt
+		state.PlatformUpdatedAt = &value
+	}
+	return state
 }

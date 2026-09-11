@@ -93,6 +93,7 @@ const (
 	JobActionProfileActivityObserve     = "profile.activity.observe"
 	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
+	JobActionApplicationRetention       = "application.retention"
 	JobConcurrencyForbid                = "forbid"
 	ApplicationModeDryRun               = "dry_run"
 	ApplicationModeApproval             = "approval"
@@ -143,6 +144,22 @@ type JobAction struct {
 	TargetSuccessful int                                  `json:"target_successful,omitempty"`
 	MaxInFlight      int                                  `json:"max_in_flight,omitempty"`
 	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
+	Retention        *ApplicationRetentionConfig          `json:"retention,omitempty"`
+}
+
+type ApplicationRetentionConfig struct {
+	StaleAfter     core.Duration `json:"stale_after"`
+	RemoveRejected *bool         `json:"remove_rejected,omitempty"`
+}
+
+func (configured ApplicationRetentionConfig) Payload(profileID core.ProfileID) core.ApplicationRetentionPayload {
+	removeRejected := true
+	if configured.RemoveRejected != nil {
+		removeRejected = *configured.RemoveRejected
+	}
+	return core.ApplicationRetentionPayload{
+		ProfileID: profileID, StaleAfter: configured.StaleAfter, RemoveRejected: removeRejected,
+	}
 }
 
 type ConversationFollowUpSelectionConfig struct {
@@ -1072,6 +1089,16 @@ func (c Config) Validate() error {
 			}
 			if err := job.Action.FollowUp.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
 				return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
+			}
+		case JobActionApplicationRetention:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			if job.Action.Retention == nil {
+				return fmt.Errorf("job %q requires application retention settings", job.Tag)
+			}
+			if err := job.Action.Retention.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
+				return fmt.Errorf("job %q retention: %w", job.Tag, err)
 			}
 		case JobActionApplicationCampaign:
 			if err := validateApplicationCampaignAction(job, profiles, searches); err != nil {

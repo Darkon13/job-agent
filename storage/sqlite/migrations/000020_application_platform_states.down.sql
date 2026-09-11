@@ -1,0 +1,2 @@
+DROP INDEX application_platform_states_retention_idx;
+DROP TABLE application_platform_states;

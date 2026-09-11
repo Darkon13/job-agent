@@ -54,6 +54,47 @@ type ApplicationSubmitPayload struct {
 	Key           ApplicationKey `json:"key"`
 }
 
+type ApplicationRemovePayload struct {
+	ApplicationID ApplicationID            `json:"application_id"`
+	Reason        ApplicationRemovalReason `json:"reason"`
+	StaleAfter    Duration                 `json:"stale_after,omitempty"`
+}
+
+func (payload ApplicationRemovePayload) Validate() error {
+	if payload.ApplicationID == "" {
+		return errors.New("application remove payload requires application id")
+	}
+	if payload.Reason == ApplicationRemovalRetentionStale && payload.StaleAfter.Value() <= 0 {
+		return errors.New("stale application removal requires positive stale_after")
+	}
+	return payload.Reason.Validate()
+}
+
+func ApplicationRemoveIdempotencyKey(applicationID ApplicationID, requestKey string) (string, error) {
+	requestKey = strings.TrimSpace(requestKey)
+	if applicationID == "" || requestKey == "" {
+		return "", errors.New("application remove idempotency requires application and request key")
+	}
+	digest := sha256.Sum256([]byte(string(applicationID) + "\x00" + requestKey))
+	return "application.remove:" + hex.EncodeToString(digest[:]), nil
+}
+
+type ApplicationRetentionPayload struct {
+	ProfileID      ProfileID `json:"profile_id"`
+	StaleAfter     Duration  `json:"stale_after"`
+	RemoveRejected bool      `json:"remove_rejected"`
+}
+
+func (payload ApplicationRetentionPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("application retention requires profile")
+	}
+	if payload.StaleAfter.Value() <= 0 {
+		return errors.New("application retention requires positive stale_after")
+	}
+	return nil
+}
+
 type ResumePublishPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`

@@ -2,7 +2,7 @@
 
 Версия продукта хранится в `buildinfo/VERSION` и следует SemVer. Пока внешние
 контракты развиваются, Job Agent выпускается как `0.x.y`; текущая ветка —
-`0.2.0-dev`. Префикс `v` используется только в Git tag (`v0.2.0`), а в JSON и
+`0.3.0-dev`. Префикс `v` используется только в Git tag (`v0.3.0`), а в JSON и
 OCI label записывается чистая SemVer-строка (`0.1.0`). API имеет независимую
 версию контракта `v1`, уже отражённую в путях `/api/v1/...`.
 
@@ -24,15 +24,15 @@ curl http://127.0.0.1:8081/dashboard-healthz
 
 Первый release выполняется из чистого commit:
 
-1. заменить `0.2.0-dev` в `buildinfo/VERSION` на `0.2.0` и синхронно передать
-   `JOB_AGENT_VERSION=0.2.0` container build;
+1. заменить `0.3.0-dev` в `buildinfo/VERSION` на `0.3.0` и синхронно передать
+   `JOB_AGENT_VERSION=0.3.0` container build;
 2. выполнить `make release-check` и smoke основных read/write policy без
    реальных нежелательных действий; отдельно запустить `job-agent-check` на
    deployment config: `degraded` требует разбора failed-задач, а `blocked`
    запрещает выпуск;
 3. собрать image с commit SHA и RFC3339 build time, проверить версии трёх
    бинарей и endpoints;
-4. создать annotated tag `v0.2.0`; публикация tag/image выполняется отдельно и
+4. создать annotated tag `v0.3.0`; публикация tag/image выполняется отдельно и
    только явно.
 
 Перед `v1.0.0` должны стабилизироваться config schema, API v1, миграции с

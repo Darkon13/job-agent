@@ -12,6 +12,7 @@ var (
 	ErrRevisionConflict             = errors.New("repository revision conflict")
 	ErrProfileMutationLocked        = errors.New("profile already has an active mutation workflow")
 	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
+	ErrApplicationRemoved           = errors.New("application was removed from the working set")
 )
 
 // RuntimeStats is an aggregate view intended for health checks and operator
@@ -138,6 +139,17 @@ type ApplicationRepository interface {
 	CreateApplication(ctx context.Context, candidate core.Application) (stored core.Application, created bool, err error)
 	Application(ctx context.Context, key core.ApplicationKey) (core.Application, error)
 	SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error
+}
+
+type ApplicationRemovalRepository interface {
+	ApplicationTombstone(ctx context.Context, id core.ApplicationID) (core.ApplicationTombstone, bool, error)
+	RemoveApplication(ctx context.Context, id core.ApplicationID, request core.ApplicationRemoval, removedAt time.Time) (tombstone core.ApplicationTombstone, removed bool, err error)
+}
+
+type ApplicationPlatformStateRepository interface {
+	SaveApplicationPlatformState(ctx context.Context, state core.ApplicationPlatformState) error
+	ApplicationPlatformState(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationPlatformState, error)
+	ListApplicationsForRetention(ctx context.Context, profileID core.ProfileID) ([]core.Application, error)
 }
 
 type ApplicationBudgetRepository interface {

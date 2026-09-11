@@ -66,6 +66,16 @@ func (repository *runtimeRepository) ListApplications(_ context.Context, filter 
 	return items, repository.err
 }
 
+func (repository *runtimeRepository) QueryApplications(_ context.Context, query storage.ApplicationQuery) (storage.ApplicationPage, error) {
+	entries := make([]storage.ApplicationListEntry, 0)
+	for _, application := range repository.applicationObjects {
+		vacancy := repository.vacancies[application.Key.Vacancy]
+		entries = append(entries, storage.ApplicationListEntry{ID: application.ID, ProfileID: application.Key.ProfileID,
+			Status: application.Status, DecisionCode: application.DecisionCode, Title: vacancy.Title, Employer: vacancy.Employer, UpdatedAt: application.UpdatedAt})
+	}
+	return storage.SelectApplicationPage(entries, query), repository.err
+}
+
 func (repository *runtimeRepository) Vacancy(_ context.Context, key core.VacancyKey) (core.Vacancy, error) {
 	vacancy, ok := repository.vacancies[key]
 	if !ok {

@@ -257,6 +257,9 @@ func (handler *ApplicationCampaignHandler) planApplication(ctx context.Context, 
 		return err
 	}
 	application, _, err := handler.apps.CreateApplication(ctx, candidate)
+	if errors.Is(err, storage.ErrApplicationRemoved) {
+		return nil
+	}
 	if err != nil {
 		return campaignError("create campaign application", err)
 	}
