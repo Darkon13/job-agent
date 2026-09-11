@@ -698,6 +698,23 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
+	if err != nil {
+		log.Fatalf("generate runtime instance id: %v", err)
+	}
+	acquired, err := store.AcquireRuntimeInstance(ctx, instanceID, time.Now().UTC(), runtimeInstanceLeaseTTL)
+	if err != nil {
+		log.Fatalf("acquire runtime instance lease: %v", err)
+	}
+	if !acquired {
+		log.Fatalf("another job-agent instance already holds the runtime lease; stop it before starting a second process")
+	}
+	defer func() {
+		if err := store.ReleaseRuntimeInstance(context.Background(), instanceID); err != nil {
+			log.Printf("release runtime instance lease: %v", err)
+		}
+	}()
+	go renewRuntimeInstance(ctx, store, instanceID, runtimeInstanceLeaseTTL)
 	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))
 	if apiToken != "" {
 		handler = httpapi.BearerAuth(apiToken, handler)
@@ -827,6 +844,32 @@ func parseMainOptions(arguments []string) (mainOptions, error) {
 		return mainOptions{}, errors.New("exactly one config path is required")
 	}
 	return mainOptions{configPath: flags.Arg(0), migrateUp: *migrateUp}, nil
+}
+
+// runtimeInstanceLeaseTTL bounds how long a crashed process can block the
+// database. The single-replica guard refuses a second live instance; scaling
+// beyond one replica needs shared coordination such as PostgreSQL or Redis.
+const runtimeInstanceLeaseTTL = 90 * time.Second
+
+func renewRuntimeInstance(ctx context.Context, store *storesqlite.Store, owner string, ttl time.Duration) {
+	ticker := time.NewTicker(ttl / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewed, err := store.RenewRuntimeInstance(ctx, owner, time.Now().UTC())
+			if err != nil {
+				log.Printf("renew runtime instance lease: %v", err)
+				continue
+			}
+			if !renewed {
+				log.Printf("runtime instance lease is no longer owned by this process")
+				return
+			}
+		}
+	}
 }
 
 // resolveAPIToken reads the configured bearer token environment variable. An

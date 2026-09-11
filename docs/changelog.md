@@ -62,6 +62,9 @@
 - Bearer-токен API: `server.api_token_env` включает проверку заголовка
   `Authorization` (health-пробы открыты), не-loopback bind разрешён только с
   токеном; dashboard проксирует запросы со своим `JOB_AGENT_API_TOKEN`.
+- Single-replica guard (миграция 26): startup берёт exclusive runtime lease в
+  SQLite с renew и takeover после падения; второй живой инстанс завершается
+  с понятной ошибкой.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

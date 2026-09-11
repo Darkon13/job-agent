@@ -110,7 +110,9 @@
 - [x] Bearer-токен для API (`server.api_token_env`) и dashboard
       (`JOB_AGENT_API_TOKEN`, внедряется proxy server-side); health-пробы
       остаются открытыми, loopback-контракт сохранён без токена.
-- [ ] Shared mutation lease в SQLite либо явный single-replica guard.
+- [x] Явный single-replica guard: exclusive runtime lease в SQLite (TTL 90s,
+      renew, takeover после падения); второй живой инстанс останавливается.
+      Shared mutation lease для нескольких реплик — вне v1.
 - [ ] Config builder: include/glob и точные ошибки с путём к файлу; заморозка
       схемы конфига.
 - [ ] Метрики, структурные логи, request/correlation ID.
