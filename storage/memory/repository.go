@@ -68,6 +68,8 @@ type Repository struct {
 	selections            map[core.ReviewSessionID][]core.ReviewSelection
 	testAttempts          map[testAttemptKey]core.TestAttempt
 	answerRevisions       map[string][]core.AnswerBlockRevision
+	qualificationAttempts map[qualificationKey][]core.QualificationAttempt
+	qualificationBest     map[qualificationKey]core.QualificationResult
 	conversations         map[core.ConversationID]core.Conversation
 	conversationExternal  map[conversationExternalKey]core.ConversationID
 	messages              map[core.ConversationID]map[core.MessageID]core.ConversationMessage
@@ -101,6 +103,8 @@ func NewRepository() *Repository {
 		selections:            make(map[core.ReviewSessionID][]core.ReviewSelection),
 		testAttempts:          make(map[testAttemptKey]core.TestAttempt),
 		answerRevisions:       make(map[string][]core.AnswerBlockRevision),
+		qualificationAttempts: make(map[qualificationKey][]core.QualificationAttempt),
+		qualificationBest:     make(map[qualificationKey]core.QualificationResult),
 		conversations:         make(map[core.ConversationID]core.Conversation),
 		conversationExternal:  make(map[conversationExternalKey]core.ConversationID),
 		messages:              make(map[core.ConversationID]map[core.MessageID]core.ConversationMessage),

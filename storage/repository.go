@@ -226,6 +226,14 @@ type AnswerBlockRevisionRepository interface {
 	LatestAnswerBlockRevision(ctx context.Context, tag string) (core.AnswerBlockRevision, bool, error)
 }
 
+// QualificationRepository stores every completed skill verification attempt
+// and the monotonic best result per platform, profile, family and level.
+type QualificationRepository interface {
+	SaveQualificationAttempt(ctx context.Context, attempt core.QualificationAttempt, recordedAt time.Time) (core.QualificationResult, bool, error)
+	QualificationAttempts(ctx context.Context, platform core.Platform, profileID core.ProfileID, familyID, levelID string) ([]core.QualificationAttempt, error)
+	BestQualificationResult(ctx context.Context, platform core.Platform, profileID core.ProfileID, familyID, levelID string) (core.QualificationResult, bool, error)
+}
+
 type ConversationFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID

@@ -70,7 +70,8 @@
 - [ ] Skill verification easy/medium/hard: sync каталога, прогон с capture
       вариантов ответа, выбор правильных (known/model/human review), запись
       reusable answer block per family/level и автоматическое прохождение
-      последующих попыток через job-agent.
+      последующих попыток через job-agent. Attempt history и монотонный best
+      уже хранятся в SQLite (миграция 27); каталог и live-прогон ещё нет.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через

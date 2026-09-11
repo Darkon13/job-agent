@@ -81,6 +81,9 @@
 - Resume aliases: `resume_aliases` резолвятся в `profile.resume` и job actions
   при загрузке конфига; `GET /api/v1/profiles/{profile}/resumes` отдаёт
   каталог targets (primary + aliases).
+- Skill verification: attempt history и монотонный best по
+  (platform, profile, family, level) в SQLite (миграция 27), включая
+  unverified/failed-политику `PreferQualificationResult`.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 
