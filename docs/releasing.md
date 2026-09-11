@@ -39,3 +39,16 @@ curl http://127.0.0.1:8081/dashboard-healthz
 проверенным upgrade/rollback, platform error semantics, idempotency/reconcile,
 секреты и backup/restore. Наличие URL `/api/v1` само по себе не означает
 готовность продукта `v1.0.0`.
+
+Критерии `v1.0.0` (детальный маршрут — `docs/roadmap-v1.md`):
+
+1. интерактивный browser login с чистого аккаунта и сохранением storage state;
+2. живое прохождение vacancy test с записью evidence и повтором по сохранённым
+   ответам;
+3. создание и update резюме как desired state с publish и read-back;
+4. замороженная схема конфига с include/glob и точными ошибками;
+5. API v1 с Bearer-токеном либо явно зафиксированный single-user loopback
+   контракт;
+6. проверенные upgrade/rollback миграций, backup/restore и destructive guard;
+7. зелёные `make verify` и `go test -race ./...`; LICENSE и quickstart;
+8. `job-agent-check` без `blocked`, выпуск из чистого commit по процессу выше.

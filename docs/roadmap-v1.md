@@ -1,0 +1,98 @@
+# Roadmap до v1.0.0
+
+Статус: active. Решения о границе релиза зафиксированы 2026-09-12.
+
+Цель v1.0.0 — личный, но надёжный инструмент для ежедневной работы с HH:
+интерактивный вход, поиск, кампании откликов, сопроводительные, живое
+прохождение тестов, управление резюме, чаты и локальная очистка — в одном
+долгоживущем сервисе с dashboard. Публичный multi-user продукт, Telegram,
+календарь и MCP сознательно вынесены за v1.0.0.
+
+## Принятые решения
+
+1. **Граница релиза:** личный v1.0 (один владелец, SQLite, один backend,
+   loopback/WG-доступ). Публичный продукт и PostgreSQL — после v1.
+2. **Browser worker:** отдельный TypeScript-сервис на официальном Playwright с
+   узким HTTP JSON RPC; один Chromium, persistent context на профиль, bounded
+   page pool, per-profile mutation lock. Go остаётся владельцем бизнес-логики.
+3. **Порядок работ:** auth → live tests → resume lifecycle → hardening.
+4. **Интеграции:** Telegram, календарь, MCP и полноценный web UI — после v1.
+5. **API auth:** минимальный Bearer-токен из secret volume для не-loopback
+   эксплуатации.
+6. **Идентичность:** module path `github.com/Darkon13/job-agent`, имя проекта и
+   SQLite + DB-backed queue сохраняются.
+
+## M0. Контракт релиза
+
+- [x] Зафиксировать решения и границу v1.0.0 (этот документ).
+- [x] Обновить критерии готовности в `docs/releasing.md`.
+- [ ] Починить устаревшие факты в `docs/project-status.md` (схема 21, publish).
+- [ ] Зафиксировать открытые архитектурные решения: RPC формат (HTTP JSON),
+      storage, queue, config includes (см. M5).
+
+## M1. Browser worker и RPC
+
+- [ ] `docs/browser-rpc.md`: операции, DTO, ошибки, таймауты, security,
+      per-profile context, bounded page pool, VNC fallback.
+- [ ] Go-пакет `browser/`: типизированный клиент, per-profile lock, маппинг
+      ошибок в core-категории, retry/восстановление.
+- [ ] `browser/browsertest`: in-memory fake для контрактных тестов.
+- [ ] TS-сервис `browser-worker/`: Playwright, один Chromium, persistent
+      contexts, health/readiness, структурные логи, Bearer-токен.
+- [ ] Compose-сервис `browser-worker` + volume для contexts и storage state.
+- [ ] Операции v1: `health`, `ensure`, `storage_state`, `goto`, `screenshot`,
+      `click`, `fill`, `press`, `wait`, `content`, `cookies`, `close`.
+- [ ] DoD: контрактные тесты Go↔fake, unit-тесты worker, VNC E2E smoke.
+
+## M2. Auth control plane
+
+- [ ] HH login driver через browser RPC: identifier → OTP/password/captcha,
+      masked destination, лимит попыток, deadline.
+- [ ] Сохранение storage state после входа, опционально OAuth exchange при
+      наличии client credentials.
+- [ ] CLI `job-agent auth login|status|import|logout`, `--presenter`,
+      `--credential-output`, разделение stdout/stderr/TTY.
+- [ ] SSE переходов сессии и dashboard auth wizard.
+- [ ] Refresh/revoke, `auth_required`, restart recovery.
+- [ ] DoD: 9 критериев из `docs/next-auth-control-plane.md`, VNC E2E login.
+
+## M3. Live vacancy tests и опросники
+
+- [ ] Adapter qualification service через browser RPC: sync каталога, capture,
+      fingerprint, submit, read-back результата.
+- [ ] Workers `test.capture`, `questionnaire.answer`, `test.complete`,
+      `review.answer`.
+- [ ] Цепочка ответа: known-answer → model → human; ревизии answer blocks;
+      contextual-вопросы только в manual.
+- [ ] Опросники из чатов через тот же registry.
+- [ ] Review UI в dashboard; CLI review.
+- [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence
+      записан.
+
+## M4. Жизненный цикл резюме
+
+- [ ] `resume.create`/`resume.update` как desired state с deterministic/model
+      processor, semantic diff и approval policy.
+- [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
+- [ ] Алиасы и каталог resume targets.
+- [ ] Dashboard-редактор резюме и история ревизий.
+- [ ] DoD: создание резюме из bootstrap-файла и безопасный update с publish.
+
+## M5. Hardening для v1.0.0
+
+- [ ] Bearer-токен для API и dashboard; обновить deployment-документацию.
+- [ ] Shared mutation lease в SQLite либо явный single-replica guard.
+- [ ] Config builder: include/glob и точные ошибки с путём к файлу; заморозка
+      схемы конфига.
+- [ ] Метрики, структурные логи, request/correlation ID.
+- [ ] Backup/restore и проверка upgrade/rollback, включая destructive guard.
+- [ ] CI (`make verify`, `go test -race`), LICENSE, release checklist.
+- [ ] Quickstart для чистого аккаунта (browser login) и runbook'и
+      восстановления: `auth_required`, `recovery_required`, failed apply, quota.
+- [ ] DoD: чистый install с нуля на пустом `data/`, `make release-check`,
+      выпуск `v1.0.0` по `docs/releasing.md`.
+
+## M6. После v1.0.0 (не блокирует релиз)
+
+Telegram-уведомления и роль рекрутера, календарь, MCP endpoint, полноценный
+web UI, PostgreSQL/Redis, внешние Go-модули адаптеров.
