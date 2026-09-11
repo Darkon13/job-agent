@@ -524,8 +524,11 @@ contract](https://github.com/hhru/api/blob/master/docs/errors.md#перепис�
 описывает сам `negotiations/limit_exceeded`, но не обещает время reset, поэтому
 граница задаётся `profile.applications.timezone`, а не зашивается в adapter.
 
-Целевой workflow временной подстройки резюме перед одним откликом и точного
-restore описан в [docs/application-resume-tailoring.md](docs/application-resume-tailoring.md).
+Временная подстройка резюме перед одним откликом и точный restore реализованы
+как durable saga с per-profile lease; политика включается
+`applications.tailoring.skills`, опционально с model processor и fallback на
+детерминированную политику. Условия и ограничения — в
+[docs/application-resume-tailoring.md](docs/application-resume-tailoring.md).
 Если `application.submit` уже отложена по `Retry-After`, campaign также ставит
 следующую проверку на её `available_at`, а не создаёт revision каждые несколько
 секунд до сброса квоты.
