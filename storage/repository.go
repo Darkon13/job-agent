@@ -234,6 +234,13 @@ type QualificationRepository interface {
 	BestQualificationResult(ctx context.Context, platform core.Platform, profileID core.ProfileID, familyID, levelID string) (core.QualificationResult, bool, error)
 }
 
+// QualificationCatalogRepository stores the skill verification catalog
+// observed for a profile.
+type QualificationCatalogRepository interface {
+	UpsertQualificationOfferings(ctx context.Context, platform core.Platform, profileID core.ProfileID, offerings []core.QualificationOffering) error
+	QualificationOfferings(ctx context.Context, platform core.Platform, profileID core.ProfileID) ([]core.QualificationOffering, error)
+}
+
 type ConversationFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID

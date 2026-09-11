@@ -263,6 +263,28 @@ func ReviewAnswerIdempotencyKey(sessionID ReviewSessionID, promptID ReviewPrompt
 	return "review.answer:" + hex.EncodeToString(digest[:]), nil
 }
 
+// SkillVerificationSyncPayload refreshes the skill verification catalog of one
+// profile. Discovery never starts an attempt.
+type SkillVerificationSyncPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+}
+
+func (payload SkillVerificationSyncPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("skill verification sync requires profile")
+	}
+	return nil
+}
+
+func SkillVerificationSyncIdempotencyKey(profileID ProfileID, requestKey string) (string, error) {
+	requestKey = strings.TrimSpace(requestKey)
+	if profileID == "" || requestKey == "" {
+		return "", errors.New("skill verification sync idempotency requires profile and request key")
+	}
+	digest := sha256.Sum256([]byte(string(profileID) + "\x00" + requestKey))
+	return "skill_verification.sync:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ResumeTouchPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`

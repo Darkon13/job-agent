@@ -84,6 +84,11 @@
 - Skill verification: attempt history и монотонный best по
   (platform, profile, family, level) в SQLite (миграция 27), включая
   unverified/failed-политику `PreferQualificationResult`.
+- Skill verification catalog: offerings в SQLite (миграция 28), порты
+  `QualificationCatalogReader`/`QualificationAttemptService`, worker
+  `skill_verification.sync` и API
+  `GET/POST /api/v1/profiles/{profile}/qualifications[/sync]`; discovery не
+  запускает попытку.
 - Терминальные рендеры auth-challenge: Kitty graphics, Sixel с web-палитрой,
   Unicode half-block preview и приватный PNG-файл как fallback.
 

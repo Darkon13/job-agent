@@ -174,6 +174,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("create resume API: %v", err)
 	}
+	qualificationWorkflow, err := workflow.NewQualificationWorkflow(store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
+	if err != nil {
+		log.Fatalf("create qualification workflow: %v", err)
+	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -220,6 +224,8 @@ func main() {
 	resumePublishers := taskworker.NewResumePublisherRegistry()
 	testCapturers := taskworker.NewVacancyTestCapturerRegistry()
 	testSubmitters := taskworker.NewVacancyTestSubmitterRegistry()
+	qualificationReaders := taskworker.NewQualificationCatalogRegistry()
+	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -315,6 +321,12 @@ func main() {
 			}
 		}
 		if apiReady {
+			if reader, ok := instance.(adapter.QualificationCatalogReader); ok {
+				if err := qualificationReaders.Register(profileID, reader); err != nil {
+					log.Fatalf("register qualification catalog for profile %q: %v", profile.Tag, err)
+				}
+				qualificationPlatforms[profileID] = core.Platform(instance.Name())
+			}
 			if transport, ok := instance.(adapter.ConversationTransport); ok && !browserConversationsReady {
 				if err := conversationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
@@ -589,6 +601,17 @@ func main() {
 		log.Fatalf("create test complete worker: %v", err)
 	}
 	workers = append(workers, testCompleteWorker)
+	if qualificationReaders.Count() > 0 {
+		qualificationSyncHandler, err := taskworker.NewQualificationSyncHandler(qualificationReaders, store)
+		if err != nil {
+			log.Fatalf("create qualification sync handler: %v", err)
+		}
+		qualificationSyncWorker, err := newTaskWorker(store, core.TaskSkillVerificationSync, qualificationSyncHandler.Handle)
+		if err != nil {
+			log.Fatalf("create qualification sync worker: %v", err)
+		}
+		workers = append(workers, qualificationSyncWorker)
+	}
 	reviewAnswerHandler, err := taskworker.NewReviewAnswerHandler(store, taskworker.SystemClock{})
 	if err != nil {
 		log.Fatalf("create review answer handler: %v", err)
@@ -727,7 +750,11 @@ func main() {
 		}
 	}()
 	go renewRuntimeInstance(ctx, store, instanceID, runtimeInstanceLeaseTTL)
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(reviewAPI.Handler(conversationAPI.Handler())))))))
+	qualificationAPI, err := httpapi.NewQualificationAPI(store, qualificationWorkflow, qualificationPlatforms)
+	if err != nil {
+		log.Fatalf("create qualification API: %v", err)
+	}
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))
 	if apiToken != "" {
 		handler = httpapi.BearerAuth(apiToken, handler)
 	}

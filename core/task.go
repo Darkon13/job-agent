@@ -35,6 +35,7 @@ const (
 	TaskProfileStateReconcile      TaskType = "profile_state.reconcile"
 	TaskProfileStateApply          TaskType = "profile_state.apply"
 	TaskSkillVerificationStart     TaskType = "skill_verification.start"
+	TaskSkillVerificationSync      TaskType = "skill_verification.sync"
 	TaskCalendarFindSlots          TaskType = "calendar.find_slots"
 	TaskCalendarCreateEvent        TaskType = "calendar.create_event"
 	TaskChallengeRespond           TaskType = "challenge.respond"
