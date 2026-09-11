@@ -36,7 +36,10 @@ type Config struct {
 	AnswerSets []string `json:"answer_sets,omitempty"`
 	// Include lists additional config files or globs. Included files contribute
 	// collections only; database and server stay in the main file.
-	Include              []string `json:"include,omitempty"`
+	Include []string `json:"include,omitempty"`
+	// SchemaVersion freezes the config schema. Version 1 is implied when the
+	// field is absent; unknown versions are rejected instead of guessed.
+	SchemaVersion        int `json:"schema_version,omitempty"`
 	resolvedAnswerBlocks []core.AnswerBlock
 }
 
@@ -59,6 +62,11 @@ type EmployerGroupRuleConfig struct {
 }
 
 const ModelProviderOpenAIResponses = "openai_responses"
+
+// CurrentConfigSchemaVersion is the frozen v1 config schema. Breaking changes
+// require a new version and an explicit migration path instead of silent
+// reinterpretation of existing files.
+const CurrentConfigSchemaVersion = 1
 
 type ModelProviderConfig struct {
 	Tag             string `json:"tag"`
@@ -533,10 +541,13 @@ func loadConfigFile(path string, visiting map[string]bool, depth int) (Config, e
 		if _, exists := raw["server"]; exists {
 			return Config{}, fmt.Errorf("config %s: server is only allowed in the main file", path)
 		}
+		if _, exists := raw["schema_version"]; exists {
+			return Config{}, fmt.Errorf("config %s: schema_version is only allowed in the main file", path)
+		}
 	}
 	directory := filepath.Dir(path)
 	normalizeConfigFileReferences(&file, directory)
-	result := mergeConfigCollections(Config{Database: file.Database, Server: file.Server}, file)
+	result := mergeConfigCollections(Config{Database: file.Database, Server: file.Server, SchemaVersion: file.SchemaVersion}, file)
 	visiting[path] = true
 	defer delete(visiting, path)
 	for _, reference := range file.Include {
@@ -950,6 +961,9 @@ func validateApplicationModelPolicy(label string, policy *ApplicationModelPolicy
 }
 
 func (c Config) Validate() error {
+	if c.SchemaVersion != 0 && c.SchemaVersion != CurrentConfigSchemaVersion {
+		return fmt.Errorf("config schema_version %d is not supported (current %d)", c.SchemaVersion, CurrentConfigSchemaVersion)
+	}
 	if c.Database.Driver != "sqlite" {
 		return fmt.Errorf("database driver must be %q", "sqlite")
 	}

@@ -112,3 +112,26 @@ func TestLoadRejectsScalarSectionsInIncludes(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestLoadValidatesConfigSchemaVersion(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.json")
+	writeConfigTestFile(t, configPath, `{
+		"schema_version":1,
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[]
+	}`)
+	if _, err := Load(configPath); err != nil {
+		t.Fatalf("schema version 1: %v", err)
+	}
+	writeConfigTestFile(t, configPath, `{
+		"schema_version":2,
+		"database":{"driver":"sqlite","path":"job-agent.db"},
+		"adapters":[{"tag":"hh-main","type":"hh"}],
+		"profiles":[]
+	}`)
+	if _, err := Load(configPath); err == nil || !strings.Contains(err.Error(), "schema_version") {
+		t.Fatalf("schema version 2 error = %v", err)
+	}
+}
