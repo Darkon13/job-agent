@@ -2,6 +2,12 @@
 
 ## 0.3.0-dev
 
+- Чатовые questionnaire HH: живьём подтверждён send-формат — text-кнопка
+  отправляется обычным `POST /chatik/api/send` с точным текстом кнопки, а
+  `send_event` остаётся для event-кнопок. Политика
+  `profiles[].conversations.answer_known` отвечает на prompt reviewed
+  conversation-блоком; задача идемпотентна по `(chat, prompt message, option)`,
+  неизвестный или устаревший вариант остаётся человеку.
 - Анкета вакансии HH подтверждена живьём: форма рендерится только при
   `startedWithQuestion=true` (иначе `vacancyTests` в состоянии отсутствует),
   live-страница использует `HH-Lux-InitialState`, а `required`/`multiple`/`open`

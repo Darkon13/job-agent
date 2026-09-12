@@ -291,6 +291,9 @@ func (profile Profile) ResolvedResumeFacts() (ApplicationResumeFacts, bool) {
 type ConversationPolicy struct {
 	AllowSend     bool `json:"allow_send,omitempty"`
 	AllowMarkRead bool `json:"allow_mark_read,omitempty"`
+	// AnswerKnown replies to a questionnaire prompt only when a reviewed
+	// conversation answer selects one of the offered text buttons.
+	AnswerKnown bool `json:"answer_known,omitempty"`
 }
 
 // AnswerPolicy configures how unknown questions are resolved after the
@@ -1173,6 +1176,9 @@ func (c Config) Validate() error {
 			if profile.Bootstrap.Publish {
 				return fmt.Errorf("profile %q bootstrap publish requires resume publication support", profile.Tag)
 			}
+		}
+		if profile.Conversations.AnswerKnown && !profile.Conversations.AllowSend {
+			return fmt.Errorf("profile %q conversations.answer_known requires allow_send", profile.Tag)
 		}
 		switch profile.Applications.ExecutionMode() {
 		case ApplicationModeDryRun, ApplicationModeApproval:

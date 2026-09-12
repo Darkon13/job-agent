@@ -253,6 +253,7 @@ func main() {
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
+	knownConversationAnswers := make(map[core.ProfileID]bool)
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels)
 		if err != nil {
@@ -262,6 +263,9 @@ func main() {
 			continue
 		}
 		profileID := core.ProfileID(profile.Tag)
+		if profile.Conversations.AnswerKnown {
+			knownConversationAnswers[profileID] = true
+		}
 		if profile.Answers != nil && profile.Answers.Model != nil {
 			model, err := answerModel(profile.Answers.Model, applicationModels)
 			if err != nil {
@@ -494,6 +498,14 @@ func main() {
 	)
 	if err != nil {
 		log.Fatalf("create conversation handlers: %v", err)
+	}
+	if answerRegistry != nil && len(knownConversationAnswers) > 0 {
+		conversationHandlers.ConfigureKnownAnswers(answerRegistry, func(profileID core.ProfileID) bool {
+			return knownConversationAnswers[profileID]
+		})
+		logf("known conversation answers are enabled for %d profile(s)", len(knownConversationAnswers))
+	} else if len(knownConversationAnswers) > 0 {
+		logf("WARNING: conversations.answer_known is set but no answer_sets are resolved; no automatic conversation answers will be sent")
 	}
 	profileMutationLane := taskworker.NewProfileMutationLane()
 	workers, err := conversationWorkers(store, conversationHandlers, profileMutationLane)

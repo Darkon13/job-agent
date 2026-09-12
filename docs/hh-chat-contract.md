@@ -119,15 +119,25 @@ Frontend bundles содержат отдельные endpoints:
 ключ внешнего workflow детерминированно преобразуется в UUID, поэтому retry не
 создаёт новый платформенный запрос с другим identity.
 
-Полная frontend-модель также оперирует `resources/uploadId`, optional edit/message ID и
-`suggestionUuid`. Для event path встречаются `messageId`, `event`, `buttonName`,
-`eventParams` и типы `chat_text_button`, `chat_event_button`,
-`chat_link_button`.
+Нажатие `text_buttons[i]` не вызывает отдельный endpoint: frontend передаёт
+текст кнопки в тот же `onMessageSend`, то есть кнопочный ответ отправляется
+обычным `POST /chatik/api/send` с `{chatId, idempotencyKey, text}`, где `text` —
+надпись кнопки. Это подтверждено живьём 2026-09-12 на активном bot-вопросе с
+`actions.text_buttons` («Да»/«Нет»): `hasMessagesWithTextButtons=true`,
+`writeMessageState.allowed=true`, `suggestions` при этом пуст. Отдельный
+`messageId` для text-кнопки в запросе не участвует; он нужен только analytics.
 
-В исследованных чатах активных suggestions не было: options были пусты и
-`hasMessagesWithTextButtons=false`. Контракт, однако, явно разделяет свободный
-текст и выбор готового варианта. Точный request body фиксируется при естественном
-появлении активной кнопки; нажимать её ради исследования нельзя.
+Кнопки с типом `send_event` используют `POST /chatik/api/send_event` с body
+`{chatId, messageId, event, eventParams}`: `event` берётся из поля кнопки, а
+`eventParams` — остальные её поля. Полная frontend-модель также оперирует
+`resources/uploadId`, optional edit/message ID и `suggestionUuid`. Для event path
+встречаются типы `chat_text_button`, `chat_event_button`, `chat_link_button`.
+
+Reviewed conversation-ответ резолвится по topic или fingerprint matcher:
+adapter отправляет точный текст выбранной text-кнопки как обычное сообщение
+(`conversations.answer_known`), а неизвестный, неоднозначный или устаревший
+вариант оставляет prompt человеку и никогда не отправляется произвольным
+текстом.
 
 Явный `POST /chatik/api/mark_read` принимает как минимум `chatId`, `messageId`
 и `hasUnreadDiscardMessage`. Transport выбирает последнее входящее видимое

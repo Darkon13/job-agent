@@ -88,12 +88,14 @@ func (StaticMessageResolver) Resolve(_ context.Context, _ core.Conversation, con
 }
 
 type ConversationHandlers struct {
-	repository storage.ConversationRepository
-	activity   storage.ProfileActivityRepository
-	workflow   *workflow.ConversationWorkflow
-	transports *ConversationTransportRegistry
-	resolver   MessageResolver
-	clock      Clock
+	repository  storage.ConversationRepository
+	activity    storage.ProfileActivityRepository
+	workflow    *workflow.ConversationWorkflow
+	transports  *ConversationTransportRegistry
+	resolver    MessageResolver
+	clock       Clock
+	answers     *core.AnswerBlockRegistry
+	answerKnown func(core.ProfileID) bool
 }
 
 func NewConversationHandlers(repository storage.ConversationRepository, activity storage.ProfileActivityRepository, conversationWorkflow *workflow.ConversationWorkflow, transports *ConversationTransportRegistry, resolver MessageResolver, clock Clock) (*ConversationHandlers, error) {
@@ -101,6 +103,17 @@ func NewConversationHandlers(repository storage.ConversationRepository, activity
 		return nil, errors.New("conversation handlers require all dependencies")
 	}
 	return &ConversationHandlers{repository: repository, activity: activity, workflow: conversationWorkflow, transports: transports, resolver: resolver, clock: clock}, nil
+}
+
+// ConfigureKnownAnswers enables reviewed text-button replies to conversation
+// questionnaires. Both the registry and the per-profile policy must be set;
+// otherwise sync never sends an automatic answer.
+func (handlers *ConversationHandlers) ConfigureKnownAnswers(registry *core.AnswerBlockRegistry, policy func(core.ProfileID) bool) {
+	if handlers == nil {
+		return
+	}
+	handlers.answers = registry
+	handlers.answerKnown = policy
 }
 
 func (handlers *ConversationHandlers) Send(ctx context.Context, task core.Task) error {
@@ -240,6 +253,24 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 		if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, result.ObservedAt); err != nil {
 			return err
 		}
+	}
+	return handlers.answerKnownQuestion(ctx, conversation, result.Messages)
+}
+
+// answerKnownQuestion enqueues one idempotent text reply when the earliest
+// unanswered questionnaire prompt has a reviewed conversation answer. The
+// actual send stays in the durable conversation.send task and its transport.
+func (handlers *ConversationHandlers) answerKnownQuestion(ctx context.Context, conversation core.Conversation, messages []core.ConversationMessage) error {
+	if handlers.answers == nil || handlers.answerKnown == nil || !handlers.answerKnown(conversation.ProfileID) {
+		return nil
+	}
+	decision, found := core.ResolveKnownConversationAnswer(conversation.Platform, messages, handlers.answers)
+	if !found {
+		return nil
+	}
+	requestKey := "questionnaire\x00" + decision.PromptExternalID + "\x00" + decision.Option.ID
+	if _, _, err := handlers.workflow.EnqueueMessage(ctx, conversation.ID, core.MessageContent{Text: decision.Option.Text}, decision.PromptMessageID, requestKey); err != nil {
+		return err
 	}
 	return nil
 }
