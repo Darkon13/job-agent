@@ -1251,9 +1251,6 @@ func (c Config) Validate() error {
 			if about.MaximumRunes < 1 {
 				return fmt.Errorf("profile %q application tailoring about requires a positive maximum_runes", profile.Tag)
 			}
-			if !hasResumeFacts {
-				return fmt.Errorf("profile %q application tailoring about requires resume facts", profile.Tag)
-			}
 			if facts, exists := profile.ResolvedResumeFacts(); exists && facts.ResumeID != profile.Resume {
 				return fmt.Errorf("profile %q application tailoring about resume facts must describe the profile resume", profile.Tag)
 			}

@@ -40,7 +40,10 @@ func resumeTailoringAboutFixture(t *testing.T) ResumeTailoringInput {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	state, err := json.Marshal(map[string]any{
 		"resumes": map[string]any{"resume-1": map[string]any{
-			"web": map[string]any{"keySkills": []string{"Go"}, "skills": []string{"Иван пишет на Go"}},
+			"web": map[string]any{"title": "Go developer", "keySkills": []string{"Go"}, "skills": []string{"Иван пишет на Go"}},
+			"web_profile": map[string]any{"experience": []any{
+				map[string]any{"company": "Example", "description": "Go и PostgreSQL, 3 года"},
+			}},
 		}},
 	})
 	if err != nil {
@@ -115,6 +118,36 @@ func TestModelResumeTailoringAboutAnonymizesAndSubstitutes(t *testing.T) {
 	}
 	if model.request.Facts["city"] != "Москва" || model.request.MaximumRunes != 200 {
 		t.Fatalf("model request=%#v", model.request)
+	}
+}
+
+func TestModelResumeTailoringAboutUsesResumeContextWithoutFacts(t *testing.T) {
+	input := resumeTailoringAboutFixture(t)
+	model := &fakeResumeTailoringAboutModel{response: ResumeTailoringAboutResponse{
+		About: "Пишу на Go и PostgreSQL, 3 года опыта.",
+	}}
+	processor, err := NewModelResumeTailoringAboutProcessor(ModelResumeTailoringAboutConfig{
+		Tag: "openai-test", PromptVersion: "v1", Instruction: "Highlight Go", MaximumRunes: 200,
+		Timeout: 5 * time.Second, Model: model,
+	})
+	if err != nil {
+		t.Fatalf("new about processor: %v", err)
+	}
+	plan, err := processor.Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := decodeTailoredAbout(t, plan); got != "Пишу на Go и PostgreSQL, 3 года опыта." {
+		t.Fatalf("about=%q", got)
+	}
+	if model.request.Facts != nil {
+		t.Fatalf("unexpected facts: %#v", model.request.Facts)
+	}
+	if model.request.ResumeContext["title"] != "Go developer" || model.request.ResumeContext["experience"] == nil {
+		t.Fatalf("resume context=%#v", model.request.ResumeContext)
+	}
+	if _, exists := model.request.ResumeContext["skills"]; exists {
+		t.Fatalf("about text must not be duplicated in the context: %#v", model.request.ResumeContext)
 	}
 }
 

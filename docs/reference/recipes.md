@@ -227,8 +227,8 @@ plan → apply → read-back и, если нужно, публикацию. Зн
         },
         "about": {                        // необязательно: переписать «О себе»
           "enabled": true,
-          "maximum_runes": 600,
-          "model": {                      // обязателен, нужен resume_facts_file
+          "maximum_runes": 600,           // контекст резюме берётся из аккаунта
+          "model": {                      // обязателен; resume_facts_file не нужен
             "provider": "openai",
             "prompt_version": "v1",
             "instruction": "Подчеркни опыт, важный для этой вакансии",
