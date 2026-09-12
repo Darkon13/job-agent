@@ -2,16 +2,21 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
+	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	"github.com/Darkon13/job-agent/workflow"
+	_ "modernc.org/sqlite"
 )
 
 type applicationAPIClock struct{ now time.Time }
@@ -176,4 +181,56 @@ func mustRemovalWorkflow(t *testing.T, repository *storagememory.Repository, que
 		t.Fatalf("new removal workflow: %v", err)
 	}
 	return removal
+}
+
+func TestApplicationListToleratesMissingVacancy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	vacancy := core.Vacancy{Platform: "hh", ExternalID: "orphan-1", Title: "Legacy vacancy", State: core.VacancyStateOpen, ObservedAt: now}
+	if _, err := store.UpsertVacancy(context.Background(), vacancy); err != nil {
+		t.Fatalf("store vacancy: %v", err)
+	}
+	application, err := core.NewApplication("application-orphan", core.ApplicationKey{
+		ProfileID: "secondary", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "orphan-1"},
+	}, now)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if _, _, err := store.CreateApplication(context.Background(), application); err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	// Legacy merges imported applications without their vacancy rows by
+	// bypassing foreign keys; reproduce that dangling reference.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("DELETE FROM vacancies WHERE external_id = 'orphan-1'"); err != nil {
+		t.Fatalf("drop vacancy: %v", err)
+	}
+	_ = raw.Close()
+	api, err := NewRuntimeAPI(store, nil)
+	if err != nil {
+		t.Fatalf("new runtime API: %v", err)
+	}
+	response := httptest.NewRecorder()
+	api.Handler(http.NotFoundHandler()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/applications?limit=10", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload applicationListResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].VacancyTitle != "" {
+		t.Fatalf("list response = %#v", payload)
+	}
 }

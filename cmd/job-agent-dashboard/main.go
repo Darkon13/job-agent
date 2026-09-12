@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -101,6 +102,16 @@ func newDashboardHandler(upstreamValue, apiToken string) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open embedded dashboard: %w", err)
 	}
+	indexHTML, err := fs.ReadFile(webRoot, "index.html")
+	if err != nil {
+		return nil, fmt.Errorf("read embedded dashboard index: %w", err)
+	}
+	build := buildinfo.Current()
+	assetVersion := strings.TrimSpace(build.Commit)
+	if assetVersion == "" {
+		assetVersion = strings.TrimSpace(build.Version)
+	}
+	index := strings.ReplaceAll(string(indexHTML), "{{.Version}}", assetVersion)
 	static := http.FileServer(http.FS(webRoot))
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiProxy)
@@ -115,6 +126,11 @@ func newDashboardHandler(upstreamValue, apiToken string) (http.Handler, error) {
 	})
 	mux.Handle("/", http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
+		if request.URL.Path == "/" || request.URL.Path == "/index.html" {
+			response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(response, index)
+			return
+		}
 		static.ServeHTTP(response, request)
 	}))
 	return securityHeaders(mux), nil
