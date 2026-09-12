@@ -213,7 +213,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 
 | `type` | Поля | Что делает |
 |---|---|---|
-| `application.campaign` | `profiles`, `routes`, `target_successful`, `max_in_flight` | запускает отклики по маршрутам до цели |
+| `application.campaign` | `profiles`, `routes`, `target_successful`, `max_in_flight` | рассылка откликов по маршрутам до цели; `max_in_flight` — сколько откликов одновременно «в работе» |
 | `application.retention` | `profile`, `retention: {stale_after, remove_rejected}` | локальная очистка старых откликов |
 | `resume.touch` | `profile` | поднимает резюме |
 | `resume.publish` | `profile`, `resume` | публикует резюме |
@@ -250,7 +250,7 @@ plan/apply. Подробности — в
 |---|---|---|
 | `target_applications` | `searches[]` | сколько вакансий собрать из поиска |
 | `target_successful` | `application.campaign` | цель по подтверждённым откликам |
-| `max_in_flight` | `application.campaign` | параллельные отклики |
+| `max_in_flight` | `application.campaign` | одновременно незавершённые отклики одной рассылки |
 | `daily_limit` | `profiles[].applications` | дневной потолок на профиль/платформу |
 | `submit_jitter` | `profiles[].applications` | пауза между отправками |
 
