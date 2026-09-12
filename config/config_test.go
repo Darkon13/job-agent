@@ -116,6 +116,45 @@ func TestApplicationTailoringRequiresSubmitResumeAndKnownModelProvider(t *testin
 	}
 }
 
+func TestApplicationTailoringAboutRequiresMatchingResumeFacts(t *testing.T) {
+	facts := ApplicationResumeFacts{
+		Tag: "primary-facts", ResumeID: "resume-2", Facts: map[string]any{"position": "Go developer"},
+	}
+	digest, err := applicationResumeFactsDigest(facts)
+	if err != nil {
+		t.Fatalf("resume facts digest: %v", err)
+	}
+	facts.Digest = digest
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Models:   []ModelProviderConfig{{Tag: "openai-main", Type: ModelProviderOpenAIResponses, Model: "gpt-test"}},
+		Profiles: []Profile{{
+			Tag: "primary", Adapter: "hh-main", Enabled: true, Resume: "resume-1",
+			resolvedResumeFacts: &facts,
+			Applications: ApplicationPolicy{
+				Mode: ApplicationModeSubmit, Timezone: "Europe/Moscow", DailyLimit: 7,
+				Tailoring: &ApplicationTailoringPolicy{About: &ApplicationTailoringAboutPolicy{
+					Enabled: true, MaximumRunes: 600,
+					Model: &ApplicationModelPolicy{Provider: "openai-main", PromptVersion: "v1", Instruction: "Rewrite about", Timeout: "30s"},
+				}},
+			},
+		}},
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected mismatched resume facts to fail")
+	}
+	config.Profiles[0].resolvedResumeFacts.ResumeID = "resume-1"
+	matchDigest, err := applicationResumeFactsDigest(*config.Profiles[0].resolvedResumeFacts)
+	if err != nil {
+		t.Fatalf("matching resume facts digest: %v", err)
+	}
+	config.Profiles[0].resolvedResumeFacts.Digest = matchDigest
+	if err := config.Validate(); err != nil {
+		t.Fatalf("matching resume facts: %v", err)
+	}
+}
+
 func TestApplicationPolicyRejectsAmbiguousMessageAndDuplicateTerms(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

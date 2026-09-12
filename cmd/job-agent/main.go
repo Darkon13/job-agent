@@ -1317,7 +1317,7 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 			return nil, nil, err
 		}
 		processors = append(processors, aboutProcessor)
-		allowedPaths = append(allowedPaths, applicationoperator.ResumeAboutPath(facts.ResumeID))
+		allowedPaths = append(allowedPaths, applicationoperator.ResumeAboutPath(profile.Resume))
 	}
 	switch len(processors) {
 	case 0:

@@ -1254,6 +1254,9 @@ func (c Config) Validate() error {
 			if !hasResumeFacts {
 				return fmt.Errorf("profile %q application tailoring about requires resume facts", profile.Tag)
 			}
+			if facts, exists := profile.ResolvedResumeFacts(); exists && facts.ResumeID != profile.Resume {
+				return fmt.Errorf("profile %q application tailoring about resume facts must describe the profile resume", profile.Tag)
+			}
 			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), about.Model, modelProviders); err != nil {
 				return err
 			}
