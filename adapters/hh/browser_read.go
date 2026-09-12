@@ -367,9 +367,14 @@ func classifyBrowserReadResponse(response *http.Response, operation string) erro
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		return nil
-	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
+	case response.StatusCode == http.StatusUnauthorized:
 		drain(response.Body)
 		return operationError(core.ErrorUnauthorized, operation, "HH browser session was rejected", nil)
+	case response.StatusCode == http.StatusForbidden:
+		// A 403 on one page while other reads still work means the resource is
+		// not accessible for this account, not that the session expired.
+		drain(response.Body)
+		return operationError(core.ErrorPermanentFailure, operation, "HH browser resource is not accessible for this account", nil)
 	case response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone:
 		drain(response.Body)
 		return operationError(core.ErrorPermanentFailure, operation, "HH browser resource is unavailable", nil)

@@ -142,11 +142,21 @@ func TestBrowserReadDoesNotTreatVacancyFAQAsClosedState(t *testing.T) {
 
 func TestBrowserReadNormalizesRejectedSession(t *testing.T) {
 	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.WriteHeader(http.StatusForbidden)
+		response.WriteHeader(http.StatusUnauthorized)
 	}))
 	_, err := client.SearchGlobal(context.Background(), SearchQuery{Source: SearchSourceGlobal}, "")
 	if !core.ErrorIsCategory(err, core.ErrorUnauthorized) {
 		t.Fatalf("error = %v, want unauthorized", err)
+	}
+}
+
+func TestBrowserReadTreatsForbiddenResourceAsPermanent(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusForbidden)
+	}))
+	_, err := client.ReadVacancy(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
+	if !core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
+		t.Fatalf("error = %v, want permanent failure", err)
 	}
 }
 

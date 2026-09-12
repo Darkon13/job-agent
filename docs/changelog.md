@@ -157,6 +157,10 @@
 - Browser worker: `BROWSER_WORKER_EXECUTABLE` позволяет запускать worker на
   системном браузере, когда Playwright не находит его в стандартных путях;
   `BROWSER_WORKER_CHANNEL=chrome` для этого недостаточно.
+- Ошибки HH: `403` на конкретную вакансию или browser-страницу больше не
+  считается истёкшей сессией, а переводится в `permanent_failure`; `401`
+  по-прежнему означает сброс авторизации. Недоступная аккаунту вакансия
+  больше не зацикливает retry.
 - Операторский retry заблокированного отклика:
   `POST /api/v1/applications/{id}/retry` (Idempotency-Key) очищает decision,
   возвращает отклик в `ready` и ставит новый durable `application.submit`;

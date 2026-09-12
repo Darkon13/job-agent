@@ -440,9 +440,12 @@ func classifyBrowserApplicationGET(response *http.Response) error {
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		return nil
-	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
+	case response.StatusCode == http.StatusUnauthorized:
 		drain(response.Body)
 		return operationError(core.ErrorUnauthorized, operation, "HH browser session was rejected", nil)
+	case response.StatusCode == http.StatusForbidden:
+		drain(response.Body)
+		return operationError(core.ErrorPermanentFailure, operation, "HH application preflight is not accessible for this account", nil)
 	case response.StatusCode == http.StatusTooManyRequests:
 		drain(response.Body)
 		failure := operationError(core.ErrorRateLimited, operation, "HH application preflight was rate limited", nil)

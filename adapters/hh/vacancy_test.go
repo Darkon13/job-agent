@@ -56,6 +56,7 @@ func TestReadVacancyNormalizesUnavailableAndRateLimit(t *testing.T) {
 		category core.ErrorCategory
 	}{
 		{name: "not found", status: http.StatusNotFound, category: core.ErrorPermanentFailure},
+		{name: "forbidden", status: http.StatusForbidden, category: core.ErrorPermanentFailure},
 		{name: "rate limited", status: http.StatusTooManyRequests, category: core.ErrorRateLimited},
 	} {
 		t.Run(test.name, func(t *testing.T) {

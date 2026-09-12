@@ -82,9 +82,14 @@ func classifyVacancyResponse(response *http.Response) error {
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 		return nil
-	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
+	case response.StatusCode == http.StatusUnauthorized:
 		drain(response.Body)
 		return operationError(core.ErrorUnauthorized, "vacancies.read", "HH credentials are expired, revoked or invalid", nil)
+	case response.StatusCode == http.StatusForbidden:
+		// HH answers 403 for a specific vacancy that the account may not see
+		// (region or employer restrictions) while the session itself is fine.
+		drain(response.Body)
+		return operationError(core.ErrorPermanentFailure, "vacancies.read", "HH vacancy is not accessible for this account", nil)
 	case response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone:
 		drain(response.Body)
 		return operationError(core.ErrorPermanentFailure, "vacancies.read", "HH vacancy is unavailable", nil)
