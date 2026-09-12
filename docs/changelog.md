@@ -154,6 +154,12 @@
 - Fix: SQLite сохраняет `review_sessions.answer_block_tag` (миграция 30).
   Колонки не было, поэтому review-сессия квалификации читалась без целевого
   блока и worker не мог дополнить family/level ревизию.
+- Наблюдаемость задач: worker логирует `task retry scheduled` и
+  `task failed` с type/category/error, поэтому `handler failed` больше не
+  скрывает причину в логах. Исчерпанные revision-конфликты conversation
+  discovery классифицируются как `temporary_failure` и ретраятся.
+- Runbook: восстановление после смены resume hash (activity observe,
+  resume.touch, resume_not_suitable).
 - Live assessment контракт skill verification: зафиксированы формы
   `get_current_task`/`submit_user_answer`/`get_contest_tasks`, экран результата
   и месячный lock после использованной попытки.

@@ -81,6 +81,21 @@ apply безопасен: proposal immutable, adapter проверяет before/
   указанного времени.
 - Дневной лимит профиля проверяется и адаптером, и campaign budget.
 
+## Resume hash изменился
+
+Симптом: `profile.activity.observe` падает с
+`configured resume activity statistics were not found`, `resume.touch`
+возвращает `permanent_failure: configured resume was not found`, а отклики
+получают `resume_not_suitable`.
+
+HH выдаёт резюме новый hash после существенного редактирования, поэтому
+`profiles[].resume` в конфиге перестаёт указывать на живое резюме. Проверьте
+`applicantResumes[]._attributes.hash`/`latestResumeHash` в
+`https://hh.ru/applicant/profile/me` (initial state) и обновите `resume` либо
+алиас в `resume_aliases`, затем перезапустите backend. Уже созданные delayed
+touch-задачи со старым hash стоит дождаться/закрыть: новые cron-запуски
+возьмут обновлённый ID.
+
 ## Runtime lease
 
 Симптом: при старте `another job-agent instance already holds the runtime

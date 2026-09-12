@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -152,8 +153,14 @@ func (worker *Worker) finish(ctx context.Context, lease broker.TaskLease, handle
 	operationError := normalizeError(handlerErr, lease.Task.Type)
 	if retryable(operationError.Category) && lease.Task.Attempts < worker.config.MaxAttempts {
 		retryAt := worker.retryAt(*operationError, lease.Task.Attempts, now)
+		slog.Default().Warn("task retry scheduled",
+			"task", lease.Task.ID, "type", lease.Task.Type, "attempts", lease.Task.Attempts,
+			"category", operationError.Category, "retry_at", retryAt.Format(time.RFC3339))
 		return worker.consumer.Retry(ctx, lease, operationError, retryAt, now)
 	}
+	slog.Default().Error("task failed",
+		"task", lease.Task.ID, "type", lease.Task.Type, "attempts", lease.Task.Attempts,
+		"category", operationError.Category, "error", operationError.Message)
 	return worker.consumer.Fail(ctx, lease, operationError, now)
 }
 

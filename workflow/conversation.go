@@ -174,7 +174,10 @@ func (workflow *ConversationWorkflow) updateConversation(ctx context.Context, co
 			return false, err
 		}
 	}
-	return false, fmt.Errorf("conversation %s update conflicted after %d attempts", conversationID, conversationUpdateAttempts)
+	return false, &core.OperationError{
+		Category: core.ErrorTemporaryFailure, Operation: "conversations.update",
+		Message: fmt.Sprintf("conversation %s was revised concurrently", conversationID),
+	}
 }
 
 func NewConversationWorkflow(repository storage.ConversationRepository, tasks broker.TaskStore, clock Clock, ids IDGenerator) (*ConversationWorkflow, error) {
