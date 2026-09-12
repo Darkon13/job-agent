@@ -109,3 +109,34 @@ func TestConversationAndFollowUpPersistence(t *testing.T) {
 		t.Fatalf("stale save error = %v, want revision conflict", err)
 	}
 }
+
+func TestAppendConversationMessageDeduplicatesSubMillisecondDrift(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 10, 50, 0, 539773913, time.UTC)
+	repository := NewRepository()
+	conversation, err := core.NewConversation("conversation-1", "hh", "primary", "external-chat-1", now)
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	sent := core.ConversationMessage{
+		ID: "message-hh-1", ConversationID: "conversation-1", ExternalID: "15449574008",
+		Direction: core.MessageOutgoing, Kind: core.MessageText, Status: core.MessageSent,
+		Text: "Посмотрю вакансию, спасибо", OccurredAt: now,
+	}
+	if _, created, err := repository.AppendConversationMessage(ctx, sent, now); err != nil || !created {
+		t.Fatalf("append sent message: created=%t err=%v", created, err)
+	}
+	sent.ReplyToID = "message-prompt"
+	if _, created, err := repository.AppendConversationMessage(ctx, sent, now); err != nil || created {
+		t.Fatalf("append sent message with reply: created=%t err=%v", created, err)
+	}
+	synced := sent
+	synced.ReplyToID = ""
+	synced.OccurredAt = now.Truncate(time.Millisecond)
+	if _, created, err := repository.AppendConversationMessage(ctx, synced, now.Add(time.Minute)); err != nil || created {
+		t.Fatalf("expected sync deduplication: created=%t err=%v", created, err)
+	}
+}

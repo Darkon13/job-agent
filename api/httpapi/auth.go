@@ -28,13 +28,14 @@ type AuthAPI struct {
 	eventsInterval time.Duration
 	logout         *auth.LogoutService
 	logoutTargets  map[core.ProfileID]auth.LogoutTarget
+	statePaths     map[core.ProfileID]string
 }
 
-func NewAuthAPI(controller AuthController) (*AuthAPI, error) {
+func NewAuthAPI(controller AuthController, statePaths map[core.ProfileID]string) (*AuthAPI, error) {
 	if controller == nil {
 		return nil, errors.New("auth API requires a controller")
 	}
-	return &AuthAPI{controller: controller, eventsInterval: 500 * time.Millisecond}, nil
+	return &AuthAPI{controller: controller, eventsInterval: 500 * time.Millisecond, statePaths: statePaths}, nil
 }
 
 func (api *AuthAPI) Handler(next http.Handler) http.Handler {
@@ -174,9 +175,15 @@ func (api *AuthAPI) start(response http.ResponseWriter, request *http.Request) {
 		}
 		ttl = parsed
 	}
+	// A browser login is stored as the profile's configured storage state
+	// when the client does not name an explicit output.
+	browserStateReference := strings.TrimSpace(body.BrowserStateReference)
+	if browserStateReference == "" && strings.TrimSpace(body.CredentialReference) == "" {
+		browserStateReference = strings.TrimSpace(api.statePaths[body.ProfileID])
+	}
 	session, err := api.controller.Start(request.Context(), auth.StartRequest{
 		Platform: body.Platform, ProfileID: body.ProfileID,
-		CredentialReference: body.CredentialReference, BrowserStateReference: body.BrowserStateReference,
+		CredentialReference: body.CredentialReference, BrowserStateReference: browserStateReference,
 		TTL: ttl,
 	})
 	if err != nil {

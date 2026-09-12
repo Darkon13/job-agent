@@ -358,7 +358,7 @@ async function sendQuestionnaireOption(message, option) {
   renderMessages(state.selectedMessages);
   try {
     const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`, {
-      content: { text: option.text }, reply_to_id: message.id,
+      content: { text: option.text },
     }, key);
     elements.actionState.textContent = result.created ? `Задача ${result.task_id} поставлена в очередь` : `Ответ уже поставлен ранее (${result.task_id})`;
     if (state.selectedConversation?.id === conversation.id) {

@@ -37,6 +37,19 @@ type mainOptions struct {
 	migrateUp  bool
 }
 
+// profileStateFiles maps enabled profiles to their configured browser state
+// file so a dashboard login can store the session without knowing paths.
+func profileStateFiles(cfg appconfig.Config) map[core.ProfileID]string {
+	files := make(map[core.ProfileID]string, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		if !profile.Enabled || strings.TrimSpace(profile.StateFile) == "" {
+			continue
+		}
+		files[core.ProfileID(profile.Tag)] = profile.StateFile
+	}
+	return files
+}
+
 // dashboardProfiles lists enabled profile tags for the dashboard account
 // switcher. It exposes configuration identities only, never credentials.
 func dashboardProfiles(cfg appconfig.Config) []core.ProfileID {
@@ -936,7 +949,7 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	if err != nil {
 		return nil, err
 	}
-	authAPI, err := httpapi.NewAuthAPI(service)
+	authAPI, err := httpapi.NewAuthAPI(service, profileStateFiles(cfg))
 	if err != nil {
 		return nil, err
 	}

@@ -443,8 +443,8 @@ func sameConversationIdentity(first, second core.Conversation) bool {
 
 func sameStoredMessage(stored, candidate core.ConversationMessage) bool {
 	if stored.ConversationID != candidate.ConversationID || stored.ExternalID != candidate.ExternalID ||
-		stored.ReplyToID != candidate.ReplyToID || stored.Direction != candidate.Direction || stored.Kind != candidate.Kind ||
-		stored.Status != candidate.Status || stored.Text != candidate.Text || !stored.OccurredAt.Equal(candidate.OccurredAt) ||
+		!sameMessageReply(stored.ReplyToID, candidate.ReplyToID) || stored.Direction != candidate.Direction || stored.Kind != candidate.Kind ||
+		stored.Status != candidate.Status || stored.Text != candidate.Text || !sameMessageTime(stored.OccurredAt, candidate.OccurredAt) ||
 		len(stored.Options) != len(candidate.Options) {
 		return false
 	}
@@ -454,6 +454,19 @@ func sameStoredMessage(stored, candidate core.ConversationMessage) bool {
 		}
 	}
 	return stored.ID == candidate.ID || stored.ExternalID != ""
+}
+
+// sameMessageReply tolerates a missing reply link on one side: the local send
+// stores the prompt it answered, while synced platform history often omits it.
+func sameMessageReply(first, second core.MessageID) bool {
+	return first == second || first == "" || second == ""
+}
+
+// sameMessageTime compares platform timestamps at millisecond precision: HH
+// returns milliseconds for synced history but can carry sub-millisecond
+// fractions on a send response for the very same message.
+func sameMessageTime(first, second time.Time) bool {
+	return first.Truncate(time.Millisecond).Equal(second.Truncate(time.Millisecond))
 }
 
 func sameFollowUpRequest(first, second core.FollowUp) bool {

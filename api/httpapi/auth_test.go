@@ -65,7 +65,7 @@ func authAPIFixture(t *testing.T) (*fakeAuthController, http.Handler) {
 		t.Fatalf("begin identifier: %v", err)
 	}
 	controller := &fakeAuthController{session: session}
-	api, err := NewAuthAPI(controller)
+	api, err := NewAuthAPI(controller, nil)
 	if err != nil {
 		t.Fatalf("new auth API: %v", err)
 	}
@@ -160,5 +160,22 @@ func TestAuthAPICancelsSession(t *testing.T) {
 	response = performRequest(t, handler, http.MethodPost, "/api/v1/auth/sessions/auth-1/cancel", "", "", nil)
 	if response.Code != http.StatusConflict {
 		t.Fatalf("settled cancel status = %d", response.Code)
+	}
+}
+
+func TestAuthAPIDefaultsBrowserStateFromConfig(t *testing.T) {
+	controller, _ := authAPIFixture(t)
+	api, err := NewAuthAPI(controller, map[core.ProfileID]string{"primary": "data/profiles/primary.json"})
+	if err != nil {
+		t.Fatalf("new auth API: %v", err)
+	}
+	response := performRequest(t, api.Handler(nil), http.MethodPost, "/api/v1/auth/sessions", "", "", authSessionRequest{
+		Platform: "hh", ProfileID: "primary",
+	})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if controller.lastStart.BrowserStateReference != "data/profiles/primary.json" {
+		t.Fatalf("browser state reference = %q", controller.lastStart.BrowserStateReference)
 	}
 }

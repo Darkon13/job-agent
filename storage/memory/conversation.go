@@ -282,8 +282,8 @@ func sameMessage(first, second core.ConversationMessage) bool {
 
 func sameMessagePayload(first, second core.ConversationMessage) bool {
 	if first.ConversationID != second.ConversationID || first.ExternalID != second.ExternalID ||
-		first.ReplyToID != second.ReplyToID || first.Direction != second.Direction || first.Kind != second.Kind ||
-		first.Status != second.Status || first.Text != second.Text || !first.OccurredAt.Equal(second.OccurredAt) || len(first.Options) != len(second.Options) {
+		!sameMessageReply(first.ReplyToID, second.ReplyToID) || first.Direction != second.Direction || first.Kind != second.Kind ||
+		first.Status != second.Status || first.Text != second.Text || !sameMessageTime(first.OccurredAt, second.OccurredAt) || len(first.Options) != len(second.Options) {
 		return false
 	}
 	for index := range first.Options {
@@ -292,6 +292,19 @@ func sameMessagePayload(first, second core.ConversationMessage) bool {
 		}
 	}
 	return true
+}
+
+// sameMessageReply tolerates a missing reply link on one side: the local send
+// stores the prompt it answered, while synced platform history often omits it.
+func sameMessageReply(first, second core.MessageID) bool {
+	return first == second || first == "" || second == ""
+}
+
+// sameMessageTime compares platform timestamps at millisecond precision: HH
+// returns milliseconds for synced history but can carry sub-millisecond
+// fractions on a send response for the very same message.
+func sameMessageTime(first, second time.Time) bool {
+	return first.Truncate(time.Millisecond).Equal(second.Truncate(time.Millisecond))
 }
 
 func sameFollowUpRequest(first, second core.FollowUp) bool {

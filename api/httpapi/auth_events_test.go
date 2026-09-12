@@ -58,7 +58,7 @@ func TestAuthEventsStreamsUntilTerminal(t *testing.T) {
 		{ID: "auth-1", Platform: "hh", ProfileID: "primary", Status: core.AuthSessionWaitingOTP, Revision: 1, CreatedAt: now, UpdatedAt: now},
 		{ID: "auth-1", Platform: "hh", ProfileID: "primary", Status: core.AuthSessionCompleted, Revision: 2, CreatedAt: now, UpdatedAt: now},
 	}}
-	api, err := NewAuthAPI(controller)
+	api, err := NewAuthAPI(controller, nil)
 	if err != nil {
 		t.Fatalf("api: %v", err)
 	}
