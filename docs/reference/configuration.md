@@ -107,6 +107,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | `base_url` | string | необязательный свой endpoint; для `openai_chat` по умолчанию `https://api.deepseek.com/v1` |
 | `api_key_env` | string | переменная с ключом, по умолчанию `OPENAI_API_KEY` |
 | `max_output_tokens` | number | предел ответа модели |
+| `reasoning_effort` | string | для reasoning-моделей: `none`, `low`, `medium`, `high`; `none` отключает «размышления» и экономит токены |
 
 ## `profiles`
 

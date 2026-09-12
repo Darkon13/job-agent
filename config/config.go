@@ -78,6 +78,7 @@ type ModelProviderConfig struct {
 	BaseURL         string `json:"base_url,omitempty"`
 	APIKeyEnv       string `json:"api_key_env,omitempty"`
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 func (config ModelProviderConfig) APIKeyEnvironment() string {
@@ -1037,6 +1038,13 @@ func validateModelProvider(config ModelProviderConfig) error {
 	}
 	if config.MaxOutputTokens < 0 || config.MaxOutputTokens > 32768 {
 		return fmt.Errorf("model provider %q max_output_tokens must be between 1 and 32768 when set", config.Tag)
+	}
+	if effort := strings.TrimSpace(config.ReasoningEffort); effort != "" {
+		switch effort {
+		case "none", "low", "medium", "high":
+		default:
+			return fmt.Errorf("model provider %q reasoning_effort must be none, low, medium or high", config.Tag)
+		}
 	}
 	if strings.TrimSpace(config.BaseURL) != "" {
 		parsed, err := url.Parse(config.BaseURL)

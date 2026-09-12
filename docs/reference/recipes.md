@@ -296,7 +296,8 @@ completions, укажите `type: "openai_chat"` и свой `base_url`; struct
     "model": "deepseek-chat",
     "base_url": "https://api.deepseek.com/v1",
     "api_key_env": "DEEPSEEK_API_KEY",
-    "max_output_tokens": 1024
+    "max_output_tokens": 2000,
+    "reasoning_effort": "none"           // DeepSeek-flash: не тратить токены на CoT
   }
 ]
 ```
