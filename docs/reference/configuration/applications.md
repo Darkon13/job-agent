@@ -31,11 +31,18 @@
 | `submit_jitter` | object | нет | HH: `15s`..`25s` | Пауза между отправками: `min`, `max` (Go duration). Разброс применяется до claim, worker не держит lease. |
 | `timezone` | string | нет | — | IANA-таймзона для расписаний и дневных лимитов, например `Europe/Moscow`. |
 | `allow_visibility_change` | bool | нет | `false` | Разрешить сервису менять видимость резюме на платформе при отклике. |
+| `validation_action` | string | нет | `review` | Что делать с вакансией, требующей анкету или тест: `review` — ждать ответа оператора (`waiting_validation`), `skip` — пометить отклик `skipped`, освободить очередь и дать «Повторить» после заполнения анкеты. |
 | `tailoring` | object | нет | — | Временная подстройка резюме: [tailoring](tailoring.md). |
 
 Ровно один из `message`, `message_template`, `message_template_file`. Если
 задан `model`, fallback-источник обязателен, а профилю нужен
 `resume_facts_file`.
+
+`validation_action: skip` не создаёт review-сессию, не тратит бюджет и не
+блокирует поток: отклик получает `skipped` с кодом `questionnaire_required` /
+`vacancy_test_required` / `platform_validation_required`, а в dashboard у него
+появляется кнопка «Повторить» — нажмите её после заполнения анкеты на
+платформе, и отклик вернётся в `ready`.
 
 ## `applications.model`
 

@@ -40,6 +40,7 @@ button.stat-card:hover { border-color: var(--cyan); filter: none; }
 .tag { border: 1px solid #4a5568; border-radius: 999px; padding: .25rem .55rem; color: var(--orange); font: 700 .67rem ui-monospace, monospace; }
 .tag.ready { border-color: #3f6e68; color: var(--green); }
 .table-wrap { width: 100%; max-width: 100%; overflow: auto; }
+#applications-section .table-wrap { max-height: min(72vh, 760px); }
 table { width: 100%; border-collapse: collapse; font-size: .84rem; }
 th, td { padding: .65rem .5rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 th { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }

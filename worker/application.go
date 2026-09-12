@@ -26,6 +26,9 @@ type ApplicationPlan struct {
 	SubmitJitterMax time.Duration
 	Timezone        string
 	Tailoring       *ApplicationTailoringPlan
+	// SkipValidation marks questionnaire and test vacancies as skipped instead
+	// of waiting for operator input; such applications stay retryable.
+	SkipValidation bool
 }
 
 func (plan ApplicationPlan) Validate() error {
@@ -388,6 +391,12 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 			}
 			return handler.repository.SaveApplication(ctx, application, expectedStatus)
 		case applicationoperator.ApplicationReview:
+			if plan.SkipValidation && skipValidationDecisionCode(preparation.Code) {
+				if err := application.Transition(core.ApplicationSkipped, now); err != nil {
+					return err
+				}
+				return handler.repository.SaveApplication(ctx, application, expectedStatus)
+			}
 			if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
 				return err
 			}
@@ -651,6 +660,17 @@ func vacancyHasNonEmptyAttribute(vacancy core.Vacancy, key string) bool {
 	}
 }
 
+// skipValidationDecisionCode lists the review decisions that validation_action
+// "skip" may push aside. Explicit employer review rules keep their meaning.
+func skipValidationDecisionCode(code string) bool {
+	switch strings.TrimSpace(code) {
+	case "questionnaire_required", "vacancy_test_required", "platform_validation_required":
+		return true
+	default:
+		return false
+	}
+}
+
 func vacancyHasString(vacancy core.Vacancy, key, expected string) bool {
 	switch values := vacancy.Attributes[key].(type) {
 	case []string:
@@ -695,6 +715,22 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		return operationError
 	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
+		if plan.SkipValidation && skipValidationDecisionCode(operationError.Metadata["code"]) {
+			if code := strings.TrimSpace(operationError.Metadata["code"]); code != "" {
+				application.DecisionCode = code
+			}
+			application.DecisionReason = "вакансия требует анкету или тест; пропущено по validation_action"
+			if err := application.Transition(core.ApplicationSkipped, now); err != nil {
+				return err
+			}
+			if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+				return err
+			}
+			if err := handler.releaseBudget(ctx, application, now); err != nil {
+				return err
+			}
+			return handler.restoreTailoring(ctx, application)
+		}
 		if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
 			return err
 		}

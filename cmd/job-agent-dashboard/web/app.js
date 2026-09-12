@@ -89,12 +89,10 @@ function applicationReason(item) {
 
 function renderStats(summary = {}) {
   const applications = summary.applications || [];
-  const imported = total(applications, (item) => item.decision_code === "imported_appltool");
   const metrics = [
     { value: total(applications, (item) => (item.status === "submitted" || item.decision_code === "already_applied") && item.decision_code !== "imported_appltool"), label: "Отклики отправлены", filter: "sent" },
     { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
     { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
-    ...(imported > 0 ? [{ value: imported, label: "Импортировано (appltool)" }] : []),
     { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
   ];
   elements.stats.replaceChildren(...metrics.map((metric) => {
@@ -119,7 +117,7 @@ function setApplicationFilter(value) {
 }
 function renderApplicationFilters(items = []) {
   const grouped = new Map(Object.entries(state.applicationGroups));
-  const filters = [["", "Все", grouped.get("") || 0], ...["queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent", "imported"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
+  const filters = [["", "Все", grouped.get("") || 0], ...["queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
   elements.applicationFilters.replaceChildren(...filters.map(([value, label, count]) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `filter-card${state.applicationFilter === value ? " active" : ""}`;
     button.append(text("strong", String(count)), text("span", label)); button.addEventListener("click", () => setApplicationFilter(value)); return button;
@@ -186,14 +184,18 @@ function renderApplicationObjects() {
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
     if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); }
-    if (["waiting_validation", "failed"].includes(item.status)) {
+    const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
+    if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
       retry.addEventListener("click", () => retryApplication(item, retry)); action.append(retry);
     }
     if (!action.childNodes.length) action.textContent = "—";
     const group = applicationGroup(item);
-    row.append(selection, vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), tailoringCell(item), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
+    const profileCell = document.createElement("td");
+    profileCell.append(text("strong", profileDisplayName(item.profile_id)));
+    const profileTag = text("small", item.profile_id, "muted"); profileTag.style.display = "block"; profileCell.append(profileTag);
+    row.append(selection, vacancy, text("td", item.employer || "—"), profileCell, statusCell(applicationGroupLabels[group], `status-${group}`), tailoringCell(item), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;
   }));
   updateApplicationSelection(items);
@@ -533,21 +535,29 @@ async function reconcileProfileState(resource) {
   state.profileBusy.delete(resource.tag); renderProfileResources();
 }
 
+function profileDisplayName(profileID) {
+  const profiles = state.summary?.profiles || [];
+  const entry = profiles.find((item) => item && item.id === profileID);
+  return (entry && entry.display_name) || profileID;
+}
+
 function renderAccountSwitcher(profiles = []) {
-  const values = new Set(profiles);
-  for (const item of state.summary?.conversations || []) values.add(item.profile_id);
-  for (const item of state.summary?.activity || []) values.add(item.profile_id);
-  for (const item of state.failedTasks || []) values.add(item.profile_id);
-  for (const item of state.jobs || []) values.add(item.profile_id);
-  for (const item of state.reviewSessions || []) values.add(item.profile_id);
-  for (const item of state.applicationObjects || []) values.add(item.profile_id);
-  values.delete(""); values.delete(undefined); values.delete(null);
-  const options = [...values].sort();
+  const labels = new Map();
+  for (const item of profiles) {
+    if (item && item.id) labels.set(item.id, item.display_name || item.id);
+  }
+  for (const item of state.summary?.conversations || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.summary?.activity || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.failedTasks || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.jobs || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.reviewSessions || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.applicationObjects || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  const options = [...labels.keys()].sort();
   if (state.account && !options.includes(state.account)) state.account = "";
   const select = elements.accountSwitcher;
   const all = document.createElement("option"); all.value = ""; all.textContent = "Все аккаунты";
   select.replaceChildren(all, ...options.map((value) => {
-    const option = document.createElement("option"); option.value = value; option.textContent = value; return option;
+    const option = document.createElement("option"); option.value = value; option.textContent = labels.get(value) || value; return option;
   }));
   select.value = state.account;
 }

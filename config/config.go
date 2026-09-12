@@ -124,6 +124,8 @@ const (
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
 	JobActionApplicationRetention       = "application.retention"
 	JobConcurrencyForbid                = "forbid"
+	ApplicationValidationReview         = "review"
+	ApplicationValidationSkip           = "skip"
 	ApplicationModeDryRun               = "dry_run"
 	ApplicationModeApproval             = "approval"
 	ApplicationModeSubmit               = "submit"
@@ -353,20 +355,24 @@ func (policy AnswerModelPolicy) TimeoutDuration() (time.Duration, error) {
 }
 
 type ApplicationPolicy struct {
-	Mode                  string                      `json:"mode,omitempty"`
-	Message               string                      `json:"message,omitempty"`
-	MessageTemplate       string                      `json:"message_template,omitempty"`
-	MessageTemplateFile   string                      `json:"message_template_file,omitempty"`
-	Model                 *ApplicationModelPolicy     `json:"model,omitempty"`
-	EmployerRules         []ApplicationEmployerRule   `json:"employer_rules,omitempty"`
-	Qualification         ApplicationQualification    `json:"qualification,omitempty"`
-	DailyLimit            int                         `json:"daily_limit,omitempty"`
-	SubmitJitter          JitterConfig                `json:"submit_jitter,omitempty"`
-	Timezone              string                      `json:"timezone,omitempty"`
-	AllowVisibilityChange bool                        `json:"allow_visibility_change,omitempty"`
-	Tailoring             *ApplicationTailoringPolicy `json:"tailoring,omitempty"`
-	resolvedTemplate      string
-	resolvedMessagePool   *ApplicationMessagePool
+	Mode                  string                    `json:"mode,omitempty"`
+	Message               string                    `json:"message,omitempty"`
+	MessageTemplate       string                    `json:"message_template,omitempty"`
+	MessageTemplateFile   string                    `json:"message_template_file,omitempty"`
+	Model                 *ApplicationModelPolicy   `json:"model,omitempty"`
+	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
+	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
+	DailyLimit            int                       `json:"daily_limit,omitempty"`
+	SubmitJitter          JitterConfig              `json:"submit_jitter,omitempty"`
+	Timezone              string                    `json:"timezone,omitempty"`
+	AllowVisibilityChange bool                      `json:"allow_visibility_change,omitempty"`
+	// ValidationAction decides what happens when a vacancy requires a
+	// questionnaire or test: "review" waits for the operator, "skip" marks the
+	// application skipped so it can be retried after the form is filled.
+	ValidationAction    string                      `json:"validation_action,omitempty"`
+	Tailoring           *ApplicationTailoringPolicy `json:"tailoring,omitempty"`
+	resolvedTemplate    string
+	resolvedMessagePool *ApplicationMessagePool
 }
 
 type ApplicationEmployerRule struct {
@@ -417,6 +423,12 @@ type ApplicationTailoringSkillsPolicy struct {
 	Maximum       int                     `json:"maximum,omitempty"`
 	AllowRemovals bool                    `json:"allow_removals,omitempty"`
 	Model         *ApplicationModelPolicy `json:"model,omitempty"`
+}
+
+// SkipValidation reports whether questionnaire and test vacancies should be
+// skipped instead of waiting for operator input.
+func (policy ApplicationPolicy) SkipValidation() bool {
+	return strings.TrimSpace(policy.ValidationAction) == ApplicationValidationSkip
 }
 
 func (policy ApplicationPolicy) TailoringSkills() (ApplicationTailoringSkillsPolicy, bool) {
@@ -1269,6 +1281,11 @@ func (c Config) Validate() error {
 			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
 			}
+		}
+		switch strings.TrimSpace(profile.Applications.ValidationAction) {
+		case "", ApplicationValidationReview, ApplicationValidationSkip:
+		default:
+			return fmt.Errorf("profile %q application validation_action must be %q or %q", profile.Tag, ApplicationValidationReview, ApplicationValidationSkip)
 		}
 		if profile.Contacts != nil {
 			if err := profile.Contacts.validate(); err != nil {

@@ -180,6 +180,27 @@ func TestProfileSessionRefreshJobRequiresStateFile(t *testing.T) {
 	}
 }
 
+func TestApplicationValidationAction(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{
+			Tag: "primary", Adapter: "hh-main", Enabled: true,
+			Applications: ApplicationPolicy{Mode: ApplicationModeSubmit, ValidationAction: ApplicationValidationSkip},
+		}},
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("validation_action skip: %v", err)
+	}
+	if !base.Profiles[0].Applications.SkipValidation() {
+		t.Fatal("skip validation was not detected")
+	}
+	base.Profiles[0].Applications.ValidationAction = "ignore"
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected invalid validation_action to fail")
+	}
+}
+
 func TestProfileContactsValidation(t *testing.T) {
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

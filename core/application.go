@@ -229,16 +229,16 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 	return nil
 }
 
-// ResetForRetry clears a blocked or failed preparation so the submit workflow
-// re-reads the platform state and re-runs preflight. Only an application
-// waiting for validation or already failed can be reset; blocked
-// questionnaire, test and suitability decisions are never reused as-is.
+// ResetForRetry clears a blocked, failed or skipped preparation so the submit
+// workflow re-reads the platform state and re-runs preflight. Skipped records
+// include questionnaires that a policy pushed aside; the operator brings them
+// back here after filling the form on the platform.
 func (application *Application) ResetForRetry(now time.Time) error {
 	if application == nil {
 		return errors.New("application is nil")
 	}
 	switch application.Status {
-	case ApplicationWaitingValidation, ApplicationFailed:
+	case ApplicationWaitingValidation, ApplicationFailed, ApplicationSkipped:
 	default:
 		return fmt.Errorf("application cannot be retried from status %s", application.Status)
 	}
@@ -320,10 +320,12 @@ func applicationTransitionAllowed(from, to ApplicationStatus) bool {
 			ApplicationDryRun: {}, ApplicationSkipped: {}, ApplicationFailed: {},
 		},
 		ApplicationSubmitting: {
-			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {}, ApplicationPendingReconcile: {}, ApplicationFailed: {},
+			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {},
+			ApplicationSkipped: {}, ApplicationPendingReconcile: {}, ApplicationFailed: {},
 		},
 		ApplicationPendingReconcile: {ApplicationSubmitted: {}, ApplicationFailed: {}},
 		ApplicationFailed:           {ApplicationReady: {}},
+		ApplicationSkipped:          {ApplicationReady: {}},
 	}
 	_, exists := allowed[from][to]
 	return exists
