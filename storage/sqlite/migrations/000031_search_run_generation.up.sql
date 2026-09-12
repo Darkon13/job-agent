@@ -1,0 +1,1 @@
+ALTER TABLE search_runs ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;

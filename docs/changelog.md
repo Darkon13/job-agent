@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Смена `query` у существующего поиска больше не роняет сервис: run
+  автоматически переходит в новую generation (чистый cursor, `generation`+1,
+  `revision`+1, запись в лог); миграция схемы 31 добавляет колонку
+  `search_runs.generation`.
+
 - Runbook: как выйти из `search run conflicts with changed configuration` —
   версия тега поиска при смене `query`; аварийное удаление строки `search_runs`
   с бэкапом. HH-синтаксис query (`AND`/`OR`/`NOT`, кавычки, скобки) описан в

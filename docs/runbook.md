@@ -119,31 +119,21 @@ job-agent-trigger -idempotency-key refresh-primary-$(date +%s) config.json refre
 импорт state. После обновления файла перезапуск backend не требуется: браузерные
 транспорты читают `state_file` перед каждой операцией.
 
-## Поиск: конфликт изменённого конфига
+## Поиск: изменение конфига
 
-Симптом: backend не стартует с сообщением
-`ensure search run "<tag>": search run <tag> conflicts with changed configuration`,
-либо task поиска падает с тем же текстом.
+`search_runs` хранит cursor и закреплённое определение поиска (adapter,
+platform, профиль, target profiles и канонический `query`). Если у существующего
+`tag` поменять `query`, старый cursor относится к другой выдаче, поэтому
+сервис **автоматически** начинает новую generation: обновляет определение,
+очищает cursor и `done`, увеличивает `generation` и `revision` и пишет в лог
+`search "<tag>" configuration changed; generation N starts with an empty
+cursor`. Участие оператора не требуется, дедупликация вакансий и откликов не
+даёт повторных действий.
 
-Причина: `search_runs` хранит cursor и закреплённое определение поиска
-(adapter, platform, профиль, target profiles и канонический `query`). Если
-поменять `query` у существующего `tag`, старый cursor перестаёт соответствовать
-новой выдаче, поэтому сервис отказывается молча продолжать её с середины.
-
-Штатное восстановление — версия тега: правьте `query` и поднимайте суффикс
-(`golang-search` → `golang-search-v2`), затем обновите ссылки в jobs/routes.
-Так история cursor остаётся честной, а старый run можно закрыть отдельно.
-
-Аварийный вариант для одноразового поиска: удалить строку из `search_runs` на
-остановленном сервисе:
-
-```bash
-job-agent db backup ./data/backup.sqlite
-sqlite3 ./data/job-agent.db "DELETE FROM search_runs WHERE search_id='secondary-similar';"
-```
-
-После этого сервис создаст новый run с текущим конфигом, но потеряет
-сохранённый cursor — ранее пройденные страницы будут просмотрены заново.
+Версия тега (`golang-search` → `-v2`) остаётся полезной, только если нужно
+сохранить оба определения как отдельные поиски с независимыми курсорами.
+Ручное удаление строки `search_runs` больше не требуется; для аварийных случаев
+сначала сделайте `job-agent db backup`.
 
 ## Runtime lease
 

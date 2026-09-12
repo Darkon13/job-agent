@@ -1590,8 +1590,14 @@ func configureSearchRuns(
 		if err != nil {
 			return nil, 0, fmt.Errorf("build search run %q: %w", search.Tag, err)
 		}
-		if _, err := handler.EnsureRun(ctx, run, search.Priority); err != nil {
+		created, err := handler.EnsureRun(ctx, run, search.Priority)
+		if err != nil {
 			return nil, 0, fmt.Errorf("ensure search run %q: %w", search.Tag, err)
+		}
+		if created {
+			if stored, readErr := store.SearchRun(ctx, searchID); readErr == nil && stored.Generation > 1 {
+				logf("search %q configuration changed; generation %d starts with an empty cursor", search.Tag, stored.Generation)
+			}
 		}
 		configured++
 	}
