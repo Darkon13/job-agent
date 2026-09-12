@@ -135,6 +135,35 @@ cursor`. Участие оператора не требуется, дедупл
 Ручное удаление строки `search_runs` больше не требуется; для аварийных случаев
 сначала сделайте `job-agent db backup`.
 
+## Docker на малом VPS
+
+Штатный Compose-стек требует много места: образ воркера на базе Playwright весит
+около 2.5 ГБ. Для сервера с небольшим диском используйте облегчённые образы:
+
+- `browser-worker/Dockerfile.slim` — `node:22-slim` + системный Chromium из
+  Debian и `BROWSER_WORKER_EXECUTABLE=/usr/bin/chromium`; образ ~1.3 ГБ вместо
+  ~2.5 ГБ. Playwright при этом запускает системный браузер.
+- `Dockerfile.binary` — упаковывает уже собранные локально статические
+  бинарники в distroless. Нужен там, где сборка Go внутри Docker не имеет
+  доступа к module proxy или у сервера мало CPU.
+
+Типовой сценарий:
+
+```bash
+# на рабочей машине
+make build
+docker build -t job-agent:1.0.1 -f Dockerfile.binary \
+  --build-arg VERSION=1.0.1 --build-arg COMMIT=$(git rev-parse --short=12 HEAD) .
+docker save job-agent:1.0.1 | gzip -1 | ssh server 'gunzip | docker load'
+
+# на сервере
+docker build -f browser-worker/Dockerfile.slim -t job-agent-browser-worker:slim .
+docker compose up -d
+```
+
+Config/data монтируются как `/config` и `/data`; dashboard слушает
+`127.0.0.1:18081` и проксирует API, backend порт наружу не публикуется.
+
 ## Runtime lease
 
 Симптом: при старте `another job-agent instance already holds the runtime
