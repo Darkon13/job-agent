@@ -26,6 +26,85 @@ func operatorFixture() (core.Application, core.Vacancy) {
 	return application, vacancy
 }
 
+func TestRuleTemplatePreparerRendersProfileContacts(t *testing.T) {
+	application, vacancy := operatorFixture()
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		MessageTemplate: "Telegram: {{.Profile.Telegram}}\nEmail: {{.Profile.Email}}\n\nЗдравствуйте!",
+		Profile: ApplicationProfileContext{
+			Email: "user@example.test", Telegram: "@qworteex",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if result.Message != "Telegram: @qworteex\nEmail: user@example.test\n\nЗдравствуйте!" {
+		t.Fatalf("message = %q", result.Message)
+	}
+}
+
+func TestRuleTemplatePreparerAnonymizesProfileContacts(t *testing.T) {
+	application, vacancy := operatorFixture()
+	resume := modelResumeFixture()
+	var received ApplicationModelRequest
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		StaticMessage: "fallback",
+		Resume:        resume,
+		Profile: ApplicationProfileContext{
+			FirstName: "Артём", LastName: "Шумилов", Email: "user@example.test", Telegram: "@qworteex",
+		},
+		Model: &ApplicationModelConfig{
+			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
+			Generator: applicationModelFunc(func(_ context.Context, request ApplicationModelRequest) (ApplicationModelResponse, error) {
+				received = request
+				contactClaim := "Telegram: {telegram}\nEmail: {email}"
+				greetingClaim := "Здравствуйте! Меня заинтересовала вакансия Backend developer."
+				text := contactClaim + "\n\n" + greetingClaim
+				return ApplicationModelResponse{
+					Text: text,
+					Evidence: []ApplicationModelEvidence{
+						{Claim: contactClaim, Sources: []ApplicationModelEvidenceSource{
+							{Path: "/profile/telegram", Quote: "{telegram}"},
+							{Path: "/profile/email", Quote: "{email}"},
+						}},
+						{Claim: greetingClaim, Sources: []ApplicationModelEvidenceSource{
+							{Path: "/vacancy/title", Quote: "Backend developer"},
+						}},
+					},
+				}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if result.Message != "Telegram: @qworteex\nEmail: user@example.test\n\nЗдравствуйте! Меня заинтересовала вакансия Backend developer." {
+		t.Fatalf("message = %q", result.Message)
+	}
+	encoded, err := json.Marshal(received.Context)
+	if err != nil {
+		t.Fatalf("encode context: %v", err)
+	}
+	contextText := string(encoded)
+	for _, secret := range []string{"@qworteex", "user@example.test", "Артём", "Шумилов"} {
+		if strings.Contains(contextText, secret) {
+			t.Fatalf("model context leaked %q: %s", secret, contextText)
+		}
+	}
+	for _, placeholder := range []string{"{telegram}", "{email}", "{first_name}", "{last_name}"} {
+		if !strings.Contains(contextText, placeholder) {
+			t.Fatalf("model context is missing %s: %s", placeholder, contextText)
+		}
+	}
+}
+
 func TestRuleTemplatePreparerFiltersAndRenders(t *testing.T) {
 	application, vacancy := operatorFixture()
 	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
@@ -155,20 +234,20 @@ func TestRuleTemplatePreparerSelectsStableMessagePoolVariant(t *testing.T) {
 
 func TestMessagePoolDigestTracksNormalizedContent(t *testing.T) {
 	base := &MessagePoolConfig{Tag: "backend", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello"}}}
-	first, err := compileMessagePool(base, nil)
+	first, err := compileMessagePool(base, nil, ApplicationProfileContext{})
 	if err != nil {
 		t.Fatalf("compile first pool: %v", err)
 	}
 	same, err := compileMessagePool(&MessagePoolConfig{
 		Tag: " backend ", Strategy: MessagePoolFirst,
 		Templates: []MessageTemplateConfig{{Tag: " one ", Template: "Hello"}},
-	}, nil)
+	}, nil, ApplicationProfileContext{})
 	if err != nil {
 		t.Fatalf("compile equivalent pool: %v", err)
 	}
 	changed, err := compileMessagePool(&MessagePoolConfig{
 		Tag: "backend", Templates: []MessageTemplateConfig{{Tag: "one", Template: "Hello!"}},
-	}, nil)
+	}, nil, ApplicationProfileContext{})
 	if err != nil {
 		t.Fatalf("compile changed pool: %v", err)
 	}

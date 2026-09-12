@@ -120,6 +120,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | `resume_facts_file` | string | файл с фактами резюме для model/template контекста; ключ `facts.placeholders` объявляет значения для обезличивания контекста модели |
 | `credentials_ref` | string | ссылка на OAuth-креденшелы (альтернатива cookies) |
 | `state_file` | string | файл browser storage state профиля |
+| `contacts` | object | контакты отправителя: `first_name`, `last_name`, `email`, `telegram` — подставляются в шаблоны и маскируются для модели |
 | `enabled` | bool | участвует ли профиль в работе |
 | `bootstrap` | object | первичное декларативное заполнение (см. `profile-bootstrap.md`) |
 | `applications` | object | политика откликов |
@@ -131,6 +132,22 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 ```json
 "resume_aliases": {"backend": "resume-id-1", "golang": "resume-id-2"}
 ```
+
+Пример контактов:
+
+```json
+"contacts": {
+  "first_name": "Артём",
+  "last_name": "Шумилов",
+  "email": "user@example.test",
+  "telegram": "@qworteex"
+}
+```
+
+В шаблонах письма контакты доступны как `{{.Profile.Email}}` и т.д., а в
+model-контексте заменяются на `{email}`, `{telegram}`, `{first_name}`,
+`{last_name}`; реальные значения подставляются после валидации. Контакты не
+секрет, но персональные данные: держите их в локальном конфиге и не коммитьте.
 
 ### `profiles[].applications`
 

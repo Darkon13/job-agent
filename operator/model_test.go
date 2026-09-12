@@ -337,7 +337,7 @@ func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
 func TestApplicationModelEvidenceRejectsUnverifiableClaims(t *testing.T) {
 	application, vacancy := operatorFixture()
 	vacancy.Attributes["experience"] = "От 1 года до 3 лет"
-	data := newApplicationTemplateData(application, vacancy, modelResumeFixture())
+	data := newApplicationTemplateData(application, vacancy, modelResumeFixture(), ApplicationProfileContext{})
 	tests := []struct {
 		name     string
 		text     string
@@ -369,7 +369,7 @@ func TestApplicationModelEvidenceRejectsUnverifiableClaims(t *testing.T) {
 func TestApplicationModelEvidenceResolvesEscapedJSONPointer(t *testing.T) {
 	application, vacancy := operatorFixture()
 	vacancy.Attributes["a/b~c"] = "quoted value"
-	data := newApplicationTemplateData(application, vacancy, modelResumeFixture())
+	data := newApplicationTemplateData(application, vacancy, modelResumeFixture(), ApplicationProfileContext{})
 	evidence := modelEvidence("A quoted value is present", "/vacancy/attributes/a~1b~0c", "quoted value")
 	if err := validateApplicationModelEvidence("A quoted value is present", evidence, data); err != nil {
 		t.Fatalf("validate evidence: %v", err)

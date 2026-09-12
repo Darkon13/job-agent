@@ -3,11 +3,11 @@
   "templates": [
     {
       "tag": "concise",
-      "template": "Здравствуйте! Меня заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Мой основной фокус — backend-разработка: Go, Python, REST API, PostgreSQL, Docker и автоматизированное тестирование. Буду рад обсудить задачи команды и подробнее рассказать о проектах."
+      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n\n{{end}}Здравствуйте! Меня заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Мой основной фокус — backend-разработка: Go, Python, REST API, PostgreSQL, Docker и автоматизированное тестирование. Буду рад обсудить задачи команды и подробнее рассказать о проектах."
     },
     {
       "tag": "project-focus",
-      "template": "Здравствуйте! Откликаюсь на {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Разрабатываю backend-сервисы на Go и Python, работаю с PostgreSQL, Docker, REST API и автоматизированными тестами. Готов подробнее обсудить релевантные проекты и задачи команды."
+      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n\n{{end}}Здравствуйте! Откликаюсь на {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Разрабатываю backend-сервисы на Go и Python, работаю с PostgreSQL, Docker, REST API и автоматизированными тестами. Готов подробнее обсудить релевантные проекты и задачи команды."
     }
   ]
 }

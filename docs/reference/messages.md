@@ -110,6 +110,8 @@
 | `{{.Vacancy.ExternalID}}` | внешний ID вакансии |
 | `{{.Vacancy.State}}` | состояние вакансии |
 | `{{.Vacancy.PublishedAt}}` | время публикации |
+| `{{.Profile.FirstName}}`, `{{.Profile.LastName}}` | имя и фамилия из `profiles[].contacts` |
+| `{{.Profile.Email}}`, `{{.Profile.Telegram}}` | контакты из `profiles[].contacts` |
 | `{{.Resume.ResumeID}}`, `{{.Resume.FactsTag}}` | идентификаторы резюме и набора фактов |
 | `{{.Resume.Facts.some_key}}` | явный факт из `resume_facts_file` |
 | `{{.ApplicationID}}`, `{{.ProfileID}}` | ID отклика и профиля |
@@ -117,6 +119,15 @@
 Для совместимости со старыми шаблонами доступны плоские `{{.Title}}`,
 `{{.Employer}}`, `{{.URL}}`, `{{.Description}}` и `{{.KeySkills}}`. Новые
 шаблоны лучше писать через `.Vacancy`: тот же контекст используется моделью.
+
+Имя, фамилия и контакты объявляются один раз в `profiles[].contacts` и не
+требуют файла фактов. Типовое начало письма:
+
+```json
+"template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n\n{{end}}Здравствуйте! ..."
+```
+
+Если контакты не заданы, условия отрендерят письмо без пустых строк.
 
 `{{.Resume.Facts.*}}` работает только при заданном `resume_facts_file`.
 Ключ `placeholders` в фактах зарезервирован под обезличивание контекста модели:

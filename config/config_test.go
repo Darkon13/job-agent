@@ -160,6 +160,35 @@ func TestApplicationTailoringAboutRequiresMatchingResumeFacts(t *testing.T) {
 	}
 }
 
+func TestProfileContactsValidation(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{
+			Tag: "primary", Adapter: "hh-main", Enabled: true,
+			Contacts: &ProfileContacts{Email: "user@example.test", Telegram: "@qworteex"},
+		}},
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid contacts: %v", err)
+	}
+	empty := base
+	empty.Profiles = []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Contacts: &ProfileContacts{}}}
+	if err := empty.Validate(); err == nil {
+		t.Fatal("expected empty contacts to fail")
+	}
+	badEmail := base
+	badEmail.Profiles = []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Contacts: &ProfileContacts{Email: "nope"}}}
+	if err := badEmail.Validate(); err == nil {
+		t.Fatal("expected invalid email to fail")
+	}
+	lineBreak := base
+	lineBreak.Profiles = []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Contacts: &ProfileContacts{Telegram: "a\nb"}}}
+	if err := lineBreak.Validate(); err == nil {
+		t.Fatal("expected line break in contacts to fail")
+	}
+}
+
 func TestApplicationPolicyRejectsAmbiguousMessageAndDuplicateTerms(t *testing.T) {
 	config := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

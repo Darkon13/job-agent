@@ -275,7 +275,40 @@ type Profile struct {
 	Applications        ApplicationPolicy  `json:"applications,omitempty"`
 	Conversations       ConversationPolicy `json:"conversations,omitempty"`
 	Answers             *AnswerPolicy      `json:"answers,omitempty"`
+	Contacts            *ProfileContacts   `json:"contacts,omitempty"`
 	resolvedResumeFacts *ApplicationResumeFacts
+}
+
+// ProfileContacts are sender contacts rendered into letters and masked for
+// model calls. They are not secrets, but they are personal data.
+type ProfileContacts struct {
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Telegram  string `json:"telegram,omitempty"`
+}
+
+func (contacts ProfileContacts) validate() error {
+	values := map[string]string{
+		"first_name": contacts.FirstName, "last_name": contacts.LastName,
+		"email": contacts.Email, "telegram": contacts.Telegram,
+	}
+	nonEmpty := 0
+	for name, value := range values {
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("profile contacts %s must not contain line breaks", name)
+		}
+		if strings.TrimSpace(value) != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty == 0 {
+		return errors.New("profile contacts must set at least one of first_name, last_name, email, telegram")
+	}
+	if email := strings.TrimSpace(contacts.Email); email != "" && !strings.Contains(email, "@") {
+		return errors.New("profile contacts email must contain @")
+	}
+	return nil
 }
 
 type ApplicationResumeFacts struct {
@@ -1234,6 +1267,11 @@ func (c Config) Validate() error {
 		if profile.Applications.Timezone != "" {
 			if _, err := time.LoadLocation(profile.Applications.Timezone); err != nil {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
+			}
+		}
+		if profile.Contacts != nil {
+			if err := profile.Contacts.validate(); err != nil {
+				return fmt.Errorf("profile %q contacts: %w", profile.Tag, err)
 			}
 		}
 		skills, skillsEnabled := profile.Applications.TailoringSkills()
