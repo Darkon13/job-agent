@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `models[].reasoning_effort` (`none`/`low`/`medium`/`high`) для
+  reasoning-моделей; chat completions получает явную схему JSON-ответа, потому
+  что JSON mode не проверяет форму. Без схемы DeepSeek возвращал свои имена
+  полей, а `deepseek-flash` тратил весь `max_tokens` на reasoning.
+
 - Tailoring навыков умеет удалять нерелевантные теги: `allow_removals: true`
   разрешает модели решение `remove` с evidence, validator запрещает удаление
   несуществующих и всех навыков, детерминированный fallback не удаляет ничего.

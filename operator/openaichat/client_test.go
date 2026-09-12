@@ -18,9 +18,10 @@ type completionRequest struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
-	MaxTokens      int               `json:"max_tokens"`
-	ResponseFormat map[string]string `json:"response_format"`
-	Stream         bool              `json:"stream"`
+	MaxTokens       int               `json:"max_tokens"`
+	ResponseFormat  map[string]string `json:"response_format"`
+	ReasoningEffort string            `json:"reasoning_effort"`
+	Stream          bool              `json:"stream"`
 }
 
 func completionServer(t *testing.T, reply func(request completionRequest) string) (*httptest.Server, *completionRequest) {
@@ -44,7 +45,10 @@ func completionServer(t *testing.T, reply func(request completionRequest) string
 
 func chatClient(t *testing.T, server *httptest.Server) *Client {
 	t.Helper()
-	client, err := New(Config{BaseURL: server.URL + "/v1", APIKey: "secret", Model: "deepseek-chat", MaxOutputTokens: 700})
+	client, err := New(Config{
+		BaseURL: server.URL + "/v1", APIKey: "secret", Model: "deepseek-chat",
+		MaxOutputTokens: 700, ReasoningEffort: "none",
+	})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -67,7 +71,8 @@ func TestClientRewritesResumeTailoringAbout(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 	if received.Model != "deepseek-chat" || received.Stream || received.ResponseFormat["type"] != "json_object" ||
-		len(received.Messages) != 2 || received.Messages[0].Role != "system" || !strings.Contains(received.Messages[0].Content, "JSON") ||
+		received.ReasoningEffort != "none" || len(received.Messages) != 2 || received.Messages[0].Role != "system" ||
+		!strings.Contains(received.Messages[0].Content, "JSON") || !strings.Contains(received.Messages[0].Content, `{"about": string}`) ||
 		!strings.Contains(received.Messages[1].Content, `"vacancy_title":"Go developer"`) {
 		t.Fatalf("request = %#v", received)
 	}

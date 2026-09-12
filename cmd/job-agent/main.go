@@ -1199,7 +1199,7 @@ func buildApplicationModels(configs []appconfig.ModelProviderConfig, lookupEnv f
 		case appconfig.ModelProviderOpenAIChat:
 			model, err = openaichat.New(openaichat.Config{
 				BaseURL: configured.BaseURL, APIKey: apiKey, Model: configured.Model,
-				MaxOutputTokens: configured.MaxOutputTokens,
+				MaxOutputTokens: configured.MaxOutputTokens, ReasoningEffort: configured.ReasoningEffort,
 			})
 		default:
 			err = fmt.Errorf("unsupported model provider type %q", configured.Type)

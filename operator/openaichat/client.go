@@ -36,6 +36,7 @@ type Config struct {
 	APIKey          string
 	Model           string
 	MaxOutputTokens int
+	ReasoningEffort string
 	HTTPClient      HTTPClient
 }
 
@@ -44,6 +45,7 @@ type Client struct {
 	apiKey          string
 	model           string
 	maxOutputTokens int
+	reasoningEffort string
 	httpClient      HTTPClient
 }
 
@@ -84,9 +86,15 @@ func New(config Config) (*Client, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	reasoningEffort := strings.TrimSpace(config.ReasoningEffort)
+	switch reasoningEffort {
+	case "", "none", "low", "medium", "high":
+	default:
+		return nil, errors.New("chat completions reasoning effort must be none, low, medium or high")
+	}
 	return &Client{
 		endpoint: endpoint, apiKey: apiKey, model: model,
-		maxOutputTokens: maxOutputTokens, httpClient: httpClient,
+		maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort, httpClient: httpClient,
 	}, nil
 }
 
@@ -111,7 +119,8 @@ func (client *Client) Generate(ctx context.Context, request applicationoperator.
 		}
 	}
 	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction,
-		"Generate a cover letter from this structured context JSON:\n"+string(contextJSON))
+		"Generate a cover letter from this structured context JSON:\n"+string(contextJSON),
+		`{"text": string, "evidence": [{"claim": string, "sources": [{"path": string, "quote": string}]}]}`)
 	if err != nil {
 		return applicationoperator.ApplicationModelResponse{}, err
 	}
@@ -147,7 +156,8 @@ func (client *Client) GenerateAnswer(ctx context.Context, request applicationope
 			Kind: applicationoperator.ModelFailurePermanent, Operation: "chat.completions", Message: "answer request is too large",
 		}
 	}
-	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction, "Answer this question:\n"+string(input))
+	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction, "Answer this question:\n"+string(input),
+		`{"selected_options": [string], "text": string, "confidence": "high"|"medium"|"low"}`)
 	if err != nil {
 		return applicationoperator.AnswerModelResponse{}, err
 	}
@@ -189,7 +199,8 @@ func (client *Client) Select(ctx context.Context, request applicationoperator.Re
 		}
 	}
 	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction,
-		"Select resume skills from this structured context JSON:\n"+string(contextJSON))
+		"Select resume skills from this structured context JSON:\n"+string(contextJSON),
+		`{"skills": [{"value": string, "action": "add"|"keep"|"remove", "evidence": string}]}`)
 	if err != nil {
 		return applicationoperator.ResumeTailoringModelResponse{}, err
 	}
@@ -228,7 +239,8 @@ func (client *Client) RewriteAbout(ctx context.Context, request applicationopera
 		}
 	}
 	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction,
-		"Rewrite the resume about text from this structured context JSON:\n"+string(contextJSON))
+		"Rewrite the resume about text from this structured context JSON:\n"+string(contextJSON),
+		`{"about": string}`)
 	if err != nil {
 		return applicationoperator.ResumeTailoringAboutResponse{}, err
 	}
@@ -248,23 +260,25 @@ type completionMeta struct {
 	responseID string
 }
 
-func (client *Client) createCompletion(ctx context.Context, operation, instructions, input string) (string, completionMeta, error) {
+func (client *Client) createCompletion(ctx context.Context, operation, instructions, input, jsonShape string) (string, completionMeta, error) {
 	if err := ctx.Err(); err != nil {
 		return "", completionMeta{}, err
 	}
 	payload, err := json.Marshal(struct {
-		Model          string            `json:"model"`
-		Messages       []completionRole  `json:"messages"`
-		MaxTokens      int               `json:"max_tokens"`
-		ResponseFormat map[string]string `json:"response_format"`
-		Stream         bool              `json:"stream"`
+		Model           string            `json:"model"`
+		Messages        []completionRole  `json:"messages"`
+		MaxTokens       int               `json:"max_tokens"`
+		ResponseFormat  map[string]string `json:"response_format"`
+		ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+		Stream          bool              `json:"stream"`
 	}{
 		Model: client.model,
 		Messages: []completionRole{
-			{Role: "system", Content: instructions + "\n\nReturn a single JSON object and nothing else."},
+			{Role: "system", Content: instructions + "\n\nReturn a single JSON object and nothing else. Required shape: " + jsonShape},
 			{Role: "user", Content: input},
 		},
-		MaxTokens: client.maxOutputTokens, ResponseFormat: map[string]string{"type": "json_object"}, Stream: false,
+		MaxTokens: client.maxOutputTokens, ResponseFormat: map[string]string{"type": "json_object"},
+		ReasoningEffort: client.reasoningEffort, Stream: false,
 	})
 	if err != nil {
 		return "", completionMeta{}, fmt.Errorf("encode chat completions request: %w", err)
