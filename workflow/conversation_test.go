@@ -8,6 +8,7 @@ import (
 
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 )
 
@@ -148,5 +149,58 @@ func TestConversationWorkflowStoresPresentationFromTransport(t *testing.T) {
 	again, err := repository.Conversation(ctx, "conversation-1")
 	if err != nil || again.Revision != stored.Revision {
 		t.Fatalf("repeat changed conversation: %#v err=%v", again, err)
+	}
+}
+
+type conflictOnceRepository struct {
+	*storagememory.Repository
+	conflicts int
+}
+
+func (repository *conflictOnceRepository) SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error {
+	if repository.conflicts > 0 {
+		repository.conflicts--
+		current, err := repository.Repository.Conversation(ctx, candidate.ID)
+		if err != nil {
+			return err
+		}
+		next := current
+		next.Revision = current.Revision + 1
+		next.UpdatedAt = current.UpdatedAt.Add(time.Second)
+		if err := repository.Repository.SaveConversation(ctx, next, current.Revision); err != nil {
+			return err
+		}
+		return storage.ErrRevisionConflict
+	}
+	return repository.Repository.SaveConversation(ctx, candidate, expectedRevision)
+}
+
+func TestConversationPresentationRetriesRevisionConflict(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	base := storagememory.NewRepository()
+	conversation, err := core.NewConversation("conversation-1", "hh", "profile-1", "external-chat-1", now)
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	if _, _, err := base.CreateConversation(ctx, conversation); err != nil {
+		t.Fatalf("store conversation: %v", err)
+	}
+	repository := &conflictOnceRepository{Repository: base, conflicts: 1}
+	workflow, err := NewConversationWorkflow(repository, brokermemory.NewQueue(), &mutableClock{now: now}, &sequentialIDs{})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	if err := workflow.ObserveConversationPresentation(ctx, conversation.ID, core.ConversationPresentation{
+		VacancyTitle: "Go developer", Employer: "Example",
+	}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("observe presentation: %v", err)
+	}
+	if repository.conflicts != 0 {
+		t.Fatalf("conflict was not consumed: %d", repository.conflicts)
+	}
+	stored, err := base.Conversation(ctx, conversation.ID)
+	if err != nil || stored.VacancyTitle != "Go developer" || stored.Revision != 3 {
+		t.Fatalf("stored conversation = %#v err=%v", stored, err)
 	}
 }

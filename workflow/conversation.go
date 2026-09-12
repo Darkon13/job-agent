@@ -56,16 +56,14 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		// a new conversation, a changed unread/status state or a new last
 		// message. Unchanged conversations stay on their stored timeline.
 		needsSync := created
-		expectedRevision := stored.Revision
-		changed, err := stored.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
-		if err != nil {
-			return result, err
-		}
-		if changed {
-			needsSync = true
-			if err := workflow.repository.SaveConversation(ctx, stored, expectedRevision); err != nil {
-				return result, fmt.Errorf("save observed conversation %s: %w", observation.ExternalID, err)
+		if !created {
+			changed, err := workflow.updateConversation(ctx, stored.ID, func(conversation *core.Conversation) (bool, error) {
+				return conversation.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
+			})
+			if err != nil {
+				return result, fmt.Errorf("observe conversation %s: %w", observation.ExternalID, err)
 			}
+			needsSync = needsSync || changed
 		}
 		if observation.LastMessage != nil {
 			messageID, err := workflow.ids.NewID("message")
@@ -129,41 +127,54 @@ func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Contex
 }
 
 func (workflow *ConversationWorkflow) ObserveConversationPresentation(ctx context.Context, conversationID core.ConversationID, presentation core.ConversationPresentation, observedAt time.Time) error {
-	conversation, err := workflow.repository.Conversation(ctx, conversationID)
+	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
+		return conversation.ObservePresentation(presentation, observedAt)
+	})
 	if err != nil {
-		return fmt.Errorf("load conversation presentation target: %w", err)
-	}
-	expectedRevision := conversation.Revision
-	changed, err := conversation.ObservePresentation(presentation, observedAt)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil
-	}
-	if err := workflow.repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
 		return fmt.Errorf("save conversation presentation: %w", err)
 	}
 	return nil
 }
 
 func (workflow *ConversationWorkflow) MarkConversationRead(ctx context.Context, conversationID core.ConversationID) error {
-	conversation, err := workflow.repository.Conversation(ctx, conversationID)
+	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
+		return conversation.MarkRead(workflow.clock.Now())
+	})
 	if err != nil {
-		return fmt.Errorf("load conversation read target: %w", err)
-	}
-	expectedRevision := conversation.Revision
-	changed, err := conversation.MarkRead(workflow.clock.Now())
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil
-	}
-	if err := workflow.repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
 		return fmt.Errorf("save conversation read state: %w", err)
 	}
 	return nil
+}
+
+const conversationUpdateAttempts = 5
+
+// updateConversation applies one optimistic read-modify-write step. Discovery
+// and per-chat syncs can revise the same conversation concurrently, so a
+// revision conflict is retried against the fresh revision instead of failing
+// the whole catalog observation.
+func (workflow *ConversationWorkflow) updateConversation(ctx context.Context, conversationID core.ConversationID, mutate func(*core.Conversation) (bool, error)) (bool, error) {
+	for attempt := 0; attempt < conversationUpdateAttempts; attempt++ {
+		conversation, err := workflow.repository.Conversation(ctx, conversationID)
+		if err != nil {
+			return false, err
+		}
+		expectedRevision := conversation.Revision
+		changed, err := mutate(&conversation)
+		if err != nil {
+			return false, err
+		}
+		if !changed {
+			return false, nil
+		}
+		err = workflow.repository.SaveConversation(ctx, conversation, expectedRevision)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, storage.ErrRevisionConflict) {
+			return false, err
+		}
+	}
+	return false, fmt.Errorf("conversation %s update conflicted after %d attempts", conversationID, conversationUpdateAttempts)
 }
 
 func NewConversationWorkflow(repository storage.ConversationRepository, tasks broker.TaskStore, clock Clock, ids IDGenerator) (*ConversationWorkflow, error) {
