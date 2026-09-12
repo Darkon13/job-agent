@@ -62,7 +62,7 @@ browser-worker/         опциональный TypeScript/Playwright RPC дл�
 - `Unsupported` — операция недоступна этим транспортом; разрешён fallback;
 - `Unauthorized` — нужно обновить сессию или токен;
 - `RateLimited` / `QuotaExceeded` — отложить задачу (`RetryAfter`) или
-  остановить кампанию;
+  остановить рассылку;
 - `ValidationRequired` / `ConfirmationRequired` — нужен человек или анкета;
 - `TemporaryFailure` — ограниченный retry;
 - `PermanentFailure` — повтор без изменения входа бессмысленен;

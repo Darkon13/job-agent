@@ -458,7 +458,7 @@ provider response ID, tag/digest resume facts, input/output/evidence digests,
 Неизвестные поля верхнего уровня, `null`, пустые строки, чрезмерная вложенность
 и файлы больше 128 KiB отклоняются. `resume_id` обязан совпадать с
 `profiles[].resume`. Loader вычисляет digest нормализованного содержимого;
-путь и полный файл не пишутся в decision reason.
+путь и полный файл не попадают в причину решения.
 
 При Compose-запуске `OPENAI_API_KEY` передаётся только backend-сервису. Для
 другого `api_key_env` переменную нужно явно добавить в deployment override.

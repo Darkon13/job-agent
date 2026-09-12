@@ -122,7 +122,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | `qualification` | object | `include_any`, `exclude_any` — текстовые фильтры по вакансии |
 | `daily_limit` | number | дневной потолок откликов на профиль/платформу |
 | `submit_jitter` | object | пауза между отправками: `min`, `max` (например, `15s`/`30s`) |
-| `timezone` | string | таймзона кампаний и расписаний |
+| `timezone` | string | таймзона рассылок и расписаний |
 | `allow_visibility_change` | bool | разрешить менять видимость резюме при отклике |
 | `tailoring` | object | временная подстройка резюме перед откликом |
 
