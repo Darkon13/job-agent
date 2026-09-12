@@ -9,6 +9,17 @@
 - Версия по умолчанию для Compose и Dockerfile обновлена до `1.0.0`; у
   browser-worker появился собственный README.
 
+## 1.0.1
+
+- Документация переехала на MkDocs Material и GitHub Pages: справочник
+  конфигурации, шпаргалки с рецептами, светлая/тёмная тема.
+- README переписан вокруг быстрого старта; добавлены гайд по адаптерам,
+  индекс документации и стартовый `deploy/config.example.json`.
+- CI: PR-бот с лейблами и статусом проверок, CodeQL для Go и TS, Dependabot,
+  защита `main`, release workflow по тегам `v*`.
+- Зависимости обновлены: modernc.org/sqlite 1.58, golang.org/x/net 0.59,
+  golang-migrate 4.20.1, свежие GitHub Actions.
+
 ## 1.0.0
 
 Первый стабильный выпуск: API v1, схема конфига 1, полный pipeline откликов,
