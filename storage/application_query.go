@@ -10,6 +10,11 @@ import (
 	"github.com/Darkon13/job-agent/core"
 )
 
+// ImportedApplicationDecisionCode marks applications that were applied through
+// an external tool before job-agent and are kept only to prevent duplicate
+// responses.
+const ImportedApplicationDecisionCode = "imported_appltool"
+
 // Query projections exclude cover letters, credentials and task payloads.
 type ApplicationListEntry struct {
 	ID           core.ApplicationID
@@ -52,7 +57,7 @@ func (query ApplicationQuery) Validate() error {
 		return errors.New("invalid application sort")
 	}
 	switch query.Group {
-	case "", "sent", "queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent":
+	case "", "sent", "queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent", "imported":
 	default:
 		return errors.New("invalid application group")
 	}
@@ -60,6 +65,11 @@ func (query ApplicationQuery) Validate() error {
 }
 
 func ApplicationListGroup(item ApplicationListEntry) string {
+	if item.DecisionCode == ImportedApplicationDecisionCode {
+		// Imported dedup records describe history from another tool; they must
+		// not inflate live application counters.
+		return "imported"
+	}
 	if item.Status == core.ApplicationSubmitted || item.DecisionCode == "already_applied" {
 		switch item.Disposition {
 		case core.ApplicationDispositionPending:
@@ -107,7 +117,8 @@ func SelectApplicationPage(entries []ApplicationListEntry, query ApplicationQuer
 		group := ApplicationListGroup(entry)
 		result.Groups[group]++
 		result.Groups[""]++
-		sent := entry.Status == core.ApplicationSubmitted || entry.DecisionCode == "already_applied"
+		sent := (entry.Status == core.ApplicationSubmitted || entry.DecisionCode == "already_applied") &&
+			entry.DecisionCode != ImportedApplicationDecisionCode
 		if sent {
 			result.Groups["sent"]++
 		}
