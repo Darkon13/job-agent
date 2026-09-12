@@ -15,22 +15,22 @@ import (
 )
 
 const resumeTailoringAboutInstruction = `Rewrite the resume "About" section for one application.
-Use only the current about text, resume facts and vacancy context supplied below. Do not invent experience, skills, employers, education, numbers, contacts or availability.
+Use only the current about text, the resume context and the vacancy context supplied below. Do not invent experience, skills, employers, education, numbers, contacts or availability.
 Keep the first-person voice, stay concise and prefer the themes that matter for this vacancy.
 Return one short paragraph. Declared placeholders like {name} may be used verbatim and must not be reworded.`
 
 // ResumeTailoringAboutRequest is the provider-neutral model input for the
-// "About" rewrite. The context is already anonymized: personal values are
-// replaced with placeholders before the request is built.
+// "About" rewrite. The context is already anonymized when the profile declares
+// placeholder values in resume facts.
 type ResumeTailoringAboutRequest struct {
-	Instruction    string         `json:"instruction"`
-	PromptVersion  string         `json:"prompt_version"`
-	VacancyTitle   string         `json:"vacancy_title,omitempty"`
-	VacancySkills  []string       `json:"vacancy_skills,omitempty"`
-	CurrentAbout   string         `json:"current_about,omitempty"`
-	Facts          map[string]any `json:"facts,omitempty"`
-	MaximumRunes   int            `json:"maximum_runes"`
-	ProfileContext string         `json:"profile_context,omitempty"`
+	Instruction   string         `json:"instruction"`
+	PromptVersion string         `json:"prompt_version"`
+	VacancyTitle  string         `json:"vacancy_title,omitempty"`
+	VacancySkills []string       `json:"vacancy_skills,omitempty"`
+	CurrentAbout  string         `json:"current_about,omitempty"`
+	ResumeContext map[string]any `json:"resume_context,omitempty"`
+	Facts         map[string]any `json:"facts,omitempty"`
+	MaximumRunes  int            `json:"maximum_runes"`
 }
 
 type ResumeTailoringAboutResponse struct {
@@ -55,7 +55,8 @@ type ModelResumeTailoringAboutConfig struct {
 
 // ModelResumeTailoringAboutProcessor rewrites the declared "About" path with a
 // model and falls back to keeping the current text on any model failure or
-// invalid output, so skills tailoring can still proceed.
+// invalid output, so skills tailoring can still proceed. Resume facts are
+// optional: without them the model works from the observed resume context.
 type ModelResumeTailoringAboutProcessor struct {
 	tag           string
 	promptVersion string
@@ -81,8 +82,8 @@ func NewModelResumeTailoringAboutProcessor(config ModelResumeTailoringAboutConfi
 	if processor.timeout <= 0 {
 		return nil, errors.New("model resume tailoring about requires a positive timeout")
 	}
-	if processor.model == nil || processor.facts == nil || len(processor.facts.Facts) == 0 {
-		return nil, errors.New("model resume tailoring about requires a model and resume facts")
+	if processor.model == nil {
+		return nil, errors.New("model resume tailoring about requires a model")
 	}
 	return processor, nil
 }
@@ -117,18 +118,24 @@ func (processor *ModelResumeTailoringAboutProcessor) Plan(ctx context.Context, i
 }
 
 func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.Context, input ResumeTailoringInput, path, current string) (ResumeTailoringPlan, error) {
-	anonymousFacts, anonymousAbout, placeholders, err := anonymizeResumeTailoringAbout(processor.facts.Facts, current)
+	resumeContext, err := resumeTailoringAboutContext(input.CurrentState, input.ResumeID)
+	if err != nil {
+		return ResumeTailoringPlan{}, err
+	}
+	anonymousContext, anonymousFacts, anonymousAbout, placeholders, err := processor.anonymize(input, resumeContext, current)
 	if err != nil {
 		return ResumeTailoringPlan{}, err
 	}
 	modelCtx, cancel := context.WithTimeout(ctx, processor.timeout)
 	defer cancel()
+	vacancySkills := vacancyAttributeStrings(input.Vacancy, "key_skills")
 	response, err := processor.model.RewriteAbout(modelCtx, ResumeTailoringAboutRequest{
 		Instruction:   resumeTailoringAboutInstruction + "\n\n" + processor.instruction,
 		PromptVersion: processor.promptVersion,
 		VacancyTitle:  input.Vacancy.Title,
-		VacancySkills: vacancyAttributeStrings(input.Vacancy, "key_skills"),
+		VacancySkills: vacancySkills,
 		CurrentAbout:  anonymousAbout,
+		ResumeContext: anonymousContext,
 		Facts:         anonymousFacts,
 		MaximumRunes:  processor.maximumRunes,
 	})
@@ -136,7 +143,7 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 		return ResumeTailoringPlan{}, err
 	}
 	text := strings.TrimSpace(response.About)
-	if err := validateResumeTailoringAboutText(text, anonymousAbout, anonymousFacts, input.Vacancy.Title, vacancyAttributeStrings(input.Vacancy, "key_skills"), processor.maximumRunes, placeholders); err != nil {
+	if err := validateResumeTailoringAboutText(text, anonymousAbout, anonymousContext, anonymousFacts, input.Vacancy.Title, vacancySkills, processor.maximumRunes, placeholders); err != nil {
 		return ResumeTailoringPlan{}, err
 	}
 	substituted, err := substituteApplicationPlaceholders(text, placeholders)
@@ -153,7 +160,7 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 	}
 	plan := ResumeTailoringPlan{
 		ProcessorTag: processor.tag, ProcessorVersion: processor.promptVersion,
-		InputDigest: resumeTailoringAboutInputDigest(input, path, current, anonymousFacts),
+		InputDigest: resumeTailoringAboutInputDigest(input, path, current, anonymousContext, anonymousFacts),
 		Overrides:   []core.ProfileStateValueOverride{{Path: path, Value: encoded}},
 	}
 	if err := plan.Validate(input); err != nil {
@@ -163,28 +170,39 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 }
 
 func (processor *ModelResumeTailoringAboutProcessor) emptyPlan(input ResumeTailoringInput, path, current string) ResumeTailoringPlan {
-	anonymousFacts, _, _, _ := anonymizeResumeTailoringAbout(processor.facts.Facts, current)
+	resumeContext, _ := resumeTailoringAboutContext(input.CurrentState, input.ResumeID)
+	anonymousContext, anonymousFacts, _, _, _ := processor.anonymize(input, resumeContext, current)
 	return ResumeTailoringPlan{
 		ProcessorTag: processor.tag, ProcessorVersion: processor.promptVersion,
-		InputDigest: resumeTailoringAboutInputDigest(input, path, current, anonymousFacts),
+		InputDigest: resumeTailoringAboutInputDigest(input, path, current, anonymousContext, anonymousFacts),
 	}
 }
 
-func anonymizeResumeTailoringAbout(facts map[string]any, about string) (map[string]any, string, map[string]string, error) {
-	declared, err := declaredApplicationPlaceholders(facts[applicationModelPlaceholdersFactKey])
+// anonymize replaces declared personal values with placeholders in the about
+// text, the observed resume context and the optional explicit facts.
+func (processor *ModelResumeTailoringAboutProcessor) anonymize(input ResumeTailoringInput, resumeContext map[string]any, about string) (map[string]any, map[string]any, string, map[string]string, error) {
+	placeholders := map[string]string{}
+	if processor.facts == nil {
+		return resumeContext, nil, about, placeholders, nil
+	}
+	declared, err := declaredApplicationPlaceholders(processor.facts.Facts[applicationModelPlaceholdersFactKey])
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, "", nil, err
 	}
 	replacements := applicationPlaceholderReplacements(declared)
-	anonymousFacts, err := anonymizedFacts(facts, replacements)
+	anonymousFacts, err := anonymizedFacts(processor.facts.Facts, replacements)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, "", nil, err
+	}
+	anonymousContext, ok := replaceApplicationPlaceholderValues(resumeContext, replacements).(map[string]any)
+	if !ok {
+		return nil, nil, "", nil, errors.New("resume tailoring about context has an unexpected shape")
 	}
 	anonymousAbout, _ := replaceApplicationPlaceholderValues(about, replacements).(string)
-	return anonymousFacts, anonymousAbout, declared, nil
+	return anonymousContext, anonymousFacts, anonymousAbout, declared, nil
 }
 
-func validateResumeTailoringAboutText(text, currentAbout string, facts map[string]any, vacancyTitle string, vacancySkills []string, maximumRunes int, placeholders map[string]string) error {
+func validateResumeTailoringAboutText(text, currentAbout string, resumeContext, facts map[string]any, vacancyTitle string, vacancySkills []string, maximumRunes int, placeholders map[string]string) error {
 	invalid := func(message string) error {
 		return fmt.Errorf("model resume tailoring about returned invalid output: %s", message)
 	}
@@ -214,10 +232,11 @@ func validateResumeTailoringAboutText(text, currentAbout string, facts map[strin
 	}
 	grounding, err := json.Marshal(struct {
 		CurrentAbout  string         `json:"current_about,omitempty"`
+		ResumeContext map[string]any `json:"resume_context,omitempty"`
 		Facts         map[string]any `json:"facts,omitempty"`
 		VacancyTitle  string         `json:"vacancy_title,omitempty"`
 		VacancySkills []string       `json:"vacancy_skills,omitempty"`
-	}{CurrentAbout: currentAbout, Facts: facts, VacancyTitle: vacancyTitle, VacancySkills: vacancySkills})
+	}{CurrentAbout: currentAbout, ResumeContext: resumeContext, Facts: facts, VacancyTitle: vacancyTitle, VacancySkills: vacancySkills})
 	if err != nil {
 		return invalid("grounding context could not be encoded")
 	}
@@ -249,6 +268,53 @@ func validateResumeTailoringAboutText(text, currentAbout string, facts map[strin
 	return nil
 }
 
+// resumeTailoringAboutContextPaths lists the read paths that give the model
+// the resume content it must rephrase: title, about, skills, experience and
+// education. The names come from the HH browser resume editor allowlist.
+func resumeTailoringAboutContextPaths(resumeID string) []string {
+	escaped := escapeResumeTailoringPointer(strings.TrimSpace(resumeID))
+	return []string{
+		"/resumes/" + escaped + "/web/title",
+		"/resumes/" + escaped + "/web/keySkills",
+		"/resumes/" + escaped + "/web/skills",
+		"/resumes/" + escaped + "/web_profile/experience",
+		"/resumes/" + escaped + "/web_profile/primaryEducation",
+		"/resumes/" + escaped + "/web_profile/additionalEducation",
+		"/resumes/" + escaped + "/web_profile/language",
+	}
+}
+
+// ResumeTailoringAboutReadPaths returns the read paths required by the about
+// processor. The caller adds them to the tailoring allowlist so the saga reads
+// the same context that reaches the model.
+func ResumeTailoringAboutReadPaths(resumeID string) []string {
+	return resumeTailoringAboutContextPaths(resumeID)
+}
+
+func resumeTailoringAboutContext(observation core.ProfileStateObservation, resumeID string) (map[string]any, error) {
+	context := make(map[string]any)
+	for _, path := range resumeTailoringAboutContextPaths(resumeID) {
+		raw, exists, err := observation.ValueAt(path)
+		if err != nil {
+			return nil, err
+		}
+		if !exists || string(raw) == "null" {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, fmt.Errorf("observed resume context at %q is not valid JSON: %w", path, err)
+		}
+		segments := strings.Split(path, "/")
+		context[segments[len(segments)-1]] = value
+	}
+	delete(context, "skills")
+	if len(context) == 0 {
+		return nil, nil
+	}
+	return context, nil
+}
+
 func ResumeAboutPath(resumeID string) string {
 	return "/resumes/" + escapeResumeTailoringPointer(strings.TrimSpace(resumeID)) + "/web/skills"
 }
@@ -277,17 +343,18 @@ func observedResumeAbout(observation core.ProfileStateObservation, path string) 
 	return values[0], nil
 }
 
-func resumeTailoringAboutInputDigest(input ResumeTailoringInput, path, currentAbout string, facts map[string]any) string {
+func resumeTailoringAboutInputDigest(input ResumeTailoringInput, path, currentAbout string, resumeContext, facts map[string]any) string {
 	encoded, _ := json.Marshal(struct {
 		ApplicationID core.ApplicationID `json:"application_id"`
 		ProfileID     core.ProfileID     `json:"profile_id"`
 		ResumeID      string             `json:"resume_id"`
 		Path          string             `json:"path"`
 		CurrentAbout  string             `json:"current_about"`
-		Facts         map[string]any     `json:"facts"`
+		ResumeContext map[string]any     `json:"resume_context,omitempty"`
+		Facts         map[string]any     `json:"facts,omitempty"`
 	}{
 		ApplicationID: input.Application.ID, ProfileID: input.Application.Key.ProfileID,
-		ResumeID: input.ResumeID, Path: path, CurrentAbout: currentAbout, Facts: facts,
+		ResumeID: input.ResumeID, Path: path, CurrentAbout: currentAbout, ResumeContext: resumeContext, Facts: facts,
 	})
 	return applicationBytesDigest(encoded)
 }

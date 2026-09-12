@@ -141,6 +141,11 @@ func TestApplicationTailoringAboutRequiresMatchingResumeFacts(t *testing.T) {
 			},
 		}},
 	}
+	config.Profiles[0].resolvedResumeFacts = nil
+	if err := config.Validate(); err != nil {
+		t.Fatalf("about tailoring without resume facts: %v", err)
+	}
+	config.Profiles[0].resolvedResumeFacts = &facts
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected mismatched resume facts to fail")
 	}

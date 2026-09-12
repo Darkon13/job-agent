@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -1289,9 +1290,11 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		allowedPaths = append(allowedPaths, applicationoperator.ResumeSkillsPath(profile.Resume))
 	}
 	if about, enabled := profile.Applications.TailoringAbout(); enabled {
-		facts, exists := profile.ResolvedResumeFacts()
-		if !exists {
-			return nil, nil, errors.New("application tailoring about requires resolved resume facts")
+		var resumeFacts *applicationoperator.ApplicationResumeContext
+		if facts, exists := profile.ResolvedResumeFacts(); exists {
+			resumeFacts = &applicationoperator.ApplicationResumeContext{
+				ResumeID: facts.ResumeID, FactsTag: facts.Tag, Digest: facts.Digest, Facts: facts.Facts,
+			}
 		}
 		provider := strings.TrimSpace(about.Model.Provider)
 		candidate := models[provider]
@@ -1308,16 +1311,17 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		}
 		aboutProcessor, err := applicationoperator.NewModelResumeTailoringAboutProcessor(applicationoperator.ModelResumeTailoringAboutConfig{
 			Tag: provider, PromptVersion: about.Model.PromptVersion, Instruction: about.Model.Instruction,
-			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel,
-			Facts: &applicationoperator.ApplicationResumeContext{
-				ResumeID: facts.ResumeID, FactsTag: facts.Tag, Digest: facts.Digest, Facts: facts.Facts,
-			},
+			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel, Facts: resumeFacts,
 		})
 		if err != nil {
 			return nil, nil, err
 		}
 		processors = append(processors, aboutProcessor)
-		allowedPaths = append(allowedPaths, applicationoperator.ResumeAboutPath(profile.Resume))
+		for _, path := range applicationoperator.ResumeTailoringAboutReadPaths(profile.Resume) {
+			if !slices.Contains(allowedPaths, path) {
+				allowedPaths = append(allowedPaths, path)
+			}
+		}
 	}
 	switch len(processors) {
 	case 0:
