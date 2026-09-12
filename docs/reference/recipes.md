@@ -118,6 +118,14 @@
 Что принимает `query.source`: `global`, `similar_resume` (нужен `resume`),
 `similar_vacancy` и `related_vacancy` (нужен `vacancy`).
 
+`similar_resume` — это «вакансии, подходящие к резюме»: browser-транспорт
+открывает ту же web-страницу с chip «Резюме» (`/search/vacancy?resume=<id>`).
+Не задавайте `order_by: publication_time` для этого source: он отключает
+релевантную сортировку HH, и в выдачу попадает всё подряд; без `order_by`
+остаются вакансии, ранжированные под резюме (в интерфейсе видно «Подходит по
+навыкам на N%»). Аналогично `similar_vacancy` — подходящие к конкретной
+вакансии, а не к резюме.
+
 Similar-выдача уже меньше глобальной, но её фильтруют так же, как global:
 `similar_resume` и `similar_vacancy` принимают весь классический набор
 (`text`, `area`, `experience`, `employment`, `schedule`, `professional_role`,
