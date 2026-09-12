@@ -27,6 +27,7 @@ const taskTypeLabels = {
 const applicationGroupLabels = {
   queued: "В очереди", sent: "Отправлено", needs_input: "Нужно участие", waiting_invitation: "Ожидает приглашения",
   invited: "Приглашение", rejected: "Отказ", state_unknown: "Состояние не синхронизировано", hidden: "Скрыт", not_sent: "Не отправлено",
+  imported: "Импортировано (appltool)",
 };
 const queuedApplicationStatuses = new Set(["new", "preparing", "ready", "submitting", "pending_reconciliation"]);
 const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
@@ -48,6 +49,7 @@ function total(items, predicate = () => true) { return items.filter(predicate).r
 function safeExternalURL(value) { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : ""; } catch (_) { return ""; } }
 function compactID(value) { const id = String(value || ""); return id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id || "—"; }
 function applicationGroup(item) {
+  if (item.decision_code === "imported_appltool") return "imported";
   if (item.status === "submitted" || item.decision_code === "already_applied") {
     if (Object.prototype.hasOwnProperty.call(item, "count")) return "sent";
     switch (item.disposition) {
@@ -87,10 +89,12 @@ function applicationReason(item) {
 
 function renderStats(summary = {}) {
   const applications = summary.applications || [];
+  const imported = total(applications, (item) => item.decision_code === "imported_appltool");
   const metrics = [
-    { value: total(applications, (item) => item.status === "submitted" || item.decision_code === "already_applied"), label: "Отклики отправлены", filter: "sent" },
+    { value: total(applications, (item) => (item.status === "submitted" || item.decision_code === "already_applied") && item.decision_code !== "imported_appltool"), label: "Отклики отправлены", filter: "sent" },
     { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
     { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
+    ...(imported > 0 ? [{ value: imported, label: "Импортировано (appltool)" }] : []),
     { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
   ];
   elements.stats.replaceChildren(...metrics.map((metric) => {
@@ -115,7 +119,7 @@ function setApplicationFilter(value) {
 }
 function renderApplicationFilters(items = []) {
   const grouped = new Map(Object.entries(state.applicationGroups));
-  const filters = [["", "Все", grouped.get("") || 0], ...["queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
+  const filters = [["", "Все", grouped.get("") || 0], ...["queued", "needs_input", "waiting_invitation", "invited", "rejected", "state_unknown", "hidden", "not_sent", "imported"].filter((group) => grouped.get(group)).map((group) => [group, applicationGroupLabels[group], grouped.get(group)])];
   elements.applicationFilters.replaceChildren(...filters.map(([value, label, count]) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `filter-card${state.applicationFilter === value ? " active" : ""}`;
     button.append(text("strong", String(count)), text("span", label)); button.addEventListener("click", () => setApplicationFilter(value)); return button;
