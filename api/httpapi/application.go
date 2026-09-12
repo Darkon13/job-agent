@@ -65,8 +65,10 @@ func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *h
 		}
 		vacancy, err := api.repository.Vacancy(request.Context(), application.Key.Vacancy)
 		if err != nil {
-			writeProblem(response, http.StatusInternalServerError, "load application vacancy")
-			return
+			// Merged historical applications may reference a vacancy that is not
+			// in the local catalogue. Keep the row visible with empty vacancy
+			// fields instead of failing the whole page.
+			vacancy = core.Vacancy{}
 		}
 		summary := ApplicationSummary{
 			ID: application.ID, Platform: application.Key.Vacancy.Platform, ProfileID: application.Key.ProfileID,

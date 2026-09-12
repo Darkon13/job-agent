@@ -229,7 +229,7 @@ function renderJobs(items = []) {
     const action = document.createElement("td");
     const run = text("button", "Запустить", "secondary compact"); run.type = "button"; run.disabled = state.jobBusy.has(item.tag);
     run.addEventListener("click", () => runJob(item)); action.append(run);
-    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", item.profile_id), text("td", String(item.priority)), text("td", flow), action);
+    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", profileDisplayName(item.profile_id)), text("td", String(item.priority)), text("td", flow), action);
     return row;
   }));
 }
@@ -245,7 +245,7 @@ function renderFailedTasks(items = []) {
     const dismiss = text("button", "Dismiss", "secondary compact"); dismiss.type = "button"; dismiss.disabled = state.taskBusy.has(item.id);
     dismiss.addEventListener("click", () => controlFailedTask(item, "dismiss"));
     actions.append(retry, dismiss);
-    row.append(text("td", item.id, "task-id"), text("td", taskTypeLabel(item.type)), text("td", item.profile_id || "—"), text("td", String(item.attempts)), text("td", error, "task-error"), text("td", formatDate(item.updated_at)), actions);
+    row.append(text("td", item.id, "task-id"), text("td", taskTypeLabel(item.type)), text("td", item.profile_id ? profileDisplayName(item.profile_id) : "—"), text("td", String(item.attempts)), text("td", error, "task-error"), text("td", formatDate(item.updated_at)), actions);
     return row;
   }));
 }
@@ -266,7 +266,7 @@ function renderActivity(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
   elements.activity.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    row.append(text("td", item.profile_id), text("td", item.platform), text("td", activityKindLabels[item.kind] || item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
+    row.append(text("td", profileDisplayName(item.profile_id)), text("td", item.platform), text("td", activityKindLabels[item.kind] || item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
     return row;
   }));
 }
@@ -284,7 +284,7 @@ function renderActivityObservations(items = []) {
   elements.activityObservations.replaceChildren(...latest.map((item) => {
     const card = document.createElement("article"); card.className = "panel activity-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
-    const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", item.profile_id), resume);
+    const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", profileDisplayName(item.profile_id)), resume);
     heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
     const metrics = document.createElement("div"); metrics.className = "activity-metrics";
     const score = item.score === null || item.score === undefined ? "—" : `${item.score}%`;
@@ -326,7 +326,7 @@ function renderConversations(items = []) {
     if (item.questionnaire_open) title.append(text("span", "опросник", "questionnaire-badge"));
     heading.append(title);
     if (item.unread_count) heading.append(text("span", String(item.unread_count), "unread-badge"));
-    button.append(heading, text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${item.profile_id} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`));
+    button.append(heading, text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${profileDisplayName(item.profile_id)} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`));
     button.addEventListener("click", () => selectConversation(item)); return button;
   }));
 }
@@ -389,7 +389,7 @@ function renderProfileResources() {
   elements.profileResources.replaceChildren(...state.profileResources.map((resource) => {
     const card = document.createElement("article"); card.className = "panel resource-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
-    const identity = document.createElement("div"); identity.append(text("h2", resource.tag), text("p", `${resource.profile_id} · ${resource.ownership}`, "muted"));
+    const identity = document.createElement("div"); identity.append(text("h2", resource.tag), text("p", `${profileDisplayName(resource.profile_id)} · ${resource.ownership}`, "muted"));
     const capabilities = text("span", `${resource.readable ? "read" : "no read"} · ${resource.writable ? "write" : "no write"}`, `tag ${resource.readable && resource.writable ? "ready" : ""}`);
     heading.append(identity, capabilities); card.append(heading);
     const paths = document.createElement("ul"); paths.className = "path-list";
@@ -595,7 +595,7 @@ function renderReviewSessions() {
     button.append(text("strong", vacancy.title || session.question || `Проверка ${compactID(session.id)}`));
     const details = vacancy.title
       ? [vacancy.employer || "Компания не определена", session.question, reviewStatusLabel(session.status), formatDate(session.updated_at)]
-      : [reviewStatusLabel(session.status), session.platform, session.profile_id, formatDate(session.updated_at)];
+      : [reviewStatusLabel(session.status), session.platform, profileDisplayName(session.profile_id), formatDate(session.updated_at)];
     button.append(text("small", details.filter(Boolean).join(" · ")));
     button.addEventListener("click", () => selectReviewSession(session));
     return button;
@@ -607,8 +607,8 @@ async function selectReviewSession(session) {
   const vacancy = session.vacancy || {};
   elements.reviewSessionTitle.textContent = vacancy.title || `Проверка ${compactID(session.id)}`;
   const meta = vacancy.title
-    ? [vacancy.employer || "Компания не определена", reviewStatusLabel(session.status), `профиль ${session.profile_id}`]
-    : [reviewStatusLabel(session.status), session.platform, `профиль ${session.profile_id}`, `revision ${session.revision}`];
+    ? [vacancy.employer || "Компания не определена", reviewStatusLabel(session.status), `профиль ${profileDisplayName(session.profile_id)}`]
+    : [reviewStatusLabel(session.status), session.platform, `профиль ${profileDisplayName(session.profile_id)}`, `revision ${session.revision}`];
   elements.reviewSessionMeta.textContent = meta.join(" · ");
   if (vacancy.url) {
     const link = document.createElement("a"); link.href = safeExternalURL(vacancy.url) || vacancy.url; link.target = "_blank"; link.rel = "noopener noreferrer";
@@ -815,7 +815,7 @@ async function refreshVersion() {
   } catch (error) { elements.runtimeVersion.textContent = "версия недоступна"; }
 }
 async function selectConversation(conversation) {
-  state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${conversation.profile_id} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
+  state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${profileDisplayName(conversation.profile_id)} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
