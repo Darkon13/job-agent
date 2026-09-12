@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- В шпаргалках описан query-синтаксис HH в `text` (`AND`, `OR`, `NOT`, кавычки,
+  скобки), его сочетание с `excluded_text` и клиентскими `include_any`/
+  `exclude_any`.
+
 - В шпаргалках уточнено: `similar_resume` — это подходящие к резюме вакансии
   (`/search/vacancy?resume=<id>`), а `order_by: publication_time` отключает
   релевантную сортировку HH; для подбора по резюме сортировку лучше не задавать.
