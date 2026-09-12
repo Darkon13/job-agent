@@ -26,7 +26,8 @@
 
 - [x] Зафиксировать решения и границу v1.0.0 (этот документ).
 - [x] Обновить критерии готовности в `docs/releasing.md`.
-- [x] Починить устаревшие факты в `docs/project-status.md` (схема 23, publish).
+- [x] Актуализировать устаревшие факты в кратком срезе проекта (схема 23,
+      publish).
 - [x] Зафиксировать открытые архитектурные решения: RPC формат (HTTP JSON,
       M1), storage (SQLite + DB-backed queue), config includes (M5);
       module path — `github.com/Darkon13/job-agent`.
