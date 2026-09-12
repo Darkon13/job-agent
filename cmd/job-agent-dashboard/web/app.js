@@ -4,7 +4,7 @@ const state = {
   applicationOffset: 0, applicationTotal: 0, applicationGroups: {}, applicationRequest: 0, applicationLoading: false,
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
-  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false,
+  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
 };
@@ -333,13 +333,44 @@ function renderMessages(items = []) {
     article.append(text("p", item.text || `[${item.kind}]`));
     if ((item.options || []).length) {
       const options = document.createElement("div"); options.className = "message-options";
-      for (const option of item.options) options.append(text("div", option.text, "message-option"));
+      for (const option of item.options) {
+        const button = text("button", option.text, "message-option");
+        button.type = "button";
+        button.disabled = item.direction === "outgoing" || item.status === "queued" || state.conversationAnswerBusy === `${item.id}:${option.id}`;
+        button.addEventListener("click", () => sendQuestionnaireOption(item, option));
+        options.append(button);
+      }
       article.append(options);
     }
     const meta = document.createElement("div"); meta.className = "message-meta";
     meta.append(text("span", item.direction === "outgoing" ? "Вы" : "Собеседник"), text("span", item.status === "queued" ? "В очереди" : formatDate(item.occurred_at)));
     article.append(meta); return article;
   })); elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+async function sendQuestionnaireOption(message, option) {
+  const conversation = state.selectedConversation;
+  if (!conversation || !option?.text) return;
+  if (!globalThis.confirm(`Отправить вариант «${option.text}»?`)) return;
+  const key = `dashboard-answer:${conversation.id}:${message.id}:${option.id}`;
+  state.conversationAnswerBusy = `${message.id}:${option.id}`;
+  elements.actionState.textContent = `Отправляю «${option.text}»…`;
+  renderMessages(state.selectedMessages);
+  try {
+    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`, {
+      content: { text: option.text }, reply_to_id: message.id,
+    }, key);
+    elements.actionState.textContent = result.created ? `Задача ${result.task_id} поставлена в очередь` : `Ответ уже поставлен ранее (${result.task_id})`;
+    if (state.selectedConversation?.id === conversation.id) {
+      state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: option.text, occurred_at: new Date().toISOString() }];
+      renderMessages(state.selectedMessages);
+    }
+    await refreshSummary();
+  } catch (error) {
+    elements.actionState.textContent = error.message;
+  }
+  state.conversationAnswerBusy = "";
+  renderMessages(state.selectedMessages);
 }
 
 function renderProfileResources() {

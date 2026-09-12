@@ -154,7 +154,9 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .message time { display: block; margin-top: .35rem; color: var(--muted); font-size: .68rem; }
 .message-meta { display: flex; justify-content: space-between; gap: .7rem; margin-top: .35rem; color: var(--muted); font-size: .68rem; }
 .message-options { display: grid; gap: .4rem; margin-top: .65rem; }
-.message-option { border: 1px solid #45606e; border-radius: 8px; padding: .5rem .65rem; background: #1c2a34; color: var(--blue); font-size: .78rem; overflow-wrap: anywhere; }
+.message-option { border: 1px solid #45606e; border-radius: 8px; padding: .5rem .65rem; background: #1c2a34; color: var(--blue); font-size: .78rem; overflow-wrap: anywhere; text-align: left; font-family: inherit; cursor: pointer; }
+.message-option:hover:not(:disabled) { border-color: var(--cyan); }
+.message-option:disabled { opacity: .55; cursor: default; }
 .empty { padding: 2rem 1rem; color: var(--muted); text-align: center; }
 .reply-form { display: grid; gap: .55rem; margin-top: .9rem; }
 .reply-form label { color: var(--muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
