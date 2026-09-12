@@ -187,10 +187,29 @@ func normalizeError(err error, taskType core.TaskType) *core.OperationError {
 	if errors.As(err, &operationError) && operationError.Validate() == nil {
 		return operationError
 	}
+	if isSQLiteBusy(err) {
+		// Write contention between workers is transient; retrying is correct.
+		return &core.OperationError{
+			Category: core.ErrorTemporaryFailure, Operation: string(taskType),
+			Message: handlerFailureMessage(err), Cause: err,
+		}
+	}
 	return &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: string(taskType),
 		Message: handlerFailureMessage(err), Cause: err,
 	}
+}
+
+// isSQLiteBusy detects SQLite write contention (SQLITE_BUSY / locked) so it is
+// retried as a temporary failure instead of failing the task permanently.
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToUpper(err.Error())
+	return strings.Contains(text, "SQLITE_BUSY") ||
+		strings.Contains(text, "DATABASE IS LOCKED") ||
+		strings.Contains(text, "DATABASE TABLE IS LOCKED")
 }
 
 // handlerFailureMessage keeps the underlying cause visible for operators while
