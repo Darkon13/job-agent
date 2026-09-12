@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -48,6 +49,38 @@ type browserApplicationPreflight struct {
 
 type browserApplicationPreflightBody struct {
 	ResponseStatus browserApplicationResponseStatus `json:"responseStatus"`
+}
+
+// browserApplicationPageState mirrors the SSR page state of the vacancy
+// response flow. The popup JSON no longer exposes responseStatus, so the
+// adapter falls back to this state when the JSON carries none.
+type browserApplicationPageState struct {
+	CountriesProfileVisibilityAgreement browserVisibilityAgreement `json:"countriesProfileVisibilityAgreement"`
+	VacancyResponsePopup                struct {
+		Type    string `json:"type"`
+		Vacancy struct {
+			AlreadyApplied      bool                                    `json:"alreadyApplied"`
+			ResponseImpossible  bool                                    `json:"responseImpossible"`
+			HasQuickResponse    bool                                    `json:"hasQuickResponse"`
+			LetterMaxLength     int                                     `json:"letterMaxLength"`
+			HiddenResumeIDs     flexibleIDs                             `json:"hiddenResumeIds"`
+			UnfinishedResumeIDs flexibleIDs                             `json:"unfinishedResumeIds"`
+			UnusedResumeIDs     flexibleIDs                             `json:"unusedResumeIds"`
+			UsedResumeIDs       flexibleIDs                             `json:"usedResumeIds"`
+			Test                browserApplicationTest                  `json:"test"`
+			Negotiations        json.RawMessage                         `json:"negotiations"`
+			ResumeVisibility    json.RawMessage                         `json:"resumeVisibility"`
+			Resumes             map[string]browserApplicationPageResume `json:"resumes"`
+		} `json:"vacancy"`
+	} `json:"vacancyResponsePopup"`
+}
+
+type browserApplicationPageResume struct {
+	ID           flexibleID      `json:"id"`
+	Hash         string          `json:"hash"`
+	Title        json.RawMessage `json:"title"`
+	IsIncomplete bool            `json:"isIncomplete"`
+	Forbidden    json.RawMessage `json:"forbidden"`
 }
 
 type browserApplicationResponseStatus struct {
@@ -312,6 +345,115 @@ func (client *BrowserApplicationClient) validateIdentity(profileID core.ProfileI
 }
 
 func (client *BrowserApplicationClient) preflight(ctx context.Context, key core.VacancyKey) (browserApplicationPreflight, error) {
+	preflight, err := client.popupPreflight(ctx, key)
+	if err != nil {
+		return browserApplicationPreflight{}, err
+	}
+	if preflightHasResponseState(preflight) {
+		return preflight, nil
+	}
+	// The popup JSON now returns only a flow hint. The resume list, applied
+	// state and negotiations live in the SSR page state, so read it before
+	// falling back to the incomplete hint.
+	page, pageErr := client.pagePreflight(ctx, key)
+	if pageErr != nil {
+		return preflight, nil
+	}
+	return page, nil
+}
+
+// preflightHasResponseState reports whether the popup JSON still carried the
+// rich responseStatus that older HH responses and fixtures expose.
+func preflightHasResponseState(preflight browserApplicationPreflight) bool {
+	status := preflight.ResponseStatus
+	return status.AlreadyApplied || status.ResponseImpossible || status.HasQuickResponse ||
+		status.Test.HasTests || status.Test.Required ||
+		len(status.Resumes) != 0 || len(status.UsedResumeIDs) != 0 || len(status.UnusedResumeIDs) != 0 ||
+		len(status.HiddenResumeIDs) != 0 || len(status.UnfinishedResumeIDs) != 0 ||
+		len(status.ResumeVisibility) != 0 || len(status.Negotiations) != 0 ||
+		preflight.CountriesProfileVisibilityAgreement.Show
+}
+
+func (client *BrowserApplicationClient) pagePreflight(ctx context.Context, key core.VacancyKey) (browserApplicationPreflight, error) {
+	endpoint := strings.TrimRight(client.webBaseURL, "/") + "/applicant/vacancy_response?" + url.Values{
+		"vacancyId":           []string{key.ExternalID},
+		"startedWithQuestion": []string{"false"},
+	}.Encode()
+	httpClient, err := client.authenticatedClient(endpoint)
+	if err != nil {
+		return browserApplicationPreflight{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return browserApplicationPreflight{}, fmt.Errorf("create HH application page request: %w", err)
+	}
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	request.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+	request.Header.Set("User-Agent", client.reader.userAgent)
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application page failed", err)
+	}
+	defer response.Body.Close()
+	if isLoginURL(response.Request.URL) {
+		return browserApplicationPreflight{}, operationError(core.ErrorUnauthorized, "applications.preflight.browser", "HH browser session requires authentication", nil)
+	}
+	if err := classifyBrowserApplicationGET(response); err != nil {
+		return browserApplicationPreflight{}, err
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxBrowserHTMLResponse))
+	if err != nil {
+		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application page could not be read", err)
+	}
+	raw, err := extractInitialStateByMarkers(data, "HH-Lux-InitialState", "VacancyResponsePopup-InitialState", "VacancyResponse-InitialState")
+	if err != nil {
+		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application page does not contain the expected initial state", err)
+	}
+	var state browserApplicationPageState
+	if err := json.Unmarshal([]byte(html.UnescapeString(string(raw))), &state); err != nil {
+		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application page returned invalid state", err)
+	}
+	return browserApplicationPagePreflight(state), nil
+}
+
+func browserApplicationPagePreflight(state browserApplicationPageState) browserApplicationPreflight {
+	vacancy := state.VacancyResponsePopup.Vacancy
+	preflight := browserApplicationPreflight{
+		Type:                                state.VacancyResponsePopup.Type,
+		CountriesProfileVisibilityAgreement: state.CountriesProfileVisibilityAgreement,
+	}
+	preflight.ResponseStatus = browserApplicationResponseStatus{
+		Test: vacancy.Test, AlreadyApplied: vacancy.AlreadyApplied, ResponseImpossible: vacancy.ResponseImpossible,
+		HasQuickResponse: vacancy.HasQuickResponse, LetterMaxLength: vacancy.LetterMaxLength,
+		UsedResumeIDs: vacancy.UsedResumeIDs, UnusedResumeIDs: vacancy.UnusedResumeIDs,
+		UnfinishedResumeIDs: vacancy.UnfinishedResumeIDs, HiddenResumeIDs: vacancy.HiddenResumeIDs,
+		Negotiations: vacancy.Negotiations, ResumeVisibility: vacancy.ResumeVisibility,
+	}
+	if len(vacancy.Resumes) != 0 {
+		preflight.ResponseStatus.Resumes = make(map[string]browserApplicationResume, len(vacancy.Resumes))
+		for key, resume := range vacancy.Resumes {
+			preflight.ResponseStatus.Resumes[key] = browserApplicationResume{
+				ID: resume.ID, Hash: resume.Hash, Title: resume.Title,
+				IsIncomplete: resume.IsIncomplete, Forbidden: resume.Forbidden,
+			}
+		}
+	}
+	if browserFlowKind(preflight.Type) == "" {
+		switch {
+		case vacancy.AlreadyApplied:
+			preflight.Type = "alreadyapplied"
+		case vacancy.Test.HasTests || vacancy.Test.Required:
+			preflight.Type = "testrequired"
+		case vacancy.HasQuickResponse:
+			preflight.Type = "quickresponse"
+		default:
+			preflight.Type = "modal"
+		}
+	}
+	return preflight
+}
+
+func (client *BrowserApplicationClient) popupPreflight(ctx context.Context, key core.VacancyKey) (browserApplicationPreflight, error) {
 	endpoint, _ := url.Parse(strings.TrimRight(client.webBaseURL, "/") + "/applicant/vacancy_response/popup")
 	query := endpoint.Query()
 	query.Set("vacancyId", key.ExternalID)

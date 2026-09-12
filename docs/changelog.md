@@ -7,10 +7,11 @@
   без теста (обычные поля отклика + task-поля); прежний urlencoded POST на
   страницу HH отклонял с `400`. Живая проверка: отклик на 136921562 принят,
   создан negotiation 5570082491.
-- Обнаружен дрейф HH: popup-JSON больше не содержит `responseStatus`, состояние
-  отклика (resumes, alreadyApplied, negotiations, visibility) доступно только в
-  `HH-Lux-InitialState` HTML-страницы; миграция preflight на HTML-состояние —
-  следующий шаг.
+- Дрейф HH закрыт: когда popup-JSON не содержит `responseStatus`, preflight
+  добирает состояние отклика (резюме, `alreadyApplied`, negotiations,
+  visibility) из `HH-Lux-InitialState` HTML-страницы. Живьём: отклик на
+  136921562 распознаётся как alreadyApplied, 136408820 без отклика — как
+  `questionnaire_required`.
 - Browser preflight и submit анкеты распознают resume-видимость: если резюме
   доступно только выбранным работодателям и текущего в списке нет, отклик
   останавливается с `resume_visibility_change_required` вместо непонятного

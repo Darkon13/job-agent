@@ -253,6 +253,36 @@ func newTestBrowserApplicationClient(t *testing.T, server *httptest.Server, opti
 	return client
 }
 
+func TestBrowserApplicationFallsBackToPageStateWhenPopupHasNoResponseStatus(t *testing.T) {
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/applicant/vacancy_response/popup":
+			writeBrowserPreflight(t, writer, `{"type":"test-required"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/applicant/vacancy_response":
+			if request.URL.Query().Get("startedWithQuestion") != "false" {
+				t.Errorf("page query = %v", request.URL.Query())
+			}
+			_, _ = writer.Write([]byte(vacancyTestPage(`{"vacancyResponsePopup":{"type":"alreadyApplied","vacancy":{"alreadyApplied":true,"negotiations":{"topicList":[{"id":"5570082491"}]}}}}`)))
+		case request.Method == http.MethodPost:
+			posts.Add(1)
+			writer.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected request %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+
+	result, err := client.SubmitApplication(context.Background(), browserSubmitCommand())
+	if err != nil || !result.Applied || !result.AlreadyApplied || result.ExternalNegotiationID != "5570082491" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if posts.Load() != 0 {
+		t.Fatalf("POST count = %d", posts.Load())
+	}
+}
+
 func browserSubmitCommand() adapter.ApplicationSubmitCommand {
 	return adapter.ApplicationSubmitCommand{
 		ProfileID: "primary", Vacancy: core.VacancyKey{Platform: Name, ExternalID: "42"}, ResumeID: "17",
