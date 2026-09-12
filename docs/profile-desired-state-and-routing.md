@@ -250,7 +250,8 @@ sing-box final    -> Job Agent explicit fallback action
   полей; потерянный ответ POST сначала сверяется read-back;
 - dashboard даёт раздельные команды plan/apply и показывает только redacted
   список операций;
-- dashboard может загрузить разрешённое поле `about`, собрать one-shot override
+- dashboard может загрузить объявленные resume-scoped text/null leaves, собрать
+  one-shot override
   и построить для него обычный immutable proposal. Override хранится только в
   proposal и не переписывает декларативный resource; пустой текст означает
   явное `null`/очистку. API принимает только уже объявленные редактируемые пути
@@ -279,9 +280,11 @@ sing-box final    -> Job Agent explicit fallback action
 
 Ссылки вида `{"processor":"about-backend"}` пока намеренно отвергаются как
 неразрешённые. Сначала config builder должен выполнить processor и передать в
-core итоговое значение. В dashboard редактируется только уже объявленный
-`about`; остальные поля профиля в этом срезе отсутствуют. Простое наличие
-resource в конфиге не вызывает side effect.
+core итоговое значение. В dashboard редактируются объявленные resume-scoped
+leaves, значение которых описано как строка или `null` (не только `about`);
+массивы, объекты, числа и boolean остаются вне текстового редактора, а adapter
+writer по-прежнему проверяет свой allowlist и подтверждает каждое поле
+read-back. Простое наличие resource в конфиге не вызывает side effect.
 
 ## Порядок реализации
 

@@ -200,9 +200,12 @@ Read/plan API не принимает observation от клиента:
 
 - `GET /api/v1/profile-state/resources` возвращает только metadata, объявленные
   JSON Pointer paths и доступность доверенного reader;
-- `GET /api/v1/profile-state/resources/{tag}/editor` явно загружает разрешённые
-  desired-значения для локальной формы; этот endpoint содержит персональный
-  текст и остаётся за той же доверенной tunnel-boundary, что и переписки;
+- `GET /api/v1/profile-state/resources/{tag}/editor` явно загружает объявленные
+  resume-scoped leaves со значением text/`null` (не только `about`) для
+  локальной формы; этот endpoint содержит персональный
+  текст и остаётся за той же доверенной tunnel-boundary, что и переписки.
+  Массивы, объекты, числа и boolean в текстовую форму не попадают, а adapter
+  writer проверяет свой allowlist и подтверждает результат read-back;
 - `POST /api/v1/profile-state/resources/{tag}/plans` сам читает актуальный HH
   state и сохраняет immutable proposal; опциональный one-shot override требует
   digest базового manifest;

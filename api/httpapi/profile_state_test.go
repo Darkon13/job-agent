@@ -215,7 +215,7 @@ func TestProfileStateAPIPlansOneShotEditorOverrideWithoutLeakingIt(t *testing.T)
 }
 
 func TestProfileStateAPIRejectsStaleOrUnsupportedEditorOverride(t *testing.T) {
-	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"from config","title":"Backend"}}}`))
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"from config","skills":["Go"]}}}`))
 	if err != nil {
 		t.Fatalf("new resource: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestProfileStateAPIRejectsStaleOrUnsupportedEditorOverride(t *testing.T) {
 		want int
 	}{
 		{body: `{"base_manifest_digest":"stale","overrides":[{"path":"/resumes/resume-1/about","value":"new"}]}`, want: http.StatusConflict},
-		{body: fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/title","value":"new"}]}`, resource.ManifestDigest), want: http.StatusUnprocessableEntity},
+		{body: fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/skills","value":"Go"}]}`, resource.ManifestDigest), want: http.StatusUnprocessableEntity},
 		{body: fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/about","value":42}]}`, resource.ManifestDigest), want: http.StatusUnprocessableEntity},
 	} {
 		response := httptest.NewRecorder()
@@ -406,5 +406,76 @@ func TestProfileStateAPIListsRedactedRevisions(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/revisions?limit=999", nil))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestProfileStateAPIEditorExposesDeclaredTextFieldsOnly(t *testing.T) {
+	now := time.Date(2026, 9, 12, 9, 0, 0, 0, time.UTC)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{
+		"resumes": {"resume-1": {
+			"about": "legacy text",
+			"web": {"about": "web text", "phone": "79990000000", "photo": null, "skills": ["Go"], "title": ["Backend"]},
+			"web_profile": {"firstName": ["Иван"]}
+		}}
+	}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	repository := memory.NewRepository()
+	queue := brokermemory.NewQueue()
+	planner, err := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, profileStateAPIClock{now}, &profileStateAPIIDs{})
+	if err != nil {
+		t.Fatalf("new planner: %v", err)
+	}
+	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
+		return core.NewProfileStateObservation("primary", resource.State, "", now)
+	})
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil {
+		t.Fatalf("new apply workflow: %v", err)
+	}
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	handler := api.Handler(nil)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/resources/backend/editor", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("editor response: %d %s", response.Code, response.Body.String())
+	}
+	var editor ProfileStateResourceEditor
+	if err := json.Unmarshal(response.Body.Bytes(), &editor); err != nil {
+		t.Fatalf("decode editor: %v", err)
+	}
+	want := []string{
+		"/resumes/resume-1/about", "/resumes/resume-1/web/about",
+		"/resumes/resume-1/web/phone", "/resumes/resume-1/web/photo",
+	}
+	if len(editor.Fields) != len(want) {
+		t.Fatalf("editable fields = %#v", editor.Fields)
+	}
+	for index, field := range editor.Fields {
+		if field.Path != want[index] {
+			t.Fatalf("editable fields = %#v", editor.Fields)
+		}
+	}
+	if editor.Fields[3].Value != nil {
+		t.Fatalf("null field = %#v", editor.Fields[3])
+	}
+
+	body := fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/web/skills","value":"Go"}]}`, resource.ManifestDigest)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/plans", strings.NewReader(body)))
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("array override response: %d %s", response.Code, response.Body.String())
+	}
+	body = fmt.Sprintf(`{"base_manifest_digest":%q,"overrides":[{"path":"/resumes/resume-1/web/phone","value":"70000000000"}]}`, resource.ManifestDigest)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/profile-state/resources/backend/plans", strings.NewReader(body)))
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"status":"planned"`) {
+		t.Fatalf("text override response: %d %s", response.Code, response.Body.String())
 	}
 }

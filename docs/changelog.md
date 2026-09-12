@@ -132,6 +132,10 @@
   статусу/профилю/платформе и текущим вопросом; секция «Проверки и опросники»
   рендерит single/multiple/text prompt и записывает ответ через durable
   `review.answer` с Idempotency-Key.
+- Dashboard-редактор profile state: редактор показывает объявленные
+  resume-scoped leaves со значением text/`null`, а не только `about`;
+  массивы, объекты, числа и boolean остаются вне формы, writer
+  по-прежнему проверяет allowlist и подтверждает read-back.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

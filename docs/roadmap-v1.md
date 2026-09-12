@@ -142,8 +142,10 @@
 - [x] История ревизий: подтверждённый apply пишет durable redacted revision
       (before/after digests, paths, source, applied_at), API
       `GET /api/v1/profile-state/revisions`, панель в dashboard.
-- [ ] Dashboard-редактор резюме: поля сверх объявленного `about` — по мере
-      подтверждения live HH-схемы.
+- [x] Dashboard-редактор: редактируются объявленные resume-scoped leaves со
+      значением text/`null` (не только `about`), с тем же plan/apply и
+      read-back. Какие именно поля объявлять в конфиге — по мере live-проверки
+      соответствующих writer-путей.
 - [ ] DoD: создание резюме из bootstrap-файла и безопасный update с publish.
 
 ## M5. Hardening для v1.0.0

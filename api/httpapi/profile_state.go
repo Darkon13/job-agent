@@ -319,17 +319,30 @@ func (api *ProfileStateAPI) plan(response http.ResponseWriter, request *http.Req
 	writeJSON(response, status, proposal)
 }
 
+// editableProfileStatePaths returns declared resume-scoped leaves whose
+// desired value is text or null. Objects, arrays, numbers and booleans stay
+// outside the text editor; the adapter writer still validates its own
+// allowlist and confirms every field with read-back.
 func editableProfileStatePaths(resource core.ProfileStateResource) []string {
 	paths, err := resource.DeclaredPaths()
 	if err != nil {
 		return nil
 	}
-	result := make([]string, 0)
+	result := make([]string, 0, len(paths))
 	for _, path := range paths {
 		segments := strings.Split(path, "/")
-		if len(segments) == 4 && segments[1] == "resumes" && segments[2] != "" && segments[3] == "about" {
-			result = append(result, path)
+		if len(segments) < 4 || segments[1] != "resumes" || segments[2] == "" {
+			continue
 		}
+		raw, exists, err := resource.ValueAt(path)
+		if err != nil || !exists {
+			continue
+		}
+		var text *string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			continue
+		}
+		result = append(result, path)
 	}
 	return result
 }
