@@ -154,6 +154,9 @@
 - Fix: SQLite сохраняет `review_sessions.answer_block_tag` (миграция 30).
   Колонки не было, поэтому review-сессия квалификации читалась без целевого
   блока и worker не мог дополнить family/level ревизию.
+- Live assessment контракт skill verification: зафиксированы формы
+  `get_current_task`/`submit_user_answer`/`get_contest_tasks`, экран результата
+  и месячный lock после использованной попытки.
 - Conversation discovery на живом аккаунте с 3474 чатами больше не падает:
   адаптер читает recent-окно (1000 последних по активности) и отдаёт
   `Truncated`, а sync планируется только для новых/изменённых диалогов

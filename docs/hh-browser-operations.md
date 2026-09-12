@@ -364,6 +364,41 @@ POST /shards/contest/report_data
 угадывать без дополнительного подтверждения; adapter не должен воспроизводить
 telemetry вручную.
 
+Снятые живьём 2026-09-12 формы ответов:
+
+```json
+GET /shards/cert_tests/get_current_task
+{
+  "answers": [{"answer": "текст варианта", "uuid": "<answer-uuid>", "feature": "false"}],
+  "description": "текст вопроса",
+  "subType": "SINGLE",
+  "taskId": 38051,
+  "title": "Golang База 2.0",
+  "media": []
+}
+
+POST /shards/cert_tests/submit_user_answer
+{"userAnswerUuids": ["<answer-uuid>"], "taskId": 39416}
+-> {"status": "ACCEPTED"}
+
+GET /shards/contest/get_contest_tasks
+{"contestTasks": [{"taskId": 39416, "status": "NOT_STARTED"}, ...]}
+```
+
+Онбординг ответов идёт через `get_current_task`: первый вопрос приходит с
+server-rendered страницей `assessment.hh.ru/tests/<contest-id>`, последующие —
+этим GET. Старт попытки выполнялся кликом на hh.ru и его запрос не попал в
+сохранённый лог; URL `/tests/322406` совпал с family ID навыка, отдельный
+attempt/contest ID не наблюдался.
+
+Результат попытки открывается на
+`https://hh.ru/skills/applicant/contest_result?token=<token>`: статус
+(`Навык не подтверждён`), уровень/вид, счёт `N из 10` и дата следующей попытки
+(`Попробовать снова можно с 13 октября 2026` — месяц lock после использованной
+попытки). Полный отчёт доступен по
+`/skills/applicant/skills/<family-id>/<level-id>/report?category=SKILL`.
+
+
 DOM selection не равен подтверждённому ответу: переход на следующий вопрос
 происходит только после submit `footer-next-button`. Для extractor доступны
 read-only операции:
