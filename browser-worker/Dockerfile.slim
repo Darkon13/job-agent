@@ -1,0 +1,27 @@
+# Slim browser worker for constrained hosts. It uses the system Chromium from
+# Debian instead of the multi-gigabyte Playwright base image, so the resulting
+# image fits small VPS disks. The worker launches Chromium through
+# BROWSER_WORKER_EXECUTABLE.
+FROM node:22-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+FROM deps AS build
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+FROM node:22-slim
+ENV NODE_ENV=production
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY --from=build /app/dist ./dist
+ENV BROWSER_WORKER_EXECUTABLE=/usr/bin/chromium
+USER node
+EXPOSE 8088
+ENTRYPOINT ["node", "dist/index.js"]
