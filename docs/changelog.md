@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Similar-поиск снова можно фильтровать: `similar_resume` и
+  `similar_vacancy` принимают современные work-поля и при их наличии идут
+  через browser-поиск с полным набором фильтров (API-эндпоинт их не знает);
+  клиентские `include_any`/`exclude_any` и employer rules применяются к
+  результатам любого source, включая `related_vacancy`.
+
 - Job `profile.session_refresh`: по расписанию перечитывает cookies из live
   browser-контекста, оставляет только HH-домены и атомарно обновляет
   `state_file` (`0600`), чтобы backend не работал по протухшему снимку сессии.
