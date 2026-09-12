@@ -27,6 +27,20 @@ query context.
 Browser-вариант важен для проверки актуальной web-семантики и новых фильтров.
 API-вариант предпочтителен, когда его контракт покрывает запрос.
 
+## Query syntax
+
+`text` принимает query-синтаксис HH: операторы `AND`, `OR`, `NOT`, точные
+фразы в кавычках и скобки. Примеры:
+
+- `Golang AND (Kafka OR PostgreSQL)`;
+- `"Go developer" NOT руководитель`;
+- `(Backend OR Golang) AND Kubernetes`.
+
+Живая проверка на resume-контексте: `Golang AND (Kafka OR PostgreSQL)`
+возвращает Go-вакансии с высоким «Подходит по навыкам» и без мусорных
+совпадений. `excluded_text` — отдельный платформенный параметр исключений,
+он не заменяет клиентские `qualification.include_any`/`exclude_any`.
+
 ## Resume context
 
 В similar-выдаче наблюдались:
