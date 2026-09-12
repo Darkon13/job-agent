@@ -48,8 +48,8 @@ curl http://127.0.0.1:8081/dashboard-healthz
    `--steps 1 down`), destructive guard подтверждён;
 3. `LICENSE`, `docs/quickstart.md` и `docs/runbook.md` соответствуют текущему
    поведению;
-4. CI зелёный: `make verify` (включая `go test -race`) и проверки
-   browser-worker.
+4. CI зелёный: `make verify` (включая `go test -race`), `make smoke` и
+   проверки browser-worker.
 
 Критерии `v1.0.0` (детальный маршрут — `docs/roadmap-v1.md`):
 

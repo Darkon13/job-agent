@@ -176,6 +176,9 @@
       recovery_required, failed apply, quota, runtime lease, token, worker.
 - [ ] DoD: чистый install с нуля на пустом `data/`, `make release-check`,
       выпуск `v1.0.0` по `docs/releasing.md` (нужен реальный аккаунт).
+      Runtime-часть чистого install автоматизирована: `make smoke` собирает
+      бинарники, мигрирует пустую БД, поднимает backend, проверяет
+      health/ready/endpoints/request-id и round-trip backup/restore.
 
 ## M6. После v1.0.0 (не блокирует релиз)
 

@@ -144,6 +144,9 @@
   `request_id` всегда заполнен; Bearer-токен защищает `/metrics` и
   auth-endpoints, access-log покрывает auth-запросы. Запросы, отклонённые
   Bearer, остаются в access-log, но не попадают в счётчики статусов.
+- `make smoke` и `scripts/smoke-runtime.sh`: сборка, миграция пустой БД,
+  запуск backend, проверка health/ready/endpoints/request-id и round-trip
+  `db backup`/`db restore` без сети и без рабочего `data/`.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

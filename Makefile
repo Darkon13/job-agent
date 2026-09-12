@@ -4,7 +4,7 @@ BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 MODIFIED ?= $(shell test -z "$$(git status --porcelain 2>/dev/null)" && printf false || printf true)
 LDFLAGS := -s -w -X github.com/Darkon13/job-agent/buildinfo.Version=$(VERSION) -X github.com/Darkon13/job-agent/buildinfo.Commit=$(COMMIT) -X github.com/Darkon13/job-agent/buildinfo.BuildTime=$(BUILD_TIME) -X github.com/Darkon13/job-agent/buildinfo.Modified=$(MODIFIED)
 
-.PHONY: version build verify release-check
+.PHONY: version build verify smoke release-check
 
 version:
 	@go run ./cmd/job-agent --version
@@ -19,6 +19,9 @@ verify:
 	go test -race ./... -count=1
 	go vet ./...
 	git diff --check
+
+smoke:
+	@scripts/smoke-runtime.sh
 
 release-check: verify
 	@case "$(VERSION)" in *-dev) echo "release version must not end with -dev: $(VERSION)"; exit 1;; esac
