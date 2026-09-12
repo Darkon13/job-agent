@@ -141,6 +141,85 @@ func (client *Client) SelectResumeTailoringSkills(ctx context.Context, request a
 	}, nil
 }
 
+// RewriteAbout asks the model to rewrite the resume "About" section. The
+// caller anonymizes the context before the call and validates the result
+// locally against resume facts and the vacancy.
+func (client *Client) RewriteAbout(ctx context.Context, request applicationoperator.ResumeTailoringAboutRequest) (applicationoperator.ResumeTailoringAboutResponse, error) {
+	if client == nil || client.httpClient == nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, errors.New("OpenAI Responses client is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, err
+	}
+	if strings.TrimSpace(request.Instruction) == "" || strings.TrimSpace(request.PromptVersion) == "" {
+		return applicationoperator.ResumeTailoringAboutResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "instruction and prompt version are required",
+		}
+	}
+	contextJSON, err := json.Marshal(request)
+	if err != nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "encode resume tailoring about context", Cause: err,
+		}
+	}
+	if len(contextJSON) > maximumRequestBytes {
+		return applicationoperator.ResumeTailoringAboutResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "resume tailoring about context is too large",
+		}
+	}
+	decoded, err := client.createResponse(ctx, "responses.create", request.Instruction,
+		"Rewrite the resume about text from this structured context JSON:\n"+string(contextJSON), resumeTailoringAboutTextConfig())
+	if err != nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, err
+	}
+	structuredOutput := strings.TrimSpace(decoded.OutputText)
+	if structuredOutput == "" {
+		parts := make([]string, 0)
+		for _, output := range decoded.Output {
+			for _, content := range output.Content {
+				if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+					parts = append(parts, content.Text)
+				}
+			}
+		}
+		structuredOutput = strings.TrimSpace(strings.Join(parts, ""))
+	}
+	var result struct {
+		About string `json:"about"`
+	}
+	outputDecoder := json.NewDecoder(strings.NewReader(structuredOutput))
+	outputDecoder.DisallowUnknownFields()
+	if err := outputDecoder.Decode(&result); err != nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create",
+			Message: "decode structured output", Cause: err,
+		}
+	}
+	if err := ensureJSONEOF(outputDecoder); err != nil {
+		return applicationoperator.ResumeTailoringAboutResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create",
+			Message: "decode structured output", Cause: err,
+		}
+	}
+	return applicationoperator.ResumeTailoringAboutResponse{
+		About: result.About, Model: decoded.Model, ResponseID: decoded.ID,
+	}, nil
+}
+
+func resumeTailoringAboutTextConfig() responsesTextConfig {
+	return responsesTextConfig{Format: responsesTextFormat{
+		Type: "json_schema", Name: "resume_tailoring_about", Strict: true,
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"about": map[string]any{"type": "string", "description": "Rewritten 'About' section text"},
+			},
+			"required":             []string{"about"},
+			"additionalProperties": false,
+		},
+	}}
+}
+
 func resumeTailoringResponseTextConfig() responsesTextConfig {
 	decisionSchema := map[string]any{
 		"type": "object",

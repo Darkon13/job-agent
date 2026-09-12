@@ -224,6 +224,16 @@ plan → apply → read-back и, если нужно, публикацию. Зн
             "instruction": "Выбери навыки из вакансии, которых не хватает в резюме",
             "timeout": "30s"
           }
+        },
+        "about": {                        // необязательно: переписать «О себе»
+          "enabled": true,
+          "maximum_runes": 600,
+          "model": {                      // обязателен, нужен resume_facts_file
+            "provider": "openai",
+            "prompt_version": "v1",
+            "instruction": "Подчеркни опыт, важный для этой вакансии",
+            "timeout": "30s"
+          }
         }
       }
     }

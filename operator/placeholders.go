@@ -46,17 +46,7 @@ func anonymizeApplicationTemplateData(data ApplicationTemplateData) (Application
 		return data, map[string]string{}, nil
 	}
 
-	replacements := make([]applicationPlaceholderValue, 0, len(declared))
-	for name, value := range declared {
-		replacements = append(replacements, applicationPlaceholderValue{name: name, value: value})
-	}
-	// Longest values first so overlapping names do not leave partial matches.
-	sort.Slice(replacements, func(i, j int) bool {
-		if len(replacements[i].value) != len(replacements[j].value) {
-			return len(replacements[i].value) > len(replacements[j].value)
-		}
-		return replacements[i].name < replacements[j].name
-	})
+	replacements := applicationPlaceholderReplacements(declared)
 
 	vacancy, err := anonymizedVacancyContext(data.Vacancy, replacements)
 	if err != nil {
@@ -75,6 +65,22 @@ func anonymizeApplicationTemplateData(data ApplicationTemplateData) (Application
 		result.Resume = &resume
 	}
 	return result, declared, nil
+}
+
+// applicationPlaceholderReplacements orders declared values longest first so
+// overlapping names do not leave partial matches.
+func applicationPlaceholderReplacements(declared map[string]string) []applicationPlaceholderValue {
+	replacements := make([]applicationPlaceholderValue, 0, len(declared))
+	for name, value := range declared {
+		replacements = append(replacements, applicationPlaceholderValue{name: name, value: value})
+	}
+	sort.Slice(replacements, func(i, j int) bool {
+		if len(replacements[i].value) != len(replacements[j].value) {
+			return len(replacements[i].value) > len(replacements[j].value)
+		}
+		return replacements[i].name < replacements[j].name
+	})
+	return replacements
 }
 
 func declaredApplicationPlaceholders(raw any) (map[string]string, error) {

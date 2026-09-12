@@ -371,6 +371,7 @@ type ApplicationQualification struct {
 
 type ApplicationTailoringPolicy struct {
 	Skills *ApplicationTailoringSkillsPolicy `json:"skills,omitempty"`
+	About  *ApplicationTailoringAboutPolicy  `json:"about,omitempty"`
 }
 
 type ApplicationTailoringSkillsPolicy struct {
@@ -384,6 +385,21 @@ func (policy ApplicationPolicy) TailoringSkills() (ApplicationTailoringSkillsPol
 		return ApplicationTailoringSkillsPolicy{}, false
 	}
 	return *policy.Tailoring.Skills, true
+}
+
+// ApplicationTailoringAboutPolicy rewrites the resume "About" section for the
+// current vacancy. It requires a model and resume facts.
+type ApplicationTailoringAboutPolicy struct {
+	Enabled      bool                    `json:"enabled,omitempty"`
+	MaximumRunes int                     `json:"maximum_runes,omitempty"`
+	Model        *ApplicationModelPolicy `json:"model,omitempty"`
+}
+
+func (policy ApplicationPolicy) TailoringAbout() (ApplicationTailoringAboutPolicy, bool) {
+	if policy.Tailoring == nil || policy.Tailoring.About == nil || !policy.Tailoring.About.Enabled {
+		return ApplicationTailoringAboutPolicy{}, false
+	}
+	return *policy.Tailoring.About, true
 }
 
 func (policy ApplicationPolicy) ExecutionMode() string {
@@ -1208,13 +1224,17 @@ func (c Config) Validate() error {
 				return fmt.Errorf("profile %q application timezone: %w", profile.Tag, err)
 			}
 		}
-		if skills, enabled := profile.Applications.TailoringSkills(); enabled {
+		skills, skillsEnabled := profile.Applications.TailoringSkills()
+		about, aboutEnabled := profile.Applications.TailoringAbout()
+		if skillsEnabled || aboutEnabled {
 			if profile.Applications.ExecutionMode() != ApplicationModeSubmit {
 				return fmt.Errorf("profile %q application tailoring requires submit mode", profile.Tag)
 			}
 			if strings.TrimSpace(profile.Resume) == "" {
 				return fmt.Errorf("profile %q application tailoring requires a resume", profile.Tag)
 			}
+		}
+		if skillsEnabled {
 			if skills.Maximum < 1 {
 				return fmt.Errorf("profile %q application tailoring skills require a positive maximum", profile.Tag)
 			}
@@ -1222,6 +1242,20 @@ func (c Config) Validate() error {
 				if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), skills.Model, modelProviders); err != nil {
 					return err
 				}
+			}
+		}
+		if aboutEnabled {
+			if about.Model == nil {
+				return fmt.Errorf("profile %q application tailoring about requires a model", profile.Tag)
+			}
+			if about.MaximumRunes < 1 {
+				return fmt.Errorf("profile %q application tailoring about requires a positive maximum_runes", profile.Tag)
+			}
+			if !hasResumeFacts {
+				return fmt.Errorf("profile %q application tailoring about requires resume facts", profile.Tag)
+			}
+			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), about.Model, modelProviders); err != nil {
+				return err
 			}
 		}
 		messageSources := 0
