@@ -138,18 +138,84 @@ func TestModelResumeTailoringRemovesLeastRelevantSkillWhenAllowed(t *testing.T) 
 		{Value: "C#", Action: ResumeTailoringSkillRemove, Evidence: "vacancy.key_skills"},
 		{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
 	}}}
-	plan, err := modelTailoringProcessorWithRemovals(t, 10, true, model).Plan(context.Background(), input)
+	plan, err := modelTailoringProcessorWithRemovals(t, 3, true, model).Plan(context.Background(), input)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	if got := decodeTailoredSkills(t, plan); !reflect.DeepEqual(got, []string{"Go", "Linux", "PostgreSQL"}) {
 		t.Fatalf("skills=%#v", got)
 	}
-	if len(plan.Skills) != 3 || plan.Skills[1].Action != ResumeTailoringSkillRemove {
+	removals := 0
+	for _, decision := range plan.Skills {
+		if decision.Action == ResumeTailoringSkillRemove && decision.Value == "C#" {
+			removals++
+		}
+	}
+	if len(plan.Skills) != 3 || removals != 1 {
 		t.Fatalf("decisions=%#v", plan.Skills)
 	}
-	if !strings.Contains(model.request.Instruction, "remove") {
+	if !strings.Contains(model.request.Instruction, "remove") || !strings.Contains(model.request.Instruction, "remove nothing") {
 		t.Fatalf("instruction=%q", model.request.Instruction)
+	}
+}
+
+func TestModelResumeTailoringIgnoresRemovalsWithoutAdditions(t *testing.T) {
+	input := resumeTailoringFixture(t, []string{"Go", "Linux", "C#"}, []string{"Go"})
+	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
+		{Value: "Go", Action: ResumeTailoringSkillKeep, Evidence: "resume.skills"},
+		{Value: "C#", Action: ResumeTailoringSkillRemove, Evidence: "vacancy.key_skills"},
+	}}}
+	plan, err := modelTailoringProcessorWithRemovals(t, 10, true, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.ProcessorTag != "openai-test" || len(plan.Overrides) != 0 {
+		t.Fatalf("expected no skill changes, tag=%q overrides=%#v", plan.ProcessorTag, plan.Overrides)
+	}
+	for _, decision := range plan.Skills {
+		if decision.Action == ResumeTailoringSkillRemove {
+			t.Fatalf("unnecessary removal leaked into the plan: %#v", plan.Skills)
+		}
+	}
+}
+
+func TestModelResumeTailoringAppliesMinimalRemovals(t *testing.T) {
+	input := resumeTailoringFixture(t, []string{"Go", "Linux", "C#", "Python"}, []string{"PostgreSQL"})
+	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
+		{Value: "C#", Action: ResumeTailoringSkillRemove, Evidence: "vacancy.key_skills"},
+		{Value: "Python", Action: ResumeTailoringSkillRemove, Evidence: "vacancy.key_skills"},
+		{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
+	}}}
+	plan, err := modelTailoringProcessorWithRemovals(t, 4, true, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := decodeTailoredSkills(t, plan); !reflect.DeepEqual(got, []string{"Go", "Linux", "Python", "PostgreSQL"}) {
+		t.Fatalf("skills=%#v", got)
+	}
+	removals := 0
+	for _, decision := range plan.Skills {
+		if decision.Action == ResumeTailoringSkillRemove {
+			removals++
+			if decision.Value != "C#" {
+				t.Fatalf("unexpected removal %#v", decision)
+			}
+		}
+	}
+	if removals != 1 {
+		t.Fatalf("removals=%d, want 1", removals)
+	}
+}
+
+func TestModelResumeTailoringRejectsTooFewRemovals(t *testing.T) {
+	input := resumeTailoringFixture(t, []string{"Go", "Linux"}, []string{"PostgreSQL", "Kafka"})
+	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
+		{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
+		{Value: "Kafka", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
+	}}}
+	_, err := modelTailoringProcessorWithRemovals(t, 3, true, model).Plan(context.Background(), input)
+	if !errors.Is(err, ErrResumeTailoringSkillLimit) {
+		t.Fatalf("error=%v, want skill limit from fallback", err)
 	}
 }
 
@@ -175,7 +241,7 @@ func TestModelResumeTailoringRemovalRequiresPolicy(t *testing.T) {
 	}
 }
 
-func TestModelResumeTailoringRejectsRemovingEverySkill(t *testing.T) {
+func TestModelResumeTailoringKeepsSkillsWhenRemovalsAreUnnecessary(t *testing.T) {
 	input := resumeTailoringFixture(t, []string{"Go", "Linux"}, []string{"PostgreSQL"})
 	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
 		{Value: "Go", Action: ResumeTailoringSkillRemove, Evidence: "vacancy.key_skills"},
@@ -185,8 +251,8 @@ func TestModelResumeTailoringRejectsRemovingEverySkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if plan.ProcessorTag != "skills-from-vacancy" {
-		t.Fatalf("expected deterministic fallback, tag=%q", plan.ProcessorTag)
+	if plan.ProcessorTag != "openai-test" || len(plan.Overrides) != 0 {
+		t.Fatalf("expected unchanged skills, tag=%q overrides=%#v", plan.ProcessorTag, plan.Overrides)
 	}
 }
 

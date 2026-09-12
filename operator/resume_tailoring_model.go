@@ -16,6 +16,7 @@ const resumeTailoringModelInstruction = `Select resume skills for one applicatio
 Use only skills offered by vacancy.key_skills or already present in resume.skills.
 Prefer the vacancy skills that are most relevant to this vacancy.
 Return one decision per considered skill with action "add" for a new skill, "keep" for an existing one or "remove" for an existing skill that is clearly the least relevant to this vacancy.
+Remove only as many existing skills as needed so that the result fits maximum_skills after the additions; if you add nothing, remove nothing.
 Every decision must carry a non-empty evidence string naming its source.`
 
 // ResumeTailoringModelRequest is the provider-neutral model input. It carries
@@ -183,7 +184,7 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 	}
 	seen := make(map[string]struct{}, len(decisions))
 	added := make(map[string]struct{}, len(decisions))
-	removed := make(map[string]struct{}, len(decisions))
+	removals := make([]ResumeTailoringSkillDecision, 0, len(decisions))
 	combined := append([]string(nil), current...)
 	selected := make([]ResumeTailoringSkillDecision, 0, len(decisions))
 	for _, decision := range decisions {
@@ -218,17 +219,33 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 			if _, exists := currentIndex[key]; !exists {
 				return ResumeTailoringPlan{}, invalid("skill %q is not a current resume skill", decision.Value)
 			}
-			removed[key] = struct{}{}
 			action = ResumeTailoringSkillRemove
+			removals = append(removals, ResumeTailoringSkillDecision{Value: value, Action: action, Evidence: strings.TrimSpace(decision.Evidence)})
 		default:
 			return ResumeTailoringPlan{}, invalid("unsupported action %q", decision.Action)
 		}
-		selected = append(selected, ResumeTailoringSkillDecision{Value: value, Action: action, Evidence: strings.TrimSpace(decision.Evidence)})
+		if action != ResumeTailoringSkillRemove {
+			selected = append(selected, ResumeTailoringSkillDecision{Value: value, Action: action, Evidence: strings.TrimSpace(decision.Evidence)})
+		}
 	}
-	if len(removed) != 0 {
+	// Removals only make room for new vacancy skills: apply exactly as many as
+	// the limit needs, in the model's order, and ignore the rest.
+	required := len(combined) - processor.maximumSkills
+	if required < 0 {
+		required = 0
+	}
+	if required > len(removals) {
+		return ResumeTailoringPlan{}, invalid("model must remove at least %d skills to fit the additions", required)
+	}
+	appliedRemovals := make(map[string]struct{}, required)
+	for _, decision := range removals[:required] {
+		appliedRemovals[normalizeResumeSkill(decision.Value)] = struct{}{}
+		selected = append(selected, decision)
+	}
+	if len(appliedRemovals) != 0 {
 		filtered := make([]string, 0, len(combined))
 		for _, skill := range combined {
-			if _, drop := removed[normalizeResumeSkill(skill)]; !drop {
+			if _, drop := appliedRemovals[normalizeResumeSkill(skill)]; !drop {
 				filtered = append(filtered, skill)
 			}
 		}
