@@ -229,15 +229,17 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 	return nil
 }
 
-// ResetForRetry clears a blocked preparation so the submit workflow re-reads
-// the platform state and re-runs preflight. Only an application waiting for
-// validation can be reset; blocked questionnaire, test and suitability
-// decisions are never reused as-is.
+// ResetForRetry clears a blocked or failed preparation so the submit workflow
+// re-reads the platform state and re-runs preflight. Only an application
+// waiting for validation or already failed can be reset; blocked
+// questionnaire, test and suitability decisions are never reused as-is.
 func (application *Application) ResetForRetry(now time.Time) error {
 	if application == nil {
 		return errors.New("application is nil")
 	}
-	if application.Status != ApplicationWaitingValidation {
+	switch application.Status {
+	case ApplicationWaitingValidation, ApplicationFailed:
+	default:
 		return fmt.Errorf("application cannot be retried from status %s", application.Status)
 	}
 	if err := application.Transition(ApplicationReady, now); err != nil {
@@ -249,6 +251,8 @@ func (application *Application) ResetForRetry(now time.Time) error {
 	application.PreparedMessage = ""
 	application.PreparationProvenance = ApplicationPreparationProvenance{}
 	application.PreparedAt = nil
+	application.FailureCategory = ""
+	application.FailureMessage = ""
 	return nil
 }
 
@@ -319,6 +323,7 @@ func applicationTransitionAllowed(from, to ApplicationStatus) bool {
 			ApplicationSubmitted: {}, ApplicationReady: {}, ApplicationWaitingValidation: {}, ApplicationPendingReconcile: {}, ApplicationFailed: {},
 		},
 		ApplicationPendingReconcile: {ApplicationSubmitted: {}, ApplicationFailed: {}},
+		ApplicationFailed:           {ApplicationReady: {}},
 	}
 	_, exists := allowed[from][to]
 	return exists

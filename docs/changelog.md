@@ -161,11 +161,11 @@
   считается истёкшей сессией, а переводится в `permanent_failure`; `401`
   по-прежнему означает сброс авторизации. Недоступная аккаунту вакансия
   больше не зацикливает retry.
-- Операторский retry заблокированного отклика:
-  `POST /api/v1/applications/{id}/retry` (Idempotency-Key) очищает decision,
-  возвращает отклик в `ready` и ставит новый durable `application.submit`;
-  повтор ключа идемпотентен, dashboard показывает кнопку «Повторить» для
-  `waiting_validation`.
+- Операторский retry заблокированного или упавшего отклика:
+  `POST /api/v1/applications/{id}/retry` (Idempotency-Key) очищает decision и
+  записанную ошибку, возвращает отклик в `ready` и ставит новый durable
+  `application.submit`; повтор ключа идемпотентен, dashboard показывает кнопку
+  «Повторить» для `waiting_validation` и `failed`.
 - Наблюдаемость задач: worker логирует `task retry scheduled` и
   `task failed` с type/category/error, поэтому `handler failed` больше не
   скрывает причину в логах. Исчерпанные revision-конфликты conversation

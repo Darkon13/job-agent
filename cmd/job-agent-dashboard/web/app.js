@@ -178,7 +178,7 @@ function renderApplicationObjects() {
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
     if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); }
-    if (item.status === "waiting_validation") {
+    if (["waiting_validation", "failed"].includes(item.status)) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
       retry.addEventListener("click", () => retryApplication(item, retry)); action.append(retry);

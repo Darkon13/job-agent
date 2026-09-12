@@ -33,3 +33,28 @@ func TestApplicationResetForRetryClearsBlockedDecision(t *testing.T) {
 		t.Fatal("expected a second reset from ready to fail")
 	}
 }
+
+func TestApplicationResetForRetryClearsFailure(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	application, err := NewApplication("application-2", ApplicationKey{
+		ProfileID: "primary", Vacancy: VacancyKey{Platform: "hh", ExternalID: "vacancy-2"},
+	}, now)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if err := application.Transition(ApplicationPreparing, now.Add(time.Second)); err != nil {
+		t.Fatalf("preparing: %v", err)
+	}
+	if err := application.Transition(ApplicationReady, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("ready: %v", err)
+	}
+	if err := application.Fail(&OperationError{Category: ErrorPermanentFailure, Operation: "applications.submit", Message: "vacancy is not accessible"}, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if err := application.ResetForRetry(now.Add(4 * time.Second)); err != nil {
+		t.Fatalf("reset failed application: %v", err)
+	}
+	if application.Status != ApplicationReady || application.FailureCategory != "" || application.FailureMessage != "" {
+		t.Fatalf("reset application = %#v", application)
+	}
+}
