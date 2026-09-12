@@ -129,7 +129,7 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 	modelCtx, cancel := context.WithTimeout(ctx, processor.timeout)
 	defer cancel()
 	vacancySkills := vacancyAttributeStrings(input.Vacancy, "key_skills")
-	response, err := processor.model.RewriteAbout(modelCtx, ResumeTailoringAboutRequest{
+	aboutRequest := ResumeTailoringAboutRequest{
 		Instruction:   resumeTailoringAboutInstruction + "\n\n" + processor.instruction,
 		PromptVersion: processor.promptVersion,
 		VacancyTitle:  input.Vacancy.Title,
@@ -138,12 +138,9 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 		ResumeContext: anonymousContext,
 		Facts:         anonymousFacts,
 		MaximumRunes:  processor.maximumRunes,
-	})
-	if err != nil {
-		return ResumeTailoringPlan{}, err
 	}
-	text := strings.TrimSpace(response.About)
-	if err := validateResumeTailoringAboutText(text, anonymousAbout, anonymousContext, anonymousFacts, input.Vacancy.Title, vacancySkills, processor.maximumRunes, placeholders); err != nil {
+	text, err := processor.rewriteWithRetry(modelCtx, aboutRequest, anonymousAbout, anonymousContext, anonymousFacts, input.Vacancy.Title, vacancySkills, placeholders)
+	if err != nil {
 		return ResumeTailoringPlan{}, err
 	}
 	substituted, err := substituteApplicationPlaceholders(text, placeholders)
@@ -167,6 +164,33 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 		return ResumeTailoringPlan{}, err
 	}
 	return plan, nil
+}
+
+// rewriteWithRetry asks the model once more when the first answer fails or
+// comes back malformed. The about rewrite is optional, so a second failure
+// later becomes an empty plan instead of blocking the application.
+func (processor *ModelResumeTailoringAboutProcessor) rewriteWithRetry(ctx context.Context, request ResumeTailoringAboutRequest, currentAbout string, resumeContext, facts map[string]any, vacancyTitle string, vacancySkills []string, placeholders map[string]string) (string, error) {
+	validate := func(text string) error {
+		return validateResumeTailoringAboutText(text, currentAbout, resumeContext, facts, vacancyTitle, vacancySkills, processor.maximumRunes, placeholders)
+	}
+	response, err := processor.model.RewriteAbout(ctx, request)
+	if err == nil {
+		if text := strings.TrimSpace(response.About); validate(text) == nil {
+			return text, nil
+		}
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	response, err = processor.model.RewriteAbout(ctx, request)
+	if err != nil {
+		return "", err
+	}
+	text := strings.TrimSpace(response.About)
+	if err := validate(text); err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 func (processor *ModelResumeTailoringAboutProcessor) emptyPlan(input ResumeTailoringInput, path, current string) ResumeTailoringPlan {

@@ -13,6 +13,7 @@ import (
 type fakeResumeTailoringModel struct {
 	response ResumeTailoringModelResponse
 	err      error
+	errs     []error
 	calls    int
 	request  ResumeTailoringModelRequest
 }
@@ -20,6 +21,9 @@ type fakeResumeTailoringModel struct {
 func (model *fakeResumeTailoringModel) Select(_ context.Context, request ResumeTailoringModelRequest) (ResumeTailoringModelResponse, error) {
 	model.calls++
 	model.request = request
+	if index := model.calls - 1; index < len(model.errs) && model.errs[index] != nil {
+		return ResumeTailoringModelResponse{}, model.errs[index]
+	}
 	if model.err != nil {
 		return ResumeTailoringModelResponse{}, model.err
 	}
@@ -197,6 +201,44 @@ func TestModelResumeTailoringRejectsRemovingVacancyOnlySkill(t *testing.T) {
 	}
 	if plan.ProcessorTag != "skills-from-vacancy" {
 		t.Fatalf("expected deterministic fallback, tag=%q", plan.ProcessorTag)
+	}
+}
+
+func TestModelResumeTailoringTemporaryFailureKeepsCurrentSkills(t *testing.T) {
+	input := resumeTailoringFixture(t, []string{"Go", "Linux"}, []string{"PostgreSQL"})
+	model := &fakeResumeTailoringModel{errs: []error{
+		&ModelError{Kind: ModelFailureRateLimited, Operation: "test", Message: "rate limited"},
+		&ModelError{Kind: ModelFailureTemporary, Operation: "test", Message: "provider unavailable"},
+	}}
+	plan, err := modelTailoringProcessor(t, 10, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.ProcessorTag != "openai-test" || len(plan.Overrides) != 0 {
+		t.Fatalf("expected empty model plan, tag=%q overrides=%#v", plan.ProcessorTag, plan.Overrides)
+	}
+	if model.calls != 2 {
+		t.Fatalf("calls=%d, want retry", model.calls)
+	}
+}
+
+func TestModelResumeTailoringRetriesAfterRateLimit(t *testing.T) {
+	input := resumeTailoringFixture(t, []string{"Go"}, []string{"PostgreSQL"})
+	model := &fakeResumeTailoringModel{
+		errs: []error{&ModelError{Kind: ModelFailureRateLimited, Operation: "test", Message: "rate limited"}},
+		response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
+			{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
+		}},
+	}
+	plan, err := modelTailoringProcessor(t, 10, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := decodeTailoredSkills(t, plan); !reflect.DeepEqual(got, []string{"Go", "PostgreSQL"}) {
+		t.Fatalf("skills=%#v", got)
+	}
+	if model.calls != 2 {
+		t.Fatalf("calls=%d, want retry", model.calls)
 	}
 }
 

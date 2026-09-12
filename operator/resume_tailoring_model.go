@@ -107,7 +107,29 @@ func (processor *ModelResumeTailoringProcessor) Plan(ctx context.Context, input 
 	if err == nil {
 		return plan, nil
 	}
+	if ctx.Err() != nil {
+		return ResumeTailoringPlan{}, ctx.Err()
+	}
+	if resumeTailoringModelFailureRetryable(err) {
+		// A rate limit or provider outage must not turn into a destructive
+		// deterministic fallback: keep the current skills and continue.
+		return processor.emptyPlan(input), nil
+	}
 	return processor.fallback.Plan(ctx, input)
+}
+
+// emptyPlan keeps the current skills when the model cannot be reached. The
+// plan carries provenance so a tailoring record stays traceable.
+func (processor *ModelResumeTailoringProcessor) emptyPlan(input ResumeTailoringInput) ResumeTailoringPlan {
+	path := ResumeSkillsPath(input.ResumeID)
+	current, err := observedResumeSkills(input.CurrentState, path)
+	if err != nil {
+		current = nil
+	}
+	return ResumeTailoringPlan{
+		ProcessorTag: processor.tag, ProcessorVersion: processor.promptVersion,
+		InputDigest: resumeTailoringInputDigest(input, path, current),
+	}
 }
 
 func (processor *ModelResumeTailoringProcessor) planWithModel(ctx context.Context, input ResumeTailoringInput) (ResumeTailoringPlan, error) {
@@ -125,12 +147,16 @@ func (processor *ModelResumeTailoringProcessor) planWithModel(ctx context.Contex
 	if !processor.allowRemovals {
 		instruction += "\nNever remove an existing resume skill."
 	}
-	response, err := processor.model.Select(modelCtx, ResumeTailoringModelRequest{
+	selectRequest := ResumeTailoringModelRequest{
 		Instruction:   instruction + "\n\n" + processor.instruction,
 		PromptVersion: processor.promptVersion, VacancyTitle: input.Vacancy.Title,
 		VacancySkills: vacancyAttributeStrings(input.Vacancy, "key_skills"),
 		CurrentSkills: append([]string(nil), current...), MaximumSkills: processor.maximumSkills,
-	})
+	}
+	response, err := processor.model.Select(modelCtx, selectRequest)
+	if err != nil && ctx.Err() == nil && resumeTailoringModelFailureRetryable(err) {
+		response, err = processor.model.Select(modelCtx, selectRequest)
+	}
 	if err != nil {
 		return ResumeTailoringPlan{}, err
 	}

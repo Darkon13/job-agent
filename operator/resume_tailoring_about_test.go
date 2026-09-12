@@ -11,17 +11,26 @@ import (
 )
 
 type fakeResumeTailoringAboutModel struct {
-	response ResumeTailoringAboutResponse
-	err      error
-	calls    int
-	request  ResumeTailoringAboutRequest
+	response  ResumeTailoringAboutResponse
+	responses []ResumeTailoringAboutResponse
+	err       error
+	errs      []error
+	calls     int
+	request   ResumeTailoringAboutRequest
 }
 
 func (model *fakeResumeTailoringAboutModel) RewriteAbout(_ context.Context, request ResumeTailoringAboutRequest) (ResumeTailoringAboutResponse, error) {
 	model.calls++
 	model.request = request
+	index := model.calls - 1
+	if index < len(model.errs) && model.errs[index] != nil {
+		return ResumeTailoringAboutResponse{}, model.errs[index]
+	}
 	if model.err != nil {
 		return ResumeTailoringAboutResponse{}, model.err
+	}
+	if index < len(model.responses) {
+		return model.responses[index], nil
 	}
 	return model.response, nil
 }
@@ -163,6 +172,27 @@ func TestModelResumeTailoringAboutKeepsTextOnModelError(t *testing.T) {
 	}
 	if !validResumeTailoringDigest(plan.InputDigest) {
 		t.Fatalf("input digest=%q", plan.InputDigest)
+	}
+	if model.calls != 2 {
+		t.Fatalf("calls=%d, want one retry", model.calls)
+	}
+}
+
+func TestModelResumeTailoringAboutRetriesInvalidOutput(t *testing.T) {
+	input := resumeTailoringAboutFixture(t)
+	model := &fakeResumeTailoringAboutModel{responses: []ResumeTailoringAboutResponse{
+		{About: "5 лет опыта и {name}"},
+		{About: "Опытный {name} пишет на Go."},
+	}}
+	plan, err := aboutTailoringProcessor(t, 200, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := decodeTailoredAbout(t, plan); got != "Опытный Иван пишет на Go." {
+		t.Fatalf("about=%q", got)
+	}
+	if model.calls != 2 {
+		t.Fatalf("calls=%d, want one retry", model.calls)
 	}
 }
 
