@@ -88,6 +88,22 @@ func (e *ModelError) Validate() error {
 	return nil
 }
 
+// resumeTailoringModelFailureRetryable reports whether the provider failure is
+// transient enough to retry or to skip tailoring without a destructive
+// fallback.
+func resumeTailoringModelFailureRetryable(err error) bool {
+	var modelError *ModelError
+	if !errors.As(err, &modelError) {
+		return false
+	}
+	switch modelError.Kind {
+	case ModelFailureTemporary, ModelFailureRateLimited, ModelFailureTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func ModelFailureKindOf(err error) ModelFailureKind {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return ModelFailureTimeout
