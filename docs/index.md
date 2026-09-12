@@ -26,6 +26,8 @@ Job Agent — локальный сервис автоматизации пои�
 | [`quickstart.md`](quickstart.md) | первый запуск с пустого аккаунта: конфигурация, вход, dry-run, реальные отклики |
 | [`features.md`](features.md) | подробный обзор возможностей и runtime-деталей: режимы, адаптеры, operators, чаты, dashboard |
 | [`runbook.md`](runbook.md) | эксплуатация: backup/restore, миграции, типовые сбои и восстановление |
+| [`reference/configuration.md`](reference/configuration.md) | справочник всех ключей конфигурации |
+| [`reference/recipes.md`](reference/recipes.md) | шпаргалки: мультипрофиль, fallback-поиски, автоответы, модель, follow-up, cleanup |
 
 ## Конфигурация и состояние профиля
 

@@ -136,7 +136,8 @@ mkdir -p data
 | `max_in_flight` | `job.action` кампании | сколько откликов обрабатывать параллельно |
 
 Полный список ключей с типами и значениями — в
-[`reference/configuration.md`](reference/configuration.md).
+[`reference/configuration.md`](reference/configuration.md), готовые куски
+конфига — в [`reference/recipes.md`](reference/recipes.md).
 
 ## 2. Один раз войдите в HH
 

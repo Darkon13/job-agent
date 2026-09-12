@@ -19,6 +19,7 @@ nav:
       - Runbook: runbook.md
   - Справочник:
       - Конфигурация: reference/configuration.md
+      - Шпаргалки и рецепты: reference/recipes.md
   - Профиль и состояние:
       - Desired state: profile-desired-state-and-routing.md
       - Bootstrap: profile-bootstrap.md
