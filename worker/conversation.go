@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -190,6 +191,10 @@ func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Ta
 	discovery, err := discoverer.DiscoverConversations(ctx, payload.ProfileID)
 	if err != nil {
 		return err
+	}
+	if discovery.Truncated {
+		slog.Default().Warn("conversation discovery reached the recent-activity window",
+			"profile", payload.ProfileID, "observed", len(discovery.Conversations))
 	}
 	if discovery.ObservedAt.IsZero() {
 		return errors.New("conversation discovery returned zero observation time")

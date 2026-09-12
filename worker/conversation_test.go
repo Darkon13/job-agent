@@ -275,3 +275,38 @@ func followUpTask(t *testing.T, followUp core.FollowUp) core.Task {
 	}
 	return task
 }
+
+func TestConversationDiscoverHandlerSkipsUnchangedConversations(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, _, queue, transport, clock := newConversationHandlersFixture(t)
+	transport.discovery = adapter.ConversationDiscoveryResult{
+		ObservedAt: clock.now,
+		Conversations: []core.ConversationObservation{
+			{ExternalID: "external-chat-1", Status: core.ConversationActive},
+			{ExternalID: "external-chat-2", Status: core.ConversationActive},
+		},
+	}
+	newTask := func(key string) core.Task {
+		payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
+		task, err := core.NewTask(core.NewTaskParams{
+			ID: core.TaskID("discover-" + key), Type: core.TaskConversationDiscover, IdempotencyKey: key,
+			Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: core.CorrelationID("correlation-" + key), Payload: payload,
+		}, clock.now)
+		if err != nil {
+			t.Fatalf("new discovery task: %v", err)
+		}
+		return task
+	}
+	if err := handlers.Discover(ctx, newTask("discover-run-1")); err != nil {
+		t.Fatalf("first discovery: %v", err)
+	}
+	if len(queue.Tasks()) != 1 {
+		t.Fatalf("first discovery tasks=%#v", queue.Tasks())
+	}
+	if err := handlers.Discover(ctx, newTask("discover-run-2")); err != nil {
+		t.Fatalf("second discovery: %v", err)
+	}
+	if len(queue.Tasks()) != 1 {
+		t.Fatalf("unchanged discovery created sync tasks: %#v", queue.Tasks())
+	}
+}

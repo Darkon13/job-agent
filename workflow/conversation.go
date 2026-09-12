@@ -52,32 +52,39 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		if created {
 			result.ConversationsCreated++
 		}
-		result.ConversationIDs = append(result.ConversationIDs, stored.ID)
+		// A full history sync is only needed when the catalog shows activity:
+		// a new conversation, a changed unread/status state or a new last
+		// message. Unchanged conversations stay on their stored timeline.
+		needsSync := created
 		expectedRevision := stored.Revision
 		changed, err := stored.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
 		if err != nil {
 			return result, err
 		}
 		if changed {
+			needsSync = true
 			if err := workflow.repository.SaveConversation(ctx, stored, expectedRevision); err != nil {
 				return result, fmt.Errorf("save observed conversation %s: %w", observation.ExternalID, err)
 			}
 		}
-		if observation.LastMessage == nil {
-			continue
+		if observation.LastMessage != nil {
+			messageID, err := workflow.ids.NewID("message")
+			if err != nil {
+				return result, err
+			}
+			message, err := observation.LastMessage.Message(core.MessageID(messageID), stored.ID)
+			if err != nil {
+				return result, err
+			}
+			if _, messageCreated, err := workflow.repository.AppendConversationMessage(ctx, message, observedAt); err != nil {
+				return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
+			} else if messageCreated {
+				result.MessagesCreated++
+				needsSync = true
+			}
 		}
-		messageID, err := workflow.ids.NewID("message")
-		if err != nil {
-			return result, err
-		}
-		message, err := observation.LastMessage.Message(core.MessageID(messageID), stored.ID)
-		if err != nil {
-			return result, err
-		}
-		if _, messageCreated, err := workflow.repository.AppendConversationMessage(ctx, message, observedAt); err != nil {
-			return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
-		} else if messageCreated {
-			result.MessagesCreated++
+		if needsSync {
+			result.ConversationIDs = append(result.ConversationIDs, stored.ID)
 		}
 	}
 	return result, nil

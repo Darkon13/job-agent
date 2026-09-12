@@ -140,6 +140,9 @@ type ConversationSyncResult struct {
 type ConversationDiscoveryResult struct {
 	Conversations []core.ConversationObservation
 	ObservedAt    time.Time
+	// Truncated reports that discovery stopped at the recent-activity window
+	// and did not enumerate the whole platform catalog.
+	Truncated bool
 }
 
 type ConversationDiscoverer interface {

@@ -3,6 +3,7 @@ package hh
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -201,4 +202,23 @@ func newTestBrowserConversationClient(t *testing.T, server *httptest.Server, opt
 	client.reader.webBaseURL = server.URL
 	client.chatBaseURL = server.URL
 	return client
+}
+
+func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		sequence := requests.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(writer, `{"chats":{"items":[{"id":%d,"currentParticipantId":"me"}],"nextFrom":%d}}`, sequence, sequence+1000)
+	}))
+	defer server.Close()
+	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
+
+	result, err := client.DiscoverConversations(context.Background(), "primary")
+	if err != nil {
+		t.Fatalf("discover conversations: %v", err)
+	}
+	if !result.Truncated || len(result.Conversations) != maxChatDiscoveryPages || requests.Load() != int32(maxChatDiscoveryPages) {
+		t.Fatalf("result=%#v requests=%d", result, requests.Load())
+	}
 }

@@ -25,6 +25,7 @@ const (
 	defaultChatBaseURL    = "https://chatik.hh.ru"
 	maxChatResponse       = 16 << 20
 	maxChatPages          = 100
+	maxChatDiscoveryPages = 50
 	hhSystemMessagePrefix = "Событие переговоров HH"
 )
 
@@ -153,7 +154,7 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 	result := make([]core.ConversationObservation, 0)
 	seenConversations := make(map[string]struct{})
 	nextFrom := ""
-	for page := 0; page < maxChatPages; page++ {
+	for page := 0; page < maxChatDiscoveryPages; page++ {
 		parameters := url.Values{
 			"filterUnread":         {"false"},
 			"filterHasTextMessage": {"false"},
@@ -197,7 +198,10 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 		}
 		nextFrom = candidate
 	}
-	return adapter.ConversationDiscoveryResult{}, operationError(core.ErrorTemporaryFailure, "conversations.discover.browser", "HH conversation pagination exceeded its safety limit", nil)
+	// The account can have thousands of historical chats; the catalog is
+	// ordered by last activity, so a bounded recent window is enough to keep
+	// the active set fresh instead of failing the whole discovery.
+	return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt, Truncated: true}, nil
 }
 
 func (client *BrowserConversationClient) SyncConversation(ctx context.Context, profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) (adapter.ConversationSyncResult, error) {
