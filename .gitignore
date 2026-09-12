@@ -11,3 +11,7 @@
 *.local.json
 node_modules/
 browser-worker/dist/
+
+# Local handoff/status notes stay untracked
+/docs/plan.md
+/docs/project-status.md
