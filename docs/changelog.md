@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Вики конфигурации переразложена по объектам в стиле справочника Xray: 15
+  страниц (`database`, `server`, `adapters`, `models`, `profiles`,
+  `applications`, `tailoring`, `conversations`, `searches`, `jobs`,
+  `resources`, `employer_groups`, `answer_sets`, `include`) с таблицами
+  «поле / тип / обязательность / описание» и примерами. Для
+  нереализованных и тестируемых возможностей добавлены явные блоки
+  `warning`/`note`.
+
 - Dashboard больше не смешивает живую статистику с историей: записи
   `imported_appltool` (501 отклик, перенесённый из hh-applicant-tool)
   выделены в отдельную группу и отдельную карточку «Импортировано (appltool)»,

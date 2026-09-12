@@ -44,7 +44,22 @@ nav:
       - Возможности: features.md
       - Runbook: runbook.md
   - Справочник:
-      - Конфигурация: reference/configuration.md
+      - Конфигурация:
+          - Обзор: reference/configuration.md
+          - database: reference/configuration/database.md
+          - server: reference/configuration/server.md
+          - adapters: reference/configuration/adapters.md
+          - models: reference/configuration/models.md
+          - profiles: reference/configuration/profiles.md
+          - applications: reference/configuration/applications.md
+          - tailoring: reference/configuration/tailoring.md
+          - conversations: reference/configuration/conversations.md
+          - searches: reference/configuration/searches.md
+          - jobs: reference/configuration/jobs.md
+          - resources: reference/configuration/resources.md
+          - employer_groups: reference/configuration/employer-groups.md
+          - answer_sets: reference/configuration/answers.md
+          - include: reference/configuration/includes.md
       - Письма и пулы: reference/messages.md
       - Шпаргалки и рецепты: reference/recipes.md
   - Профиль и состояние:
