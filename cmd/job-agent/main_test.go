@@ -18,6 +18,7 @@ import (
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	applicationoperator "github.com/Darkon13/job-agent/operator"
 	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
@@ -222,9 +223,56 @@ func TestProbeProfileAuthorizationsReturnsTransportFailure(t *testing.T) {
 func TestApplicationPreparerRejectsInvalidTemplateAtComposition(t *testing.T) {
 	_, err := applicationPreparer(appconfig.Profile{Applications: appconfig.ApplicationPolicy{
 		MessageTemplate: "{{.Missing}}",
-	}}, nil, nil)
+	}}, nil, nil, applicationoperator.ApplicationProfileContext{})
 	if err == nil {
 		t.Fatal("expected invalid application message template")
+	}
+}
+
+func TestProfileContactsFromObservationUnwrapsPlatformFields(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	state, err := json.Marshal(map[string]any{
+		"resumes": map[string]any{"resume-1": map[string]any{
+			"web": map[string]any{"email": []any{"user@example.test"}},
+			"web_profile": map[string]any{
+				"firstName":            []any{"Антон"},
+				"lastName":             []any{"Иванов"},
+				"communicationMethods": []any{map[string]any{"telegram": "@qworteex", "whatsapp": nil}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	observation, err := core.NewProfileStateObservation("primary", state, "revision-1", now)
+	if err != nil {
+		t.Fatalf("observation: %v", err)
+	}
+	contacts := profileContactsFromObservation(observation, "resume-1")
+	if contacts.FirstName != "Антон" || contacts.LastName != "Иванов" || contacts.Email != "user@example.test" || contacts.Telegram != "@qworteex" {
+		t.Fatalf("contacts=%#v", contacts)
+	}
+	if names := contactFieldNames(contacts); names != "email,first_name,last_name,telegram" {
+		t.Fatalf("field names=%q", names)
+	}
+}
+
+func TestProfileContactsFromObservationSkipsEmptyFields(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	state, err := json.Marshal(map[string]any{
+		"resumes": map[string]any{"resume-1": map[string]any{
+			"web_profile": map[string]any{"firstName": []any{}, "communicationMethods": []any{}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	observation, err := core.NewProfileStateObservation("primary", state, "revision-1", now)
+	if err != nil {
+		t.Fatalf("observation: %v", err)
+	}
+	if contacts := profileContactsFromObservation(observation, "resume-1"); !contacts.IsZero() {
+		t.Fatalf("contacts=%#v", contacts)
 	}
 }
 

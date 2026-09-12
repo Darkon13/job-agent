@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Имя и контакты для писем резолвятся при старте из live-профиля
+  (`firstName`, `lastName`, `web/email`, `communicationMethods`); блок
+  `profiles[].contacts` остался fallback-ом для полей, которых нет на
+  платформе.
+
 - `profiles[].contacts` (`first_name`, `last_name`, `email`, `telegram`):
   в шаблонах писем доступны как `{{.Profile.*}}`, для модели обезличиваются в
   `{email}`/`{telegram}`/`{first_name}`/`{last_name}` и подставляются после
