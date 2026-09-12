@@ -116,6 +116,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("build answer block registry: %v", err)
 		}
+	} else {
+		// The vacancy review pipeline works from an empty registry: the first
+		// human answer creates the conventional reviewed block.
+		answerRegistry, err = core.NewAnswerBlockRegistry()
+		if err != nil {
+			log.Fatalf("build empty answer block registry: %v", err)
+		}
 	}
 	if options.migrateUp {
 		if err := storesqlite.MigrateUp(cfg.Database.Path); err != nil {
@@ -137,11 +144,15 @@ func main() {
 		logf("marked %d interrupted auth sessions as failed after restart", recovered)
 	}
 	var answerResolver taskworker.AnswerBlockResolver
-	if answerRegistry != nil {
+	if len(cfg.ResolvedAnswerBlocks()) > 0 {
 		answerResolver, err = taskworker.NewReviewedVacancyAnswers(answerRegistry, store)
 		if err != nil {
 			log.Fatalf("build reviewed vacancy answers: %v", err)
 		}
+	}
+	vacancyAnswerResolver, err := taskworker.NewReviewedVacancyAnswers(answerRegistry, store)
+	if err != nil {
+		log.Fatalf("build reviewed vacancy answers: %v", err)
 	}
 
 	instances := make(map[string]adapter.Adapter, len(cfg.Adapters))
@@ -621,9 +632,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("create vacancy test capture handler: %v", err)
 		}
-		if answerResolver != nil {
-			testCaptureHandler.ConfigureAnswerRouting(answerResolver, store, vacancyTestWorkflow)
-		}
+		testCaptureHandler.ConfigureAnswerRouting(vacancyAnswerResolver, store, vacancyTestWorkflow)
 		testCaptureWorker, err := newTaskWorker(store, core.TaskTestCapture, testCaptureHandler.Handle)
 		if err != nil {
 			log.Fatalf("create vacancy test capture worker: %v", err)
@@ -682,9 +691,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create review answer handler: %v", err)
 	}
-	if answerResolver != nil {
-		reviewAnswerHandler.ConfigureContinuation(answerResolver, store, vacancyTestWorkflow)
-	}
+	reviewAnswerHandler.ConfigureContinuation(vacancyAnswerResolver, store, vacancyTestWorkflow)
 	reviewAnswerWorker, err := newTaskWorker(store, core.TaskReviewAnswer, reviewAnswerHandler.Handle)
 	if err != nil {
 		log.Fatalf("create review answer worker: %v", err)

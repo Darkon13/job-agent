@@ -97,7 +97,7 @@ func (handler *ReviewAnswerHandler) appendRevision(ctx context.Context, session 
 	if err != nil {
 		return err
 	}
-	if len(base.Answers) == 0 {
+	if len(base.Answers) == 0 && base.Kind != core.AnswerBlockVacancy {
 		return nil
 	}
 	name, kind := base.Name, base.Kind
@@ -218,9 +218,14 @@ func (handler *ReviewAnswerHandler) reviewedBlock(ctx context.Context, session c
 		return core.AnswerBlock{}, "", err
 	}
 	if !found {
-		return core.AnswerBlock{}, "", nil
+		// The first reviewed answer creates the conventional platform block;
+		// later revisions extend it.
+		block = core.AnswerBlock{
+			Tag:  VacancyReviewedBlockTag(session.Platform, core.AnswerBlock{}, false),
+			Name: "Vacancy questionnaire", Kind: core.AnswerBlockVacancy, Platform: session.Platform,
+		}
 	}
-	return block, VacancyReviewedBlockTag(session.Platform, block, true), nil
+	return block, block.Tag, nil
 }
 
 func (handler *ReviewAnswerHandler) resolvedAnswers(questionnaire core.Questionnaire, block core.AnswerBlock, humanQuestion core.Question, selection core.ReviewSelection) ([]core.ResolvedAnswer, error) {

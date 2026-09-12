@@ -88,6 +88,52 @@ func TestVacancyTestCaptureStoresProgressiveCatalog(t *testing.T) {
 	}
 }
 
+func TestVacancyTestCaptureStartsReviewWithoutBaseBlock(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	capturer := &stubVacancyTestCapturer{questionnaire: core.Questionnaire{
+		Title: "Go basics",
+		Questions: []core.Question{
+			{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{{ID: "10", Text: "Go"}, {ID: "11", Text: "Python"}}},
+			{ID: "2", Text: "Explain experience", Kind: core.QuestionText},
+		},
+	}}
+	capturers := NewVacancyTestCapturerRegistry()
+	if err := capturers.Register("primary", capturer); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	repository := storagememory.NewRepository()
+	handler, err := NewVacancyTestCaptureHandler(capturers, repository, fixedClock{now: now})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	registry, err := core.NewAnswerBlockRegistry()
+	if err != nil {
+		t.Fatalf("empty registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	handler.ConfigureAnswerRouting(resolver, repository, nil)
+	if err := handler.Handle(context.Background(), testCaptureTask(t, "primary", "hh", "42")); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	sessions, err := repository.ListReviewSessions(context.Background(), storage.ReviewSessionFilter{ProfileID: "primary"})
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Status != core.ReviewWaiting {
+		t.Fatalf("sessions = %#v", sessions)
+	}
+	prompt, err := repository.ReviewPrompt(context.Background(), core.ReviewPromptID(string(sessions[0].ID)+"-prompt-1"))
+	if err != nil {
+		t.Fatalf("review prompt: %v", err)
+	}
+	if prompt.Question.ID != "1" {
+		t.Fatalf("prompt = %#v", prompt)
+	}
+}
+
 func TestVacancyTestCaptureRejectsUnknownProfile(t *testing.T) {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	capturers := NewVacancyTestCapturerRegistry()

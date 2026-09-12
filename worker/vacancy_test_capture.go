@@ -143,7 +143,12 @@ func (handler *VacancyTestCaptureHandler) routeAnswers(ctx context.Context, payl
 		return err
 	}
 	if !found {
-		return nil
+		// The first questionnaire of a platform has no reviewed block yet:
+		// every question is uncovered, so the human review starts from scratch.
+		if handler.reviews == nil || len(questionnaire.Questions) == 0 {
+			return nil
+		}
+		return handler.recordReview(ctx, payload, definition, questionnaire, questionnaire.Questions[0], now, task)
 	}
 	missing, err := core.UncoveredQuestions(questionnaire, block)
 	if err != nil {

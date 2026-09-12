@@ -166,6 +166,49 @@ func TestReviewAnswerAppendsReusableRevision(t *testing.T) {
 	}
 }
 
+func TestReviewAnswerCreatesFirstVacancyRevisionWithoutBaseBlock(t *testing.T) {
+	questions := []core.Question{
+		{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{
+			{ID: "10", Text: "Go"}, {ID: "11", Text: "Python"},
+		}},
+		{ID: "2", Text: "Explain experience", Kind: core.QuestionText},
+	}
+	handler, repository, _, prompt, chain := reviewFixture(t, questions, 0, core.AnswerBlock{})
+	registry, err := core.NewAnswerBlockRegistry()
+	if err != nil {
+		t.Fatalf("empty registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	handler.ConfigureContinuation(resolver, repository, chain)
+	err = handler.Handle(context.Background(), reviewAnswerTask(t, core.ReviewAnswerPayload{
+		SessionID: "review-1", PromptID: prompt.ID, ExpectedRevision: 1,
+		SelectedOptions: []string{"Go"}, Source: "dashboard",
+	}))
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(chain.answers) != 0 {
+		t.Fatalf("answers = %#v", chain.answers)
+	}
+	latest, exists, err := repository.LatestAnswerBlockRevision(context.Background(), "hh-vacancy-reviewed")
+	if err != nil || !exists {
+		t.Fatalf("latest revision: exists=%v err=%v", exists, err)
+	}
+	if len(latest.Answers) != 1 || latest.Answers[0].SelectedOptions[0] != "Go" || latest.Answers[0].QuestionFingerprint == "" {
+		t.Fatalf("revision = %#v", latest)
+	}
+	next, err := repository.ReviewPrompt(context.Background(), core.ReviewPromptID("review-1-prompt-2"))
+	if err != nil {
+		t.Fatalf("load next prompt: %v", err)
+	}
+	if next.Question.ID != "2" {
+		t.Fatalf("next prompt = %#v", next)
+	}
+}
+
 func TestReviewAnswerRejectsStaleRevision(t *testing.T) {
 	questions := []core.Question{{ID: "1", Text: "Explain experience", Kind: core.QuestionText}}
 	block := core.AnswerBlock{
