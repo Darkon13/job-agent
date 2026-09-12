@@ -1571,6 +1571,12 @@ func configureSearchRuns(
 			logf("search %q is disabled until one of its profiles is authorized", search.Tag)
 			continue
 		}
+		if checker, ok := instance.(adapter.SearchSupportChecker); ok {
+			if err := checker.SupportsSearch(searchProfileID, search.Query); err != nil {
+				logf("search %q is skipped for profile %q: %v", search.Tag, searchProfileID, err)
+				continue
+			}
+		}
 		searchWorkflow, err := workflow.NewSearchWorkflow(instance, store, store, store, clock, ids)
 		if err != nil {
 			return nil, 0, fmt.Errorf("create search workflow %q: %w", search.Tag, err)

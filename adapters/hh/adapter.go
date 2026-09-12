@@ -414,6 +414,44 @@ func (query SearchQuery) hasSearchFilters() bool {
 		query.ExcludedText != "" || len(query.Education) != 0 || query.hasModernWorkFields()
 }
 
+// SupportsSearch reports whether the transports bound to one profile can serve
+// the configured search. The composition layer uses it to skip unsupported
+// routes at startup instead of creating a run whose first page always fails.
+func (a *Adapter) SupportsSearch(profileID core.ProfileID, raw json.RawMessage) error {
+	if err := a.ValidateSearch(raw); err != nil {
+		return err
+	}
+	var query SearchQuery
+	if err := json.Unmarshal(raw, &query); err != nil {
+		return fmt.Errorf("decode hh search query: %w", err)
+	}
+	operation := "vacancies.search." + string(query.Source)
+	a.mu.RLock()
+	client := a.clients[profileID]
+	browserClient := a.browserClients[profileID]
+	a.mu.RUnlock()
+	if client == nil && browserClient == nil {
+		return operationError(core.ErrorUnauthorized, operation, "HH profile has no bound read session", nil)
+	}
+	switch query.Source {
+	case SearchSourceGlobal:
+		return nil
+	case SearchSourceSimilarResume:
+		if browserClient != nil || (client != nil && !query.hasModernWorkFields()) {
+			return nil
+		}
+	case SearchSourceSimilarVacancy:
+		if client != nil && !query.hasModernWorkFields() {
+			return nil
+		}
+	case SearchSourceRelatedVacancy:
+		if client != nil {
+			return nil
+		}
+	}
+	return hhUnsupported(operation)
+}
+
 func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json.RawMessage, cursor string) (core.SearchPage, error) {
 	if err := a.ValidateSearch(raw); err != nil {
 		return core.SearchPage{}, err

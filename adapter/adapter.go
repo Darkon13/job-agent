@@ -18,6 +18,13 @@ type VacancySearcher interface {
 	Search(ctx context.Context, profileID core.ProfileID, query json.RawMessage, cursor string) (core.SearchPage, error)
 }
 
+// SearchSupportChecker optionally narrows which searches a bound profile can
+// actually run. It prevents scheduled routes with unsupported transports from
+// failing as background tasks.
+type SearchSupportChecker interface {
+	SupportsSearch(profileID core.ProfileID, query json.RawMessage) error
+}
+
 // VacancyReader loads the current, full platform representation before an
 // application decision is made. Search results are deliberately insufficient
 // for this step because platforms omit requirements and applicant relations.
