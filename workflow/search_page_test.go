@@ -57,7 +57,7 @@ func newSearchRunFixture(t *testing.T, now time.Time, searcher *cursorSearcher) 
 
 func searchPageTask(t *testing.T, queue *brokermemory.Queue, searchID core.SearchID, cursor string) core.Task {
 	t.Helper()
-	key, err := core.SearchPageIdempotencyKey(searchID, cursor)
+	key, err := core.SearchPageIdempotencyKey(searchID, 1, cursor)
 	if err != nil {
 		t.Fatalf("search task key: %v", err)
 	}

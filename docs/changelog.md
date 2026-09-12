@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Исправлено: после авто-смены generation поиска первый page-task больше не
+  дедуплицируется о завершённую задачу прошлой generation — idempotency key
+  включает generation, поэтому новый прогон реально стартует и отклики
+  продолжают идти.
+
 - Вики конфигурации переразложена по объектам в стиле справочника Xray: 15
   страниц (`database`, `server`, `adapters`, `models`, `profiles`,
   `applications`, `tailoring`, `conversations`, `searches`, `jobs`,

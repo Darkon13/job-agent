@@ -131,7 +131,7 @@ func (handler *SearchPageHandler) enqueue(ctx context.Context, run core.SearchRu
 	if err != nil {
 		return false, err
 	}
-	idempotencyKey, err := core.SearchPageIdempotencyKey(run.SearchID, run.Cursor)
+	idempotencyKey, err := core.SearchPageIdempotencyKey(run.SearchID, run.Generation, run.Cursor)
 	if err != nil {
 		return false, err
 	}

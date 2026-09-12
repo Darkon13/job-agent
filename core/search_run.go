@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -109,10 +110,13 @@ func (payload SearchPagePayload) Validate() error {
 	return nil
 }
 
-func SearchPageIdempotencyKey(searchID SearchID, cursor string) (string, error) {
+// SearchPageIdempotencyKey includes the run generation: after an automatic
+// definition change a new generation must be able to enqueue its first page
+// even though the previous generation completed the same cursor.
+func SearchPageIdempotencyKey(searchID SearchID, generation uint64, cursor string) (string, error) {
 	if searchID == "" {
 		return "", errors.New("search page idempotency key requires search id")
 	}
 	digest := sha256.Sum256([]byte(cursor))
-	return "search-page:" + string(searchID) + ":" + hex.EncodeToString(digest[:8]), nil
+	return "search-page:" + string(searchID) + ":" + strconv.FormatUint(generation, 10) + ":" + hex.EncodeToString(digest[:8]), nil
 }
