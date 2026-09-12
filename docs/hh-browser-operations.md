@@ -143,16 +143,14 @@ vacancyTests.<vacancy-id>
 | `multiple=true`, `open=false` | `checkbox` `name=task_<task-id>`, `value=<solution-id>`, несколько значений с одним именем |
 | `multiple=false`, `open=true` | `radio` по вариантам плюс radio `value=open` и `textarea` `task_<task-id>_text` для своего ответа |
 
-Форма `RESPONSE_MODAL_FORM_ID` отправляется POST на текущий
-`/applicant/vacancy_response?vacancyId=...&startedWithQuestion=true` как
-`application/x-www-form-urlencoded` и содержит:
-
-- `_xsrf`;
-- `uidPk`;
-- `guid`;
-- `startTime`;
-- `testRequired`;
-- task-specific поля из таблицы выше.
+Ответ отправляется не как обычная форма, а тем же popup-запросом, что и
+отклик без теста: `POST /applicant/vacancy_response/popup` с
+`multipart/form-data`. Кроме task-полей из таблицы выше запрос содержит
+контекст формы (`_xsrf`, `uidPk`, `guid`, `startTime`, `testRequired`) и
+обычные поля отклика: `vacancy_id`, `resume_hash`, `ignore_postponed`,
+`incomplete`, `mark_applicant_visible_in_vacancy_country`, `country_ids`,
+`letter`, `lux`, `withoutTest=no`, `hhtmFromLabel`, `hhtmSourceLabel`.
+Прямой urlencoded POST на страницу `vacancy_response` HH отклоняет с `400`.
 
 Submit button: `vacancy-response-submit-popup`.
 

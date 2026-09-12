@@ -2,6 +2,15 @@
 
 ## 0.3.0-dev
 
+- Живой отклик с анкетой доведён до конца: ответы отправляются тем же
+  multipart-запросом `POST /applicant/vacancy_response/popup`, что и отклик
+  без теста (обычные поля отклика + task-поля); прежний urlencoded POST на
+  страницу HH отклонял с `400`. Живая проверка: отклик на 136921562 принят,
+  создан negotiation 5570082491.
+- Обнаружен дрейф HH: popup-JSON больше не содержит `responseStatus`, состояние
+  отклика (resumes, alreadyApplied, negotiations, visibility) доступно только в
+  `HH-Lux-InitialState` HTML-страницы; миграция preflight на HTML-состояние —
+  следующий шаг.
 - Browser preflight и submit анкеты распознают resume-видимость: если резюме
   доступно только выбранным работодателям и текущего в списке нет, отклик
   останавливается с `resume_visibility_change_required` вместо непонятного

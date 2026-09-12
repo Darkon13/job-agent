@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -38,23 +39,26 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 	var submitted url.Values
 	var submittedType string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/applicant/vacancy_response" {
-			t.Errorf("path = %q", request.URL.Path)
-		}
 		switch request.Method {
 		case http.MethodGet:
+			if request.URL.Path != "/applicant/vacancy_response" {
+				t.Errorf("get path = %q", request.URL.Path)
+			}
 			if submittedFlag.Load() {
 				_, _ = writer.Write([]byte(`<html><body>application form</body></html>`))
 				return
 			}
 			_, _ = writer.Write([]byte(vacancyTestPopupPage(openVacancyTestState, "xsrf-field")))
 		case http.MethodPost:
+			if request.URL.Path != "/applicant/vacancy_response/popup" {
+				t.Errorf("post path = %q", request.URL.Path)
+			}
 			posts.Add(1)
 			submittedType = request.Header.Get("Content-Type")
-			if err := request.ParseForm(); err != nil {
-				t.Errorf("parse form: %v", err)
+			if err := request.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse multipart: %v", err)
 			}
-			submitted = request.PostForm
+			submitted = request.MultipartForm.Value
 			submittedFlag.Store(true)
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(`{}`))
@@ -64,7 +68,7 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{ResumeID: "resume-hash"})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Five years of Go"},
 		{QuestionID: "2", Text: "A local job agent"},
@@ -75,17 +79,18 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 	if posts.Load() != 1 {
 		t.Fatalf("posts = %d", posts.Load())
 	}
-	if submittedType != "application/x-www-form-urlencoded" {
+	if !strings.HasPrefix(submittedType, "multipart/form-data") {
 		t.Fatalf("content type = %q", submittedType)
 	}
 	want := map[string]string{
 		"_xsrf": "xsrf-field", "uidPk": "123", "guid": "guid-1",
 		"startTime": "1750000000", "testRequired": "true",
+		"vacancy_id": "42", "resume_hash": "resume-hash", "withoutTest": "no", "lux": "true",
 		"task_1_text": "Five years of Go", "task_2_text": "A local job agent",
 	}
 	for key, expected := range want {
-		if actual := submitted.Get(key); actual != expected {
-			t.Errorf("field %s = %q, want %q", key, actual, expected)
+		if actual := submitted[key]; len(actual) == 0 || actual[0] != expected {
+			t.Errorf("field %s = %#v, want %q", key, actual, expected)
 		}
 	}
 }
@@ -120,14 +125,14 @@ func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
 				{"id":"1","description":"Pick one","candidateSolutions":[{"id":10,"description":"Go"},{"id":11,"description":"Python"}]},
 				{"id":"2","description":"Pick frameworks","multiple":true,"candidateSolutions":[{"id":20,"description":"Gin"},{"id":21,"description":"Echo"}]},
 				{"id":"3","description":"Custom availability","open":true,"candidateSolutions":[{"id":30,"description":"Yes"},{"id":31,"description":"No"}]}]}}}`
-	var submitted url.Values
+	var submitted map[string][]string
 	var submittedFlag atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost {
-			if err := request.ParseForm(); err != nil {
-				t.Errorf("parse form: %v", err)
+			if err := request.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse multipart: %v", err)
 			}
-			submitted = request.PostForm
+			submitted = request.MultipartForm.Value
 			submittedFlag.Store(true)
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(`{}`))
@@ -141,7 +146,7 @@ func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{ResumeID: "resume-hash"})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", SelectedOptionIDs: []string{"10"}},
 		{QuestionID: "2", SelectedOptionIDs: []string{"20", "21"}},
@@ -150,17 +155,20 @@ func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	if submitted.Get("task_1") != "10" {
-		t.Errorf("task_1 = %q", submitted.Get("task_1"))
+	if values := submitted["task_1"]; len(values) != 1 || values[0] != "10" {
+		t.Errorf("task_1 = %#v", values)
 	}
 	if values := submitted["task_2"]; len(values) != 2 || values[0] != "20" || values[1] != "21" {
 		t.Errorf("task_2 = %#v", values)
 	}
-	if submitted.Get("task_3") != "open" || submitted.Get("task_3_text") != "Готов обсудить" {
-		t.Errorf("task_3 = %q text = %q", submitted.Get("task_3"), submitted.Get("task_3_text"))
+	if values := submitted["task_3"]; len(values) != 1 || values[0] != "open" {
+		t.Errorf("task_3 = %#v", values)
 	}
-	if submitted.Get("_xsrf") != "xsrf-choice" || submitted.Get("guid") != "guid-choice" {
-		t.Errorf("context = %#v", submitted)
+	if values := submitted["task_3_text"]; len(values) != 1 || values[0] != "Готов обсудить" {
+		t.Errorf("task_3_text = %#v", values)
+	}
+	if values := submitted["_xsrf"]; len(values) != 1 || values[0] != "xsrf-choice" {
+		t.Errorf("xsrf = %#v", values)
 	}
 }
 
@@ -240,7 +248,7 @@ func TestBrowserSubmitVacancyTestRequiresConfirmation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{ResumeID: "resume-hash"})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Five years of Go"},
 		{QuestionID: "2", Text: "A local job agent"},

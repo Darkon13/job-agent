@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -152,19 +153,58 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 			return vacancyTestError(fmt.Sprintf("HH vacancy task %q has no answer", task.ID))
 		}
 	}
-	httpClient, err := client.authenticatedClient(actionURL)
+	resumeHash := strings.TrimSpace(client.options.ResumeID)
+	if resumeHash == "" {
+		return vacancyTestError("HH vacancy test submission requires a configured resume")
+	}
+	// The popup frontend submits the answers together with the ordinary
+	// response fields to the popup endpoint as multipart form data. Posting the
+	// bare form to the page URL is rejected by HH with a generic 400.
+	baseFields := map[string]string{
+		"vacancy_id":       key.ExternalID,
+		"resume_hash":      resumeHash,
+		"ignore_postponed": "true",
+		"incomplete":       "false",
+		"mark_applicant_visible_in_vacancy_country": "false",
+		"country_ids":     "[]",
+		"letter":          "",
+		"lux":             "true",
+		"withoutTest":     "no",
+		"hhtmFromLabel":   "",
+		"hhtmSourceLabel": "",
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range baseFields {
+		if err := writer.WriteField(name, value); err != nil {
+			return fmt.Errorf("encode HH vacancy test field %s: %w", name, err)
+		}
+	}
+	for name, values := range form {
+		for _, value := range values {
+			if err := writer.WriteField(name, value); err != nil {
+				return fmt.Errorf("encode HH vacancy test field %s: %w", name, err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("finish HH vacancy test body: %w", err)
+	}
+	endpoint := strings.TrimRight(client.webBaseURL, "/") + "/applicant/vacancy_response/popup"
+	httpClient, err := client.authenticatedClient(endpoint)
 	if err != nil {
 		return err
 	}
 	copy := *httpClient
 	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, actionURL, strings.NewReader(form.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
 	if err != nil {
 		return fmt.Errorf("create HH vacancy test request: %w", err)
 	}
 	client.setBrowserHeaders(request, "application/json")
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("Referer", strings.TrimRight(client.webBaseURL, "/")+"/vacancy/"+url.PathEscape(key.ExternalID))
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Origin", strings.TrimRight(client.webBaseURL, "/"))
+	request.Header.Set("Referer", actionURL)
 	if xsrf := form.Get("_xsrf"); xsrf != "" {
 		request.Header.Set("X-Xsrftoken", xsrf)
 	}
