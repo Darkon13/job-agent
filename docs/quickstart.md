@@ -193,6 +193,14 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 Профиль `browser` добавляет worker для входа и browser-only операций. Без него
 сервис тоже работает, но login и анкеты будут недоступны.
 
+`JOB_AGENT_API_TOKEN` — необязательный общий секрет (не пользовательская
+авторизация). В Compose он рекомендован, потому что backend доступен
+контейнерам приватной сети, а dashboard подставляет токен server-side. Можно
+работать и без него: не задавайте переменную и уберите `api_token_env` из
+конфига — тогда API не требует заголовка (dashboard продолжит работать).
+Подробнее — в
+[справочнике конфигурации](reference/configuration.md#зачем-bearer-токен-и-как-работать-без-него).
+
 ### Локально без Docker
 
 ```sh
@@ -201,6 +209,11 @@ export PATH="$PWD/dist:$PATH"   # job-agent* доступны без префи�
 job-agent-migrate -config ./deploy/config.json up
 job-agent ./deploy/config.json
 ```
+
+Для локального запуска токен не нужен: уберите `api_token_env` из конфига и не
+задавайте `JOB_AGENT_API_TOKEN` — backend будет слушать только loopback
+(`127.0.0.1:8080`). Токен обязателен при доступе по сети (WireGuard/туннель)
+и рекомендован в Compose.
 
 Dashboard (опционально) — `./dist/job-agent-dashboard`. Для browser-операций
 запустите worker: `cd browser-worker && npm ci && npm run build && npm start`.
