@@ -199,7 +199,7 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 работать и без него: не задавайте переменную и уберите `api_token_env` из
 конфига — тогда API не требует заголовка (dashboard продолжит работать).
 Подробнее — в
-[справочнике конфигурации](reference/configuration.md#зачем-bearer-токен-и-как-работать-без-него).
+[справочнике server](reference/configuration/server.md).
 
 ### Локально без Docker
 

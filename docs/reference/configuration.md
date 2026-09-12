@@ -1,310 +1,77 @@
-# Справочник конфигурации
+# Конфигурация
 
-Полное описание ключей декларативной конфигурации. Формат вдохновлён Xray и
-sing-box: объекты имеют `tag`, ссылаются друг на друга по имени и
-объединяются в include-файлы.
+Job Agent читает один JSON-файл. Файл может быть собран из нескольких через
+`include`, но итоговая конфигурация существует только в памяти: приложение не
+пишет её обратно.
 
-Начните с [`../quickstart.md`](../quickstart.md), а сюда возвращайтесь за
-точными именами полей и допустимыми значениями.
+Документация разложена по объектам — как в справочнике Xray, у каждого поля
+указаны тип, обязательность и значение по умолчанию.
 
-## Как читается конфигурация
+## Объекты
 
-- `schema_version` обязателен при ломающих изменениях; текущая версия — `1`.
-  Неизвестная версия отклоняется.
-- `include` содержит пути или glob-маски относительно своего файла.
-  Include-файлы объединяются depth-first после основного файла и добавляют
-  только коллекции (`adapters`, `profiles`, `searches`, `jobs`, `models`,
-  `employer_groups`, `resources`). `database` и `server` допустимы только в
-  главном файле.
-- Повтор `tag` между файлами запрещён; glob без совпадений — ошибка.
-- Ссылки на файлы внутри любого include (`message_template_file`,
-  `resume_facts_file`, `bootstrap.source`) считаются от каталога файла, который
-  их объявил.
-- Секреты в конфиг не пишутся: только `credentials_ref`, `state_file` или
-  переменные окружения.
-
-## Верхний уровень
-
-| Ключ | Тип | Описание |
+| Объект | Ключ | Что описывает |
 |---|---|---|
-| `schema_version` | number | версия схемы конфига, сейчас `1` |
-| `database` | object | SQLite-хранилище |
-| `server` | object | HTTP API и scheduler |
-| `adapters` | array | экземпляры адаптеров платформ |
-| `models` | array | провайдеры моделей для operator-цепочек |
-| `profiles` | array | аккаунты платформ |
-| `searches` | array | поисковые объекты |
-| `jobs` | array | расписания и actions |
-| `resources` | array | desired state профиля (`profile_state`) |
-| `employer_groups` | array | именованные группы работодателей для правил |
-| `answer_sets` | array | пути к файлам ответов (`AnswerBlock`) |
-| `include` | array | подключаемые файлы и маски |
+| [database](configuration/database.md) | `database` | хранилище состояния (SQLite) |
+| [server](configuration/server.md) | `server` | HTTP API, наблюдаемость, токен |
+| [adapters](configuration/adapters.md) | `adapters` | инстансы платформ и их настройки |
+| [models](configuration/models.md) | `models` | провайдеры моделей для писем и ответов |
+| [profiles](configuration/profiles.md) | `profiles` | учётные записи, резюме, контакты |
+| [applications](configuration/applications.md) | `profiles[].applications` | политика откликов и писем |
+| [tailoring](configuration/tailoring.md) | `profiles[].applications.tailoring` | временная подстройка резюме |
+| [conversations](configuration/conversations.md) | `profiles[].conversations` | чаты и автоответы |
+| [searches](configuration/searches.md) | `searches` | поиски и фильтры платформы |
+| [jobs](configuration/jobs.md) | `jobs` | расписание и действия |
+| [resources](configuration/resources.md) | `resources` | декларативный desired state |
+| [employer_groups](configuration/employer-groups.md) | `employer_groups` | группы работодателей |
+| [answer_sets](configuration/answers.md) | `answer_sets` | файлы готовых ответов |
+| [include](configuration/includes.md) | `include` | сборка конфига из файлов |
+| [messages](messages.md) | `message_template_file` | формат пулов писем |
 
-### `database`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `driver` | string | только `sqlite` |
-| `path` | string | путь к файлу БД; каталог создаётся автоматически |
-
-### `server`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `listen` | string | адрес listener, по умолчанию `127.0.0.1:8080` |
-| `api_token_env` | string | имя переменной с Bearer-токеном; без него разрешён только loopback |
-| `exposure` | string | `loopback` или `private` (для непубличной сети контейнера) |
-| `follow_up_reconcile_interval` | duration | период сверки follow-up таймеров |
-| `scheduler_reconcile_interval` | duration | период сверки cron-расписаний |
-
-#### Зачем Bearer-токен и как работать без него
-
-`api_token_env` — необязательный общий секрет, а не пользовательская
-аутентификация: job-agent не мультитенантный, у него нет учётных записей.
-
-Без `api_token_env` backend принимает только loopback-адрес и работает без
-авторизации — это нормальный режим для локального одиночного запуска.
-
-Токен нужен, когда API выходит за пределы loopback:
-
-- любая локальная программа может обратиться к `127.0.0.1`, а у сервиса на
-  кону реальные отклики;
-- браузерная страница может быть уведена на localhost (CSRF/DNS rebinding);
-  Bearer-заголовок это исключает, потому что обычная страница не может
-  добавить его без CORS-preflight;
-- в Docker Compose backend живёт в приватной сети контейнеров, а dashboard
-  проксирует API и подставляет токен server-side;
-- при прослушивании адреса WireGuard/туннеля токен обязателен.
-
-Правила: не публикуйте порт backend на `0.0.0.0`; храните значение в
-переменной окружения или secret storage; не коммитьте токен.
-
-Переменные окружения `JOB_AGENT_SERVER_LISTEN` и
-`JOB_AGENT_SERVER_EXPOSURE` переопределяют listener для контейнера.
-
-### `adapters`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `tag` | string | имя экземпляра адаптера |
-| `type` | string | тип из registry, сейчас `hh` |
-| `settings` | object | настройки адаптера |
-
-Настройки HH (`type: hh`):
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `api_delay_ms` | number | пауза между API-запросами, мс |
-| `user_agent` | string | User-Agent для API-запросов |
-
-### `models`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `tag` | string | имя провайдера, на него ссылаются policy |
-| `type` | string | `openai_responses` (Responses API) или `openai_chat` (chat completions: DeepSeek, шлюзы, локальный vLLM) |
-| `model` | string | имя модели |
-| `base_url` | string | необязательный свой endpoint; для `openai_chat` по умолчанию `https://api.deepseek.com/v1` |
-| `api_key_env` | string | переменная с ключом, по умолчанию `OPENAI_API_KEY` |
-| `max_output_tokens` | number | предел ответа модели |
-| `reasoning_effort` | string | для reasoning-моделей: `none`, `low`, `medium`, `high`; `none` отключает «размышления» и экономит токены |
-
-## `profiles`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `tag` | string | **произвольное имя профиля**, используется в ссылках |
-| `adapter` | string | ссылка на `adapters[].tag` |
-| `resume` | string | ID резюме на платформе или alias из `resume_aliases` |
-| `resume_aliases` | object | карта `alias → platform resume ID` |
-| `resume_facts_file` | string | файл с фактами резюме для model/template контекста; ключ `facts.placeholders` объявляет значения для обезличивания контекста модели |
-| `credentials_ref` | string | ссылка на OAuth-креденшелы (альтернатива cookies) |
-| `state_file` | string | файл browser storage state профиля |
-| `contacts` | object | необязательный fallback для имени и контактов; платформа отдаёт `first_name`/`last_name`/`email`/`telegram` сама, а конфиг заполняет пропущенные поля |
-| `enabled` | bool | участвует ли профиль в работе |
-| `bootstrap` | object | первичное декларативное заполнение (см. `profile-bootstrap.md`) |
-| `applications` | object | политика откликов |
-| `conversations` | object | политика чатов |
-| `answers` | object | резолвер неизвестных вопросов |
-
-Пример алиасов:
+## Минимальный конфиг
 
 ```json
-"resume_aliases": {"backend": "resume-id-1", "golang": "resume-id-2"}
-```
-
-При старте сервис читает имя, email и Telegram из live-профиля (browser state)
-и использует их в письмах и «О себе». Конфиг ниже нужен только для того, чего
-нет на платформе или что нужно переопределить.
-
-Пример контактов:
-
-```json
-"contacts": {
-  "first_name": "Артём",
-  "last_name": "Шумилов",
-  "email": "user@example.test",
-  "telegram": "@qworteex"
+{
+  "schema_version": 1,
+  "database": {"driver": "sqlite", "path": "./data/job-agent.db"},
+  "adapters": [{"tag": "hh-main", "type": "hh"}],
+  "profiles": [{
+    "tag": "primary",
+    "adapter": "hh-main",
+    "resume": "0123456789abcdef",
+    "state_file": "./data/profiles/primary.json",
+    "enabled": true,
+    "applications": {"mode": "dry_run", "message": "Здравствуйте!"}
+  }],
+  "searches": [{
+    "tag": "golang",
+    "adapter": "hh-main",
+    "profiles": ["primary"],
+    "priority": 100,
+    "target_applications": 10,
+    "query": {"source": "global", "text": "Golang"}
+  }]
 }
 ```
 
-В шаблонах письма контакты доступны как `{{.Profile.Email}}` и т.д., а в
-model-контексте заменяются на `{email}`, `{telegram}`, `{first_name}`,
-`{last_name}`; реальные значения подставляются после валидации. Контакты не
-секрет, но персональные данные: держите их в локальном конфиге и не коммитьте.
+## Общие правила
 
-### `profiles[].applications`
+- **`tag` и ссылки.** Каждый объект с `tag` имеет уникальное имя в своём
+  пространстве. Ссылки — строки с чужим `tag` (`adapter`, `profiles`,
+  `routes`, `provider`, `operator`). Опечатка отклоняется при загрузке.
+- **`schema_version`.** Необязательное поле, по умолчанию `1`. Другая версия
+  отклоняется: ломающее изменение схемы требует новой версии и миграции.
+- **Пути к файлам.** `resume_facts_file`, `message_template_file`,
+  `bootstrap.source` и `answer_sets` разрешаются относительно файла, который
+  их объявил, поэтому include-фрагменты переносимы.
+- **Секреты.** Ключи моделей не хранятся в конфиге: указывается только имя
+  переменной окружения (`api_key_env`). Credentials, cookies и browser state —
+  в `state_file`/`credentials_ref`, права `0600`, вне Git.
+- **Проверка.** Конфиг валидируется при старте: сервис не запустится с
+  неразрешённой ссылкой, неизвестным `type`, отрицательным лимитом или
+  синтаксически неверным шаблоном. Состояние работающего сервиса показывает
+  `job-agent-check`.
+- **Изменения на ходу.** Изменение определения поиска (`query`, профили,
+  adapter) автоматически начинает новую generation с чистым курсором; смена
+  `config.json` требует перезапуска сервиса.
 
-| Ключ | Тип | Описание |
-|---|---|---|
-| `mode` | string | `dry_run` (ничего не отправляет), `approval` (ждёт approve), `submit` (отправляет) |
-| `message` | string | статический текст сопроводительного |
-| `message_template` | string | inline-шаблон |
-| `message_template_file` | string | файл пула шаблонов (`strategy: first\|stable_hash`), см. [Письма и пулы](messages.md) |
-| `model` | object | `provider`/`prompt_version`/`instruction`/`timeout` для генерации письма |
-| `employer_rules` | array | правила по работодателям: `employer_groups`, `action` (`skip`, `review`, `message_pool`), свой пул или model |
-| `qualification` | object | `include_any`, `exclude_any` — текстовые фильтры по вакансии |
-| `daily_limit` | number | дневной потолок откликов на профиль/платформу |
-| `submit_jitter` | object | пауза между отправками: `min`, `max` (например, `15s`/`30s`) |
-| `timezone` | string | таймзона рассылок и расписаний |
-| `allow_visibility_change` | bool | разрешить менять видимость резюме при отклике |
-| `tailoring` | object | временная подстройка резюме перед откликом: `skills` и/или `about` |
-
-Ровно один из `message`, `message_template`, `message_template_file` — если
-указан `model`, fallback-источник обязателен.
-
-### `profiles[].conversations`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `allow_send` | bool | разрешить отправку сообщений (по умолчанию выключено) |
-| `allow_mark_read` | bool | разрешить менять read-state чатов |
-| `answer_known` | bool | отвечать на опросники просмотренными блоками из `answer_sets` (требует `allow_send`) |
-
-### `profiles[].answers`
-
-```json
-"answers": {
-  "model": {
-    "provider": "openai",
-    "prompt_version": "v1",
-    "instruction": "Отвечай только вариантом из списка",
-    "timeout": "30s"
-  }
-}
-```
-
-## `searches`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `tag` | string | имя поиска, используется в `fallback` и `routes` |
-| `adapter` | string | ссылка на адаптер |
-| `profiles` | array | для каких профилей выполняется поиск |
-| `priority` | number | порядок обхода маршрутов |
-| `target_applications` | number | сколько вакансий собрать из этого поиска за проход |
-| `fallback` | string | следующий `search.tag`, если выдача исчерпана |
-| `query` | object | adapter-specific фильтры |
-
-Ключи `query` для HH, `source` обязателен:
-
-| Ключ | Значения |
-|---|---|
-| `source` | `global`, `similar_resume`, `similar_vacancy`, `related_vacancy` |
-| `resume` | ID резюме; обязателен для `similar_resume`, запрещён для `global` |
-| `vacancy` | ID вакансии; обязателен для vacancy-based источников |
-| `text` | строка поиска |
-| `area` | ID регионов: `1` — Москва, `2` — Санкт-Петербург (`https://api.hh.ru/areas`) |
-| `professional_role` | ID профессиональных ролей |
-| `experience` | `noExperience`, `between1And3`, `between3And6`, `moreThan6` |
-| `employment` | `full`, `part`, `project`, `probation`, `volunteer` |
-| `schedule` | `remote`, `fullDay`, `flexible`, `shift`, `flyInFlyOut` |
-| `industry`, `employer_id`, `excluded_employer_id` | отрасли и работодатели |
-| `salary`, `currency`, `only_with_salary` | зарплатный фильтр |
-| `period`, `date_from`, `date_to` | окно публикации |
-| `order_by` | `publication_time`, `salary_desc`, `relevance` |
-| `page_size`, `max_pages` | пагинация за один проход |
-| `label`, `search_field`, `metro` | дополнительные фильтры |
-
-## `jobs`
-
-| Ключ | Тип | Описание |
-|---|---|---|
-| `tag` | string | имя job, используется в API и dashboard |
-| `enabled` | bool | включено ли расписание |
-| `priority` | number | приоритет задачи в очереди |
-| `concurrency` | string | `forbid`, `forbid_per_profile` или `allow` |
-| `triggers` | array | cron, event или оба |
-| `action` | object | что выполнять |
-
-### Триггеры
-
-```json
-{"type": "cron", "expression": "30 9 * * *", "timezone": "Europe/Moscow", "misfire": "run_once",
- "jitter": {"min": "1m", "max": "10m"}}
-```
-
-| Ключ | Описание |
-|---|---|
-| `type` | `cron` или `event` |
-| `expression` | cron-выражение (5 полей) |
-| `timezone` | явная таймзона, по умолчанию берётся из профиля |
-| `misfire` | `run_once` — один догоняющий запуск |
-| `jitter` | случайная задержка старта `min`/`max` |
-| `event` / `filters` | для `type: event` — имя события и фильтры по атрибутам |
-
-### Actions
-
-| `type` | Поля | Что делает |
-|---|---|---|
-| `application.campaign` | `profiles`, `routes`, `target_successful`, `max_in_flight` | рассылка откликов по маршрутам до цели; `max_in_flight` — сколько откликов одновременно «в работе» |
-| `application.retention` | `profile`, `retention: {stale_after, remove_rejected}` | локальная очистка старых откликов |
-| `resume.touch` | `profile` | поднимает резюме |
-| `resume.publish` | `profile`, `resume` | публикует резюме |
-| `resume.update` | `profile`, `resource`, `publish` | plan → apply → read-back для desired state |
-| `profile.activity.observe` | `profile` | снимок активности резюме |
-| `profile.session_refresh` | `profile` | перечитывает cookies из live browser-контекста и обновляет `state_file` (страховка от протухшей сессии) |
-| `profile_state.reconcile` | `resource` | сверяет объявленный resource с платформой |
-| `conversation.sync` | `profile` | синхронизирует историю чатов |
-| `conversation.follow_up.select` | `profile`, `follow_up` | выбирает чат и планирует напоминание |
-
-## `resources`
-
-Декларативный desired state профиля (резюме, личные поля) с безопасным
-plan/apply. Подробности — в
-[`../profile-desired-state-and-routing.md`](../profile-desired-state-and-routing.md).
-
-| Ключ | Описание |
-|---|---|
-| `tag` | имя resource |
-| `type` | `profile_state` |
-| `profile` | ссылка на профиль |
-| `ownership` | `declared_fields` — владеет только объявленными листьями |
-| `state` | объявленные поля: `resumes.<id>/{web,web_profile,...}` для browser или `resumes.<id>/{profile,resume,creds,additional_properties}` для API |
-
-## `answer_sets`
-
-Пути к файлам `AnswerBlock` (`qualification`, `conversation`, `vacancy`).
-Один файл — один небольшой блок с `tag`, `name`, `kind`, `platform` и
-ответами. Блоки с одним и тем же `tag` запрещены. Контракт ответов — в
-[`../next-answer-model-fallback.md`](../next-answer-model-fallback.md).
-
-## Счётчики и лимиты
-
-| Поле | Где | Смысл |
-|---|---|---|
-| `target_applications` | `searches[]` | сколько вакансий собрать из поиска |
-| `target_successful` | `application.campaign` | цель по подтверждённым откликам |
-| `max_in_flight` | `application.campaign` | одновременно незавершённые отклики одной рассылки |
-| `daily_limit` | `profiles[].applications` | дневной потолок на профиль/платформу |
-| `submit_jitter` | `profiles[].applications` | пауза между отправками |
-
-## Переменные окружения
-
-| Переменная | Назначение |
-|---|---|
-| `JOB_AGENT_SERVER_LISTEN` | переопределяет `server.listen` (контейнер) |
-| `JOB_AGENT_SERVER_EXPOSURE` | переопределяет `server.exposure` |
-| `JOB_AGENT_API_TOKEN` | Bearer-токен, имя задаётся в `server.api_token_env` |
-| `BROWSER_WORKER_URL` / `BROWSER_WORKER_TOKEN` | адрес и токен browser worker |
-| `OPENAI_API_KEY` | ключ модели по умолчанию для `models` |
+См. также [рецепты](recipes.md) — готовые конфигурации для частых задач.
