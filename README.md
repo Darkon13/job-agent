@@ -71,10 +71,11 @@ curl -sf http://127.0.0.1:8081/dashboard-healthz
 
 ```sh
 make build
+export PATH="$PWD/dist:$PATH"
 export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-./dist/job-agent-migrate -config deploy/config.json up
-./dist/job-agent deploy/config.json          # backend, API на 127.0.0.1:8080
-./dist/job-agent-dashboard                   # dashboard на 127.0.0.1:8081
+job-agent-migrate -config deploy/config.json up
+job-agent deploy/config.json          # backend, API на 127.0.0.1:8080
+job-agent-dashboard                   # dashboard на 127.0.0.1:8081
 ```
 
 Для входа в HH из исходников дополнительно запустите browser-worker
@@ -84,9 +85,14 @@ export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
 ### 3. Один раз войдите в HH
 
 Вход и dashboard — опциональные удобства: сам сервис работает по конфигу и
-cron. Сохраните browser-сессию профиля любым способом:
+cron. CLI-команды используют собранные бинарники, поэтому один раз выполните
+`make build` и добавьте `dist/` в PATH (либо указывайте `./dist/job-agent`
+явно):
 
 ```sh
+make build
+export PATH="$PWD/dist:$PATH"
+
 job-agent auth login --profile main --state-output ./data/profiles/main.json
 # или импорт готового state:
 job-agent auth import --source export.json \
@@ -96,6 +102,10 @@ job-agent auth import --source export.json \
 Либо откройте dashboard `http://127.0.0.1:8081` → «Вход в HH» → профиль
 `main` → «Начать вход». Сессия переживёт перезапуск, а дальше сервис работает
 без вашего участия.
+
+> При запуске через Compose порт backend на хост не публикуется: для CLI
+> передайте `--api http://127.0.0.1:8081` (dashboard proxy) или войдите через
+> сам dashboard.
 
 ### 4. Проверьте dry-run
 
