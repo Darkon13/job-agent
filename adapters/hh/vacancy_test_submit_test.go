@@ -93,7 +93,7 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 func TestBrowserSubmitVacancyTestRejectsUnsupportedTasks(t *testing.T) {
 	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10"}}},
 		"vacancyTests":{"10":{"uidPk":1,"guid":"g","tasks":[
-			{"id":"1","description":"Pick one","candidateSolutions":[{"id":10,"description":"Go"}]}]}}}`
+			{"id":"1","description":"Write code"}]}}}`
 	var posts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost {
@@ -105,9 +105,83 @@ func TestBrowserSubmitVacancyTestRejectsUnsupportedTasks(t *testing.T) {
 
 	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
-		{QuestionID: "1", SelectedOptionIDs: []string{"10"}},
+		{QuestionID: "1", Text: "package main"},
 	})
 	requireOperationCategory(t, err, core.ErrorUnsupported)
+	if posts.Load() != 0 {
+		t.Fatalf("posts = %d", posts.Load())
+	}
+}
+
+func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
+	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10","required":true}}},
+		"vacancyTests":{"10":{"uidPk":7,"guid":"guid-choice","required":true,"startTime":1750000000,
+			"tasks":[
+				{"id":"1","description":"Pick one","candidateSolutions":[{"id":10,"description":"Go"},{"id":11,"description":"Python"}]},
+				{"id":"2","description":"Pick frameworks","multiple":true,"candidateSolutions":[{"id":20,"description":"Gin"},{"id":21,"description":"Echo"}]},
+				{"id":"3","description":"Custom availability","open":true,"candidateSolutions":[{"id":30,"description":"Yes"},{"id":31,"description":"No"}]}]}}}`
+	var submitted url.Values
+	var submittedFlag atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			if err := request.ParseForm(); err != nil {
+				t.Errorf("parse form: %v", err)
+			}
+			submitted = request.PostForm
+			submittedFlag.Store(true)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{}`))
+			return
+		}
+		if submittedFlag.Load() {
+			_, _ = writer.Write([]byte(`<html><body>application form</body></html>`))
+			return
+		}
+		_, _ = writer.Write([]byte(vacancyTestPopupPage(state, "xsrf-choice")))
+	}))
+	defer server.Close()
+
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
+		{QuestionID: "1", SelectedOptionIDs: []string{"10"}},
+		{QuestionID: "2", SelectedOptionIDs: []string{"20", "21"}},
+		{QuestionID: "3", Text: "Готов обсудить"},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if submitted.Get("task_1") != "10" {
+		t.Errorf("task_1 = %q", submitted.Get("task_1"))
+	}
+	if values := submitted["task_2"]; len(values) != 2 || values[0] != "20" || values[1] != "21" {
+		t.Errorf("task_2 = %#v", values)
+	}
+	if submitted.Get("task_3") != "open" || submitted.Get("task_3_text") != "Готов обсудить" {
+		t.Errorf("task_3 = %q text = %q", submitted.Get("task_3"), submitted.Get("task_3_text"))
+	}
+	if submitted.Get("_xsrf") != "xsrf-choice" || submitted.Get("guid") != "guid-choice" {
+		t.Errorf("context = %#v", submitted)
+	}
+}
+
+func TestBrowserSubmitVacancyTestRejectsInvalidChoice(t *testing.T) {
+	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10"}}},
+		"vacancyTests":{"10":{"uidPk":1,"guid":"g","tasks":[
+			{"id":"1","description":"Pick one","candidateSolutions":[{"id":10,"description":"Go"},{"id":11,"description":"Python"}]}]}}}`
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			posts.Add(1)
+		}
+		_, _ = writer.Write([]byte(vacancyTestPopupPage(state, "xsrf")))
+	}))
+	defer server.Close()
+
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
+	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
+		{QuestionID: "1", SelectedOptionIDs: []string{"10", "99"}},
+	})
+	requireOperationCategory(t, err, core.ErrorValidationRequired)
 	if posts.Load() != 0 {
 		t.Fatalf("posts = %d", posts.Load())
 	}

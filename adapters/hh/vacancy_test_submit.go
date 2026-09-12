@@ -25,13 +25,22 @@ type vacancyTestCapture struct {
 	Questionnaire core.Questionnaire
 	ActionURL     string
 	Fields        map[string]string
-	TextFields    map[string]string
+	Tasks         []vacancyTestFormTask
+}
+
+// vacancyTestFormTask mirrors one HH task as a form field contract. Open tasks
+// use the task textarea; choice tasks use one form value per selected option.
+type vacancyTestFormTask struct {
+	ID        string
+	Open      bool
+	Multiple  bool
+	OptionIDs map[string]struct{}
 }
 
 func vacancyResponsePageURL(baseURL, externalID string) string {
 	return strings.TrimRight(baseURL, "/") + "/applicant/vacancy_response?" + url.Values{
 		"vacancyId":           []string{externalID},
-		"startedWithQuestion": []string{"false"},
+		"startedWithQuestion": []string{"true"},
 	}.Encode()
 }
 
@@ -48,7 +57,7 @@ func parseVacancyTestCapture(document []byte, actionURL string) (vacancyTestCapt
 	if xsrf == "" {
 		return vacancyTestCapture{}, operationError(core.ErrorTemporaryFailure, vacancyTestSubmitOperation, "HH vacancy test form does not contain a submission token", nil)
 	}
-	required := test.Required || state.VacancyResponsePopup.Vacancy.Test.Required
+	required := bool(test.Required) || state.VacancyResponsePopup.Vacancy.Test.Required
 	fields := map[string]string{
 		"_xsrf":        xsrf,
 		"uidPk":        string(test.UIDPk),
@@ -56,25 +65,31 @@ func parseVacancyTestCapture(document []byte, actionURL string) (vacancyTestCapt
 		"startTime":    jsonScalar(test.StartTime),
 		"testRequired": strconv.FormatBool(required),
 	}
-	textFields := make(map[string]string, len(test.Tasks))
+	tasks := make([]vacancyTestFormTask, 0, len(test.Tasks))
 	for _, task := range test.Tasks {
-		if !task.Open {
-			continue
-		}
 		id := strings.TrimSpace(string(task.ID))
-		if id != "" {
-			textFields[id] = "task_" + id + "_text"
+		if id == "" {
+			return vacancyTestCapture{}, vacancyTestError("HH vacancy test contains a task without an id")
 		}
+		formTask := vacancyTestFormTask{ID: id, Open: bool(task.Open), Multiple: bool(task.Multiple)}
+		if len(task.CandidateSolutions) != 0 {
+			formTask.OptionIDs = make(map[string]struct{}, len(task.CandidateSolutions))
+			for _, solution := range task.CandidateSolutions {
+				optionID := strings.TrimSpace(string(solution.ID))
+				if optionID == "" {
+					return vacancyTestCapture{}, vacancyTestError(fmt.Sprintf("HH vacancy task %q contains an option without an id", id))
+				}
+				formTask.OptionIDs[optionID] = struct{}{}
+			}
+		}
+		tasks = append(tasks, formTask)
 	}
-	if len(textFields) == 0 {
-		return vacancyTestCapture{}, operationError(core.ErrorUnsupported, vacancyTestSubmitOperation, "HH vacancy test has no open-text tasks that the adapter can submit", nil)
-	}
-	return vacancyTestCapture{Questionnaire: questionnaire, ActionURL: actionURL, Fields: fields, TextFields: textFields}, nil
+	return vacancyTestCapture{Questionnaire: questionnaire, ActionURL: actionURL, Fields: fields, Tasks: tasks}, nil
 }
 
-// SubmitVacancyTest fills the vacancy response popup with open-text answers and
-// verifies through read-back that HH accepted the submission. Choice and code
-// tasks remain unsupported until their form fields are verified live.
+// SubmitVacancyTest fills the vacancy response popup with open-text and choice
+// answers and verifies through read-back that HH accepted the submission. Code
+// tasks remain unsupported; every captured task requires exactly one answer.
 func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
 	if err := client.validateIdentity(profileID, key); err != nil {
 		return err
@@ -106,25 +121,28 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 			form.Set(name, value)
 		}
 	}
+	tasksByID := make(map[string]vacancyTestFormTask, len(capture.Tasks))
+	for _, task := range capture.Tasks {
+		tasksByID[task.ID] = task
+	}
 	answered := make(map[string]bool, len(answers))
 	for _, answer := range answers {
 		taskID := strings.TrimSpace(answer.QuestionID)
-		field, ok := capture.TextFields[taskID]
+		task, ok := tasksByID[taskID]
 		if !ok {
-			return vacancyTestError(fmt.Sprintf("HH vacancy task %q is not an open-text task", answer.QuestionID))
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q is not part of the questionnaire", answer.QuestionID))
 		}
-		if strings.TrimSpace(answer.Text) == "" {
-			return vacancyTestError(fmt.Sprintf("HH vacancy task %q requires an open-text answer", answer.QuestionID))
+		if answered[taskID] {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q has more than one answer", answer.QuestionID))
 		}
-		if len(answer.SelectedOptionIDs) != 0 {
-			return vacancyTestError(fmt.Sprintf("HH vacancy task %q must not select options", answer.QuestionID))
-		}
-		form.Set(field, answer.Text)
 		answered[taskID] = true
+		if err := fillVacancyTestTask(form, task, answer); err != nil {
+			return err
+		}
 	}
-	for taskID := range capture.TextFields {
-		if !answered[taskID] {
-			return vacancyTestError(fmt.Sprintf("HH vacancy task %q has no answer", taskID))
+	for _, task := range capture.Tasks {
+		if !answered[task.ID] {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q has no answer", task.ID))
 		}
 	}
 	httpClient, err := client.authenticatedClient(actionURL)
@@ -169,6 +187,43 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 		return operationError(core.ErrorPermanentFailure, vacancyTestSubmitOperation, fmt.Sprintf("HH rejected the vacancy test with status %d", response.StatusCode), nil)
 	}
 	return client.confirmVacancyTestSubmission(ctx, actionURL)
+}
+
+// fillVacancyTestTask maps one resolved answer onto the live form fields. A
+// choice task uses one value per selected option under "task_<id>"; an open
+// task that also lists options is answered through the HH "open" branch.
+func fillVacancyTestTask(form url.Values, task vacancyTestFormTask, answer core.ResolvedAnswer) error {
+	text := strings.TrimSpace(answer.Text)
+	options := answer.SelectedOptionIDs
+	switch {
+	case task.Open && len(task.OptionIDs) == 0:
+		if text == "" || len(options) != 0 {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q requires an open-text answer", answer.QuestionID))
+		}
+		form.Set("task_"+task.ID+"_text", answer.Text)
+	case task.Open:
+		if text == "" || len(options) != 0 {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q requires a custom text answer", answer.QuestionID))
+		}
+		form.Set("task_"+task.ID, "open")
+		form.Set("task_"+task.ID+"_text", answer.Text)
+	case len(task.OptionIDs) != 0:
+		if text != "" || len(options) == 0 {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q requires selected options", answer.QuestionID))
+		}
+		if !task.Multiple && len(options) != 1 {
+			return vacancyTestError(fmt.Sprintf("HH vacancy task %q is single-choice and requires exactly one option", answer.QuestionID))
+		}
+		for _, optionID := range options {
+			if _, ok := task.OptionIDs[optionID]; !ok {
+				return vacancyTestError(fmt.Sprintf("HH vacancy task %q has no option %q", answer.QuestionID, optionID))
+			}
+			form.Add("task_"+task.ID, optionID)
+		}
+	default:
+		return operationError(core.ErrorUnsupported, vacancyTestSubmitOperation, fmt.Sprintf("HH vacancy task %q is not supported by the browser submitter", answer.QuestionID), nil)
+	}
+	return nil
 }
 
 func (client *BrowserApplicationClient) confirmVacancyTestSubmission(ctx context.Context, actionURL string) error {

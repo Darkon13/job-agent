@@ -15,6 +15,7 @@ import (
 )
 
 var vacancyTestStateMarkers = []string{
+	"HH-Lux-InitialState",
 	"VacancyResponsePopup-InitialState",
 	"VacancyResponse-InitialState",
 }
@@ -36,7 +37,7 @@ type vacancyTest struct {
 	UIDPk       flexibleID      `json:"uidPk"`
 	GUID        string          `json:"guid"`
 	Description string          `json:"description"`
-	Required    bool            `json:"required"`
+	Required    flexibleBool    `json:"required"`
 	StartTime   json.RawMessage `json:"startTime"`
 	Tasks       []vacancyTask   `json:"tasks"`
 }
@@ -44,9 +45,34 @@ type vacancyTest struct {
 type vacancyTask struct {
 	ID                 flexibleID            `json:"id"`
 	Description        string                `json:"description"`
-	Multiple           bool                  `json:"multiple"`
-	Open               bool                  `json:"open"`
+	Multiple           flexibleBool          `json:"multiple"`
+	Open               flexibleBool          `json:"open"`
 	CandidateSolutions []vacancyTaskSolution `json:"candidateSolutions"`
+}
+
+// flexibleBool accepts native JSON booleans and the string booleans HH embeds
+// in the rendered popup state ("multiple": "true").
+type flexibleBool bool
+
+func (value *flexibleBool) UnmarshalJSON(data []byte) error {
+	var flag bool
+	if err := json.Unmarshal(data, &flag); err == nil {
+		*value = flexibleBool(flag)
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		switch strings.ToLower(strings.TrimSpace(text)) {
+		case "true", "1":
+			*value = true
+		case "false", "0", "":
+			*value = false
+		default:
+			return fmt.Errorf("boolean field has unsupported value %q", text)
+		}
+		return nil
+	}
+	return errors.New("boolean field must be a boolean or a string")
 }
 
 type vacancyTaskSolution struct {
@@ -122,11 +148,15 @@ func vacancyTaskQuestion(task vacancyTask) (core.Question, error) {
 	}
 	question := core.Question{ID: id, Text: text}
 	switch {
-	case task.Open:
+	case bool(task.Open):
+		// An open task is rendered as a textarea. When it also lists candidate
+		// solutions HH adds an "open" branch ("Свой вариант"), so the core
+		// question stays open text and the browser submitter selects that
+		// branch together with the submitted text.
 		question.Kind = core.QuestionText
 	case len(task.CandidateSolutions) > 0:
 		question.Kind = core.QuestionSingle
-		if task.Multiple {
+		if bool(task.Multiple) {
 			question.Kind = core.QuestionMultiple
 		}
 		for _, solution := range task.CandidateSolutions {
@@ -168,7 +198,7 @@ func (client *BrowserReadClient) CaptureVacancyTest(ctx context.Context, profile
 	}
 	endpoint := strings.TrimRight(client.webBaseURL, "/") + "/applicant/vacancy_response?" + url.Values{
 		"vacancyId":           []string{key.ExternalID},
-		"startedWithQuestion": []string{"false"},
+		"startedWithQuestion": []string{"true"},
 	}.Encode()
 	document, finalURL, err := client.getHTML(ctx, endpoint, "vacancies.test.capture")
 	if err != nil {

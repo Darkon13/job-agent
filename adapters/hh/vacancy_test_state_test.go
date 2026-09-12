@@ -62,6 +62,20 @@ func TestParseVacancyTestQuestionnaireRejectsUnknownPage(t *testing.T) {
 	}
 }
 
+func TestParseVacancyTestQuestionnaireReadsLiveLuxState(t *testing.T) {
+	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10"}}},
+		"vacancyTests":{"10":{"uidPk":1,"guid":"g","description":"Go basics","tasks":[
+			{"id":"1","description":"Pick one","candidateSolutions":[{"id":10,"text":"Go"}]}]}}}`
+	page := `<html><body><template style="display:none" id="HH-Lux-InitialState">` + state + `</template></body></html>`
+	questionnaire, err := ParseVacancyTestQuestionnaire([]byte(page))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(questionnaire.Questions) != 1 || questionnaire.Questions[0].Options[0].Text != "Go" {
+		t.Fatalf("questionnaire = %#v", questionnaire)
+	}
+}
+
 func TestBrowserCaptureVacancyTest(t *testing.T) {
 	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10"}}},
 		"vacancyTests":{"10":{"uidPk":1,"guid":"g","description":"Go basics","tasks":[
@@ -70,7 +84,7 @@ func TestBrowserCaptureVacancyTest(t *testing.T) {
 		if request.URL.Path != "/applicant/vacancy_response" {
 			t.Errorf("path = %q", request.URL.Path)
 		}
-		if request.URL.Query().Get("vacancyId") != "42" || request.URL.Query().Get("startedWithQuestion") != "false" {
+		if request.URL.Query().Get("vacancyId") != "42" || request.URL.Query().Get("startedWithQuestion") != "true" {
 			t.Errorf("query = %v", request.URL.Query())
 		}
 		_, _ = fmt.Fprint(response, vacancyTestPage(state))

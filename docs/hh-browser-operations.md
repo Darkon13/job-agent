@@ -104,10 +104,12 @@ topic/chat сохраняются как platform references, но не выво
 
 ## Vacancy questionnaire/test form
 
-При наличии обязательного теста кнопка отклика открывает:
+Popup отклика и форма вопросов открываются одним URL; `startedWithQuestion`
+управляет отображением теста:
 
 ```text
 GET /applicant/vacancy_response?vacancyId=...&startedWithQuestion=false
+GET /applicant/vacancy_response?vacancyId=...&startedWithQuestion=true
 ```
 
 Initial state содержит:
@@ -132,9 +134,17 @@ vacancyTests.<vacancy-id>
    `- candidateSolutions[]
 ```
 
-Наблюдаемый open-text task был представлен `textarea` с именем
-`task_<task-id>_text`. Форма отправляется POST на текущий
-`/applicant/vacancy_response?...` как
+Наблюдаемые типы task и их поля формы:
+
+| Task в state | Поле в форме |
+| --- | --- |
+| `open=true`, без вариантов | `textarea` `task_<task-id>_text` |
+| `multiple=false`, `open=false` | `radio` `name=task_<task-id>`, `value=<solution-id>` |
+| `multiple=true`, `open=false` | `checkbox` `name=task_<task-id>`, `value=<solution-id>`, несколько значений с одним именем |
+| `multiple=false`, `open=true` | `radio` по вариантам плюс radio `value=open` и `textarea` `task_<task-id>_text` для своего ответа |
+
+Форма `RESPONSE_MODAL_FORM_ID` отправляется POST на текущий
+`/applicant/vacancy_response?vacancyId=...&startedWithQuestion=true` как
 `application/x-www-form-urlencoded` и содержит:
 
 - `_xsrf`;
@@ -142,11 +152,29 @@ vacancyTests.<vacancy-id>
 - `guid`;
 - `startTime`;
 - `testRequired`;
-- `task_<task-id>_text` для открытого ответа;
-- аналогичные task-specific поля для других типов, которые нужно исследовать
-  отдельно.
+- task-specific поля из таблицы выше.
 
 Submit button: `vacancy-response-submit-popup`.
+
+Popup с `startedWithQuestion=false` не содержит `vacancyTests` и служит только
+для чтения состояния отклика; форма с вопросами рендерится при
+`startedWithQuestion=true`. Если вакансия уже отработана, состояние возвращает
+`vacancyResponsePopup.type=alreadyApplied`, и форма не показывается.
+
+Живая проверка (2026-09-12, профиль `primary`, browser read session):
+
+- 136921562 — open-text и choice с `open=true`;
+- 136407992 — одиннадцать radio-вопросов и один checkbox-вопрос;
+- 136408820 — только open-text.
+
+В live-состоянии `required`, `multiple` и `open` приходят строками
+(`"true"`/`"false"`), а не JSON-булевыми. Capture рендерит форму тем же URL с
+`startedWithQuestion=true` и ничего не отправляет; submit заново читает форму,
+заполняет все task-поля и делает POST. Choice-вопрос отправляется одним
+значением `task_<id>=<solution-id>` на каждый выбранный вариант, а вопрос с
+`open=true` и списком вариантов — веткой `task_<id>=open` вместе с
+`task_<id>_text`. Code-вопрос попадает в каталог, но browser submitter его не
+отправляет.
 
 Extractor не хранит XSRF/guid в `TestDefinition`. Они являются short-lived
 submission context внутри зашифрованного profile state. Содержание теста
