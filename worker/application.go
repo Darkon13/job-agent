@@ -536,6 +536,7 @@ func (handler *ApplicationHandler) acquirePacing(ctx context.Context, applicatio
 	return &core.OperationError{
 		Category: core.ErrorRateLimited, Operation: "applications.pacing.wait", Platform: application.Key.Vacancy.Platform,
 		RetryAfter: &retryAt, Message: "application submit is waiting for its pacing slot",
+		Metadata: map[string]string{"pacing": "true"},
 	}
 }
 

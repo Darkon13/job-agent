@@ -350,3 +350,42 @@ func sqliteTask(t *testing.T, id core.TaskID, key string, now time.Time, deadlin
 	}
 	return task
 }
+
+func TestTaskRetryPreservesAttemptsForPacing(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task := sqliteTask(t, "task-pacing", "key-pacing", now, nil)
+	if created, err := store.Enqueue(ctx, task); err != nil || !created {
+		t.Fatalf("enqueue: created=%v err=%v", created, err)
+	}
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "worker-a", Now: now, LeaseDuration: time.Minute})
+	if err != nil || !found || lease.Task.Attempts != 1 {
+		t.Fatalf("claim: found=%v attempts=%d err=%v", found, lease.Task.Attempts, err)
+	}
+	retryAt := now.Add(time.Minute)
+	pacing := &core.OperationError{
+		Category: core.ErrorRateLimited, Operation: "applications.pacing.wait",
+		Message: "application submit is waiting for its pacing slot", RetryAfter: &retryAt,
+		Metadata: map[string]string{"pacing": "true"},
+	}
+	if err := store.Retry(ctx, lease, pacing, retryAt, now.Add(time.Second)); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	second, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "worker-a", Now: retryAt.Add(time.Second), LeaseDuration: time.Minute})
+	if err != nil || !found || second.Task.Attempts != 1 {
+		t.Fatalf("pacing wait burned an attempt: found=%v attempts=%d err=%v", found, second.Task.Attempts, err)
+	}
+	realFailure := &core.OperationError{Category: core.ErrorTemporaryFailure, Operation: "applications.submit", Message: "platform hiccup"}
+	if err := store.Retry(ctx, second, realFailure, retryAt.Add(time.Minute), retryAt.Add(2*time.Second)); err != nil {
+		t.Fatalf("second retry: %v", err)
+	}
+	third, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "worker-a", Now: retryAt.Add(2 * time.Minute), LeaseDuration: time.Minute})
+	if err != nil || !found || third.Task.Attempts != 2 {
+		t.Fatalf("real failure must burn an attempt: found=%v attempts=%d err=%v", found, third.Task.Attempts, err)
+	}
+}
