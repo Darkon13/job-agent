@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Tailoring навыков умеет удалять нерелевантные теги: `allow_removals: true`
+  разрешает модели решение `remove` с evidence, validator запрещает удаление
+  несуществующих и всех навыков, детерминированный fallback не удаляет ничего.
+
 - Второй тип model provider — `openai_chat` (OpenAI-совместимый chat
   completions, по умолчанию DeepSeek): structured output через JSON mode и
   строгий локальный decoder, работает для писем, ответов и tailoring.

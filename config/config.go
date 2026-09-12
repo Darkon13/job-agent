@@ -378,9 +378,10 @@ type ApplicationTailoringPolicy struct {
 }
 
 type ApplicationTailoringSkillsPolicy struct {
-	Enabled bool                    `json:"enabled,omitempty"`
-	Maximum int                     `json:"maximum,omitempty"`
-	Model   *ApplicationModelPolicy `json:"model,omitempty"`
+	Enabled       bool                    `json:"enabled,omitempty"`
+	Maximum       int                     `json:"maximum,omitempty"`
+	AllowRemovals bool                    `json:"allow_removals,omitempty"`
+	Model         *ApplicationModelPolicy `json:"model,omitempty"`
 }
 
 func (policy ApplicationPolicy) TailoringSkills() (ApplicationTailoringSkillsPolicy, bool) {

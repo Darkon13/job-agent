@@ -14,8 +14,8 @@ import (
 
 const resumeTailoringModelInstruction = `Select resume skills for one application.
 Use only skills offered by vacancy.key_skills or already present in resume.skills.
-Never remove an existing resume skill. Prefer the vacancy skills that are most relevant to this vacancy.
-Return one decision per considered skill with action "add" for a new skill or "keep" for an existing one.
+Prefer the vacancy skills that are most relevant to this vacancy.
+Return one decision per considered skill with action "add" for a new skill, "keep" for an existing one or "remove" for an existing skill that is clearly the least relevant to this vacancy.
 Every decision must carry a non-empty evidence string naming its source.`
 
 // ResumeTailoringModelRequest is the provider-neutral model input. It carries
@@ -50,6 +50,7 @@ type ModelResumeTailoringConfig struct {
 	PromptVersion string
 	Instruction   string
 	MaximumSkills int
+	AllowRemovals bool
 	Timeout       time.Duration
 	Model         ResumeTailoringModel
 	Fallback      ResumeTailoringProcessor
@@ -64,6 +65,7 @@ type ModelResumeTailoringProcessor struct {
 	promptVersion string
 	instruction   string
 	maximumSkills int
+	allowRemovals bool
 	timeout       time.Duration
 	model         ResumeTailoringModel
 	fallback      ResumeTailoringProcessor
@@ -73,7 +75,8 @@ func NewModelResumeTailoringProcessor(config ModelResumeTailoringConfig) (*Model
 	processor := &ModelResumeTailoringProcessor{
 		tag: strings.TrimSpace(config.Tag), promptVersion: strings.TrimSpace(config.PromptVersion),
 		instruction: strings.TrimSpace(config.Instruction), maximumSkills: config.MaximumSkills,
-		timeout: config.Timeout, model: config.Model, fallback: config.Fallback,
+		allowRemovals: config.AllowRemovals,
+		timeout:       config.Timeout, model: config.Model, fallback: config.Fallback,
 	}
 	if processor.tag == "" || processor.promptVersion == "" || processor.instruction == "" {
 		return nil, errors.New("model resume tailoring requires tag, prompt version and instruction")
@@ -118,8 +121,12 @@ func (processor *ModelResumeTailoringProcessor) planWithModel(ctx context.Contex
 	}
 	modelCtx, cancel := context.WithTimeout(ctx, processor.timeout)
 	defer cancel()
+	instruction := resumeTailoringModelInstruction
+	if !processor.allowRemovals {
+		instruction += "\nNever remove an existing resume skill."
+	}
 	response, err := processor.model.Select(modelCtx, ResumeTailoringModelRequest{
-		Instruction:   resumeTailoringModelInstruction + "\n\n" + processor.instruction,
+		Instruction:   instruction + "\n\n" + processor.instruction,
 		PromptVersion: processor.promptVersion, VacancyTitle: input.Vacancy.Title,
 		VacancySkills: vacancyAttributeStrings(input.Vacancy, "key_skills"),
 		CurrentSkills: append([]string(nil), current...), MaximumSkills: processor.maximumSkills,
@@ -137,15 +144,20 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 	if len(decisions) == 0 {
 		return ResumeTailoringPlan{}, invalid("model returned no skill decisions")
 	}
-	allowed := make(map[string]struct{}, len(current)+len(vacancyAttributeStrings(input.Vacancy, "key_skills")))
+	currentIndex := make(map[string]struct{}, len(current))
 	for _, skill := range current {
-		allowed[normalizeResumeSkill(skill)] = struct{}{}
+		currentIndex[normalizeResumeSkill(skill)] = struct{}{}
+	}
+	allowed := make(map[string]struct{}, len(current)+len(vacancyAttributeStrings(input.Vacancy, "key_skills")))
+	for key := range currentIndex {
+		allowed[key] = struct{}{}
 	}
 	for _, skill := range vacancyAttributeStrings(input.Vacancy, "key_skills") {
 		allowed[normalizeResumeSkill(skill)] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(decisions))
 	added := make(map[string]struct{}, len(decisions))
+	removed := make(map[string]struct{}, len(decisions))
 	combined := append([]string(nil), current...)
 	selected := make([]ResumeTailoringSkillDecision, 0, len(decisions))
 	for _, decision := range decisions {
@@ -161,20 +173,43 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 		if _, known := allowed[key]; !known {
 			return ResumeTailoringPlan{}, invalid("skill %q is neither a vacancy skill nor a current skill", decision.Value)
 		}
+		action := ResumeTailoringSkillKeep
 		switch decision.Action {
 		case ResumeTailoringSkillAdd, ResumeTailoringSkillKeep:
+			if decision.Action == ResumeTailoringSkillAdd {
+				if _, exists := currentIndex[key]; !exists {
+					if _, duplicate := added[key]; !duplicate {
+						added[key] = struct{}{}
+						combined = append(combined, value)
+						action = ResumeTailoringSkillAdd
+					}
+				}
+			}
+		case ResumeTailoringSkillRemove:
+			if !processor.allowRemovals {
+				return ResumeTailoringPlan{}, invalid("remove action is not allowed by the skills policy")
+			}
+			if _, exists := currentIndex[key]; !exists {
+				return ResumeTailoringPlan{}, invalid("skill %q is not a current resume skill", decision.Value)
+			}
+			removed[key] = struct{}{}
+			action = ResumeTailoringSkillRemove
 		default:
 			return ResumeTailoringPlan{}, invalid("unsupported action %q", decision.Action)
 		}
-		action := ResumeTailoringSkillKeep
-		if decision.Action == ResumeTailoringSkillAdd && !containsNormalizedResumeSkill(current, key) {
-			if _, exists := added[key]; !exists {
-				added[key] = struct{}{}
-				combined = append(combined, value)
-				action = ResumeTailoringSkillAdd
+		selected = append(selected, ResumeTailoringSkillDecision{Value: value, Action: action, Evidence: strings.TrimSpace(decision.Evidence)})
+	}
+	if len(removed) != 0 {
+		filtered := make([]string, 0, len(combined))
+		for _, skill := range combined {
+			if _, drop := removed[normalizeResumeSkill(skill)]; !drop {
+				filtered = append(filtered, skill)
 			}
 		}
-		selected = append(selected, ResumeTailoringSkillDecision{Value: value, Action: action, Evidence: strings.TrimSpace(decision.Evidence)})
+		combined = filtered
+	}
+	if len(combined) == 0 {
+		return ResumeTailoringPlan{}, invalid("model removed every resume skill")
 	}
 	if len(combined) > processor.maximumSkills {
 		return ResumeTailoringPlan{}, invalid("selected %d skills above the limit of %d", len(combined), processor.maximumSkills)
@@ -183,7 +218,7 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 		ProcessorTag: processor.tag, ProcessorVersion: processor.promptVersion,
 		InputDigest: resumeTailoringInputDigest(input, path, current), Skills: selected,
 	}
-	if len(combined) != len(current) {
+	if !slices.Equal(combined, current) {
 		encoded, err := json.Marshal(combined)
 		if err != nil {
 			return ResumeTailoringPlan{}, fmt.Errorf("encode tailored resume skills: %w", err)

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	ResumeTailoringSkillAdd  = "add"
-	ResumeTailoringSkillKeep = "keep"
+	ResumeTailoringSkillAdd    = "add"
+	ResumeTailoringSkillKeep   = "keep"
+	ResumeTailoringSkillRemove = "remove"
 )
 
 var ErrResumeTailoringSkillLimit = errors.New("resume tailoring cannot add every vacancy skill without dropping an existing skill")
@@ -115,7 +116,7 @@ func (plan ResumeTailoringPlan) Validate(input ResumeTailoringInput) error {
 			return errors.New("resume tailoring skill decision requires value and evidence")
 		}
 		switch decision.Action {
-		case ResumeTailoringSkillAdd, ResumeTailoringSkillKeep:
+		case ResumeTailoringSkillAdd, ResumeTailoringSkillKeep, ResumeTailoringSkillRemove:
 		default:
 			return fmt.Errorf("resume tailoring skill decision has unsupported action %q", decision.Action)
 		}

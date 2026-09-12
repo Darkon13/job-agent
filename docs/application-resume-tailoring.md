@@ -120,6 +120,12 @@ schema validation, allowlist путей, platform limits и semantic diff.
 хватает, processor ранжирует кандидатов, а validator не допускает молчаливой
 потери исходных навыков.
 
+Удаление существующих тегов возможно только через model processor и только при
+`tailoring.skills.allow_removals: true`. Модель помечает решение как `remove`
+с evidence, локальный validator принимает его лишь для реально существующего
+навыка, запрещает удалить все навыки и выход за `maximum`, а детерминированный
+fallback никогда ничего не удаляет.
+
 ## Restore и сбои
 
 До apply сохраняются encrypted/private snapshot разрешённых полей, remote
@@ -155,12 +161,15 @@ retention policy.
 ## Model processor
 
 Если в `tailoring.skills.model` задан провайдер, processor просит модель выбрать
-подмножество `key_skills` вакансии, которое помещается в лимит. Модель не
-редактирует резюме: её решения проверяются по исходным навыкам и вакансии,
-неизвестные значения и превышение лимита отклоняются, после чего используется
-детерминированный `add_vacancy_skills`. Провайдер повторно использует
-зарегистрированный `models[]` и structured output; при timeout, rate limit,
-provider failure или невалидном ответе срабатывает deterministic fallback.
+подмножество `key_skills` вакансии, которое помещается в лимит, а при
+`allow_removals: true` — ещё и отметить `remove` самые нерелевантные для этой
+вакансии существующие навыки. Модель не редактирует резюме: её решения
+проверяются по исходным навыкам и вакансии, неизвестные значения, удаление
+несуществующего навыка, попытка удалить все навыки и превышение лимита
+отклоняются, после чего используется детерминированный `add_vacancy_skills`
+без удалений. Провайдер повторно использует зарегистрированный `models[]` и
+structured output; при timeout, rate limit, provider failure или невалидном
+ответе срабатывает deterministic fallback.
 
 ## Model about rewrite
 
@@ -211,6 +220,7 @@ Tailoring включается явно в профиле и работает т
       "skills": {
         "enabled": true,
         "maximum": 30,
+        "allow_removals": true,
         "model": {
           "provider": "openai-main",
           "prompt_version": "v1",

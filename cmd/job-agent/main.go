@@ -1286,7 +1286,8 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 			}
 			skillProcessor, err = applicationoperator.NewModelResumeTailoringProcessor(applicationoperator.ModelResumeTailoringConfig{
 				Tag: provider, PromptVersion: skills.Model.PromptVersion, Instruction: skills.Model.Instruction,
-				MaximumSkills: skills.Maximum, Timeout: timeout, Model: tailoringModel, Fallback: deterministic,
+				MaximumSkills: skills.Maximum, AllowRemovals: skills.AllowRemovals,
+				Timeout: timeout, Model: tailoringModel, Fallback: deterministic,
 			})
 			if err != nil {
 				return nil, nil, err
