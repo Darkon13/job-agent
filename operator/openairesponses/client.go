@@ -35,6 +35,9 @@ type Config struct {
 	HTTPClient      HTTPClient
 }
 
+var _ applicationoperator.ApplicationMessageModel = (*Client)(nil)
+var _ applicationoperator.AnswerGenerator = (*Client)(nil)
+
 type Client struct {
 	endpoint        string
 	apiKey          string

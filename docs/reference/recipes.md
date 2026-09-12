@@ -256,7 +256,7 @@ plan → apply → read-back и, если нужно, публикацию. Зн
 "models": [
   {
     "tag": "openai",                     // имя провайдера для ссылок
-    "type": "openai",                    // тип провайдера
+    "type": "openai_responses",          // тип провайдера
     "model": "gpt-5-mini",               // имя модели
     "api_key_env": "OPENAI_API_KEY",     // переменная с ключом
     "max_output_tokens": 800
@@ -279,6 +279,23 @@ plan → apply → read-back и, если нужно, публикацию. Зн
         "timeout": "30s"
       }
     }
+  }
+]
+```
+
+Если вместо OpenAI используется DeepSeek или другой endpoint с chat
+completions, укажите `type: "openai_chat"` и свой `base_url`; structured output
+там работает через JSON mode и тот же локальный валидатор:
+
+```jsonc
+"models": [
+  {
+    "tag": "deepseek",
+    "type": "openai_chat",
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "max_output_tokens": 1024
   }
 ]
 ```

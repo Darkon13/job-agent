@@ -26,6 +26,7 @@ import (
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
+	"github.com/Darkon13/job-agent/operator/openaichat"
 	"github.com/Darkon13/job-agent/operator/openairesponses"
 	jobscheduler "github.com/Darkon13/job-agent/scheduler"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
@@ -1192,6 +1193,11 @@ func buildApplicationModels(configs []appconfig.ModelProviderConfig, lookupEnv f
 		switch configured.Type {
 		case appconfig.ModelProviderOpenAIResponses:
 			model, err = openairesponses.New(openairesponses.Config{
+				BaseURL: configured.BaseURL, APIKey: apiKey, Model: configured.Model,
+				MaxOutputTokens: configured.MaxOutputTokens,
+			})
+		case appconfig.ModelProviderOpenAIChat:
+			model, err = openaichat.New(openaichat.Config{
 				BaseURL: configured.BaseURL, APIKey: apiKey, Model: configured.Model,
 				MaxOutputTokens: configured.MaxOutputTokens,
 			})
