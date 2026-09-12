@@ -444,7 +444,7 @@ func main() {
 				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
 				Timezone: profile.Applications.LocationName(),
 			}
-			tailoringProcessor, tailoringErr := applicationTailoringProcessor(profile, applicationModels)
+			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels)
 			if tailoringErr != nil {
 				log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, tailoringErr)
 			}
@@ -457,7 +457,7 @@ func main() {
 				}
 				tailoringPlan := taskworker.ApplicationTailoringPlan{
 					Processor:       tailoringProcessor,
-					AllowedPaths:    []string{applicationoperator.ResumeSkillsPath(profile.Resume)},
+					AllowedPaths:    tailoringPaths,
 					EmployerMatcher: employerMatcher,
 				}
 				applicationTailoringPlans[profileID] = tailoringPlan
@@ -1253,35 +1253,86 @@ func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applic
 	return pool
 }
 
-func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ResumeTailoringProcessor, error) {
-	skills, enabled := profile.Applications.TailoringSkills()
-	if !enabled {
-		return nil, nil
+func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ResumeTailoringProcessor, []string, error) {
+	processors := make([]applicationoperator.ResumeTailoringProcessor, 0, 2)
+	allowedPaths := make([]string, 0, 2)
+	skills, skillsEnabled := profile.Applications.TailoringSkills()
+	if skillsEnabled {
+		deterministic, err := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
+		if err != nil {
+			return nil, nil, err
+		}
+		var skillProcessor applicationoperator.ResumeTailoringProcessor = deterministic
+		if skills.Model != nil {
+			provider := strings.TrimSpace(skills.Model.Provider)
+			candidate := models[provider]
+			if candidate == nil {
+				return nil, nil, fmt.Errorf("application tailoring model references unavailable provider %q", provider)
+			}
+			tailoringModel, ok := candidate.(applicationoperator.ResumeTailoringModel)
+			if !ok {
+				return nil, nil, fmt.Errorf("application tailoring model provider %q does not support skill selection", provider)
+			}
+			timeout, err := time.ParseDuration(skills.Model.Timeout)
+			if err != nil || timeout <= 0 {
+				return nil, nil, fmt.Errorf("application tailoring model provider %q has invalid timeout %q", provider, skills.Model.Timeout)
+			}
+			skillProcessor, err = applicationoperator.NewModelResumeTailoringProcessor(applicationoperator.ModelResumeTailoringConfig{
+				Tag: provider, PromptVersion: skills.Model.PromptVersion, Instruction: skills.Model.Instruction,
+				MaximumSkills: skills.Maximum, Timeout: timeout, Model: tailoringModel, Fallback: deterministic,
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		processors = append(processors, skillProcessor)
+		allowedPaths = append(allowedPaths, applicationoperator.ResumeSkillsPath(profile.Resume))
 	}
-	deterministic, err := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
-	if err != nil {
-		return nil, err
+	if about, enabled := profile.Applications.TailoringAbout(); enabled {
+		facts, exists := profile.ResolvedResumeFacts()
+		if !exists {
+			return nil, nil, errors.New("application tailoring about requires resolved resume facts")
+		}
+		provider := strings.TrimSpace(about.Model.Provider)
+		candidate := models[provider]
+		if candidate == nil {
+			return nil, nil, fmt.Errorf("application tailoring about references unavailable provider %q", provider)
+		}
+		aboutModel, ok := candidate.(applicationoperator.ResumeTailoringAboutModel)
+		if !ok {
+			return nil, nil, fmt.Errorf("application tailoring model provider %q does not support about rewrite", provider)
+		}
+		timeout, err := time.ParseDuration(about.Model.Timeout)
+		if err != nil || timeout <= 0 {
+			return nil, nil, fmt.Errorf("application tailoring about provider %q has invalid timeout %q", provider, about.Model.Timeout)
+		}
+		aboutProcessor, err := applicationoperator.NewModelResumeTailoringAboutProcessor(applicationoperator.ModelResumeTailoringAboutConfig{
+			Tag: provider, PromptVersion: about.Model.PromptVersion, Instruction: about.Model.Instruction,
+			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel,
+			Facts: &applicationoperator.ApplicationResumeContext{
+				ResumeID: facts.ResumeID, FactsTag: facts.Tag, Digest: facts.Digest, Facts: facts.Facts,
+			},
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		processors = append(processors, aboutProcessor)
+		allowedPaths = append(allowedPaths, applicationoperator.ResumeAboutPath(facts.ResumeID))
 	}
-	if skills.Model == nil {
-		return deterministic, nil
+	switch len(processors) {
+	case 0:
+		return nil, nil, nil
+	case 1:
+		return processors[0], allowedPaths, nil
+	default:
+		chain, err := applicationoperator.NewChainResumeTailoringProcessor(applicationoperator.ChainResumeTailoringConfig{
+			Tag: "application-tailoring", Version: "v1", Processors: processors,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return chain, allowedPaths, nil
 	}
-	provider := strings.TrimSpace(skills.Model.Provider)
-	candidate := models[provider]
-	if candidate == nil {
-		return nil, fmt.Errorf("application tailoring model references unavailable provider %q", provider)
-	}
-	tailoringModel, ok := candidate.(applicationoperator.ResumeTailoringModel)
-	if !ok {
-		return nil, fmt.Errorf("application tailoring model provider %q does not support skill selection", provider)
-	}
-	timeout, err := time.ParseDuration(skills.Model.Timeout)
-	if err != nil || timeout <= 0 {
-		return nil, fmt.Errorf("application tailoring model provider %q has invalid timeout %q", provider, skills.Model.Timeout)
-	}
-	return applicationoperator.NewModelResumeTailoringProcessor(applicationoperator.ModelResumeTailoringConfig{
-		Tag: provider, PromptVersion: skills.Model.PromptVersion, Instruction: skills.Model.Instruction,
-		MaximumSkills: skills.Maximum, Timeout: timeout, Model: tailoringModel, Fallback: deterministic,
-	})
 }
 
 func configureSearchRuns(

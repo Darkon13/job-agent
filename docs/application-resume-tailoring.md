@@ -148,6 +148,9 @@ retention policy.
 4. ✅ Связать application submit с фазами saga и обязательной компенсацией.
 5. ✅ Подключить model processor с fallback на deterministic policy.
 6. ✅ Показать plan, skill diff, restore/recovery status в dashboard.
+7. ✅ Добавить model about processor: обезличенный контекст, локальная
+   валидация и chain с навыками.
+8. ⬜ Связать `resume.rewrite` (ежедневный рерайт) с тем же processor-контрактом.
 
 ## Model processor
 
@@ -158,6 +161,26 @@ retention policy.
 детерминированный `add_vacancy_skills`. Провайдер повторно использует
 зарегистрированный `models[]` и structured output; при timeout, rate limit,
 provider failure или невалидном ответе срабатывает deterministic fallback.
+
+## Model about rewrite
+
+Блок `tailoring.about` переписывает «О себе» под конкретную вакансию. Модель
+получает текущий текст, обезличенные `resume_facts` (личные значения из
+`facts.placeholders` уже заменены плейсхолдерами, объявление удалено), название
+вакансии и её `key_skills`. Модель не является источником фактов: локальный
+validator отклоняет пустой и превышающий `maximum_runes` текст, служебные
+JSON/code-fence ответы, управляющие символы, незаявленные плейсхолдеры и
+неподтверждённые числа, URL или e-mail. После валидации плейсхолдеры локально
+заменяются реальными значениями, и только затем строится override.
+
+Любая ошибка модели или невалидный ответ означает «оставить текущий текст»:
+about processor возвращает пустой план без override, а остальные processor-ы
+продолжают работу. Поэтому сбой about не блокирует ни навыки, ни отклик.
+
+Разрешённый путь выводится из `resume` профиля:
+`/resumes/{resume}/web/skills`. Policies `skills` и `about` можно включать
+независимо; если включены обе, processors объединяются в chain, а совпадающие
+пути отклоняются на этапе plan.
 
 ## Dashboard
 
@@ -188,6 +211,16 @@ Tailoring включается явно в профиле и работает т
           "instruction": "Prefer the skills most relevant to the vacancy.",
           "timeout": "30s"
         }
+      },
+      "about": {
+        "enabled": true,
+        "maximum_runes": 600,
+        "model": {
+          "provider": "openai-main",
+          "prompt_version": "v1",
+          "instruction": "Highlight the Go and PostgreSQL experience relevant to this vacancy.",
+          "timeout": "30s"
+        }
       }
     }
   }
@@ -198,7 +231,11 @@ Tailoring включается явно в профиле и работает т
 `key_skills` вакансии, не удаляя существующие, и отклоняет план, если лимит
 превышен. Разрешённый путь выводится из `resume` профиля
 (`/resumes/{resume}/web/keySkills`), поэтому пользователь не задаёт JSON Pointer
-вручную. Блок `model` необязателен и ссылается на зарегистрированный
-`models[]`; без него работает только детерминированная политика. Без блока
-`tailoring` handler работает как раньше.
+вручную. Блок `model` у навыков необязателен и ссылается на зарегистрированный
+`models[]`; без него работает только детерминированная политика.
+
+`about` требует `model` (переиспользуется тот же `models[]`) и
+`resume_facts_file`, потому что переписывать «О себе» без проверяемых фактов
+нельзя. `maximum_runes` ограничивает длину результата; ориентируйтесь на лимит
+платформы. Без блока `tailoring` handler работает как раньше.
 

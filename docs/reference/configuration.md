@@ -146,7 +146,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | `submit_jitter` | object | пауза между отправками: `min`, `max` (например, `15s`/`30s`) |
 | `timezone` | string | таймзона рассылок и расписаний |
 | `allow_visibility_change` | bool | разрешить менять видимость резюме при отклике |
-| `tailoring` | object | временная подстройка резюме перед откликом |
+| `tailoring` | object | временная подстройка резюме перед откликом: `skills` и/или `about` |
 
 Ровно один из `message`, `message_template`, `message_template_file` — если
 указан `model`, fallback-источник обязателен.

@@ -54,6 +54,46 @@ func TestClientSelectsResumeTailoringSkills(t *testing.T) {
 	}
 }
 
+func TestClientRewritesResumeTailoringAbout(t *testing.T) {
+	var received struct {
+		Model        string              `json:"model"`
+		Instructions string              `json:"instructions"`
+		Input        string              `json:"input"`
+		Text         responsesTextConfig `json:"text"`
+		Store        bool                `json:"store"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"id":"response-4","model":"gpt-test","status":"completed",
+			"output_text":"{\"about\":\"Опытный {name} пишет на Go.\"}"
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Config{BaseURL: server.URL + "/v1", APIKey: "secret", Model: "gpt-test", MaxOutputTokens: 700})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	result, err := client.RewriteAbout(context.Background(), applicationoperator.ResumeTailoringAboutRequest{
+		Instruction: "Highlight Go", PromptVersion: "v1", VacancyTitle: "Go developer",
+		CurrentAbout: "{name} пишет на Go", Facts: map[string]any{"city": "Москва"}, MaximumRunes: 600,
+	})
+	if err != nil {
+		t.Fatalf("rewrite about: %v", err)
+	}
+	if result.About != "Опытный {name} пишет на Go." || result.Model != "gpt-test" || result.ResponseID != "response-4" {
+		t.Fatalf("result = %#v", result)
+	}
+	if received.Store || received.Text.Format.Name != "resume_tailoring_about" || !received.Text.Format.Strict ||
+		!strings.Contains(received.Input, `"maximum_runes":600`) || !strings.Contains(received.Input, `"city":"Москва"`) {
+		t.Fatalf("request body = %#v", received)
+	}
+}
+
 func TestClientRejectsMalformedTailoringOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
