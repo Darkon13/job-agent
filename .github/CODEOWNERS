@@ -1,0 +1,15 @@
+# Владелец по умолчанию: ревью запрашивается автоматически.
+* @Darkon13
+
+# Ядро, контракты и адаптеры
+/core/ @Darkon13
+/adapter/ @Darkon13
+/adapters/ @Darkon13
+/workflow/ @Darkon13
+/worker/ @Darkon13
+
+# Документация, конфигурация и CI
+/docs/ @Darkon13
+/mkdocs.yml @Darkon13
+/CONTRIBUTING.md @Darkon13
+/.github/ @Darkon13
