@@ -394,7 +394,7 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 			if err := handler.repository.SaveApplication(ctx, application, expectedStatus); err != nil {
 				return err
 			}
-			if preparation.Code == "vacancy_test_required" {
+			if preparation.Code == "vacancy_test_required" || preparation.Code == "questionnaire_required" {
 				if err := handler.enqueueTestCapture(ctx, application, "application-review"); err != nil {
 					return err
 				}

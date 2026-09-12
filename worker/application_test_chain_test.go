@@ -119,3 +119,31 @@ func TestApplicationHandlerSchedulesCaptureOnQuestionnaireBlocker(t *testing.T) 
 		t.Fatalf("status = %q", application.Status)
 	}
 }
+
+func TestApplicationHandlerSchedulesCaptureOnResumePreflightQuestionnaire(t *testing.T) {
+	transport := &fakeApplicationTransport{suitableErr: &core.OperationError{
+		Category: core.ErrorValidationRequired, Operation: "vacancies.suitable_resumes.browser",
+		Message: "HH vacancy requires a test or questionnaire", Metadata: map[string]string{"code": "questionnaire_required"},
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	chain := &recordingTestChain{}
+	handler.ConfigureTestChain(repository, chain)
+	transport.vacancy = core.Vacancy{
+		Platform: "hh", ExternalID: "42", Title: "Go developer", State: core.VacancyStateOpen,
+		ObservedAt: time.Date(2026, 7, 19, 14, 1, 0, 0, time.UTC),
+		Attributes: map[string]any{},
+	}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(chain.captures) != 1 || chain.sources[0] != "application-review" {
+		t.Fatalf("captures = %#v sources=%#v", chain.captures, chain.sources)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"}})
+	if err != nil {
+		t.Fatalf("load application: %v", err)
+	}
+	if application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "questionnaire_required" {
+		t.Fatalf("application = %#v", application)
+	}
+}
