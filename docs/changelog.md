@@ -146,6 +146,11 @@
   уходят в обычный review, успешный `QualificationResult` дописывает verified
   ответ с provenance в qualification-блок; без declarative-блока используется
   conventional reviewed tag.
+- HH skill verification catalog: парсер читает `HH-Lux-InitialState`
+  (`skillsVerificationMethodsPage.items`) с family ID, уровнями
+  (`internalId`/`rank`) и доступностью видов (`theory`/`practice`); legacy
+  HTML-разметка остаётся fallback. Живой E2E подтвердил, что карточки больше
+  не содержат ссылок `/applicant/skills/<id>/verification_methods`.
 - Порядок HTTP-обвязки: `RequestID` теперь снаружи access-log, поэтому
   `request_id` всегда заполнен; Bearer-токен защищает `/metrics` и
   auth-endpoints, access-log покрывает auth-запросы. Запросы, отклонённые

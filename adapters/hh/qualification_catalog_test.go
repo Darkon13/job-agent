@@ -2,6 +2,7 @@ package hh
 
 import (
 	"context"
+	stdhtml "html"
 	"net/http"
 	"testing"
 	"time"
@@ -88,4 +89,62 @@ func TestBrowserSyncQualificationsRequiresLogin(t *testing.T) {
 	}))
 	_, err := client.SyncQualifications(context.Background(), "primary")
 	requireOperationCategory(t, err, core.ErrorUnauthorized)
+}
+
+func qualificationInitialStateFixture(t *testing.T) string {
+	t.Helper()
+	state := `{"skillsVerificationMethodsPage":{"items":[
+		{"id":322406,"name":"Golang","category":"SKILL","levels":[
+			{"id":8,"internalId":"base","name":"Базовый","rank":1,
+			 "theory":{"externalId":"dee21739","availability":{"status":"AVAILABLE"}},
+			 "practice":{"externalId":"7fc6eb8b","availability":{"status":"AVAILABLE"}}},
+			{"id":9,"internalId":"middle","name":"Средний","rank":2,
+			 "theory":{"externalId":"8a02d3e2","availability":{"status":"AVAILABLE"}},
+			 "practice":{"externalId":"f6ccad0f","availability":{"status":"UNAVAILABLE"}}}
+		]},
+		{"id":57,"name":"Английский","category":"LANG","levels":[
+			{"id":1,"internalId":"a1","name":"A1 — Начальный","rank":1,
+			 "theory":{"externalId":"58bcf028","availability":{"status":"AVAILABLE"}},"practice":null}
+		]}
+	]}}`
+	return `<html><body><template id="HH-Lux-InitialState">` + stdhtml.EscapeString(state) + `</template></body></html>`
+}
+
+func TestParseQualificationCatalogReadsInitialState(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	offerings, err := ParseQualificationCatalog([]byte(qualificationInitialStateFixture(t)), Name, "primary", now)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(offerings) != 4 {
+		t.Fatalf("offerings = %#v", offerings)
+	}
+	byExternal := make(map[string]core.QualificationOffering, len(offerings))
+	for _, offering := range offerings {
+		byExternal[offering.ExternalID] = offering
+	}
+	base, exists := byExternal["322406:base:theory"]
+	if !exists || base.Qualification.FamilyName != "Golang" || base.Qualification.LevelName != "Базовый" ||
+		base.Qualification.LevelOrder == nil || *base.Qualification.LevelOrder != 0 {
+		t.Fatalf("base offering = %#v", base)
+	}
+	if _, exists := byExternal["322406:base:practice"]; !exists {
+		t.Fatalf("missing base practice: %#v", byExternal)
+	}
+	middle, exists := byExternal["322406:middle:theory"]
+	if !exists || middle.Qualification.LevelOrder == nil || *middle.Qualification.LevelOrder != 1 {
+		t.Fatalf("middle offering = %#v", middle)
+	}
+	if _, exists := byExternal["322406:middle:practice"]; exists {
+		t.Fatalf("unavailable practice was included: %#v", byExternal)
+	}
+	if _, exists := byExternal["57:a1:theory"]; !exists {
+		t.Fatalf("missing language offering: %#v", byExternal)
+	}
+}
+
+func TestParseQualificationCatalogRejectsEmptyInitialState(t *testing.T) {
+	page := `<html><body><template id="HH-Lux-InitialState">{"skillsVerificationMethodsPage":{"items":[]}}</template></body></html>`
+	_, err := ParseQualificationCatalog([]byte(page), Name, "primary", time.Now().UTC())
+	requireOperationCategory(t, err, core.ErrorUnsupported)
 }

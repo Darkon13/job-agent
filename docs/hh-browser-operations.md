@@ -298,16 +298,18 @@ Scheduler использует `nextTouchAt`; период нельзя жёст
 
 ## Skill verification
 
-Каталог открывается на `/applicant/skill_verifications/methods`. Наблюдаемые
-selectors:
-
-- `skills-verification-method-container`;
-- `verification-method-title`;
-- `/applicant/skills/<skill-id>/verification_methods`;
-- `applicant-keyskills-verification-methods-level-tab`;
-- `applicant-keyskills-verification-methods-kind-card-theory`;
-- `applicant-keyskills-verification-methods-kind-card-practice`;
-- `applicant-keyskills-verification-methods-start-theory`.
+Каталог открывается на `/applicant/skill_verifications/methods`. Live-контракт
+на 2026-09-12: страница содержит server-rendered карточки и полный
+`HH-Lux-InitialState` (`<template id="HH-Lux-InitialState">`), из которого
+читаются family ID, уровни и доступность видов. JSON path:
+`skillsVerificationMethodsPage.items[]`; у элемента — `id`, `name`,
+`category` (`SKILL`/`LANG`), `levels[]` с `internalId` (`base`/`middle`/
+`advanced`/`a1`…), `rank`, `name` и объектами `theory`/`practice` с
+`externalId` и `availability.status`. Карточки каталога больше не содержат
+`<a href="/applicant/skills/<id>/verification_methods">`; на detail-страницу
+переходит JS. Legacy-разметка с `skills-verification-method-container`,
+`verification-method-title`, level tab и kind card остаётся fallback, если
+initial state отсутствует.
 
 Уровень и вид проверки выбираются до создания попытки. Нажатие start может
 создать ограниченную/таймированную попытку, поэтому `skills.start_attempt` и
