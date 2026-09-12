@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -188,8 +189,25 @@ func normalizeError(err error, taskType core.TaskType) *core.OperationError {
 	}
 	return &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: string(taskType),
-		Message: "handler failed", Cause: err,
+		Message: handlerFailureMessage(err), Cause: err,
 	}
+}
+
+// handlerFailureMessage keeps the underlying cause visible for operators while
+// bounding the stored text. Plain handler errors used to collapse into a bare
+// "handler failed", which made permanent failures undiagnosable.
+func handlerFailureMessage(err error) string {
+	const maximum = 300
+	message := "handler failed"
+	if err != nil {
+		if text := strings.TrimSpace(err.Error()); text != "" {
+			if len(text) > maximum {
+				text = text[:maximum]
+			}
+			message = "handler failed: " + text
+		}
+	}
+	return message
 }
 
 func retryable(category core.ErrorCategory) bool {

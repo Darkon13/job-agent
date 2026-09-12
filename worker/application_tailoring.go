@@ -119,6 +119,11 @@ func (coordinator *ApplicationTailoringCoordinator) Apply(ctx context.Context, a
 	}
 	processorPlan, err := plan.Processor.Plan(ctx, input)
 	if err != nil {
+		if errors.Is(err, applicationoperator.ErrResumeTailoringSkillLimit) {
+			// Temporary tailoring is optional: if the skill limit cannot be
+			// satisfied, submit on the current resume instead of failing.
+			return nil, nil
+		}
 		return nil, err
 	}
 	if err := processorPlan.Validate(input); err != nil {

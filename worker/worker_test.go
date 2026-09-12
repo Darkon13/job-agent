@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,20 @@ func enqueueWorkerTask(t *testing.T, queue *brokermemory.Queue, id string, taskT
 	}
 	if _, err := queue.Enqueue(context.Background(), task); err != nil {
 		t.Fatalf("enqueue task: %v", err)
+	}
+}
+
+func TestNormalizeErrorKeepsHandlerCause(t *testing.T) {
+	normalized := normalizeError(errors.New("browser session is unauthorized"), core.TaskApplicationSubmit)
+	if normalized.Category != core.ErrorPermanentFailure || normalized.Operation != string(core.TaskApplicationSubmit) {
+		t.Fatalf("normalized=%#v", normalized)
+	}
+	if !strings.Contains(normalized.Message, "browser session is unauthorized") {
+		t.Fatalf("message lost the cause: %q", normalized.Message)
+	}
+	long := normalizeError(errors.New(strings.Repeat("x", 1000)), core.TaskApplicationSubmit)
+	if len(long.Message) > 320 {
+		t.Fatalf("message is not bounded: %d", len(long.Message))
 	}
 }
 
