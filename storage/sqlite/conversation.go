@@ -196,6 +196,35 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 	return conversation, true, nil
 }
 
+// OpenQuestionnaireConversationIDs lists conversations whose latest incoming
+// questionnaire still has no outgoing answer after it.
+func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT m.conversation_id
+		FROM conversation_messages m
+		WHERE m.direction = 'incoming' AND m.kind = 'questionnaire'
+		  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
+		  AND m.occurred_at > COALESCE((
+			SELECT MAX(o.occurred_at) FROM conversation_messages o
+			WHERE o.conversation_id = m.conversation_id AND o.direction = 'outgoing'
+			  AND o.status IN ('sent', 'queued')), 0)
+		GROUP BY m.conversation_id
+		ORDER BY m.conversation_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list open questionnaires: %w", err)
+	}
+	defer rows.Close()
+	var result []core.ConversationID
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, core.ConversationID(id))
+	}
+	return result, rows.Err()
+}
+
 func (store *Store) ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error) {
 	if id == "" {
 		return nil, errors.New("conversation id is required")

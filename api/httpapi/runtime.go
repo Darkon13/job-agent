@@ -25,6 +25,7 @@ type RuntimeReadRepository interface {
 	ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error)
 	ListProfileActivitySnapshots(context.Context, storage.ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 	ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error)
+	OpenQuestionnaireConversationIDs(context.Context) ([]core.ConversationID, error)
 }
 
 type RuntimeAPI struct {
@@ -59,18 +60,19 @@ type ApplicationCampaignSummary struct {
 }
 
 type ConversationSummary struct {
-	ID             core.ConversationID     `json:"id"`
-	Platform       core.Platform           `json:"platform"`
-	ProfileID      core.ProfileID          `json:"profile_id"`
-	Status         core.ConversationStatus `json:"status"`
-	LastMessageAt  *time.Time              `json:"last_message_at,omitempty"`
-	LastIncomingAt *time.Time              `json:"last_incoming_at,omitempty"`
-	UpdatedAt      time.Time               `json:"updated_at"`
-	Revision       uint64                  `json:"revision"`
-	VacancyTitle   string                  `json:"vacancy_title,omitempty"`
-	Employer       string                  `json:"employer,omitempty"`
-	VacancyURL     string                  `json:"vacancy_url,omitempty"`
-	UnreadCount    int                     `json:"unread_count"`
+	ID                core.ConversationID     `json:"id"`
+	Platform          core.Platform           `json:"platform"`
+	ProfileID         core.ProfileID          `json:"profile_id"`
+	Status            core.ConversationStatus `json:"status"`
+	LastMessageAt     *time.Time              `json:"last_message_at,omitempty"`
+	LastIncomingAt    *time.Time              `json:"last_incoming_at,omitempty"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+	Revision          uint64                  `json:"revision"`
+	VacancyTitle      string                  `json:"vacancy_title,omitempty"`
+	Employer          string                  `json:"employer,omitempty"`
+	VacancyURL        string                  `json:"vacancy_url,omitempty"`
+	QuestionnaireOpen bool                    `json:"questionnaire_open,omitempty"`
+	UnreadCount       int                     `json:"unread_count"`
 }
 
 // ApplicationSummary is an operator-facing object. It intentionally omits
@@ -197,10 +199,21 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load conversations")
 		return
 	}
+	openQuestionnaires, err := api.repository.OpenQuestionnaireConversationIDs(request.Context())
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load open questionnaires")
+		return
+	}
+	openSet := make(map[core.ConversationID]struct{}, len(openQuestionnaires))
+	for _, id := range openQuestionnaires {
+		openSet[id] = struct{}{}
+	}
 	conversationSummaries := make([]ConversationSummary, 0, len(conversations))
 	for _, conversation := range conversations {
+		_, questionnaireOpen := openSet[conversation.ID]
 		summary := ConversationSummary{
-			ID: conversation.ID, Platform: conversation.Platform, ProfileID: conversation.ProfileID,
+			QuestionnaireOpen: questionnaireOpen,
+			ID:                conversation.ID, Platform: conversation.Platform, ProfileID: conversation.ProfileID,
 			Status: conversation.Status, LastMessageAt: conversation.LastMessageAt,
 			LastIncomingAt: conversation.LastIncomingAt, UpdatedAt: conversation.UpdatedAt,
 			Revision: conversation.Revision, VacancyTitle: conversation.VacancyTitle,

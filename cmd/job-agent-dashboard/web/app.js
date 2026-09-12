@@ -294,7 +294,8 @@ function visibleConversations(items = []) {
   const filtered = items.filter((item) => {
     if (state.account && item.profile_id !== state.account) return false;
     if (state.conversationFilter === "unread" && !item.unread_count) return false;
-    if (state.conversationFilter && state.conversationFilter !== "unread" && item.status !== state.conversationFilter) return false;
+    if (state.conversationFilter === "questionnaire" && !item.questionnaire_open) return false;
+    if (state.conversationFilter && !["unread", "questionnaire"].includes(state.conversationFilter) && item.status !== state.conversationFilter) return false;
     return !query || [item.vacancy_title, item.employer, item.profile_id, conversationStatusLabels[item.status]].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
   });
   const stringCompare = (left, right) => String(left || "").localeCompare(String(right || ""), "ru", { sensitivity: "base" });
@@ -313,7 +314,11 @@ function renderConversations(items = []) {
   if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
   elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
-    const heading = document.createElement("span"); heading.className = "conversation-heading"; heading.append(text("strong", conversationLabel(item)));
+    const heading = document.createElement("span"); heading.className = "conversation-heading";
+    const title = document.createElement("span"); title.className = "conversation-title";
+    title.append(text("strong", conversationLabel(item)));
+    if (item.questionnaire_open) title.append(text("span", "опросник", "questionnaire-badge"));
+    heading.append(title);
     if (item.unread_count) heading.append(text("span", String(item.unread_count), "unread-badge"));
     button.append(heading, text("span", item.employer || "Компания не определена", "conversation-employer"), text("small", `${item.profile_id} · ${conversationStatusLabels[item.status] || item.status} · ${formatDate(item.updated_at)}`));
     button.addEventListener("click", () => selectConversation(item)); return button;

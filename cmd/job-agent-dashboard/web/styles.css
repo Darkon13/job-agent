@@ -135,7 +135,9 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .conversation.active { border-color: var(--cyan); }
 .conversation strong, .conversation small { display: block; }
 .conversation-heading { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
-.conversation-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-heading strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-title { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+.questionnaire-badge { flex: none; border: 1px solid #8a6d3b; border-radius: 999px; padding: .1rem .45rem; color: #e8c37a; font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .unread-badge { flex: none; min-width: 1.4rem; border-radius: 999px; padding: .15rem .4rem; background: var(--cyan); color: #111820; font: 700 .7rem/1.2 ui-monospace, monospace; text-align: center; }
 .conversation-employer { display: block; margin-top: .25rem; overflow: hidden; color: var(--text); font-size: .78rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .conversation small { margin-top: .35rem; color: var(--muted); font-weight: 400; }

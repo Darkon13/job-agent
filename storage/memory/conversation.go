@@ -147,6 +147,37 @@ func (repository *Repository) AppendConversationMessage(ctx context.Context, mes
 	return cloneConversation(conversation), true, nil
 }
 
+// OpenQuestionnaireConversationIDs lists conversations whose latest incoming
+// questionnaire still has no outgoing answer after it.
+func (repository *Repository) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.ConversationID, 0)
+	for id, messages := range repository.messages {
+		var lastOutgoing, latestIncoming time.Time
+		for _, message := range messages {
+			if message.Direction == core.MessageOutgoing && (message.Status == core.MessageSent || message.Status == core.MessageQueued) &&
+				message.OccurredAt.After(lastOutgoing) {
+				lastOutgoing = message.OccurredAt
+			}
+		}
+		for _, message := range messages {
+			if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
+				message.OccurredAt.After(lastOutgoing) && message.OccurredAt.After(latestIncoming) {
+				latestIncoming = message.OccurredAt
+			}
+		}
+		if !latestIncoming.IsZero() {
+			result = append(result, id)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result, nil
+}
+
 func (repository *Repository) ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

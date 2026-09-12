@@ -26,6 +26,7 @@ type runtimeRepository struct {
 	activity           []storage.ProfileActivityCount
 	activitySnapshots  []core.ProfileActivitySnapshot
 	conversations      []core.Conversation
+	openQuestionnaires []core.ConversationID
 	tailoring          *core.ApplicationTailoring
 	err                error
 }
@@ -113,6 +114,10 @@ func (repository *runtimeRepository) ListConversations(context.Context, storage.
 	return repository.conversations, repository.err
 }
 
+func (repository *runtimeRepository) OpenQuestionnaireConversationIDs(context.Context) ([]core.ConversationID, error) {
+	return repository.openQuestionnaires, repository.err
+}
+
 func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 	now := time.Date(2026, 9, 6, 16, 0, 0, 0, time.UTC)
 	vacancy := core.Vacancy{Platform: "hh", ExternalID: "42", URL: "https://hh.ru/vacancy/42", Title: "Go developer", Employer: "Example", State: core.VacancyStateOpen, ObservedAt: now}
@@ -162,8 +167,9 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		activitySnapshots: []core.ProfileActivitySnapshot{{
 			ID: "snapshot-1", Platform: "hh", ProfileID: "primary", ResumeID: "resume-1", SearchShows: intPointer(35), Views: intPointer(1), ScoreHidden: true, ObservedAt: now,
 		}},
-		conversations: []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
-		tailoring:     &tailoring,
+		conversations:      []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
+		openQuestionnaires: []core.ConversationID{"conversation-1"},
+		tailoring:          &tailoring,
 	}
 	api, err := NewRuntimeAPI(repository, nil)
 	if err != nil {
@@ -196,7 +202,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`, `"vacancy_title":"Go developer"`, `"employer":"Example"`, `"unread_count":2`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`, `"vacancy_title":"Go developer"`, `"employer":"Example"`, `"unread_count":2`, `"questionnaire_open":true`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
 		t.Fatalf("unexpected summary: %s", body)
 	}
 
