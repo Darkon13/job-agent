@@ -151,6 +151,9 @@
   (`internalId`/`rank`) и доступностью видов (`theory`/`practice`); legacy
   HTML-разметка остаётся fallback. Живой E2E подтвердил, что карточки больше
   не содержат ссылок `/applicant/skills/<id>/verification_methods`.
+- Fix: SQLite сохраняет `review_sessions.answer_block_tag` (миграция 30).
+  Колонки не было, поэтому review-сессия квалификации читалась без целевого
+  блока и worker не мог дополнить family/level ревизию.
 - Порядок HTTP-обвязки: `RequestID` теперь снаружи access-log, поэтому
   `request_id` всегда заполнен; Bearer-токен защищает `/metrics` и
   auth-endpoints, access-log покрывает auth-запросы. Запросы, отклонённые

@@ -180,3 +180,36 @@ func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 		t.Fatalf("limited sessions: %#v err=%v", limited, err)
 	}
 }
+
+func TestSQLiteReviewSessionKeepsAnswerBlockTag(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	definition, err := core.NewProgressiveTestDefinition("hh", "go-medium", "Go", nil, now)
+	if err != nil {
+		t.Fatalf("definition: %v", err)
+	}
+	if _, err := store.UpsertTestDefinition(ctx, definition); err != nil {
+		t.Fatalf("store definition: %v", err)
+	}
+	session, err := core.NewReviewSession("review-1", definition, "profile-1", "correlation-1", now)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	session.AnswerBlockTag = "hh-go-medium-reviewed"
+	if created, err := store.CreateReviewSession(ctx, session); err != nil || !created {
+		t.Fatalf("create session: created=%v err=%v", created, err)
+	}
+	stored, err := store.ReviewSession(ctx, session.ID)
+	if err != nil || stored.AnswerBlockTag != "hh-go-medium-reviewed" {
+		t.Fatalf("stored tag = %q err=%v", stored.AnswerBlockTag, err)
+	}
+	listed, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{Status: core.ReviewPending})
+	if err != nil || len(listed) != 1 || listed[0].AnswerBlockTag != "hh-go-medium-reviewed" {
+		t.Fatalf("listed sessions = %#v err=%v", listed, err)
+	}
+}

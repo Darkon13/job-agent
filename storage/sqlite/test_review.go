@@ -161,10 +161,10 @@ func (store *Store) CreateReviewSession(ctx context.Context, session core.Review
 		return false, fmt.Errorf("encode review session questionnaire: %w", err)
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO review_sessions
-		(id, test_definition_id, platform, profile_id, correlation_id, status, revision, created_at, updated_at, questionnaire)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.TestDefinitionID, session.Platform,
+		(id, test_definition_id, platform, profile_id, correlation_id, status, revision, created_at, updated_at, questionnaire, answer_block_tag)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session.ID, session.TestDefinitionID, session.Platform,
 		session.ProfileID, session.CorrelationID, session.Status, session.Revision,
-		session.CreatedAt.UnixNano(), session.UpdatedAt.UnixNano(), questionnaire)
+		session.CreatedAt.UnixNano(), session.UpdatedAt.UnixNano(), questionnaire, session.AnswerBlockTag)
 	if err != nil {
 		return false, fmt.Errorf("create review session %s: %w", session.ID, err)
 	}
@@ -183,7 +183,7 @@ func (store *Store) CreateReviewSession(ctx context.Context, session core.Review
 }
 
 const reviewSessionColumns = `id, test_definition_id, platform, profile_id, correlation_id,
-	status, revision, created_at, updated_at, questionnaire`
+	status, revision, created_at, updated_at, questionnaire, answer_block_tag`
 
 func (store *Store) ReviewSession(ctx context.Context, id core.ReviewSessionID) (core.ReviewSession, error) {
 	if id == "" {
@@ -229,7 +229,8 @@ func scanReviewSession(row rowScanner) (core.ReviewSession, error) {
 	var createdAt, updatedAt int64
 	var questionnaire []byte
 	if err := row.Scan(&session.ID, &session.TestDefinitionID, &session.Platform, &session.ProfileID,
-		&session.CorrelationID, &session.Status, &session.Revision, &createdAt, &updatedAt, &questionnaire); err != nil {
+		&session.CorrelationID, &session.Status, &session.Revision, &createdAt, &updatedAt, &questionnaire,
+		&session.AnswerBlockTag); err != nil {
 		return core.ReviewSession{}, err
 	}
 	if len(bytes.TrimSpace(questionnaire)) != 0 && string(bytes.TrimSpace(questionnaire)) != "{}" {
