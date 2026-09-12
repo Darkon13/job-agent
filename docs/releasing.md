@@ -36,8 +36,10 @@ curl http://127.0.0.1:8081/dashboard-healthz
    запрещает выпуск;
 3. собрать image с commit SHA и RFC3339 build time, проверить версии трёх
    бинарей и endpoints;
-4. создать annotated tag `v1.0.0`; публикация tag/image выполняется отдельно и
-   только явно.
+4. создать annotated tag `v1.0.0` и запушить его: release workflow сам
+   проверит совпадение тега с `buildinfo/VERSION`, соберёт бинарники под
+   linux amd64/arm64, посчитает checksums и опубликует GitHub Release; image
+   публикуется отдельно и только явно.
 
 Перед `v1.0.0` должны стабилизироваться config schema, API v1, миграции с
 проверенным upgrade/rollback, platform error semantics, idempotency/reconcile,

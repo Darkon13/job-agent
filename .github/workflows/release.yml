@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Проверить, что тег совпадает с версией
+        run: |
+          expected="v$(tr -d '\n' < buildinfo/VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match buildinfo/VERSION ${expected}" >&2
+            exit 1
+          fi
+
+      - name: Собрать бинарники и архивы
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          commit="${GITHUB_SHA::12}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-s -w -X github.com/Darkon13/job-agent/buildinfo.Version=${version} -X github.com/Darkon13/job-agent/buildinfo.Commit=${commit} -X github.com/Darkon13/job-agent/buildinfo.BuildTime=${build_time} -X github.com/Darkon13/job-agent/buildinfo.Modified=false"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            stage="dist/job-agent_${version}_linux_${arch}"
+            mkdir -p "${stage}"
+            for cmd in job-agent job-agent-migrate job-agent-dashboard; do
+              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
+                go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
+                -o "${stage}/${cmd}" "./cmd/${cmd}"
+            done
+            cp LICENSE README.md "${stage}/"
+            tar -C "${stage}" -czf "dist/job-agent_${version}_linux_${arch}.tar.gz" .
+            rm -rf "${stage}"
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+
+      - name: Опубликовать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.tar.gz dist/checksums.txt \
+            --title "Job Agent ${GITHUB_REF_NAME}" \
+            --generate-notes
