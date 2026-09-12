@@ -62,10 +62,37 @@ mkdir -p data
     }
   ],
   "jobs": [
-    {"tag": "touch-main-resume", "triggers": [{"type": "cron", "expression": "0 10 * * *", "timezone": "Europe/Moscow"}],
-     "action": {"type": "resume.touch", "profile": "main"}},
-    {"tag": "daily-applications", "triggers": [{"type": "cron", "expression": "30 9 * * *", "timezone": "Europe/Moscow"}],
-     "action": {"type": "application.campaign", "profiles": ["main"], "routes": ["golang-global", "golang-similar"], "target_successful": 20, "max_in_flight": 2}}
+    {
+      "tag": "touch-main-resume",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 10 * * *",
+          "timezone": "Europe/Moscow"
+        }
+      ],
+      "action": {
+        "type": "resume.touch",
+        "profile": "main"
+      }
+    },
+    {
+      "tag": "daily-applications",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "30 9 * * *",
+          "timezone": "Europe/Moscow"
+        }
+      ],
+      "action": {
+        "type": "application.campaign",
+        "profiles": ["main"],
+        "routes": ["golang-global", "golang-similar"],
+        "target_successful": 20,
+        "max_in_flight": 2
+      }
+    }
   ]
 }
 ```
@@ -82,6 +109,34 @@ mkdir -p data
 - **`profiles`** — аккаунты. Фильтры `qualification` и тексты писем живут в
   профиле, поэтому у разных аккаунтов могут быть разные правила.
 - Сообщения лежат рядом с конфигом: `deploy/messages/backend.json`.
+
+Ключи `query` у HH-поиска:
+
+| Ключ | Что означает |
+|---|---|
+| `source` | `global` — обычная выдача, `similar_resume` — похожие на ваше резюме, `similar_vacancy`/`related_vacancy` — похожие на конкретную вакансию |
+| `text` | поисковый запрос, например `Golang developer` |
+| `area` | **регион**: числовой ID региона HH. `"1"` — Москва, `"2"` — Санкт-Петербург; полный список — `https://api.hh.ru/areas` (или `areas` в ответе `GET /api/v1/...`) |
+| `professional_role` | ID профессиональной роли (`96` — программист) |
+| `experience` | опыт: `noExperience`, `between1And3`, `between3And6`, `moreThan6` |
+| `schedule` | график: `remote`, `fullDay`, `flexible`, `shift`, `flyInFlyOut` |
+| `employment` | занятость: `full`, `part`, `project`, `probation`, `volunteer` |
+| `salary` / `only_with_salary` | минимальная зарплата и фильтр «только с зарплатой» |
+| `period` | за сколько последних дней искать (1, 3, 7, 30) |
+| `page_size` / `max_pages` | размер страницы и предел пагинации за один проход |
+| `order_by` | сортировка: `publication_time`, `salary_desc`, `relevance` |
+
+Сколько откликов делать, задаётся тремя разными полями:
+
+| Поле | Где | Смысл |
+|---|---|---|
+| `target_applications` | `searches[]` | сколько подходящих вакансий собрать из этого поиска за один проход |
+| `target_successful` | `job.action` кампании | цель по **подтверждённым** откликам: кампания переходит к следующему route или останавливается, когда их набралось столько |
+| `daily_limit` | `profile.applications` | жёсткий дневной потолок отправок на профиль/платформу |
+| `max_in_flight` | `job.action` кампании | сколько откликов обрабатывать параллельно |
+
+Полный список ключей с типами и значениями — в
+[`reference/configuration.md`](reference/configuration.md).
 
 ## 2. Один раз войдите в HH
 

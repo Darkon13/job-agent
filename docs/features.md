@@ -60,7 +60,7 @@ JOB_AGENT_DASHBOARD_BIND_IP=10.66.66.1 \
 Не используйте `0.0.0.0`: пользовательская аутентификация API ещё не
 реализована. Backend не публикуется на host и доступен dashboard только через
 Compose network. Устройство dashboard, очередей и будущего общего browser
-service описано в [`docs/dashboard-runtime.md`](docs/dashboard-runtime.md).
+service описано в [`dashboard-runtime.md`](dashboard-runtime.md).
 
 ## Текущее состояние
 
@@ -215,7 +215,7 @@ job-agent profile bootstrap --api http://127.0.0.1:8081 --apply ./data/resume.js
 
 `startup` сразу ставит plan в durable queue; `profile bootstrap` без `--apply`
 только показывает операции и пути. Формат, пример с `experience`/`keySkills` и
-ограничения описаны в [`docs/profile-bootstrap.md`](docs/profile-bootstrap.md).
+ограничения описаны в [`profile-bootstrap.md`](profile-bootstrap.md).
 Тот же manifest можно подключить к долгоживущему сервису в записи профиля:
 
 ```json
@@ -393,7 +393,7 @@ provider response ID, tag/digest resume facts, input/output/evidence digests,
 сохранённые решения.
 
 План и оставшиеся критерии готовности описаны в
-[`docs/next-cover-letter-routing.md`](docs/next-cover-letter-routing.md).
+[`next-cover-letter-routing.md`](next-cover-letter-routing.md).
 
 Формат пула:
 
@@ -535,7 +535,7 @@ contract](https://github.com/hhru/api/blob/master/docs/errors.md#перепис�
 как durable saga с per-profile lease; политика включается
 `applications.tailoring.skills`, опционально с model processor и fallback на
 детерминированную политику. Условия и ограничения — в
-[docs/application-resume-tailoring.md](docs/application-resume-tailoring.md).
+[application-resume-tailoring.md](application-resume-tailoring.md).
 Если `application.submit` уже отложена по `Retry-After`, campaign также ставит
 следующую проверку на её `available_at`, а не создаёт revision каждые несколько
 секунд до сброса квоты.

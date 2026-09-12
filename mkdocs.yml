@@ -1,0 +1,53 @@
+site_name: Job Agent
+site_description: Локальный сервис автоматизации поиска работы
+docs_dir: docs
+theme:
+  name: material
+  language: ru
+  palette:
+    - scheme: slate
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+nav:
+  - Главная: index.md
+  - Начало работы:
+      - Quickstart: quickstart.md
+      - Возможности: features.md
+      - Runbook: runbook.md
+  - Справочник:
+      - Конфигурация: reference/configuration.md
+  - Профиль и состояние:
+      - Desired state: profile-desired-state-and-routing.md
+      - Bootstrap: profile-bootstrap.md
+      - Tailoring резюме: application-resume-tailoring.md
+      - Очистка откликов: application-cleanup.md
+  - API и интеграции:
+      - Conversation API: conversation-api.md
+      - Browser RPC: browser-rpc.md
+      - Dashboard runtime: dashboard-runtime.md
+  - HeadHunter:
+      - API-контракты: hh-api-contracts.md
+      - Auth: hh-auth-flow.md
+      - Поиск: hh-browser-search.md
+      - Browser-операции: hh-browser-operations.md
+      - Чаты: hh-chat-contract.md
+      - Резюме: hh-resume-contract.md
+      - Референс-инструмент: hh-applicant-tool-reference.md
+  - Развитие:
+      - Как писать адаптеры: writing-adapters.md
+      - Roadmap: roadmap-v1.md
+      - Релизы: releasing.md
+      - Changelog: changelog.md
+      - Model fallback: next-answer-model-fallback.md
+      - Auth control plane: next-auth-control-plane.md
+      - Cover letter routing: next-cover-letter-routing.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences

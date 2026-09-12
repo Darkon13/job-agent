@@ -147,7 +147,7 @@ events -> broker -> deterministic / LLM / MCP / human operators
 - `browser-worker` — опциональный Playwright RPC для browser-only операций.
 
 Подробности архитектуры, режимов и контрактов — в
-[`docs/features.md`](docs/features.md) и [`docs/README.md`](docs/README.md).
+[`docs/features.md`](docs/features.md) и [`docs/index.md`](docs/index.md).
 
 ## Документация
 
