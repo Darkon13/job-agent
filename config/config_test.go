@@ -160,6 +160,26 @@ func TestApplicationTailoringAboutRequiresMatchingResumeFacts(t *testing.T) {
 	}
 }
 
+func TestProfileSessionRefreshJobRequiresStateFile(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Resume: "resume-1"}},
+		Jobs: []Job{{
+			Tag: "refresh-primary-session", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "0 */4 * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionProfileSessionRefresh, Profile: "primary"},
+		}},
+	}
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected session refresh without state_file to fail")
+	}
+	base.Profiles[0].StateFile = "/tmp/primary.json"
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid session refresh job: %v", err)
+	}
+}
+
 func TestProfileContactsValidation(t *testing.T) {
 	base := Config{
 		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},

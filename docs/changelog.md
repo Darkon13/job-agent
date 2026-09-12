@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Job `profile.session_refresh`: по расписанию перечитывает cookies из live
+  browser-контекста, оставляет только HH-домены и атомарно обновляет
+  `state_file` (`0600`), чтобы backend не работал по протухшему снимку сессии.
+
 - Имя и контакты для писем резолвятся при старте из live-профиля
   (`firstName`, `lastName`, `web/email`, `communicationMethods`); блок
   `profiles[].contacts` остался fallback-ом для полей, которых нет на

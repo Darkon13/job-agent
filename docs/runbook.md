@@ -96,6 +96,29 @@ HH выдаёт резюме новый hash после существенног
 touch-задачи со старым hash стоит дождаться/закрыть: новые cron-запуски
 возьмут обновлённый ID.
 
+## Сессия браузера устарела
+
+Симптом: browser-backed чтения или записи возвращают `permanent_failure` вида
+«HH browser resource is not accessible for this account», `activity.observe`
+не находит статистику, хотя раньше всё работало; в логе старта профиль
+получает контакты из config, а не из платформы.
+
+Причина: backend работает по снимку `state_file`, а HH периодически
+переставляет cookies. Снимок нужно обновлять из живого browser-контекста.
+
+Штатная страховка — job `profile.session_refresh` (например, каждые 4 часа):
+он берёт cookies из browser worker, оставляет только HH-домены и атомарно
+перезаписывает `state_file` с правами `0600`. Запустить вручную:
+
+```bash
+job-agent-trigger -idempotency-key refresh-primary-$(date +%s) config.json refresh-primary-session
+```
+
+Если и в browser worker сессия мертва (worker отвечает `unauthorized`),
+перелогиньтесь: `job-agent auth login --profile primary` или VNC-поток, затем
+импорт state. После обновления файла перезапуск backend не требуется: браузерные
+транспорты читают `state_file` перед каждой операцией.
+
 ## Runtime lease
 
 Симптом: при старте `another job-agent instance already holds the runtime

@@ -119,6 +119,7 @@ const (
 	JobActionApplicationCampaign        = "application.campaign"
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
+	JobActionProfileSessionRefresh      = "profile.session_refresh"
 	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
 	JobActionApplicationRetention       = "application.retention"
@@ -1471,6 +1472,14 @@ func (c Config) Validate() error {
 			}
 		}
 		switch job.Action.Type {
+		case JobActionProfileSessionRefresh:
+			profile, exists := profileConfigs[job.Action.Profile]
+			if !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			}
+			if strings.TrimSpace(profile.StateFile) == "" {
+				return fmt.Errorf("job %q profile.session_refresh requires a profile state_file", job.Tag)
+			}
 		case JobActionResumeTouch, JobActionResumePublish, JobActionProfileActivityObserve:
 			if _, exists := profiles[job.Action.Profile]; !exists {
 				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)

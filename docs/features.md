@@ -565,6 +565,7 @@ Campaign routes должны использовать один adapter и вкл
 timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
 `next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
 `resume.publish`, `resume.update`, `profile.activity.observe`,
+`profile.session_refresh`,
 `conversation.follow_up.select`, `profile_state.reconcile` или
 `application.campaign` tasks. После простоя пропущенные интервалы схлопываются
 в один запуск. Jitter записывается в `available_at`, поэтому worker не удерживает

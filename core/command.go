@@ -354,6 +354,20 @@ type ProfileActivityObservePayload struct {
 	ResumeID  string    `json:"resume_id"`
 }
 
+// ProfileSessionRefreshPayload re-exports the live browser context into the
+// profile storage state file so cookie rotations and session extensions do not
+// leave the backend with a stale snapshot.
+type ProfileSessionRefreshPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+}
+
+func (payload ProfileSessionRefreshPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("profile session refresh requires profile id")
+	}
+	return nil
+}
+
 type ProfileStateApplyPayload struct {
 	ProposalID ProfileStateProposalID `json:"proposal_id"`
 }

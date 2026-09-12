@@ -115,6 +115,15 @@ func (client *HTTPClient) Close(ctx context.Context, profileID core.ProfileID, p
 	})
 }
 
+// RefreshStorageState ensures the profile context exists and exports its live
+// cookies. Callers sanitize and persist the result.
+func (client *HTTPClient) RefreshStorageState(ctx context.Context, profileID core.ProfileID) (json.RawMessage, error) {
+	if _, err := client.Ensure(ctx, profileID, EnsureRequest{}); err != nil {
+		return nil, err
+	}
+	return client.ExportStorageState(ctx, profileID)
+}
+
 func (client *HTTPClient) ExportStorageState(ctx context.Context, profileID core.ProfileID) (json.RawMessage, error) {
 	var state json.RawMessage
 	err := client.withProfile(ctx, profileID, "browser.state.export", func() error {
