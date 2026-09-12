@@ -207,6 +207,29 @@ func TestBrowserSubmitVacancyTestRequiresEveryAnswer(t *testing.T) {
 	}
 }
 
+func TestBrowserSubmitVacancyTestStopsOnWhitelistVisibility(t *testing.T) {
+	state := `{"vacancyResponsePopup":{"vacancy":{"test":{"hasTests":true,"testId":"10"},
+		"resumeVisibility":{"1":{"hash":"hash-1","accessType":"whitelist","whitelist":{"containsEmployer":false}}}}},
+		"vacancyTests":{"10":{"uidPk":1,"guid":"g","tasks":[{"id":"1","description":"Explain experience","open":true}]}}}`
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			posts.Add(1)
+		}
+		_, _ = writer.Write([]byte(vacancyTestPopupPage(state, "xsrf")))
+	}))
+	defer server.Close()
+
+	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{ResumeID: "hash-1"})
+	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
+		{QuestionID: "1", Text: "Five years of Go"},
+	})
+	requireOperationCategory(t, err, core.ErrorConfirmationRequired)
+	if posts.Load() != 0 {
+		t.Fatalf("posts = %d", posts.Load())
+	}
+}
+
 func TestBrowserSubmitVacancyTestRequiresConfirmation(t *testing.T) {
 	var posts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

@@ -29,6 +29,7 @@ type vacancyResponseState struct {
 				TestID   flexibleID `json:"testId"`
 				Required bool       `json:"required"`
 			} `json:"test"`
+			ResumeVisibility map[string]browserResumeVisibility `json:"resumeVisibility"`
 		} `json:"vacancy"`
 	} `json:"vacancyResponsePopup"`
 }

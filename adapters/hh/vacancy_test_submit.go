@@ -22,10 +22,11 @@ const vacancyTestSubmitOperation = "vacancies.test.submit"
 // vacancyTestCapture couples the normalized questionnaire with the
 // short-lived popup form context. It never leaves the adapter.
 type vacancyTestCapture struct {
-	Questionnaire core.Questionnaire
-	ActionURL     string
-	Fields        map[string]string
-	Tasks         []vacancyTestFormTask
+	Questionnaire    core.Questionnaire
+	ActionURL        string
+	Fields           map[string]string
+	Tasks            []vacancyTestFormTask
+	ResumeVisibility map[string]browserResumeVisibility
 }
 
 // vacancyTestFormTask mirrors one HH task as a form field contract. Open tasks
@@ -84,7 +85,10 @@ func parseVacancyTestCapture(document []byte, actionURL string) (vacancyTestCapt
 		}
 		tasks = append(tasks, formTask)
 	}
-	return vacancyTestCapture{Questionnaire: questionnaire, ActionURL: actionURL, Fields: fields, Tasks: tasks}, nil
+	return vacancyTestCapture{
+		Questionnaire: questionnaire, ActionURL: actionURL, Fields: fields, Tasks: tasks,
+		ResumeVisibility: state.VacancyResponsePopup.Vacancy.ResumeVisibility,
+	}, nil
 }
 
 // SubmitVacancyTest fills the vacancy response popup with open-text and choice
@@ -113,6 +117,9 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	}
 	capture, err := parseVacancyTestCapture(rendered, actionURL)
 	if err != nil {
+		return err
+	}
+	if err := resumeVisibilityBlocker(capture.ResumeVisibility, client.options.ResumeID, vacancyTestSubmitOperation); err != nil {
 		return err
 	}
 	form := url.Values{}

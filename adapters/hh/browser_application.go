@@ -78,6 +78,17 @@ type browserApplicationResume struct {
 	Forbidden    json.RawMessage `json:"forbidden"`
 }
 
+// browserResumeVisibility mirrors the per-resume availability HH reports in
+// the response popup. A whitelist resume cannot respond to an employer who is
+// not on the list, and HH rejects such a submission with a generic 400.
+type browserResumeVisibility struct {
+	Hash       string `json:"hash"`
+	AccessType string `json:"accessType"`
+	Whitelist  struct {
+		ContainsEmployer bool `json:"containsEmployer"`
+	} `json:"whitelist"`
+}
+
 type browserVisibilityAgreement struct {
 	Show                        bool        `json:"show"`
 	Confirmed                   bool        `json:"confirmed"`
@@ -172,6 +183,9 @@ func (client *BrowserApplicationClient) ListSuitableResumes(ctx context.Context,
 	if err := client.preflightBlocker(preflight, "vacancies.suitable_resumes.browser"); err != nil {
 		return nil, err
 	}
+	if err := resumeVisibilityBlocker(decodeResumeVisibility(preflight.ResponseStatus.ResumeVisibility), client.options.ResumeID, "vacancies.suitable_resumes.browser"); err != nil {
+		return nil, err
+	}
 
 	hidden := stringSet(preflight.ResponseStatus.HiddenResumeIDs)
 	unfinished := stringSet(preflight.ResponseStatus.UnfinishedResumeIDs)
@@ -211,6 +225,9 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		}, nil
 	}
 	if err := client.preflightBlocker(preflight, "applications.submit.browser"); err != nil {
+		return adapter.ApplicationSubmitResult{}, err
+	}
+	if err := resumeVisibilityBlocker(decodeResumeVisibility(preflight.ResponseStatus.ResumeVisibility), command.ResumeID, "applications.submit.browser"); err != nil {
 		return adapter.ApplicationSubmitResult{}, err
 	}
 	resumeKey, resume, ok := findBrowserResume(preflight.ResponseStatus.Resumes, command.ResumeID)
@@ -372,6 +389,36 @@ func browserFlowKind(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	replacer := strings.NewReplacer("-", "", "_", "", " ", "")
 	return replacer.Replace(value)
+}
+
+func decodeResumeVisibility(raw json.RawMessage) map[string]browserResumeVisibility {
+	if len(raw) == 0 {
+		return nil
+	}
+	var visibility map[string]browserResumeVisibility
+	if err := json.Unmarshal(raw, &visibility); err != nil {
+		return nil
+	}
+	return visibility
+}
+
+// resumeVisibilityBlocker stops before a doomed submission when the selected
+// resume is visible only to whitelisted employers and this employer is not on
+// the list. HH answers such a submission with a generic 400, which hides the
+// real cause from the operator.
+func resumeVisibilityBlocker(visibility map[string]browserResumeVisibility, resumeID, operation string) error {
+	resumeID = strings.TrimSpace(resumeID)
+	for key, entry := range visibility {
+		if resumeID != "" && key != resumeID && !strings.EqualFold(strings.TrimSpace(entry.Hash), resumeID) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(entry.AccessType), "whitelist") || entry.Whitelist.ContainsEmployer {
+			continue
+		}
+		return browserReviewErrorAt(operation, core.ErrorConfirmationRequired, "resume_visibility_change_required",
+			"HH resume is visible only to selected employers; change the resume visibility or add the employer")
+	}
+	return nil
 }
 
 func preflightAlreadyApplied(preflight browserApplicationPreflight) bool {
