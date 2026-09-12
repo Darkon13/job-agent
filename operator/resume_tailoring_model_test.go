@@ -207,15 +207,18 @@ func TestModelResumeTailoringAppliesMinimalRemovals(t *testing.T) {
 	}
 }
 
-func TestModelResumeTailoringRejectsTooFewRemovals(t *testing.T) {
+func TestModelResumeTailoringKeepsSkillsWhenRemovalsAreTooFew(t *testing.T) {
 	input := resumeTailoringFixture(t, []string{"Go", "Linux"}, []string{"PostgreSQL", "Kafka"})
 	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
 		{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
 		{Value: "Kafka", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
 	}}}
-	_, err := modelTailoringProcessorWithRemovals(t, 3, true, model).Plan(context.Background(), input)
-	if !errors.Is(err, ErrResumeTailoringSkillLimit) {
-		t.Fatalf("error=%v, want skill limit from fallback", err)
+	plan, err := modelTailoringProcessorWithRemovals(t, 3, true, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.ProcessorTag != "openai-test" || len(plan.Overrides) != 0 {
+		t.Fatalf("expected unchanged skills, tag=%q overrides=%#v", plan.ProcessorTag, plan.Overrides)
 	}
 }
 
@@ -308,14 +311,17 @@ func TestModelResumeTailoringRetriesAfterRateLimit(t *testing.T) {
 	}
 }
 
-func TestModelResumeTailoringReturnsFallbackLimitError(t *testing.T) {
+func TestModelResumeTailoringKeepsSkillsWhenFallbackCannotFit(t *testing.T) {
 	input := resumeTailoringFixture(t, []string{"Go"}, []string{"PostgreSQL", "Kafka"})
 	model := &fakeResumeTailoringModel{response: ResumeTailoringModelResponse{Skills: []ResumeTailoringModelDecision{
 		{Value: "PostgreSQL", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
 		{Value: "Kafka", Action: ResumeTailoringSkillAdd, Evidence: "vacancy.key_skills"},
 	}}}
-	_, err := modelTailoringProcessor(t, 2, model).Plan(context.Background(), input)
-	if !errors.Is(err, ErrResumeTailoringSkillLimit) {
-		t.Fatalf("error=%v, want skill limit", err)
+	plan, err := modelTailoringProcessor(t, 2, model).Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.ProcessorTag != "openai-test" || len(plan.Overrides) != 0 {
+		t.Fatalf("expected unchanged skills, tag=%q overrides=%#v", plan.ProcessorTag, plan.Overrides)
 	}
 }

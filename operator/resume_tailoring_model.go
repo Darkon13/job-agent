@@ -116,7 +116,17 @@ func (processor *ModelResumeTailoringProcessor) Plan(ctx context.Context, input 
 		// deterministic fallback: keep the current skills and continue.
 		return processor.emptyPlan(input), nil
 	}
-	return processor.fallback.Plan(ctx, input)
+	fallbackPlan, fallbackErr := processor.fallback.Plan(ctx, input)
+	if fallbackErr != nil {
+		// Tailoring is best-effort: when even the deterministic policy cannot
+		// fit the vacancy skills into the platform limit, keep the resume as is
+		// instead of failing the whole application.
+		if errors.Is(fallbackErr, ErrResumeTailoringSkillLimit) {
+			return processor.emptyPlan(input), nil
+		}
+		return ResumeTailoringPlan{}, fallbackErr
+	}
+	return fallbackPlan, nil
 }
 
 // emptyPlan keeps the current skills when the model cannot be reached. The
