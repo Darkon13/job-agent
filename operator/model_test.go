@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestRuleTemplatePreparerGeneratesApplicationMessage(t *testing.T) {
 			Generator: applicationModelFunc(func(_ context.Context, request ApplicationModelRequest) (ApplicationModelResponse, error) {
 				received = request
 				return ApplicationModelResponse{
-					Text: "  Generated for Example  ", Evidence: modelEvidence("Generated for Example", "/vacancy/employer", "Example"),
+					Text: "  Generated for {company_name}  ", Evidence: modelEvidence("Generated for {company_name}", "/vacancy/employer", "{company_name}"),
 					Model: "mini-model", ResponseID: "response-1",
 				}, nil
 			}),
@@ -199,6 +200,7 @@ func TestRuleTemplatePreparerRejectsUnsafeOrUngroundedModelText(t *testing.T) {
 		text string
 	}{
 		{name: "unresolved placeholder", text: "Здравствуйте, {{.Resume.Name}}"},
+		{name: "undeclared placeholder", text: "Здравствуйте, {nickname}"},
 		{name: "fenced response", text: "```text\nЗдравствуйте\n```"},
 		{name: "structured response", text: `{"text":"Здравствуйте"}`},
 		{name: "invented experience", text: "У меня 7 лет коммерческого опыта."},
@@ -226,6 +228,77 @@ func TestRuleTemplatePreparerRejectsUnsafeOrUngroundedModelText(t *testing.T) {
 				t.Fatalf("preparation = %#v, err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestRuleTemplatePreparerAnonymizesDeclaredPlaceholders(t *testing.T) {
+	application, vacancy := operatorFixture()
+	resume := modelResumeFixture()
+	resume.Facts = map[string]any{
+		"placeholders": map[string]any{"name": "Иван", "surname": "Иванов"},
+		"summary":      "Иван Иванов — backend разработчик",
+	}
+	var received ApplicationModelRequest
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		StaticMessage: "fallback",
+		Resume:        resume,
+		Model: &ApplicationModelConfig{
+			Tag: "model", PromptVersion: "v1", Instruction: "Concise", Timeout: time.Second,
+			Generator: applicationModelFunc(func(_ context.Context, request ApplicationModelRequest) (ApplicationModelResponse, error) {
+				received = request
+				text := "{name} {surname} — backend разработчик. Компания {company_name}."
+				return ApplicationModelResponse{
+					Text: text,
+					Evidence: []ApplicationModelEvidence{{
+						Claim: text,
+						Sources: []ApplicationModelEvidenceSource{
+							{Path: "/resume/facts/summary", Quote: "{name}"},
+							{Path: "/vacancy/employer", Quote: "{company_name}"},
+						},
+					}},
+				}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if result.Message != "Иван Иванов — backend разработчик. Компания Example." {
+		t.Fatalf("message = %q", result.Message)
+	}
+	encoded, err := json.Marshal(received.Context)
+	if err != nil {
+		t.Fatalf("encode context: %v", err)
+	}
+	contextText := string(encoded)
+	for _, secret := range []string{"Иван", "Иванов", "Example"} {
+		if strings.Contains(contextText, secret) {
+			t.Fatalf("model context leaked %q: %s", secret, contextText)
+		}
+	}
+	for _, placeholder := range []string{"{name}", "{surname}", "{company_name}"} {
+		if !strings.Contains(contextText, placeholder) {
+			t.Fatalf("model context is missing %s", placeholder)
+		}
+	}
+	if strings.Contains(contextText, "placeholders") {
+		t.Fatalf("model context must not expose the placeholders declaration: %s", contextText)
+	}
+}
+
+func TestApplicationPlaceholderValidation(t *testing.T) {
+	invalid := ApplicationTemplateData{Resume: &ApplicationResumeContext{Facts: map[string]any{
+		"placeholders": map[string]any{"Name": "Иван"},
+	}}}
+	if _, _, err := anonymizeApplicationTemplateData(invalid); err == nil {
+		t.Fatal("expected an invalid placeholder name to fail")
+	}
+	if _, err := substituteApplicationPlaceholders("Привет, {unknown}", map[string]string{"name": "Иван"}); err == nil {
+		t.Fatal("expected an undeclared placeholder to fail substitution")
 	}
 }
 
