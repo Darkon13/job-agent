@@ -46,7 +46,7 @@ jobs:
               echo 'CI запустится автоматически. Merge доступен после зелёных проверок и аппрува ревьюера.'
             fi
           } > comment.md
-      - uses: peter-evans/find-comment@v3
+      - uses: peter-evans/find-comment@v4
         id: find
         with:
           issue-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
