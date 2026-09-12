@@ -102,9 +102,9 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | Ключ | Тип | Описание |
 |---|---|---|
 | `tag` | string | имя провайдера, на него ссылаются policy |
-| `type` | string | тип провайдера (OpenAI-совместимый) |
+| `type` | string | `openai_responses` (Responses API) или `openai_chat` (chat completions: DeepSeek, шлюзы, локальный vLLM) |
 | `model` | string | имя модели |
-| `base_url` | string | необязательный свой endpoint |
+| `base_url` | string | необязательный свой endpoint; для `openai_chat` по умолчанию `https://api.deepseek.com/v1` |
 | `api_key_env` | string | переменная с ключом, по умолчанию `OPENAI_API_KEY` |
 | `max_output_tokens` | number | предел ответа модели |
 

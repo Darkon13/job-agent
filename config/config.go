@@ -61,7 +61,10 @@ type EmployerGroupRuleConfig struct {
 	Name       string        `json:"name,omitempty"`
 }
 
-const ModelProviderOpenAIResponses = "openai_responses"
+const (
+	ModelProviderOpenAIResponses = "openai_responses"
+	ModelProviderOpenAIChat      = "openai_chat"
+)
 
 // CurrentConfigSchemaVersion is the frozen v1 config schema. Breaking changes
 // require a new version and an explicit migration path instead of silent
@@ -1025,7 +1028,7 @@ func validateModelProvider(config ModelProviderConfig) error {
 	if strings.TrimSpace(config.Tag) == "" || strings.TrimSpace(config.Model) == "" {
 		return errors.New("model provider requires tag and model")
 	}
-	if config.Type != ModelProviderOpenAIResponses {
+	if config.Type != ModelProviderOpenAIResponses && config.Type != ModelProviderOpenAIChat {
 		return fmt.Errorf("model provider %q has unsupported type %q", config.Tag, config.Type)
 	}
 	if environment := config.APIKeyEnvironment(); strings.Contains(environment, "=") || strings.ContainsAny(environment, " \t\r\n") {

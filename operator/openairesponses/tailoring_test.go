@@ -37,7 +37,7 @@ func TestClientSelectsResumeTailoringSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	result, err := client.SelectResumeTailoringSkills(context.Background(), applicationoperator.ResumeTailoringModelRequest{
+	result, err := client.Select(context.Background(), applicationoperator.ResumeTailoringModelRequest{
 		Instruction: "Prefer Go", PromptVersion: "v1", VacancyTitle: "Go developer",
 		VacancySkills: []string{"Go", "PostgreSQL"}, CurrentSkills: []string{"Go"}, MaximumSkills: 2,
 	})
@@ -105,7 +105,7 @@ func TestClientRejectsMalformedTailoringOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	_, err = client.SelectResumeTailoringSkills(context.Background(), applicationoperator.ResumeTailoringModelRequest{
+	_, err = client.Select(context.Background(), applicationoperator.ResumeTailoringModelRequest{
 		Instruction: "Prefer Go", PromptVersion: "v1",
 	})
 	var modelError *applicationoperator.ModelError

@@ -381,6 +381,11 @@ func TestConfigValidatesModelProvidersAndFallbacks(t *testing.T) {
 	if err := base.Validate(); err != nil {
 		t.Fatalf("valid model config: %v", err)
 	}
+	chat := base
+	chat.Models = []ModelProviderConfig{{Tag: "mini", Type: ModelProviderOpenAIChat, Model: "deepseek-chat"}}
+	if err := chat.Validate(); err != nil {
+		t.Fatalf("valid openai_chat model config: %v", err)
+	}
 
 	tests := []struct {
 		name   string
@@ -393,6 +398,7 @@ func TestConfigValidatesModelProvidersAndFallbacks(t *testing.T) {
 		{name: "missing resume facts", mutate: func(config *Config) { config.Profiles[0].resolvedResumeFacts = nil }},
 		{name: "mismatched resume facts", mutate: func(config *Config) { config.Profiles[0].Resume = "resume-2" }},
 		{name: "invalid timeout", mutate: func(config *Config) { config.Profiles[0].Applications.Model.Timeout = "0s" }},
+		{name: "unsupported provider type", mutate: func(config *Config) { config.Models[0].Type = "unknown" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

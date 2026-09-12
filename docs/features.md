@@ -357,10 +357,11 @@ platform-specific `employer_id`, точному нормализованному
 содержит группу и тип доказательства совпадения.
 
 Application model подключается как именованный top-level provider и остаётся
-сменяемым относительно operator pipeline. Реализован `openai_responses` через
-`POST /responses`: API key читается только из указанной переменной окружения,
-структурированный vacancy context передаётся как данные, а запрос всегда задаёт
-`store:false`. Profile-level `model` либо employer rule с action `model`
+сменяемым относительно operator pipeline. Реализованы `openai_responses` через
+`POST /responses` и `openai_chat` через chat completions (DeepSeek и другие
+OpenAI-совместимые endpoint-ы, structured output через JSON mode): API key
+читается только из указанной переменной окружения, структурированный vacancy
+context передаётся как данные, а Responses-запрос всегда задаёт `store:false`. Profile-level `model` либо employer rule с action `model`
 обязательно имеют готовое письмо или файловый пул как fallback. Timeout,
 rate-limit, временная ошибка, пустой или слишком длинный ответ не блокируют
 campaign: operator выбирает fallback и сохраняет в причине provider tag,

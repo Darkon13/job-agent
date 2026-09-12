@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Второй тип model provider — `openai_chat` (OpenAI-совместимый chat
+  completions, по умолчанию DeepSeek): structured output через JSON mode и
+  строгий локальный decoder, работает для писем, ответов и tailoring.
+- Исправлено: OpenAI Responses client не реализовывал `Select` из контракта
+  tailoring skills, из-за чего skills-модель не подключалась.
+
 - Справочник: [«Письма и пулы»](reference/messages.md) — пример `message.json`,
   формат пула, стратегии `first`/`stable_hash`, контекст Go-шаблонов и
   ограничения `Attributes`.

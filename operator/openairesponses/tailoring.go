@@ -13,10 +13,13 @@ import (
 	applicationoperator "github.com/Darkon13/job-agent/operator"
 )
 
-// SelectResumeTailoringSkills asks the model to choose which vacancy skills to
+var _ applicationoperator.ResumeTailoringModel = (*Client)(nil)
+var _ applicationoperator.ResumeTailoringAboutModel = (*Client)(nil)
+
+// Select asks the model to choose which vacancy skills to
 // append to the current resume. The caller still validates every decision
 // against current skills, allowed paths and the platform limit.
-func (client *Client) SelectResumeTailoringSkills(ctx context.Context, request applicationoperator.ResumeTailoringModelRequest) (applicationoperator.ResumeTailoringModelResponse, error) {
+func (client *Client) Select(ctx context.Context, request applicationoperator.ResumeTailoringModelRequest) (applicationoperator.ResumeTailoringModelResponse, error) {
 	if client == nil || client.httpClient == nil {
 		return applicationoperator.ResumeTailoringModelResponse{}, errors.New("OpenAI Responses client is nil")
 	}
