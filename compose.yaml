@@ -1,7 +1,7 @@
 name: job-agent
 
 x-runtime: &runtime
-  image: ${JOB_AGENT_IMAGE:-job-agent:0.3.0-dev}
+  image: ${JOB_AGENT_IMAGE:-job-agent:1.0.0}
 
 x-runtime-volumes: &runtime-volumes
   - ${JOB_AGENT_CONFIG_DIR:-./deploy}:/config:ro
@@ -14,7 +14,7 @@ services:
       context: .
       target: runtime
       args:
-        VERSION: ${JOB_AGENT_VERSION:-0.3.0-dev}
+        VERSION: ${JOB_AGENT_VERSION:-1.0.0}
         COMMIT: ${JOB_AGENT_COMMIT:-unknown}
         BUILD_TIME: ${JOB_AGENT_BUILD_TIME:-unknown}
         MODIFIED: ${JOB_AGENT_MODIFIED:-unknown}

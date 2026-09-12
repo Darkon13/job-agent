@@ -1,28 +1,48 @@
-# Quickstart: чистый аккаунт
+# Quickstart: с нуля до первых откликов
 
-Этот маршрут поднимает Job Agent с нуля: пустой `data/`, новый HH-аккаунт без
-сохранённых cookies и первая кампания откликов. Предполагается Linux или macOS
-с Docker и Compose v2; сам backend на хосте не обязателен.
+Маршрут поднимает Job Agent с пустого каталога `data/`: конфигурация, вход в
+HH, пробная кампания в `dry_run` и переход к реальным откликам. Варианты
+запуска — Docker Compose (проще) или локальные бинарники (для разработки).
+
+Самый быстрый путь — взять готовый пример и поменять в нём резюме:
+
+```sh
+git clone https://github.com/Darkon13/job-agent.git
+cd job-agent
+cp -r config/example deploy
+mkdir -p data
+```
+
+Дальше достаточно заменить `replace-with-hh-resume-id` в `deploy/config.json`
+на ID своего резюме HH, экспортировать токен API и запустить:
+
+```sh
+export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
+JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_DATA_DIR=./data \
+  docker compose --profile browser up -d --build
+```
+
+Если хочется понять, из чего собран пример, — ниже разобран эквивалент с нуля.
 
 ## 1. Конфигурация
-
-Создайте рабочий каталог:
 
 ```text
 job-agent/
 |- deploy/
 |  |- config.json
 |  |- profiles.json
+|  |- messages/backend.json
 |  `- searches/golang.json
 `- data/
 ```
 
-`deploy/config.json` — единственный файл с `database`/`server`/`include`:
+`deploy/config.json` — единственный файл с `database`, `server` и `include`
+(остальные объекты можно держать в include-файлах):
 
 ```json
 {
   "schema_version": 1,
-  "database": {"driver": "sqlite", "path": "/data/job-agent.db"},
+  "database": {"driver": "sqlite", "path": "./data/job-agent.db"},
   "server": {
     "listen": "127.0.0.1:8080",
     "api_token_env": "JOB_AGENT_API_TOKEN"
@@ -31,7 +51,7 @@ job-agent/
 }
 ```
 
-`deploy/profiles.json` описывает профиль и адаптер:
+`deploy/profiles.json` описывает адаптер и профиль:
 
 ```json
 {
@@ -40,16 +60,34 @@ job-agent/
     {
       "tag": "primary",
       "adapter": "hh-main",
-      "state_file": "/data/profiles/primary.state.json",
+      "resume": "replace-with-hh-resume-id",
+      "state_file": "./data/profiles/primary.json",
       "enabled": true,
-      "applications": {"mode": "dry_run"}
+      "applications": {
+        "mode": "dry_run",
+        "message_template_file": "messages/backend.json",
+        "qualification": {"include_any": ["Go", "Golang", "Backend"]},
+        "timezone": "Europe/Moscow"
+      },
+      "conversations": {"allow_send": false, "allow_mark_read": false}
     }
   ]
 }
 ```
 
-Начните с `"mode": "dry_run"`: подготовка и письма выполняются, платформа не
-меняется. Реальный submit включается после проверки письма и лимитов.
+`deploy/messages/backend.json` — пул сопроводительных:
+
+```json
+{
+  "strategy": "stable_hash",
+  "templates": [
+    {
+      "tag": "concise",
+      "template": "Здравствуйте! Заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Буду рад обсудить задачи команды."
+    }
+  ]
+}
+```
 
 `deploy/searches/golang.json` добавляет поиск:
 
@@ -60,86 +98,120 @@ job-agent/
       "tag": "golang",
       "adapter": "hh-main",
       "profiles": ["primary"],
-      "query": {"source": "global", "text": "Golang developer", "area": ["1"]}
+      "query": {"source": "global", "text": "Golang developer", "area": ["1"], "page_size": 20}
     }
   ]
 }
 ```
 
+Начните с `"mode": "dry_run"`: письма и решения готовятся, платформа не
+меняется. Реальный submit включается после проверки письма, лимитов и
+pacing-политики.
+
 ## 2. Запуск
 
-Задайте токен API и при необходимости ключ модели:
+### Docker Compose
 
-```bash
+```sh
 export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-export OPENAI_API_KEY="..."          # только если включён model operator
-```
-
-Поднимите сервисы (browser worker нужен для интерактивного входа):
-
-```bash
 JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_DATA_DIR=./data \
   docker compose --profile browser up -d --build
 ```
 
-Проверка:
+Профиль `browser` добавляет browser worker, который нужен для входа в HH и
+browser-only операций (анкеты, тесты, чаты). Проверка:
 
-```bash
+```sh
 curl -sf -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
   http://127.0.0.1:8080/api/v1/version
 curl -sf http://127.0.0.1:8081/dashboard-healthz
 ```
 
+### Локальные бинарники
+
+```sh
+make build
+export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
+./dist/job-agent-migrate -config ./deploy/config.json up
+./dist/job-agent ./deploy/config.json
+```
+
+Backend слушает `127.0.0.1:8080`. Dashboard запускается отдельно
+(`./dist/job-agent-dashboard`, `127.0.0.1:8081`). Для browser-операций
+запустите worker: `cd browser-worker && npm ci && npm run build && npm start`.
+
 ## 3. Вход в HH
 
-Интерактивный вход выполняет CLI на хосте и управляет browser worker:
+Через dashboard: секция «Вход в HH» → профиль `primary` → «Начать вход» →
+e-mail и код из письма (или captcha). Сессия сохранится в browser storage
+state профиля (`data/profiles/primary.json`) и переживёт перезапуск.
 
-```bash
-BROWSER_WORKER_URL=http://127.0.0.1:8088 \
-BROWSER_WORKER_TOKEN=... \
-  job-agent auth login --profile primary --state-output ./data/profiles/primary.state.json
+Через CLI (нужен запущенный browser worker):
+
+```sh
+job-agent auth login --profile primary --state-output ./data/profiles/primary.json
 ```
 
-Команда попросит e-mail, затем код или captcha в терминале. После успеха CLI
-сохраняет browser storage state с правами `0600`; backend подхватывает его без
-перезапуска.
+Если state уже есть (например, экспорт Playwright), используйте импорт:
 
-Если state уже есть (например, экспорт Playwright), используйте офлайн-импорт:
-
-```bash
+```sh
 job-agent auth import --source export.json \
-  --state-output ./data/profiles/primary.state.json --force
+  --state-output ./data/profiles/primary.json --force
 ```
 
-## 4. Первый поиск и отклик
+Проверить статус профиля можно в dashboard или через `job-agent auth status
+--profile primary --watch` (следит за сессией через SSE).
 
-Перезапустите backend после изменения конфигурации и запустите поиск через
-расписание или вручную:
+## 4. Первый поиск и dry-run отклик
 
-```bash
+Перезапустите backend после правок конфигурации и запустите job вручную из
+dashboard (раздел «Задания» → «Запустить») или через API:
+
+```sh
 curl -sf -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
   -H "Idempotency-Key: $(uuidgen)" \
-  http://127.0.0.1:8080/api/v1/jobs/golang/run
+  http://127.0.0.1:8080/api/v1/jobs/<job-tag>/runs
 ```
 
-Смотрите состояние в dashboard (`JOB_AGENT_DASHBOARD_BIND_IP` по умолчанию
-`127.0.0.1:8081`) или через API:
+`<job-tag>` — тег job из конфигурации (в примере —
+`daily-backend-applications`). Смотрите результат в dashboard («Отклики»,
+«Очередь», «Задания») или через API:
 
-```bash
+```sh
 curl -s -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
   "http://127.0.0.1:8080/api/v1/applications?limit=20"
 ```
 
-`dry_run` оставляет отклики в состоянии подготовки. Проверьте письмо и
-decision reason, затем смените политику и включите реальный submit.
+В `dry_run` отклики остаются в состоянии подготовки: проверьте письмо,
+decision reason и фильтры. Если вакансия требует анкету, в разделе «Проверки
+и опросники» появится сессия — заполните её, и отправка продолжится
+автоматически.
 
-## 5. Обслуживание
+## 5. Реальные отклики
 
-```bash
-job-agent-check --config ./deploy/config.json     # ready|degraded|blocked
-job-agent db backup --config ./deploy/config.json # снимок SQLite
+В профиле:
+
+```json
+"applications": {
+  "mode": "submit",
+  "daily_limit": 30,
+  "submit_jitter": {"min": "15s", "max": "30s"}
+}
+```
+
+`daily_limit` — потолок откликов в день на профиль/платформу,
+`submit_jitter` — пауза между отправками. Перезапустите сервис и начинайте с
+небольших значений, проверяя dashboard после каждого запуска. Платформа может
+сама остановить отправку (`rate_limited`, `quota_exceeded`) — job дождётся
+разрешённого времени или остановится с понятной причиной.
+
+## 6. Обслуживание
+
+```sh
+job-agent-check ./deploy/config.json               # ready | degraded | blocked
+job-agent db backup --config ./deploy/config.json  # снимок SQLite
 job-agent db restore --config ./deploy/config.json --input <backup> --force
 ```
 
-Восстановление и upgrade выполняются на остановленном сервисе. Перед
-обновлением image всегда делайте backup; подробности — в `docs/runbook.md`.
+Upgrade и restore выполняются на остановленном сервисе, после backup.
+Типовые сбои и порядок восстановления — в [`runbook.md`](runbook.md).
