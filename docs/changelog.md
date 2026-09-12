@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Runbook: как выйти из `search run conflicts with changed configuration` —
+  версия тега поиска при смене `query`; аварийное удаление строки `search_runs`
+  с бэкапом. HH-синтаксис query (`AND`/`OR`/`NOT`, кавычки, скобки) описан в
+  контракте поиска.
+
 - В шпаргалках описан query-синтаксис HH в `text` (`AND`, `OR`, `NOT`, кавычки,
   скобки), его сочетание с `excluded_text` и клиентскими `include_any`/
   `exclude_any`.
