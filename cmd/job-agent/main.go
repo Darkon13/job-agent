@@ -293,8 +293,9 @@ func main() {
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
 	knownConversationAnswers := make(map[core.ProfileID]bool)
+	profileContacts := resolveProfileContacts(cfg, instances)
 	for _, profile := range cfg.Profiles {
-		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels)
+		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, profileContacts[core.ProfileID(profile.Tag)])
 		if err != nil {
 			log.Fatalf("build application operator for profile %q: %v", profile.Tag, err)
 		}
@@ -446,7 +447,7 @@ func main() {
 				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
 				Timezone: profile.Applications.LocationName(),
 			}
-			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels)
+			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels, profileContacts[profileID])
 			if tailoringErr != nil {
 				log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, tailoringErr)
 			}
@@ -1128,7 +1129,80 @@ func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (strin
 	return nil
 }
 
-func applicationProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
+const (
+	contactFirstNamePath      = "/web_profile/firstName"
+	contactLastNamePath       = "/web_profile/lastName"
+	contactEmailPath          = "/web/email"
+	contactCommunicationsPath = "/web_profile/communicationMethods"
+)
+
+// resolveProfileContacts reads the sender name and contacts from the platform
+// profile once at startup, then lets the optional config block fill the gaps.
+// The platform stays the source of truth for the name; config remains a
+// fallback for profiles without a trusted reader.
+func resolveProfileContacts(cfg appconfig.Config, instances map[string]adapter.Adapter) map[core.ProfileID]applicationoperator.ApplicationProfileContext {
+	resolved := make(map[core.ProfileID]applicationoperator.ApplicationProfileContext, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		if !profile.Enabled {
+			continue
+		}
+		profileID := core.ProfileID(profile.Tag)
+		fallback := configProfileContacts(profile)
+		if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
+			resolved[profileID] = fallback
+			continue
+		}
+		instance := instances[profile.Adapter]
+		if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
+			if _, err := binder.BindBrowserSession(profileID, profile.StateFile); err != nil {
+				logf("profile %q contacts: browser session failed, using config: %v", profile.Tag, err)
+				resolved[profileID] = fallback
+				continue
+			}
+		}
+		reader, ok := instance.(adapter.ProfileStateReader)
+		if !ok {
+			resolved[profileID] = fallback
+			continue
+		}
+		observation, err := reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+			ProfileID: profileID, Paths: profileContactPaths(profile.Resume),
+		})
+		if err != nil {
+			logf("profile %q contacts: platform read failed, using config: %v", profile.Tag, err)
+			resolved[profileID] = fallback
+			continue
+		}
+		contacts := profileContactsFromObservation(observation, profile.Resume)
+		if contacts.FirstName == "" {
+			contacts.FirstName = fallback.FirstName
+		}
+		if contacts.LastName == "" {
+			contacts.LastName = fallback.LastName
+		}
+		if contacts.Email == "" {
+			contacts.Email = fallback.Email
+		}
+		if contacts.Telegram == "" {
+			contacts.Telegram = fallback.Telegram
+		}
+		resolved[profileID] = contacts
+		logf("profile %q contacts resolved: %s", profile.Tag, contactFieldNames(contacts))
+	}
+	return resolved
+}
+
+func profileContactPaths(resumeID string) []string {
+	prefix := "/resumes/" + resumeID
+	return []string{
+		prefix + contactEmailPath,
+		prefix + contactFirstNamePath,
+		prefix + contactLastNamePath,
+		prefix + contactCommunicationsPath,
+	}
+}
+
+func configProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
 	if profile.Contacts == nil {
 		return applicationoperator.ApplicationProfileContext{}
 	}
@@ -1138,7 +1212,72 @@ func applicationProfileContacts(profile appconfig.Profile) applicationoperator.A
 	}
 }
 
-func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ApplicationPreparer, error) {
+// profileContactsFromObservation extracts the first non-empty value from the
+// observed contact fields. HH wraps most scalar fields in arrays and objects.
+func profileContactsFromObservation(observation core.ProfileStateObservation, resumeID string) applicationoperator.ApplicationProfileContext {
+	prefix := "/resumes/" + resumeID
+	read := func(path string, extract func(any) string) string {
+		raw, exists, err := observation.ValueAt(path)
+		if err != nil || !exists || string(raw) == "null" {
+			return ""
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return ""
+		}
+		return extract(value)
+	}
+	return applicationoperator.ApplicationProfileContext{
+		FirstName: read(prefix+contactFirstNamePath, firstObservedContactValue("string", "name", "value")),
+		LastName:  read(prefix+contactLastNamePath, firstObservedContactValue("string", "name", "value")),
+		Email:     read(prefix+contactEmailPath, firstObservedContactValue("string", "value", "email")),
+		Telegram:  read(prefix+contactCommunicationsPath, firstObservedContactValue("telegram")),
+	}
+}
+
+func firstObservedContactValue(keys ...string) func(any) string {
+	return func(value any) string {
+		switch item := value.(type) {
+		case string:
+			return strings.TrimSpace(item)
+		case []any:
+			for _, child := range item {
+				if found := firstObservedContactValue(keys...)(child); found != "" {
+					return found
+				}
+			}
+		case map[string]any:
+			for _, key := range keys {
+				raw, exists := item[key]
+				if !exists {
+					continue
+				}
+				if text, ok := raw.(string); ok {
+					if text = strings.TrimSpace(text); text != "" {
+						return text
+					}
+				}
+			}
+		}
+		return ""
+	}
+}
+
+func contactFieldNames(contacts applicationoperator.ApplicationProfileContext) string {
+	names := make([]string, 0, 4)
+	for name, value := range map[string]string{
+		"first_name": contacts.FirstName, "last_name": contacts.LastName,
+		"email": contacts.Email, "telegram": contacts.Telegram,
+	} {
+		if strings.TrimSpace(value) != "" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}
+
+func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel, contacts applicationoperator.ApplicationProfileContext) (applicationoperator.ApplicationPreparer, error) {
 	var messagePool *applicationoperator.MessagePoolConfig
 	var resumeContext *applicationoperator.ApplicationResumeContext
 	if facts, exists := profile.ResolvedResumeFacts(); exists {
@@ -1178,7 +1317,7 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		MessagePool:     messagePool,
 		Model:           model,
 		Resume:          resumeContext,
-		Profile:         applicationProfileContacts(profile),
+		Profile:         contacts,
 		EmployerMatcher: employerMatcher,
 		EmployerRules:   employerRules,
 	})
@@ -1271,7 +1410,7 @@ func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applic
 	return pool
 }
 
-func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ResumeTailoringProcessor, []string, error) {
+func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel, contacts applicationoperator.ApplicationProfileContext) (applicationoperator.ResumeTailoringProcessor, []string, error) {
 	processors := make([]applicationoperator.ResumeTailoringProcessor, 0, 2)
 	allowedPaths := make([]string, 0, 2)
 	skills, skillsEnabled := profile.Applications.TailoringSkills()
@@ -1330,7 +1469,7 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		aboutProcessor, err := applicationoperator.NewModelResumeTailoringAboutProcessor(applicationoperator.ModelResumeTailoringAboutConfig{
 			Tag: provider, PromptVersion: about.Model.PromptVersion, Instruction: about.Model.Instruction,
 			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel, Facts: resumeFacts,
-			Contacts: applicationProfileContacts(profile),
+			Contacts: contacts,
 		})
 		if err != nil {
 			return nil, nil, err
