@@ -1,16 +1,42 @@
 site_name: Job Agent
 site_description: Локальный сервис автоматизации поиска работы
+site_url: https://darkon13.github.io/job-agent/
+repo_url: https://github.com/Darkon13/job-agent
+repo_name: Darkon13/job-agent
+edit_uri: edit/main/docs/
 docs_dir: docs
+
 theme:
   name: material
   language: ru
+  icon:
+    repo: fontawesome/brands/github
   palette:
-    - scheme: slate
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Тёмная тема
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Светлая тема
   features:
     - navigation.sections
     - navigation.top
-    - content.code.copy
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
     - search.highlight
+    - content.code.copy
+    - content.tabs.link
+
 nav:
   - Главная: index.md
   - Начало работы:
@@ -45,10 +71,17 @@ nav:
       - Model fallback: next-answer-model-fallback.md
       - Auth control plane: next-auth-control-plane.md
       - Cover letter routing: next-cover-letter-routing.md
+
 markdown_extensions:
   - admonition
+  - attr_list
   - tables
   - toc:
       permalink: true
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+
+extra_css:
+  - assets/extra.css

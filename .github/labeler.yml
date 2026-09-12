@@ -1,0 +1,15 @@
+go:
+  - changed-files:
+      - any-glob-to-any-file: ["**/*.go", "go.mod", "go.sum", "Makefile"]
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "mkdocs.yml", "README.md", "CONTRIBUTING.md", "LICENSE"]
+
+browser-worker:
+  - changed-files:
+      - any-glob-to-any-file: ["browser-worker/**"]
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**", "compose.yaml", "Dockerfile"]

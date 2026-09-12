@@ -1,0 +1,60 @@
+name: PR Bot
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  workflow_run:
+    workflows: ["CI", "Docs"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+
+  comment:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.pull_requests[0].number != null)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Собрать комментарий
+        env:
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          {
+            echo '<!-- pr-bot -->'
+            echo '### Спасибо за pull request!'
+            echo
+            echo "Полезное: [CONTRIBUTING](https://github.com/${REPO}/blob/main/CONTRIBUTING.md) · [документация](https://darkon13.github.io/job-agent/) · [как писать адаптеры](https://darkon13.github.io/job-agent/writing-adapters/)"
+            echo
+            if [ "$EVENT" = "workflow_run" ]; then
+              if [ "$CONCLUSION" = "success" ]; then BADGE="✅ success"; else BADGE="❌ ${CONCLUSION}"; fi
+              echo "**${WORKFLOW}: ${BADGE}** — [запуск](${RUN_URL})"
+            else
+              echo 'CI запустится автоматически. Merge доступен после зелёных проверок и аппрува ревьюера.'
+            fi
+          } > comment.md
+      - uses: peter-evans/find-comment@v3
+        id: find
+        with:
+          issue-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          comment-author: github-actions[bot]
+          body-includes: "<!-- pr-bot -->"
+      - uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          comment-id: ${{ steps.find.outputs.comment-id }}
+          body-path: comment.md
+          edit-mode: replace
