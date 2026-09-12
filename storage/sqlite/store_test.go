@@ -165,6 +165,29 @@ func TestStorePersistsAndRevisionChecksSearchCursor(t *testing.T) {
 	if persisted.Cursor != "1" || persisted.Done || persisted.Revision != 2 || persisted.CorrelationID != "correlation-search" {
 		t.Fatalf("unexpected persisted search run: %#v", persisted)
 	}
+
+	changed, err := core.NewSearchRun(
+		"golang", "hh-main", "hh", "primary", []core.ProfileID{"primary", "secondary"},
+		json.RawMessage(`{"source":"global","text":"Go AND Kafka"}`), "correlation-search-2", now.Add(2*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("new changed search run: %v", err)
+	}
+	reset, created, err := reopened.CreateSearchRun(ctx, changed)
+	if err != nil || !created {
+		t.Fatalf("reset search run: stored=%#v created=%v err=%v", reset, created, err)
+	}
+	if reset.Generation != 2 || reset.Revision != 3 || reset.Cursor != "" || reset.Done ||
+		string(reset.Query) != `{"source":"global","text":"Go AND Kafka"}` || reset.CorrelationID != "correlation-search-2" {
+		t.Fatalf("unexpected reset search run: %#v", reset)
+	}
+	if !reset.CreatedAt.Equal(persisted.CreatedAt) {
+		t.Fatalf("reset changed created_at: %s != %s", reset.CreatedAt, persisted.CreatedAt)
+	}
+	repeated, created, err := reopened.CreateSearchRun(ctx, changed)
+	if err != nil || created || repeated.Generation != 2 || repeated.Revision != 3 {
+		t.Fatalf("repeat changed run: stored=%#v created=%v err=%v", repeated, created, err)
+	}
 }
 
 func TestStoreReturnsExistingApplicationAndRejectsTaskKeyConflict(t *testing.T) {

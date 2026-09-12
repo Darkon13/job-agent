@@ -133,7 +133,17 @@ func (repository *Repository) CreateSearchRun(ctx context.Context, candidate cor
 	if stored, exists := repository.searchRuns[candidate.SearchID]; exists {
 		if stored.Adapter != candidate.Adapter || stored.Platform != candidate.Platform || stored.SearchProfileID != candidate.SearchProfileID ||
 			!slices.Equal(stored.TargetProfiles, candidate.TargetProfiles) || !bytes.Equal(stored.Query, candidate.Query) {
-			return core.SearchRun{}, false, errors.New("search run conflicts with changed configuration")
+			// The configured definition changed: version the run, drop the
+			// stale cursor and continue without operator involvement.
+			updated := cloneSearchRun(candidate)
+			updated.CreatedAt = stored.CreatedAt
+			updated.Generation = stored.Generation + 1
+			updated.Revision = stored.Revision + 1
+			if updated.UpdatedAt.Before(stored.UpdatedAt) {
+				updated.UpdatedAt = stored.UpdatedAt
+			}
+			repository.searchRuns[candidate.SearchID] = updated
+			return cloneSearchRun(updated), true, nil
 		}
 		return cloneSearchRun(stored), false, nil
 	}

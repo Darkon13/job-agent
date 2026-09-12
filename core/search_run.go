@@ -23,9 +23,13 @@ type SearchRun struct {
 	Query           json.RawMessage `json:"query"`
 	Cursor          string          `json:"cursor,omitempty"`
 	Done            bool            `json:"done"`
-	Revision        uint64          `json:"revision"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	// Generation increases when the stored definition no longer matches the
+	// configured search. The old cursor belongs to a different query, so a new
+	// generation starts from the first page without operator involvement.
+	Generation uint64    `json:"generation"`
+	Revision   uint64    `json:"revision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func NewSearchRun(searchID SearchID, adapter string, platform Platform, searchProfileID ProfileID, targetProfiles []ProfileID, query json.RawMessage, correlationID CorrelationID, now time.Time) (SearchRun, error) {
@@ -33,7 +37,7 @@ func NewSearchRun(searchID SearchID, adapter string, platform Platform, searchPr
 		SearchID: searchID, Adapter: adapter, Platform: platform, SearchProfileID: searchProfileID,
 		TargetProfiles: slices.Clone(targetProfiles), Query: append(json.RawMessage(nil), query...),
 		CorrelationID: correlationID,
-		Revision:      1, CreatedAt: now, UpdatedAt: now,
+		Generation:    1, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := run.Validate(); err != nil {
 		return SearchRun{}, err
