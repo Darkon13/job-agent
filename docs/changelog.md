@@ -140,6 +140,10 @@
   цепочка known-answer → model (validator) → manual, границы
   contextual/code, provenance и режимы `auto_submit`/`review_only`
   (`docs/next-answer-model-fallback.md`); реализация не начата.
+- Порядок HTTP-обвязки: `RequestID` теперь снаружи access-log, поэтому
+  `request_id` всегда заполнен; Bearer-токен защищает `/metrics` и
+  auth-endpoints, access-log покрывает auth-запросы. Запросы, отклонённые
+  Bearer, остаются в access-log, но не попадают в счётчики статусов.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

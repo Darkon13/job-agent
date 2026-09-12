@@ -78,7 +78,8 @@ type TaskCountProvider interface {
 }
 
 // MetricsAPI exposes small process counters in Prometheus text format. It is a
-// wrapper so the counters observe the whole chain, including rejected requests.
+// wrapper so the counters observe every request that passed bearer
+// authentication; requests rejected before it stay in the access log.
 type MetricsAPI struct {
 	started   time.Time
 	tasks     TaskCountProvider

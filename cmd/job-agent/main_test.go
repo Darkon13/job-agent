@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/api/httpapi"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
@@ -568,5 +573,83 @@ func TestResolveAPITokenReadsConfiguredEnv(t *testing.T) {
 	}
 	if _, err := resolveAPIToken("MISSING_TOKEN", lookup); err == nil {
 		t.Fatal("expected missing environment variable to fail")
+	}
+}
+
+func TestBuildAPIHandlerOrdersAuthMetricsAndObservability(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buffer, nil))
+	product := http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	})
+	authCalled := false
+	auth := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			if strings.HasPrefix(request.URL.Path, "/api/v1/auth/") {
+				authCalled = true
+				response.WriteHeader(http.StatusAccepted)
+				return
+			}
+			next.ServeHTTP(response, request)
+		})
+	}
+	handler := buildAPIHandler(product, httpapi.NewMetricsAPI(nil), "secret-token", auth, logger)
+
+	for _, path := range []string{"/api/v1/version", "/metrics"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated %s: %d %s", path, response.Code, response.Body.String())
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/auth/sessions", nil))
+	if response.Code != http.StatusUnauthorized || authCalled {
+		t.Fatalf("unauthenticated auth API: %d called=%t", response.Code, authCalled)
+	}
+
+	authorized := func(path string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer secret-token")
+		request.Header.Set("X-Request-ID", "trace-1")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	for _, test := range []struct {
+		path string
+		code int
+	}{
+		{path: "/healthz", code: http.StatusNoContent},
+		{path: "/metrics", code: http.StatusOK},
+		{path: "/api/v1/version", code: http.StatusNoContent},
+		{path: "/api/v1/auth/sessions", code: http.StatusAccepted},
+	} {
+		if response := authorized(test.path); response.Code != test.code {
+			t.Fatalf("authorized %s: %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	if !authCalled {
+		t.Fatal("authenticated auth route was not served")
+	}
+	traceSeen := false
+	for _, line := range strings.Split(strings.TrimSpace(buffer.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode access log: %v line=%s", err, line)
+		}
+		id, _ := entry["request_id"].(string)
+		if id == "" {
+			t.Fatalf("access log lost the request id: %s", line)
+		}
+		if id == "trace-1" {
+			traceSeen = true
+		}
+	}
+	if !traceSeen {
+		t.Fatal("access log did not record the incoming request id")
 	}
 }

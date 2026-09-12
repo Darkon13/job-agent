@@ -809,18 +809,38 @@ func main() {
 		log.Fatalf("create qualification API: %v", err)
 	}
 	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))
-	if apiToken != "" {
-		handler = httpapi.BearerAuth(apiToken, handler)
-	}
-	handler = httpapi.NewMetricsAPI(store).Handler(handler)
-	handler = httpapi.RequestID(handler)
-	handler = httpapi.AccessLog(slog.Default(), handler)
+	var authHandler func(http.Handler) http.Handler
 	if authAPI != nil {
-		handler = authAPI.Handler(handler)
+		authHandler = authAPI.Handler
 	}
+	handler = buildAPIHandler(
+		handler, httpapi.NewMetricsAPI(store), apiToken, authHandler, slog.Default(),
+	)
 	if err := serve(ctx, cfg, handler, conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// buildAPIHandler composes the public API chain. RequestID is outermost so the
+// access log always carries the correlation ID; the bearer token wraps both the
+// product API and the auth control plane, and gates /metrics as documented.
+// Authenticated requests then pass the metrics counters before routing.
+func buildAPIHandler(
+	product http.Handler,
+	metrics *httpapi.MetricsAPI,
+	apiToken string,
+	authHandler func(http.Handler) http.Handler,
+	logger *slog.Logger,
+) http.Handler {
+	handler := metrics.Handler(product)
+	if authHandler != nil {
+		handler = authHandler(handler)
+	}
+	if strings.TrimSpace(apiToken) != "" {
+		handler = httpapi.BearerAuth(apiToken, handler)
+	}
+	handler = httpapi.AccessLog(logger, handler)
+	return httpapi.RequestID(handler)
 }
 
 // configureAuthAPI wires the interactive login control plane when the browser
