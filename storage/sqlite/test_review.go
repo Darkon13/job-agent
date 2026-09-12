@@ -182,18 +182,54 @@ func (store *Store) CreateReviewSession(ctx context.Context, session core.Review
 	return false, nil
 }
 
+const reviewSessionColumns = `id, test_definition_id, platform, profile_id, correlation_id,
+	status, revision, created_at, updated_at, questionnaire`
+
 func (store *Store) ReviewSession(ctx context.Context, id core.ReviewSessionID) (core.ReviewSession, error) {
 	if id == "" {
 		return core.ReviewSession{}, errors.New("review session id is required")
 	}
-	row := store.db.QueryRowContext(ctx, `SELECT test_definition_id, platform, profile_id, correlation_id,
-		status, revision, created_at, updated_at, questionnaire FROM review_sessions WHERE id = ?`, id)
+	return scanReviewSession(store.db.QueryRowContext(ctx,
+		`SELECT `+reviewSessionColumns+` FROM review_sessions WHERE id = ?`, id))
+}
+
+func (store *Store) ListReviewSessions(ctx context.Context, filter storage.ReviewSessionFilter) ([]core.ReviewSession, error) {
+	query := `SELECT ` + reviewSessionColumns + `
+		FROM review_sessions
+		WHERE (? = '' OR status = ?)
+		  AND (? = '' OR profile_id = ?)
+		  AND (? = '' OR platform = ?)
+		ORDER BY updated_at DESC, id`
+	args := []any{filter.Status, filter.Status, filter.ProfileID, filter.ProfileID, filter.Platform, filter.Platform}
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := store.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list review sessions: %w", err)
+	}
+	defer rows.Close()
+	sessions := make([]core.ReviewSession, 0)
+	for rows.Next() {
+		session, err := scanReviewSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate review sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+func scanReviewSession(row rowScanner) (core.ReviewSession, error) {
 	var session core.ReviewSession
 	var createdAt, updatedAt int64
 	var questionnaire []byte
-	session.ID = id
-	if err := row.Scan(&session.TestDefinitionID, &session.Platform, &session.ProfileID, &session.CorrelationID,
-		&session.Status, &session.Revision, &createdAt, &updatedAt, &questionnaire); err != nil {
+	if err := row.Scan(&session.ID, &session.TestDefinitionID, &session.Platform, &session.ProfileID,
+		&session.CorrelationID, &session.Status, &session.Revision, &createdAt, &updatedAt, &questionnaire); err != nil {
 		return core.ReviewSession{}, err
 	}
 	if len(bytes.TrimSpace(questionnaire)) != 0 && string(bytes.TrimSpace(questionnaire)) != "{}" {

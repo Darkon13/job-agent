@@ -273,7 +273,11 @@ history. Каталог создаётся до начала попытки и �
 изменённый набор вариантов сохраняется под новым question fingerprint. Review
 prompt включает полный runtime-вопрос, а выбор пользователя append-ится вместе
 с атомарным CAS по session revision, поэтому повторные REST/TG callbacks не
-могут отправить два ответа.
+могут отправить два ответа. `GET /api/v1/review-sessions` возвращает redacted
+список сессий (статус, профиль, платформа, текущий вопрос и его тип) для
+dashboard: секция «Проверки и опросники» показывает ожидающие сессии, рендерит
+single/multiple/text prompt и записывает ответ через тот же durable
+`review.answer` с Idempotency-Key.
 
 Conversation storage сохраняет нормализованные диалоги, упорядоченный timeline
 сообщений и follow-up таймеры. Внешние chat/message ID и idempotency key

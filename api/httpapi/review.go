@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -31,6 +33,7 @@ func (api *ReviewAPI) Handler(next http.Handler) http.Handler {
 		next = http.NotFoundHandler()
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/review-sessions", api.listSessions)
 	mux.HandleFunc("GET /api/v1/review-sessions/{session_id}", api.getSession)
 	mux.HandleFunc("POST /api/v1/review-sessions/{session_id}/answers", api.answer)
 	mux.Handle("/", next)
@@ -48,6 +51,75 @@ type reviewSessionResponse struct {
 	UpdatedAt        time.Time                `json:"updated_at"`
 	Prompt           *core.ReviewPrompt       `json:"prompt,omitempty"`
 	Selections       []core.ReviewSelection   `json:"selections,omitempty"`
+}
+
+type reviewSessionListItem struct {
+	ID               core.ReviewSessionID     `json:"id"`
+	TestDefinitionID core.TestDefinitionID    `json:"test_definition_id"`
+	Platform         core.Platform            `json:"platform"`
+	ProfileID        core.ProfileID           `json:"profile_id"`
+	Status           core.ReviewSessionStatus `json:"status"`
+	Revision         uint64                   `json:"revision"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
+	Question         string                   `json:"question,omitempty"`
+	QuestionKind     core.QuestionKind        `json:"question_kind,omitempty"`
+}
+
+const (
+	reviewSessionDefaultLimit = 50
+	reviewSessionMaximumLimit = 200
+)
+
+func (api *ReviewAPI) listSessions(response http.ResponseWriter, request *http.Request) {
+	filter := storage.ReviewSessionFilter{
+		Status:    core.ReviewSessionStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
+		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Platform:  core.Platform(strings.TrimSpace(request.URL.Query().Get("platform"))),
+		Limit:     reviewSessionDefaultLimit,
+	}
+	if filter.Status != "" && !validReviewSessionStatus(filter.Status) {
+		writeProblem(response, http.StatusBadRequest, "unsupported review session status")
+		return
+	}
+	if raw := strings.TrimSpace(request.URL.Query().Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > reviewSessionMaximumLimit {
+			writeProblem(response, http.StatusBadRequest, "review session limit must be between 1 and 200")
+			return
+		}
+		filter.Limit = limit
+	}
+	sessions, err := api.reviews.ListReviewSessions(request.Context(), filter)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	items := make([]reviewSessionListItem, 0, len(sessions))
+	for _, session := range sessions {
+		item := reviewSessionListItem{
+			ID: session.ID, TestDefinitionID: session.TestDefinitionID, Platform: session.Platform,
+			ProfileID: session.ProfileID, Status: session.Status, Revision: session.Revision,
+			CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
+		}
+		if prompt, err := api.reviews.ReviewPrompt(request.Context(), reviewPromptID(session)); err == nil {
+			item.Question = prompt.Question.Text
+			item.QuestionKind = prompt.Question.Kind
+		}
+		items = append(items, item)
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, listResponse[reviewSessionListItem]{Items: items})
+}
+
+func validReviewSessionStatus(status core.ReviewSessionStatus) bool {
+	switch status {
+	case core.ReviewPending, core.ReviewWaiting, core.ReviewAnswered, core.ReviewCompleted,
+		core.ReviewCancelled, core.ReviewUnsupported, core.ReviewExpired:
+		return true
+	default:
+		return false
+	}
 }
 
 func (api *ReviewAPI) getSession(response http.ResponseWriter, request *http.Request) {

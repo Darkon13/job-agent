@@ -108,6 +108,24 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .resource-actions { display: flex; align-items: center; justify-content: flex-end; gap: .6rem; margin-top: auto; }
 .resource-actions .muted { margin-right: auto; overflow-wrap: anywhere; }
 .chat-layout { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); gap: 1rem; min-height: 520px; }
+.review-layout { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); gap: 1rem; min-height: 360px; }
+.review-list { overflow: auto; padding: .45rem; }
+.review-session { width: 100%; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; }
+.review-session:hover, .review-session.active { border-color: var(--line); background: var(--surface-2); filter: none; }
+.review-session.active { border-color: var(--cyan); }
+.review-session strong, .review-session small { display: block; }
+.review-session strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-session small { margin-top: .35rem; color: var(--muted); font-weight: 400; }
+.review-panel { display: flex; flex-direction: column; gap: .8rem; }
+.review-prompt { flex: 1; }
+.review-form { display: grid; gap: .9rem; }
+.review-question { margin: 0; color: var(--text); font-weight: 600; }
+.review-options { display: grid; gap: .45rem; }
+.review-option { display: flex; align-items: center; gap: .55rem; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: #191e29; cursor: pointer; }
+.review-option input { accent-color: var(--cyan); }
+.review-form textarea { min-height: 7rem; font: .84rem/1.5 ui-monospace, monospace; }
+.review-actions { display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
+.review-actions .muted { overflow-wrap: anywhere; }
 .conversation-list { overflow: auto; padding: .45rem; }
 .conversation { width: 100%; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; }
 .conversation:hover, .conversation.active { border-color: var(--line); background: var(--surface-2); filter: none; }

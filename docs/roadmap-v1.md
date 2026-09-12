@@ -119,7 +119,9 @@
       25); человеческие ответы пишутся ревизией и подмешиваются композитом
       `ReviewedVacancyAnswers` (latest revision wins), повтор без изменений
       ревизию не создаёт.
-- [ ] Dashboard review.
+- [x] Dashboard review: список review-сессий (`GET /api/v1/review-sessions`
+      с фильтрами), интерактивный single/multiple/text prompt и запись ответа
+      через durable `review.answer`.
 - [ ] Опросники из чатов через тот же registry.
 - [ ] DoD: реальный тест пройден, повтор по сохранённым ответам, evidence
       записан.

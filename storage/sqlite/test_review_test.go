@@ -167,4 +167,16 @@ func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 	if storedSession.Revision != 2 || storedSession.Status != core.ReviewAnswered || len(selections) != 1 {
 		t.Fatalf("review state is not atomic: session=%#v selections=%#v", storedSession, selections)
 	}
+	listed, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{
+		Status: core.ReviewAnswered, ProfileID: "profile-1", Platform: "hh",
+	})
+	if err != nil || len(listed) != 1 || listed[0].ID != session.ID {
+		t.Fatalf("list answered sessions: %#v err=%v", listed, err)
+	}
+	if waiting, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{Status: core.ReviewWaiting}); err != nil || len(waiting) != 0 {
+		t.Fatalf("waiting sessions: %#v err=%v", waiting, err)
+	}
+	if limited, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{Limit: 1}); err != nil || len(limited) != 1 {
+		t.Fatalf("limited sessions: %#v err=%v", limited, err)
+	}
 }

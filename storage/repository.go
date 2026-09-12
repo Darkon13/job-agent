@@ -216,9 +216,17 @@ type TestCatalogRepository interface {
 	ListTestDefinitions(ctx context.Context, filter TestDefinitionFilter) ([]core.TestDefinition, error)
 }
 
+type ReviewSessionFilter struct {
+	Status    core.ReviewSessionStatus
+	ProfileID core.ProfileID
+	Platform  core.Platform
+	Limit     int
+}
+
 type ReviewRepository interface {
 	CreateReviewSession(ctx context.Context, session core.ReviewSession) (created bool, err error)
 	ReviewSession(ctx context.Context, id core.ReviewSessionID) (core.ReviewSession, error)
+	ListReviewSessions(ctx context.Context, filter ReviewSessionFilter) ([]core.ReviewSession, error)
 	ReviewPrompt(ctx context.Context, id core.ReviewPromptID) (core.ReviewPrompt, error)
 	SaveReviewPrompt(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, expectedRevision uint64) error
 	AppendReviewSelection(ctx context.Context, session core.ReviewSession, selection core.ReviewSelection, expectedRevision uint64) error

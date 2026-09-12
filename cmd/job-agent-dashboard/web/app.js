@@ -4,12 +4,14 @@ const state = {
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false,
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
+  reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
+  "review-state", "review-filter", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистить устаревшие отклики",
@@ -29,6 +31,7 @@ const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_requ
 const taskStatusLabels = { new: "Ожидает", processing: "Выполняется", waiting_confirmation: "Нужно решение", retry_scheduled: "Повтор запланирован", completed: "Завершена", failed: "Ошибка", dismissed: "Закрыта" };
 const campaignStatusLabels = { running: "Выполняется", target_reached: "Цель достигнута", exhausted: "Вакансии закончились", paused_budget: "Пауза: лимит", paused_rate_limit: "Пауза: rate limit", failed: "Ошибка" };
 const conversationStatusLabels = { active: "Активный", closed: "Закрыт", rejected: "Отказ", archived: "Архив" };
+const reviewStatusLabels = { pending: "Подготовка", waiting_answer: "Ждёт ответа", answer_recorded: "Ответ записан", completed: "Завершена", cancelled: "Отменена", unsupported: "Не поддерживается", expired: "Истекла" };
 const activityKindLabels = { "vacancy.inspected": "Просмотрена вакансия", "application.submitted": "Отправлен отклик", "conversation.message_sent": "Отправлено сообщение", "resume.touched": "Поднято резюме" };
 const decisionLabels = { qualified: "Проверки пройдены", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
@@ -464,6 +467,114 @@ async function reconcileProfileState(resource) {
   } catch (error) { state.profileMessages.set(resource.tag, error.message); }
   state.profileBusy.delete(resource.tag); renderProfileResources();
 }
+
+function reviewStatusLabel(value) { return reviewStatusLabels[value] || value || "—"; }
+
+async function refreshReviewSessions() {
+  try {
+    const filter = elements.reviewFilter.value;
+    const query = filter ? `?status=${encodeURIComponent(filter)}&limit=50` : "?limit=50";
+    const result = await request(`/api/v1/review-sessions${query}`);
+    state.reviewSessions = result.items || [];
+    elements.reviewState.textContent = state.reviewSessions.length ? `Сессий: ${state.reviewSessions.length}` : "Нет сессий";
+    renderReviewSessions();
+  } catch (error) {
+    elements.reviewState.textContent = error.message;
+    elements.reviewSessions.replaceChildren(text("p", "Не удалось загрузить проверки.", "empty panel"));
+  }
+}
+
+function renderReviewSessions() {
+  if (!state.reviewSessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
+  elements.reviewSessions.replaceChildren(...state.reviewSessions.map((session) => {
+    const button = document.createElement("button"); button.type = "button";
+    button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
+    button.append(text("strong", session.question || `Проверка ${compactID(session.id)}`));
+    button.append(text("small", `${reviewStatusLabel(session.status)} · ${session.platform} · ${session.profile_id} · ${formatDate(session.updated_at)}`));
+    button.addEventListener("click", () => selectReviewSession(session));
+    return button;
+  }));
+}
+
+async function selectReviewSession(session) {
+  state.reviewSelected = session; state.reviewMessage = ""; renderReviewSessions();
+  elements.reviewSessionTitle.textContent = `Проверка ${compactID(session.id)}`;
+  elements.reviewSessionMeta.textContent = `${reviewStatusLabel(session.status)} · ${session.platform} · профиль ${session.profile_id} · revision ${session.revision}`;
+  elements.reviewPrompt.replaceChildren(text("p", "Загрузка…", "empty"));
+  try {
+    state.reviewDetail = await request(`/api/v1/review-sessions/${encodeURIComponent(session.id)}`);
+    renderReviewPrompt();
+  } catch (error) {
+    elements.reviewPrompt.replaceChildren(text("p", error.message, "empty"));
+  }
+}
+
+function renderReviewPrompt() {
+  const detail = state.reviewDetail;
+  if (!detail?.prompt) {
+    elements.reviewPrompt.replaceChildren(text("p", "Для этой сессии нет ожидающего вопроса.", "empty"));
+    return;
+  }
+  const prompt = detail.prompt;
+  const kind = prompt.question.kind;
+  if (kind !== "single" && kind !== "multiple" && kind !== "text") {
+    elements.reviewPrompt.replaceChildren(text("p", `Тип вопроса «${kind}» пока не поддерживается интерактивно.`, "empty"));
+    return;
+  }
+  const form = document.createElement("form"); form.className = "review-form";
+  form.append(text("p", prompt.question.text, "review-question"));
+  let input;
+  if (kind === "text") {
+    input = document.createElement("textarea"); input.rows = 5; input.placeholder = "Ответ"; input.required = true;
+  } else {
+    input = document.createElement("div"); input.className = "review-options";
+    for (const option of prompt.question.options || []) {
+      const label = document.createElement("label"); label.className = "review-option";
+      const control = document.createElement("input");
+      control.type = kind === "single" ? "radio" : "checkbox";
+      control.name = "review-option"; control.value = option.text;
+      label.append(control, text("span", option.text));
+      input.append(label);
+    }
+  }
+  form.append(input);
+  const footer = document.createElement("div"); footer.className = "review-actions";
+  const submit = text("button", "Записать ответ"); submit.type = "submit"; submit.disabled = state.reviewBusy;
+  footer.append(text("span", state.reviewMessage, "muted"), submit); form.append(footer);
+  form.addEventListener("submit", (event) => { event.preventDefault(); submitReviewAnswer(prompt, form, input, kind); });
+  elements.reviewPrompt.replaceChildren(form);
+}
+
+async function submitReviewAnswer(prompt, form, input, kind) {
+  if (state.reviewBusy) return;
+  const selected = [];
+  let answerText = "";
+  if (kind === "text") {
+    answerText = input.value.trim();
+    if (!answerText) { state.reviewMessage = "Введите ответ"; renderReviewPrompt(); return; }
+  } else {
+    for (const control of form.querySelectorAll('input[name="review-option"]:checked')) selected.push(control.value);
+    if (kind === "single" && selected.length !== 1) { state.reviewMessage = "Выберите один вариант"; renderReviewPrompt(); return; }
+    if (kind === "multiple" && selected.length === 0) { state.reviewMessage = "Выберите хотя бы один вариант"; renderReviewPrompt(); return; }
+  }
+  state.reviewBusy = true; state.reviewMessage = "Отправляю…"; renderReviewPrompt();
+  try {
+    await enqueue(`/api/v1/review-sessions/${encodeURIComponent(state.reviewDetail.id)}/answers`, {
+      prompt_id: prompt.id, expected_revision: prompt.revision,
+      selected_options: selected, text: answerText, source: "dashboard",
+    });
+    state.reviewMessage = "Ответ записан, задача поставлена в очередь";
+    await refreshSummary();
+    globalThis.setTimeout(async () => {
+      await refreshReviewSessions();
+      if (state.reviewSelected) await selectReviewSession(state.reviewSelected);
+    }, 1500);
+  } catch (error) {
+    state.reviewMessage = error.message;
+  }
+  state.reviewBusy = false; renderReviewPrompt();
+}
+
 async function request(path, options = {}) { const response = await fetch(path, { cache: "no-store", ...options }); let body = {}; try { body = await response.json(); } catch (_) {} if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`); return body; }
 
 async function controlFailedTask(task, action) {
@@ -583,8 +694,10 @@ elements.applicationNext.addEventListener("click", () => { state.applicationOffs
 elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; renderConversations(state.summary?.conversations || []); });
 elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; renderConversations(state.summary?.conversations || []); });
 elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.summary?.conversations || []); });
-elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); });
-refreshVersion(); refreshSummary(); refreshProfileResources(); setInterval(() => { refreshSummary(); refreshProfileResources(); }, 30_000);
+elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); });
+elements.reviewRefresh.addEventListener("click", () => refreshReviewSessions());
+elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
+refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
 (() => {
   const startButton = document.getElementById("auth-start");

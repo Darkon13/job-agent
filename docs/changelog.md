@@ -128,6 +128,10 @@
   записывает redacted revision (before/after digests, изменённые paths,
   `source`, `applied_at`); API `GET /api/v1/profile-state/revisions` с
   фильтрами и панель «История ревизий» в dashboard.
+- Dashboard review: `GET /api/v1/review-sessions` с фильтрами по
+  статусу/профилю/платформе и текущим вопросом; секция «Проверки и опросники»
+  рендерит single/multiple/text prompt и записывает ответ через durable
+  `review.answer` с Idempotency-Key.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

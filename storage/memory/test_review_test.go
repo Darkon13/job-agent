@@ -68,4 +68,20 @@ func TestRepositoryKeepsProgressiveReviewStateIsolated(t *testing.T) {
 	if err != nil || len(selections) != 1 {
 		t.Fatalf("unexpected selections: %#v err=%v", selections, err)
 	}
+	waiting, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{Status: core.ReviewWaiting})
+	if err != nil || len(waiting) != 0 {
+		t.Fatalf("waiting sessions: %#v err=%v", waiting, err)
+	}
+	answered, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{
+		Status: core.ReviewAnswered, ProfileID: "profile-1", Platform: "hh",
+	})
+	if err != nil || len(answered) != 1 || answered[0].ID != session.ID {
+		t.Fatalf("answered sessions: %#v err=%v", answered, err)
+	}
+	if other, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{ProfileID: "another"}); err != nil || len(other) != 0 {
+		t.Fatalf("unrelated sessions: %#v err=%v", other, err)
+	}
+	if limited, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{Limit: 1}); err != nil || len(limited) != 1 {
+		t.Fatalf("limited sessions: %#v err=%v", limited, err)
+	}
 }

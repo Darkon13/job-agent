@@ -133,6 +133,33 @@ func (repository *Repository) ReviewSession(ctx context.Context, id core.ReviewS
 	return cloneReviewSession(session), nil
 }
 
+func (repository *Repository) ListReviewSessions(ctx context.Context, filter storage.ReviewSessionFilter) ([]core.ReviewSession, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.ReviewSession, 0, len(repository.reviews))
+	for _, session := range repository.reviews {
+		if filter.Status != "" && session.Status != filter.Status ||
+			filter.ProfileID != "" && session.ProfileID != filter.ProfileID ||
+			filter.Platform != "" && session.Platform != filter.Platform {
+			continue
+		}
+		result = append(result, cloneReviewSession(session))
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].UpdatedAt.Equal(result[j].UpdatedAt) {
+			return result[i].UpdatedAt.After(result[j].UpdatedAt)
+		}
+		return result[i].ID < result[j].ID
+	})
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
+	}
+	return result, nil
+}
+
 func (repository *Repository) ReviewPrompt(ctx context.Context, id core.ReviewPromptID) (core.ReviewPrompt, error) {
 	if err := ctx.Err(); err != nil {
 		return core.ReviewPrompt{}, err

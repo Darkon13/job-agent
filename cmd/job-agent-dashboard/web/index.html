@@ -124,6 +124,29 @@
       </div>
       <div id="profile-resources" class="resource-grid"></div>
     </section>
+    <section aria-labelledby="review-title">
+      <div class="section-title">
+        <div><p class="eyebrow">РЕВЬЮ</p><h2 id="review-title">Проверки и опросники</h2></div>
+        <div class="section-actions">
+          <span id="review-state" class="muted">Загрузка…</span>
+          <select id="review-filter">
+            <option value="waiting_answer">Ожидают ответа</option>
+            <option value="answer_recorded">Ответ записан</option>
+            <option value="">Все сессии</option>
+          </select>
+          <button id="review-refresh" class="secondary compact" type="button">Обновить</button>
+        </div>
+      </div>
+      <div class="review-layout">
+        <nav id="review-sessions" class="review-list" aria-label="Список review-сессий"></nav>
+        <article class="panel review-panel">
+          <div class="panel-heading">
+            <div><h2 id="review-session-title">Выберите проверку</h2><p id="review-session-meta" class="muted">Ответ записывается через durable review.answer и не отправляется на платформу из HTTP-запроса.</p></div>
+          </div>
+          <div id="review-prompt" class="review-prompt"><p class="empty">Здесь появится текущий вопрос.</p></div>
+        </article>
+      </div>
+    </section>
     <section aria-labelledby="conversations-title">
       <div class="section-title">
         <div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div>

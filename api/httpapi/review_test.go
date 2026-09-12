@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,5 +113,33 @@ func TestReviewAPIEnqueuesIdempotentAnswer(t *testing.T) {
 	})
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid body status = %d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestReviewAPIListFiltersWaitingSessions(t *testing.T) {
+	handler, _ := newReviewAPI(t)
+	response := performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions?status=waiting_answer&profile_id=profile-1", "", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var body listResponse[reviewSessionListItem]
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].ID != "review-1" || body.Items[0].Question != "Pick a language" ||
+		body.Items[0].QuestionKind != core.QuestionSingle || body.Items[0].Status != core.ReviewWaiting {
+		t.Fatalf("items = %#v", body.Items)
+	}
+	response = performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions?status=waiting_answer&profile_id=another", "", "", nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[]`) {
+		t.Fatalf("filtered list = %d %s", response.Code, response.Body.String())
+	}
+	response = performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions?status=unknown", "", "", nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown status = %d %s", response.Code, response.Body.String())
+	}
+	response = performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions?limit=0", "", "", nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit = %d %s", response.Code, response.Body.String())
 	}
 }
