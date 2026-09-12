@@ -116,8 +116,21 @@
 ```
 
 Что принимает `query.source`: `global`, `similar_resume` (нужен `resume`),
-`similar_vacancy` и `related_vacancy` (нужен `vacancy`). Остальные фильтры —
-в [`configuration.md`](configuration.md#searches).
+`similar_vacancy` и `related_vacancy` (нужен `vacancy`).
+
+Similar-выдача уже меньше глобальной, но её фильтруют так же, как global:
+`similar_resume` и `similar_vacancy` принимают весь классический набор
+(`text`, `area`, `experience`, `employment`, `schedule`, `professional_role`,
+`industry`, `employer_id`, `salary`, `period`, `date_from/to`, `order_by`).
+Современные work-поля (`work_format`, `employment_form`,
+`work_schedule_by_days`, `working_hours`) классический API-эндпоинт
+игнорирует, поэтому при их наличии адаптер использует browser-поиск с полным
+фильтром, если у профиля есть browser-сессия; без неё операция честно
+возвращает `unsupported`. `related_vacancy` платформа принимает только с
+пагинацией, но найденные вакансии всё равно проходят `include_any`/`exclude_any`
+и employer rules при подготовке отклика — это касается любого source.
+
+Остальные фильтры — в [`configuration.md`](configuration.md#searches).
 
 ## Поднятие резюме
 

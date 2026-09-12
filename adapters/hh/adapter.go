@@ -263,18 +263,12 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 		if query.Vacancy != "" {
 			return errors.New("hh similar_resume search must not specify vacancy")
 		}
-		if query.hasModernWorkFields() {
-			return errors.New("hh similar_resume search does not support employment_form, work_schedule_by_days, working_hours or work_format")
-		}
 	case SearchSourceSimilarVacancy:
 		if query.Vacancy == "" {
 			return errors.New("hh similar_vacancy search requires vacancy")
 		}
 		if query.Resume != "" {
 			return errors.New("hh similar_vacancy search must not specify resume")
-		}
-		if query.hasModernWorkFields() {
-			return errors.New("hh similar_vacancy search does not support employment_form, work_schedule_by_days, working_hours or work_format")
 		}
 	case SearchSourceRelatedVacancy:
 		if query.Vacancy == "" {
@@ -442,14 +436,17 @@ func (a *Adapter) Search(ctx context.Context, profileID core.ProfileID, raw json
 			return browserClient.SearchGlobal(ctx, query, cursor)
 		}
 	case SearchSourceSimilarResume:
-		if client != nil {
+		// The classic API endpoint predates the modern work fields. When they
+		// are requested, prefer the browser search that supports the full web
+		// filter set instead of silently dropping them.
+		if client != nil && !query.hasModernWorkFields() {
 			return client.SearchSimilarResume(ctx, query, cursor)
 		}
 		if browserClient != nil {
 			return browserClient.SearchSimilarResume(ctx, query, cursor)
 		}
 	case SearchSourceSimilarVacancy:
-		if client != nil {
+		if client != nil && !query.hasModernWorkFields() {
 			return client.SearchSimilarVacancy(ctx, query, cursor)
 		}
 	case SearchSourceRelatedVacancy:
