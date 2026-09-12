@@ -163,13 +163,19 @@ mkdir -p data
 перезапуск. Выберите любой способ:
 
 - **CLI**: `job-agent auth login --profile main --state-output ./data/profiles/main.json`
-  (попросит e-mail и код);
+  (попросит e-mail и код). Команды используют собранные бинарники: один раз
+  выполните `make build` и `export PATH="$PWD/dist:$PATH"` (либо пишите
+  `./dist/job-agent` явно);
 - **Dashboard** (опционально): секция «Вход в HH» → профиль `main` → «Начать
   вход»;
 - **Импорт готовой сессии**: `job-agent auth import --source export.json --state-output ./data/profiles/main.json --force`.
 
 Если у вас OAuth-доступ к API HH, браузерный вход не обязателен: укажите
 `credentials_ref` в профиле, и API-операции пойдут без cookies.
+
+При Docker-запуске backend не публикует порт на хост: для CLI-входа добавьте
+флаг `--api http://127.0.0.1:8081` (dashboard proxy) либо войдите через сам
+dashboard.
 
 > Дальше ничего нажимать не нужно: cron внутри сервиса сам выполнит поиск,
 > поднятие резюме и отклики по расписанию из конфига.
@@ -191,8 +197,9 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 
 ```sh
 make build
-./dist/job-agent-migrate -config ./deploy/config.json up
-./dist/job-agent ./deploy/config.json
+export PATH="$PWD/dist:$PATH"   # job-agent* доступны без префикса
+job-agent-migrate -config ./deploy/config.json up
+job-agent ./deploy/config.json
 ```
 
 Dashboard (опционально) — `./dist/job-agent-dashboard`. Для browser-операций
@@ -289,9 +296,12 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
 
 ## 6. Наблюдение и обслуживание
 
-Без dashboard всё доступно через CLI и API:
+Без dashboard всё доступно через CLI и API. Команды выполняются из каталога
+репозитория после `make build` (`dist/` в PATH):
 
 ```sh
+export PATH="$PWD/dist:$PATH"
+
 job-agent-check ./deploy/config.json               # ready | degraded | blocked
 curl -s -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" "http://127.0.0.1:8080/api/v1/applications?limit=20"
 curl -s -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
@@ -299,6 +309,8 @@ curl -s -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" -H "Idempotency-
 job-agent db backup --config ./deploy/config.json
 job-agent db restore --config ./deploy/config.json --input <backup> --force
 ```
+
+Команды требуют собранных бинарников (`make build`, `dist/` в PATH).
 
 Upgrade и restore выполняются на остановленном сервисе, после backup.
 Типовые сбои и восстановление — в [`runbook.md`](runbook.md).
