@@ -264,7 +264,15 @@ func (queue *Queue) Retry(
 	retryAt, now time.Time,
 ) error {
 	return queue.finish(ctx, lease, now, func(task *core.Task) error {
-		return task.ScheduleRetry(retryAt, operationError, now)
+		if err := task.ScheduleRetry(retryAt, operationError, now); err != nil {
+			return err
+		}
+		// A pacing wait only asks for a later slot; it must not burn retry
+		// attempts the way a real platform attempt does.
+		if operationError.Metadata["pacing"] == "true" && task.Attempts > 0 {
+			task.Attempts--
+		}
+		return nil
 	})
 }
 

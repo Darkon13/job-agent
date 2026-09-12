@@ -154,12 +154,19 @@ func (store *Store) Retry(
 	if err := task.ScheduleRetry(retryAt, operationError, now); err != nil {
 		return err
 	}
+	// A pacing wait only asks for a later slot; it must not burn retry attempts
+	// the way a real platform attempt does.
+	preserveAttempt := 0
+	if operationError != nil && operationError.Metadata["pacing"] == "true" {
+		preserveAttempt = 1
+	}
 	result, err := store.db.ExecContext(ctx, `UPDATE tasks SET
 		status = ?, available_at = ?, updated_at = ?, failure_category = ?, failure_message = ?,
+		attempts = CASE WHEN ? = 1 AND attempts > 0 THEN attempts - 1 ELSE attempts END,
 		lease_owner = NULL, lease_token = NULL, lease_until = NULL
 		WHERE id = ? AND status = ? AND lease_owner = ? AND lease_token = ? AND lease_until > ?`,
 		task.Status, task.AvailableAt.UnixNano(), task.UpdatedAt.UnixNano(), task.Failure.Category, task.Failure.Message,
-		task.ID, core.TaskProcessing, lease.WorkerID, lease.Token, now.UnixNano())
+		preserveAttempt, task.ID, core.TaskProcessing, lease.WorkerID, lease.Token, now.UnixNano())
 	if err != nil {
 		return fmt.Errorf("retry task: %w", err)
 	}

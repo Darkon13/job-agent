@@ -2198,7 +2198,7 @@ func newTaskWorkerBlockedBy(consumer broker.TaskConsumer, taskType, blockerType 
 		ID: "worker-" + string(taskType), TaskType: taskType, BlockedByTaskType: blockerType,
 		LeaseDuration: 2 * time.Minute, HeartbeatInterval: 30 * time.Second,
 		PollInterval: time.Second, RetryBaseDelay: 5 * time.Second,
-		BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 5,
+		BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 10,
 	})
 }
 
