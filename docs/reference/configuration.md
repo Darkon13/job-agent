@@ -138,7 +138,7 @@ sing-box: объекты имеют `tag`, ссылаются друг на др
 | `mode` | string | `dry_run` (ничего не отправляет), `approval` (ждёт approve), `submit` (отправляет) |
 | `message` | string | статический текст сопроводительного |
 | `message_template` | string | inline-шаблон |
-| `message_template_file` | string | файл пула шаблонов (`strategy: first\|stable_hash`) |
+| `message_template_file` | string | файл пула шаблонов (`strategy: first\|stable_hash`), см. [Письма и пулы](messages.md) |
 | `model` | object | `provider`/`prompt_version`/`instruction`/`timeout` для генерации письма |
 | `employer_rules` | array | правила по работодателям: `employer_groups`, `action` (`skip`, `review`, `message_pool`), свой пул или model |
 | `qualification` | object | `include_any`, `exclude_any` — текстовые фильтры по вакансии |
