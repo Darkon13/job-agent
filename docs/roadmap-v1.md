@@ -135,14 +135,17 @@
 ## M4. Жизненный цикл резюме
 
 - [ ] `resume.create`/`resume.update` как desired state с deterministic/model
-      processor, semantic diff и approval policy. Готовы durable
+      processor, semantic diff и approval policy (native `resume.create` и
+      `bootstrap.when: missing_resume` перенесены в `1.0.x`: browser-cookie
+      профиль создавать резюме не может, а native API требует OAuth). Готовы durable
       `resume.update` (payload + idempotency + workflow), worker
       «plan → apply → read-back → optional publish», API
       `POST /profiles/{profile}/resumes/{resume}/update` с Idempotency-Key,
       main-проводка и плановый job action `resume.update` с optional publish:
       approval не требуется, задача ждёт `Retry-After`/`next_publish_at`.
       История ревизий готова (см. ниже); остаётся dashboard-редактор.
-- [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
+- [x] Publish после update и read-back (worker ждёт `next_publish_at`);
+      `bootstrap.when: missing_resume` перенесён в `1.0.x`.
 - [x] Алиасы (`resume_aliases`, резолв в `profile.resume` и job actions) и
       каталог targets (`GET /api/v1/profiles/{profile}/resumes`).
 - [x] История ревизий: подтверждённый apply пишет durable redacted revision
@@ -152,7 +155,8 @@
       значением text/`null` (не только `about`), с тем же plan/apply и
       read-back. Какие именно поля объявлять в конфиге — по мере live-проверки
       соответствующих writer-путей.
-- [ ] DoD: создание резюме из bootstrap-файла и безопасный update с publish.
+- [ ] DoD: создание резюме из bootstrap-файла (`1.0.x`) и безопасный update с
+      publish (готов).
 
 ## M5. Hardening для v1.0.0
 
@@ -177,7 +181,7 @@
 - [x] Quickstart для чистого аккаунта и runbook восстановления
       (`docs/quickstart.md`, `docs/runbook.md`): auth_required,
       recovery_required, failed apply, quota, runtime lease, token, worker.
-- [ ] DoD: чистый install с нуля на пустом `data/`, `make release-check`,
+- [x] DoD: чистый install с нуля на пустом `data/`, `make release-check`,
       выпуск `v1.0.0` по `docs/releasing.md` (нужен реальный аккаунт).
       Runtime-часть чистого install автоматизирована: `make smoke` собирает
       бинарники, мигрирует пустую БД, поднимает backend, проверяет
