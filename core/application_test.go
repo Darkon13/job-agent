@@ -58,3 +58,31 @@ func TestApplicationResetForRetryClearsFailure(t *testing.T) {
 		t.Fatalf("reset application = %#v", application)
 	}
 }
+
+func TestApplicationSkippedValidationIsRetryable(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	application, err := NewApplication("application-skip", ApplicationKey{
+		ProfileID: "secondary", Vacancy: VacancyKey{Platform: "hh", ExternalID: "vacancy-skip"},
+	}, now)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if err := application.Transition(ApplicationPreparing, now.Add(time.Second)); err != nil {
+		t.Fatalf("preparing: %v", err)
+	}
+	if err := application.Transition(ApplicationReady, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("ready: %v", err)
+	}
+	if err := application.Transition(ApplicationSubmitting, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("submitting: %v", err)
+	}
+	if err := application.Transition(ApplicationSkipped, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("skipping submit attempt: %v", err)
+	}
+	if err := application.ResetForRetry(now.Add(5 * time.Second)); err != nil {
+		t.Fatalf("reset skipped application: %v", err)
+	}
+	if application.Status != ApplicationReady {
+		t.Fatalf("status=%s", application.Status)
+	}
+}

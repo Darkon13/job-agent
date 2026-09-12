@@ -52,15 +52,19 @@ func profileStateFiles(cfg appconfig.Config) map[core.ProfileID]string {
 	return files
 }
 
-// dashboardProfiles lists enabled profile tags for the dashboard account
-// switcher. It exposes configuration identities only, never credentials.
-func dashboardProfiles(cfg appconfig.Config) []core.ProfileID {
-	profiles := make([]core.ProfileID, 0, len(cfg.Profiles))
+// dashboardProfiles lists enabled profiles for the dashboard account switcher
+// with the resolved sender name. It exposes configuration identities and the
+// display name only, never credentials.
+func dashboardProfiles(cfg appconfig.Config, contacts map[core.ProfileID]applicationoperator.ApplicationProfileContext) []httpapi.ProfileSummary {
+	profiles := make([]httpapi.ProfileSummary, 0, len(cfg.Profiles))
 	for _, profile := range cfg.Profiles {
 		if !profile.Enabled {
 			continue
 		}
-		profiles = append(profiles, core.ProfileID(profile.Tag))
+		profileID := core.ProfileID(profile.Tag)
+		resolved := contacts[profileID]
+		displayName := strings.TrimSpace(strings.TrimSpace(resolved.FirstName) + " " + strings.TrimSpace(resolved.LastName))
+		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName})
 	}
 	return profiles
 }
@@ -237,7 +241,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
 	}
-	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg))
+	profileContacts := resolveProfileContacts(cfg, instances)
+	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg, profileContacts))
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
 	}
@@ -294,7 +299,6 @@ func main() {
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
 	knownConversationAnswers := make(map[core.ProfileID]bool)
-	profileContacts := resolveProfileContacts(cfg, instances)
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, profileContacts[core.ProfileID(profile.Tag)])
 		if err != nil {
@@ -446,7 +450,8 @@ func main() {
 				Message: profile.Applications.Message, Preparer: preparer,
 				DailyLimit:      profile.Applications.EffectiveDailyLimit(instance.Name()),
 				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
-				Timezone: profile.Applications.LocationName(),
+				Timezone:       profile.Applications.LocationName(),
+				SkipValidation: profile.Applications.SkipValidation(),
 			}
 			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels, profileContacts[profileID])
 			if tailoringErr != nil {

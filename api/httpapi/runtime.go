@@ -28,15 +28,22 @@ type RuntimeReadRepository interface {
 	OpenQuestionnaireConversationIDs(context.Context) ([]core.ConversationID, error)
 }
 
+// ProfileSummary is the dashboard-facing profile identity: configuration tag
+// plus the resolved sender name, never credentials.
+type ProfileSummary struct {
+	ID          core.ProfileID `json:"id"`
+	DisplayName string         `json:"display_name,omitempty"`
+}
+
 type RuntimeAPI struct {
 	repository RuntimeReadRepository
-	profiles   []core.ProfileID
+	profiles   []ProfileSummary
 	now        func() time.Time
 }
 
 type DashboardSummary struct {
 	GeneratedAt       time.Time                      `json:"generated_at"`
-	Profiles          []core.ProfileID               `json:"profiles,omitempty"`
+	Profiles          []ProfileSummary               `json:"profiles,omitempty"`
 	Stats             storage.RuntimeStats           `json:"stats"`
 	Tasks             []storage.TaskCount            `json:"tasks"`
 	Applications      []storage.ApplicationCount     `json:"applications"`
@@ -109,11 +116,11 @@ type ApplicationTailoringSummary struct {
 	UpdatedAt        time.Time                         `json:"updated_at"`
 }
 
-func NewRuntimeAPI(repository RuntimeReadRepository, profiles []core.ProfileID) (*RuntimeAPI, error) {
+func NewRuntimeAPI(repository RuntimeReadRepository, profiles []ProfileSummary) (*RuntimeAPI, error) {
 	if repository == nil {
 		return nil, errors.New("runtime API requires repository")
 	}
-	return &RuntimeAPI{repository: repository, profiles: append([]core.ProfileID(nil), profiles...), now: time.Now}, nil
+	return &RuntimeAPI{repository: repository, profiles: append([]ProfileSummary(nil), profiles...), now: time.Now}, nil
 }
 
 // Handler adds health and dashboard routes in front of the supplied product
