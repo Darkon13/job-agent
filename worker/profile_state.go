@@ -59,14 +59,16 @@ func (registry *ProfileStateWriterRegistry) Count() int {
 
 type ProfileStateApplyHandler struct {
 	proposals storage.ProfileStateProposalRepository
+	revisions storage.ProfileStateRevisionRepository
 	writers   *ProfileStateWriterRegistry
+	clock     Clock
 }
 
-func NewProfileStateApplyHandler(proposals storage.ProfileStateProposalRepository, writers *ProfileStateWriterRegistry) (*ProfileStateApplyHandler, error) {
-	if proposals == nil || writers == nil {
-		return nil, errors.New("profile state apply handler requires proposals and writer registry")
+func NewProfileStateApplyHandler(proposals storage.ProfileStateProposalRepository, revisions storage.ProfileStateRevisionRepository, writers *ProfileStateWriterRegistry, clock Clock) (*ProfileStateApplyHandler, error) {
+	if proposals == nil || revisions == nil || writers == nil || clock == nil {
+		return nil, errors.New("profile state apply handler requires proposals, revisions, writer registry and clock")
 	}
-	return &ProfileStateApplyHandler{proposals: proposals, writers: writers}, nil
+	return &ProfileStateApplyHandler{proposals: proposals, revisions: revisions, writers: writers, clock: clock}, nil
 }
 
 func (handler *ProfileStateApplyHandler) Handle(ctx context.Context, task core.Task) error {
@@ -111,5 +113,10 @@ func (handler *ProfileStateApplyHandler) Handle(ctx context.Context, task core.T
 	if len(pending) != 0 {
 		return &core.OperationError{Category: core.ErrorAmbiguousResult, Operation: "profile_state.apply", Message: "profile state writer returned an unverified result"}
 	}
-	return nil
+	revision, err := core.NewProfileStateRevision(proposal, task.Source, handler.clock.Now())
+	if err != nil {
+		return err
+	}
+	_, _, err = handler.revisions.CreateProfileStateRevision(ctx, revision)
+	return err
 }

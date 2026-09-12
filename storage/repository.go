@@ -35,6 +35,7 @@ type RuntimeStats struct {
 	Messages              int `json:"messages"`
 	FollowUps             int `json:"follow_ups"`
 	ProfileStateProposals int `json:"profile_state_proposals"`
+	ProfileStateRevisions int `json:"profile_state_revisions"`
 	ProfileActivity       int `json:"profile_activity"`
 	ActivitySnapshots     int `json:"activity_snapshots"`
 }
@@ -188,6 +189,19 @@ type ProfileStateProposalRepository interface {
 	CreateProfileStateProposal(ctx context.Context, candidate core.ProfileStateProposal) (stored core.ProfileStateProposal, created bool, err error)
 	ProfileStateProposal(ctx context.Context, id core.ProfileStateProposalID) (core.ProfileStateProposal, error)
 	ListProfileStateProposals(ctx context.Context, filter ProfileStateProposalFilter) ([]core.ProfileStateProposal, error)
+}
+
+type ProfileStateRevisionFilter struct {
+	ResourceTag string
+	ProfileID   core.ProfileID
+	Limit       int
+}
+
+// ProfileStateRevisionRepository stores the redacted history of confirmed
+// profile state applies. One proposal produces at most one revision.
+type ProfileStateRevisionRepository interface {
+	CreateProfileStateRevision(ctx context.Context, candidate core.ProfileStateRevision) (stored core.ProfileStateRevision, created bool, err error)
+	ListProfileStateRevisions(ctx context.Context, filter ProfileStateRevisionFilter) ([]core.ProfileStateRevision, error)
 }
 
 type TestDefinitionFilter struct {

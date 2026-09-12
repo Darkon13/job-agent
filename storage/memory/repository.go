@@ -78,6 +78,7 @@ type Repository struct {
 	followUpKeys           map[string]core.FollowUpID
 	profileStateProposals  map[core.ProfileStateProposalID]core.ProfileStateProposal
 	profileStateKeys       map[string]core.ProfileStateProposalID
+	profileStateRevisions  map[core.ProfileStateProposalID]core.ProfileStateRevision
 	profileActivity        map[core.ProfileActivityID]core.ProfileActivityRecord
 	activitySnapshots      map[core.ProfileActivitySnapshotID]core.ProfileActivitySnapshot
 }
@@ -114,6 +115,7 @@ func NewRepository() *Repository {
 		followUpKeys:           make(map[string]core.FollowUpID),
 		profileStateProposals:  make(map[core.ProfileStateProposalID]core.ProfileStateProposal),
 		profileStateKeys:       make(map[string]core.ProfileStateProposalID),
+		profileStateRevisions:  make(map[core.ProfileStateProposalID]core.ProfileStateRevision),
 		profileActivity:        make(map[core.ProfileActivityID]core.ProfileActivityRecord),
 		activitySnapshots:      make(map[core.ProfileActivitySnapshotID]core.ProfileActivitySnapshot),
 	}

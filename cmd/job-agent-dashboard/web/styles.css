@@ -95,6 +95,12 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .path-list li { padding: .38rem .5rem; border-radius: 6px; background: var(--surface-2); }
 .plan-result { display: grid; gap: .35rem; padding: .7rem; border: 1px solid var(--line); border-radius: 9px; background: #191e29; }
 .plan-result strong { color: var(--text); font-size: .82rem; }
+.revision-history { display: grid; gap: .5rem; padding: .7rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+.revision-history > strong { color: var(--text); font-size: .82rem; }
+.revision-history .muted { margin: 0; }
+.revision-item { display: grid; gap: .3rem; padding: .55rem; border: 1px solid var(--line); border-radius: 8px; background: #191e29; }
+.revision-item .muted { font-size: .72rem; }
+.revision-item code { display: block; overflow-wrap: anywhere; color: var(--blue); font: .74rem/1.4 ui-monospace, monospace; }
 .resource-editor { display: grid; gap: .7rem; padding: .8rem; border: 1px solid #45606e; border-radius: 10px; background: #191e29; }
 .resource-editor label { display: grid; gap: .4rem; color: var(--blue); font: .72rem/1.4 ui-monospace, monospace; }
 .resource-editor textarea { min-height: 9rem; font: .84rem/1.5 ui-monospace, monospace; }

@@ -60,7 +60,7 @@ func TestProfileStateAPIListsMetadataAndCreatesRedactedPlan(t *testing.T) {
 		t.Fatalf("new apply workflow: %v", err)
 	}
 	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{next: 100}, map[core.ProfileID]core.Platform{"primary": "hh"})
-	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestProfileStateAPIPlansOneShotEditorOverrideWithoutLeakingIt(t *testing.T)
 		t.Fatalf("new apply workflow: %v", err)
 	}
 	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
-	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestProfileStateAPIRejectsStaleOrUnsupportedEditorOverride(t *testing.T) {
 	reader := profileStateAPIReader(func(_ context.Context, request adapter.ProfileStateReadRequest) (core.ProfileStateObservation, error) {
 		return core.NewProfileStateObservation(request.ProfileID, resource.State, "", time.Now().UTC())
 	})
-	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	handler := api.Handler(nil)
 
 	for _, test := range []struct {
@@ -262,7 +262,7 @@ func TestProfileStateAPIRejectsCallerObservationAndUnavailableReader(t *testing.
 		t.Fatalf("new apply workflow: %v", err)
 	}
 	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
-	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, nil)
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, repository, nil)
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestProfileStateAPICreatesOneShotBootstrapPlan(t *testing.T) {
 		}
 		return core.NewProfileStateObservation(request.ProfileID, json.RawMessage(`{"resumes":{"resume-1":{"experience":[],"skill_set":["Go"]}}}`), "revision-1", now)
 	})
-	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, repository, map[core.ProfileID]adapter.ProfileStateReader{"primary": reader})
 	body := `{
 		"api_version":"job-agent/v1",
 		"kind":"ProfileBootstrap",
@@ -328,7 +328,7 @@ func TestProfileStateAPIRejectsUnknownBootstrapProfileAndControlField(t *testing
 	planner, _ := workflow.NewProfileStatePlanner(nil, repository, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	apply, _ := workflow.NewProfileStateApplyWorkflow(repository, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
 	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, workflow.SystemClock{}, workflow.RandomIDGenerator{}, nil)
-	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, nil)
+	api, _ := NewProfileStateAPI(planner, apply, reconcile, repository, repository, nil)
 	for _, body := range []string{
 		`{"api_version":"job-agent/v1","kind":"ProfileBootstrap","metadata":{"name":"resume"},"spec":{"profile_id":"missing","state":{"profile":{"area":"1"}}}}`,
 		`{"api_version":"job-agent/v1","kind":"ProfileBootstrap","metadata":{"name":"resume"},"spec":{"profile_id":"missing","state":{"profile":{"area":"1"}}},"typo":true}`,
@@ -338,5 +338,73 @@ func TestProfileStateAPIRejectsUnknownBootstrapProfileAndControlField(t *testing
 		if response.Code < 400 {
 			t.Fatalf("bootstrap should fail: %d %s", response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestProfileStateAPIListsRedactedRevisions(t *testing.T) {
+	now := time.Date(2026, 9, 11, 20, 0, 0, 0, time.UTC)
+	resource, err := core.NewProfileStateResource("backend", "primary", core.ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"resume-1":{"about":"revision secret new"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	before, err := core.NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"resume-1":{"about":"revision secret old"}}}`), "", now)
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	proposal, err := core.NewProfileStateProposal("proposal-1", resource, before, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	revision, err := core.NewProfileStateRevision(proposal, "resume-api", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("new revision: %v", err)
+	}
+	repository := memory.NewRepository()
+	if _, _, err := repository.CreateProfileStateProposal(context.Background(), proposal); err != nil {
+		t.Fatalf("store proposal: %v", err)
+	}
+	if _, created, err := repository.CreateProfileStateRevision(context.Background(), revision); err != nil || !created {
+		t.Fatalf("store revision: created=%t err=%v", created, err)
+	}
+	queue := brokermemory.NewQueue()
+	planner, err := workflow.NewProfileStatePlanner([]core.ProfileStateResource{resource}, repository, profileStateAPIClock{now}, &profileStateAPIIDs{})
+	if err != nil {
+		t.Fatalf("new planner: %v", err)
+	}
+	apply, err := workflow.NewProfileStateApplyWorkflow(repository, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	if err != nil {
+		t.Fatalf("new apply workflow: %v", err)
+	}
+	reconcile, _ := workflow.NewProfileStateReconcileWorkflow(planner, queue, profileStateAPIClock{now}, &profileStateAPIIDs{}, map[core.ProfileID]core.Platform{"primary": "hh"})
+	api, err := NewProfileStateAPI(planner, apply, reconcile, repository, repository, nil)
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	handler := api.Handler(nil)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/revisions?resource_tag=backend", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("revisions response: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "revision secret") {
+		t.Fatalf("revisions response leaked values: %s", response.Body.String())
+	}
+	var body listResponse[core.ProfileStateRevision]
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode revisions: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].ProposalID != "proposal-1" || body.Items[0].Source != "resume-api" || len(body.Items[0].Changes) != 1 {
+		t.Fatalf("revisions = %#v", body.Items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/revisions?profile_id=secondary", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[]`) {
+		t.Fatalf("filtered revisions response: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profile-state/revisions?limit=999", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit response: %d %s", response.Code, response.Body.String())
 	}
 }

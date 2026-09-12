@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Darkon13/job-agent/adapter"
@@ -20,6 +21,7 @@ type ProfileStateAPI struct {
 	apply      *workflow.ProfileStateApplyWorkflow
 	reconcile  *workflow.ProfileStateReconcileWorkflow
 	repository storage.ProfileStateProposalRepository
+	revisions  storage.ProfileStateRevisionRepository
 	readers    map[core.ProfileID]adapter.ProfileStateReader
 }
 
@@ -53,9 +55,9 @@ type profileStatePlanRequest struct {
 	Overrides          []core.ProfileStateValueOverride `json:"overrides"`
 }
 
-func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, reconcile *workflow.ProfileStateReconcileWorkflow, repository storage.ProfileStateProposalRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
-	if planner == nil || apply == nil || reconcile == nil || repository == nil {
-		return nil, errors.New("profile state API requires planner, apply and reconcile workflows and repository")
+func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.ProfileStateApplyWorkflow, reconcile *workflow.ProfileStateReconcileWorkflow, repository storage.ProfileStateProposalRepository, revisions storage.ProfileStateRevisionRepository, readers map[core.ProfileID]adapter.ProfileStateReader) (*ProfileStateAPI, error) {
+	if planner == nil || apply == nil || reconcile == nil || repository == nil || revisions == nil {
+		return nil, errors.New("profile state API requires planner, apply and reconcile workflows, repository and revisions")
 	}
 	copiedReaders := make(map[core.ProfileID]adapter.ProfileStateReader, len(readers))
 	for profileID, reader := range readers {
@@ -64,7 +66,7 @@ func NewProfileStateAPI(planner *workflow.ProfileStatePlanner, apply *workflow.P
 		}
 		copiedReaders[profileID] = reader
 	}
-	return &ProfileStateAPI{planner: planner, apply: apply, reconcile: reconcile, repository: repository, readers: copiedReaders}, nil
+	return &ProfileStateAPI{planner: planner, apply: apply, reconcile: reconcile, repository: repository, revisions: revisions, readers: copiedReaders}, nil
 }
 
 func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
@@ -79,6 +81,7 @@ func (api *ProfileStateAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/profile-state/bootstrap/plans", api.planBootstrap)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals", api.listProposals)
 	mux.HandleFunc("GET /api/v1/profile-state/proposals/{proposal_id}", api.getProposal)
+	mux.HandleFunc("GET /api/v1/profile-state/revisions", api.listRevisions)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/apply", api.applyProposal)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/retry", api.retryProposal)
 	mux.HandleFunc("POST /api/v1/profile-state/proposals/{proposal_id}/dismiss", api.dismissProposal)
@@ -359,6 +362,34 @@ func (api *ProfileStateAPI) getProposal(response http.ResponseWriter, request *h
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, proposal)
+}
+
+const (
+	profileStateRevisionDefaultLimit = 50
+	profileStateRevisionMaximumLimit = 200
+)
+
+func (api *ProfileStateAPI) listRevisions(response http.ResponseWriter, request *http.Request) {
+	filter := storage.ProfileStateRevisionFilter{
+		ResourceTag: strings.TrimSpace(request.URL.Query().Get("resource_tag")),
+		ProfileID:   core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Limit:       profileStateRevisionDefaultLimit,
+	}
+	if raw := strings.TrimSpace(request.URL.Query().Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > profileStateRevisionMaximumLimit {
+			writeProblem(response, http.StatusBadRequest, "profile state revision limit must be between 1 and 200")
+			return
+		}
+		filter.Limit = limit
+	}
+	revisions, err := api.revisions.ListProfileStateRevisions(request.Context(), filter)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, listResponse[core.ProfileStateRevision]{Items: revisions})
 }
 
 func emptyRequestBody(response http.ResponseWriter, request *http.Request) bool {

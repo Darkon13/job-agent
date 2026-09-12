@@ -8,6 +8,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	"github.com/Darkon13/job-agent/storage/memory"
 )
 
@@ -49,12 +50,12 @@ func TestProfileStateApplyHandlerLoadsDesiredSnapshotOutsideTask(t *testing.T) {
 	if err := registry.Register("primary", writer); err != nil {
 		t.Fatalf("register writer: %v", err)
 	}
-	handler, err := NewProfileStateApplyHandler(repository, registry)
+	handler, err := NewProfileStateApplyHandler(repository, repository, registry, fixedClock{now: now})
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
 	payload, _ := json.Marshal(core.ProfileStateApplyPayload{ProposalID: proposal.ID})
-	task := core.Task{Type: core.TaskProfileStateApply, ProfileID: "primary", Payload: payload}
+	task := core.Task{Type: core.TaskProfileStateApply, ProfileID: "primary", Source: "test", Payload: payload}
 	if err := handler.Handle(context.Background(), task); err != nil {
 		t.Fatalf("handle apply: %v", err)
 	}
@@ -63,6 +64,13 @@ func TestProfileStateApplyHandlerLoadsDesiredSnapshotOutsideTask(t *testing.T) {
 	}
 	if string(task.Payload) != `{"proposal_id":"proposal-1"}` {
 		t.Fatalf("task leaked desired snapshot: %s", task.Payload)
+	}
+	revisions, err := repository.ListProfileStateRevisions(context.Background(), storage.ProfileStateRevisionFilter{})
+	if err != nil || len(revisions) != 1 {
+		t.Fatalf("revisions = %#v err=%v", revisions, err)
+	}
+	if revisions[0].ProposalID != proposal.ID || revisions[0].Source != "test" || !revisions[0].AppliedAt.Equal(now) {
+		t.Fatalf("revision = %#v", revisions[0])
 	}
 }
 
@@ -76,7 +84,7 @@ func TestProfileStateApplyHandlerRejectsUnverifiedWriterResult(t *testing.T) {
 	writer := &fakeProfileStateWriter{result: adapter.ProfileStateApplyResult{Observation: before}}
 	registry := NewProfileStateWriterRegistry()
 	_ = registry.Register("primary", writer)
-	handler, _ := NewProfileStateApplyHandler(repository, registry)
+	handler, _ := NewProfileStateApplyHandler(repository, repository, registry, fixedClock{now: now})
 	payload, _ := json.Marshal(core.ProfileStateApplyPayload{ProposalID: proposal.ID})
 	err := handler.Handle(context.Background(), core.Task{Type: core.TaskProfileStateApply, ProfileID: "primary", Payload: payload})
 	if !core.ErrorIsCategory(err, core.ErrorAmbiguousResult) {

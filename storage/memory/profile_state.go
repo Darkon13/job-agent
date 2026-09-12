@@ -94,3 +94,62 @@ func cloneProfileStateProposal(proposal core.ProfileStateProposal) core.ProfileS
 	proposal.Changes = slices.Clone(proposal.Changes)
 	return proposal
 }
+
+func (repository *Repository) CreateProfileStateRevision(ctx context.Context, candidate core.ProfileStateRevision) (core.ProfileStateRevision, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ProfileStateRevision{}, false, err
+	}
+	if err := candidate.Validate(); err != nil {
+		return core.ProfileStateRevision{}, false, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if stored, exists := repository.profileStateRevisions[candidate.ProposalID]; exists {
+		if !sameProfileStateRevisionInputs(stored, candidate) {
+			return core.ProfileStateRevision{}, false, errors.New("profile state revision conflicts with existing contents")
+		}
+		return cloneProfileStateRevision(stored), false, nil
+	}
+	repository.profileStateRevisions[candidate.ProposalID] = cloneProfileStateRevision(candidate)
+	return cloneProfileStateRevision(candidate), true, nil
+}
+
+func (repository *Repository) ListProfileStateRevisions(ctx context.Context, filter storage.ProfileStateRevisionFilter) ([]core.ProfileStateRevision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.ProfileStateRevision, 0)
+	for _, revision := range repository.profileStateRevisions {
+		if filter.ResourceTag != "" && revision.ResourceTag != filter.ResourceTag ||
+			filter.ProfileID != "" && revision.ProfileID != filter.ProfileID {
+			continue
+		}
+		result = append(result, cloneProfileStateRevision(revision))
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].AppliedAt.Equal(result[j].AppliedAt) {
+			return result[i].AppliedAt.After(result[j].AppliedAt)
+		}
+		return result[i].ProposalID < result[j].ProposalID
+	})
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
+	}
+	return result, nil
+}
+
+// sameProfileStateRevisionInputs treats the applied time as non-conflicting
+// metadata: a retried recording keeps the first confirmed timestamp.
+func sameProfileStateRevisionInputs(left, right core.ProfileStateRevision) bool {
+	return left.ResourceTag == right.ResourceTag && left.ProfileID == right.ProfileID &&
+		left.ManifestDigest == right.ManifestDigest && left.ObservedDigest == right.ObservedDigest &&
+		left.DesiredDigest == right.DesiredDigest && left.RemoteRevision == right.RemoteRevision &&
+		left.Source == right.Source && slices.Equal(left.Changes, right.Changes)
+}
+
+func cloneProfileStateRevision(revision core.ProfileStateRevision) core.ProfileStateRevision {
+	revision.Changes = slices.Clone(revision.Changes)
+	return revision
+}

@@ -133,11 +133,15 @@
       `POST /profiles/{profile}/resumes/{resume}/update` с Idempotency-Key,
       main-проводка и плановый job action `resume.update` с optional publish:
       approval не требуется, задача ждёт `Retry-After`/`next_publish_at`.
-      Остались dashboard-редактор и история ревизий.
+      История ревизий готова (см. ниже); остаётся dashboard-редактор.
 - [ ] Publish после update и read-back; `bootstrap.when: missing_resume`.
 - [x] Алиасы (`resume_aliases`, резолв в `profile.resume` и job actions) и
       каталог targets (`GET /api/v1/profiles/{profile}/resumes`).
-- [ ] Dashboard-редактор резюме и история ревизий.
+- [x] История ревизий: подтверждённый apply пишет durable redacted revision
+      (before/after digests, paths, source, applied_at), API
+      `GET /api/v1/profile-state/revisions`, панель в dashboard.
+- [ ] Dashboard-редактор резюме: поля сверх объявленного `about` — по мере
+      подтверждения live HH-схемы.
 - [ ] DoD: создание резюме из bootstrap-файла и безопасный update с publish.
 
 ## M5. Hardening для v1.0.0

@@ -264,3 +264,44 @@ func TestProfileStateProposalClassifiesPartialApplyAndConflict(t *testing.T) {
 		t.Fatalf("unchanged field conflict error = %v", err)
 	}
 }
+
+func TestProfileStateRevisionRequiresAppliedProposal(t *testing.T) {
+	now := time.Now().UTC()
+	resource, err := NewProfileStateResource("resource", "primary", ProfileStateOwnershipDeclaredFields, json.RawMessage(`{"resumes":{"one":{"about":"new"}}}`))
+	if err != nil {
+		t.Fatalf("new resource: %v", err)
+	}
+	before, err := NewProfileStateObservation("primary", json.RawMessage(`{"resumes":{"one":{"about":"old"}}}`), "", now)
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	proposal, err := NewProfileStateProposal("proposal", resource, before, now)
+	if err != nil {
+		t.Fatalf("new proposal: %v", err)
+	}
+	revision, err := NewProfileStateRevision(proposal, "cron:refresh-about", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("new revision: %v", err)
+	}
+	if revision.ProposalID != proposal.ID || revision.Source != "cron:refresh-about" ||
+		len(revision.Changes) != 1 || revision.Changes[0].Path != "/resumes/one/about" {
+		t.Fatalf("revision = %#v", revision)
+	}
+	if _, err := NewProfileStateRevision(proposal, "  ", now); err == nil {
+		t.Fatal("expected empty source to fail")
+	}
+	if _, err := NewProfileStateRevision(proposal, "cron", time.Time{}); err == nil {
+		t.Fatal("expected zero applied time to fail")
+	}
+	same, err := NewProfileStateObservation("primary", resource.State, "", now)
+	if err != nil {
+		t.Fatalf("new same observation: %v", err)
+	}
+	noChanges, err := NewProfileStateProposal("proposal-2", resource, same, now)
+	if err != nil {
+		t.Fatalf("new no-changes proposal: %v", err)
+	}
+	if _, err := NewProfileStateRevision(noChanges, "cron", now); err == nil {
+		t.Fatal("expected a no-changes proposal to be rejected")
+	}
+}

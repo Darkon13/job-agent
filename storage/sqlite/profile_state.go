@@ -130,3 +130,109 @@ func cloneSQLiteProfileStateProposal(proposal core.ProfileStateProposal) core.Pr
 	proposal.Changes = slices.Clone(proposal.Changes)
 	return proposal
 }
+
+const profileStateRevisionColumns = `proposal_id, resource_tag, profile_id, manifest_digest,
+	observed_digest, desired_digest, remote_revision, changes, source, applied_at`
+
+func (store *Store) CreateProfileStateRevision(ctx context.Context, candidate core.ProfileStateRevision) (core.ProfileStateRevision, bool, error) {
+	if err := candidate.Validate(); err != nil {
+		return core.ProfileStateRevision{}, false, err
+	}
+	changes, err := json.Marshal(candidate.Changes)
+	if err != nil {
+		return core.ProfileStateRevision{}, false, fmt.Errorf("encode profile state revision changes: %w", err)
+	}
+	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO profile_state_revisions (`+profileStateRevisionColumns+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		candidate.ProposalID, candidate.ResourceTag, candidate.ProfileID, candidate.ManifestDigest,
+		candidate.ObservedDigest, candidate.DesiredDigest, candidate.RemoteRevision, changes,
+		candidate.Source, candidate.AppliedAt.UnixNano())
+	if err != nil {
+		return core.ProfileStateRevision{}, false, fmt.Errorf("insert profile state revision %s: %w", candidate.ProposalID, err)
+	}
+	created, err := oneRowAffected(result)
+	if err != nil {
+		return core.ProfileStateRevision{}, false, err
+	}
+	if created {
+		return cloneSQLiteProfileStateRevision(candidate), true, nil
+	}
+	stored, err := store.profileStateRevision(ctx, candidate.ProposalID)
+	if err != nil {
+		return core.ProfileStateRevision{}, false, fmt.Errorf("load existing profile state revision: %w", err)
+	}
+	if !sameSQLiteProfileStateRevisionInputs(stored, candidate) {
+		return core.ProfileStateRevision{}, false, errors.New("profile state revision conflicts with existing contents")
+	}
+	return stored, false, nil
+}
+
+func (store *Store) profileStateRevision(ctx context.Context, proposalID core.ProfileStateProposalID) (core.ProfileStateRevision, error) {
+	return scanProfileStateRevision(store.db.QueryRowContext(ctx,
+		`SELECT `+profileStateRevisionColumns+` FROM profile_state_revisions WHERE proposal_id = ?`, proposalID))
+}
+
+func (store *Store) ListProfileStateRevisions(ctx context.Context, filter storage.ProfileStateRevisionFilter) ([]core.ProfileStateRevision, error) {
+	query := `SELECT ` + profileStateRevisionColumns + `
+		FROM profile_state_revisions
+		WHERE (? = '' OR resource_tag = ?)
+		  AND (? = '' OR profile_id = ?)
+		ORDER BY applied_at DESC, proposal_id`
+	args := []any{filter.ResourceTag, filter.ResourceTag, filter.ProfileID, filter.ProfileID}
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := store.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list profile state revisions: %w", err)
+	}
+	defer rows.Close()
+	revisions := make([]core.ProfileStateRevision, 0)
+	for rows.Next() {
+		revision, err := scanProfileStateRevision(rows)
+		if err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, revision)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate profile state revisions: %w", err)
+	}
+	return revisions, nil
+}
+
+func scanProfileStateRevision(row rowScanner) (core.ProfileStateRevision, error) {
+	var revision core.ProfileStateRevision
+	var changes []byte
+	var appliedAt int64
+	if err := row.Scan(
+		&revision.ProposalID, &revision.ResourceTag, &revision.ProfileID, &revision.ManifestDigest,
+		&revision.ObservedDigest, &revision.DesiredDigest, &revision.RemoteRevision, &changes,
+		&revision.Source, &appliedAt,
+	); err != nil {
+		return core.ProfileStateRevision{}, err
+	}
+	if err := json.Unmarshal(changes, &revision.Changes); err != nil {
+		return core.ProfileStateRevision{}, fmt.Errorf("decode profile state revision changes: %w", err)
+	}
+	revision.AppliedAt = time.Unix(0, appliedAt).UTC()
+	if err := revision.Validate(); err != nil {
+		return core.ProfileStateRevision{}, fmt.Errorf("invalid stored profile state revision %s: %w", revision.ProposalID, err)
+	}
+	return revision, nil
+}
+
+// sameSQLiteProfileStateRevisionInputs treats the applied time as
+// non-conflicting metadata: a retried recording keeps the first timestamp.
+func sameSQLiteProfileStateRevisionInputs(left, right core.ProfileStateRevision) bool {
+	return left.ResourceTag == right.ResourceTag && left.ProfileID == right.ProfileID &&
+		left.ManifestDigest == right.ManifestDigest && left.ObservedDigest == right.ObservedDigest &&
+		left.DesiredDigest == right.DesiredDigest && left.RemoteRevision == right.RemoteRevision &&
+		left.Source == right.Source && slices.Equal(left.Changes, right.Changes)
+}
+
+func cloneSQLiteProfileStateRevision(revision core.ProfileStateRevision) core.ProfileStateRevision {
+	revision.Changes = slices.Clone(revision.Changes)
+	return revision
+}

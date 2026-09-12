@@ -238,6 +238,11 @@ sing-box final    -> Job Agent explicit fallback action
 - явный apply endpoint ставит durable `profile_state.apply` task, содержащий
   только `proposal_id`; worker получает неизменяемый desired snapshot из
   SQLite;
+- подтверждённый apply пишет durable redacted revision (миграция 29):
+  before/after digests, список изменённых JSON Pointer paths, source и
+  applied_at без значений полей; `GET /api/v1/profile-state/revisions`
+  отдаёт историю с фильтрами, а dashboard показывает её по ресурсу. Ревизия
+  идемпотентна по proposal, повторная запись сохраняет первый applied_at;
 - HH browser writer поддерживает `about`, проверяет все declared paths до POST
   и подтверждает результат повторным GET. Состояние, не совпадающее ни с
   before, ни с after digest, завершается конфликтом;

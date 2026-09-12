@@ -8,6 +8,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 )
 
 // ResumeUpdatePlanner reads the declared resource and builds an immutable
@@ -25,13 +26,15 @@ type ResumeUpdateHandler struct {
 	readers    map[core.ProfileID]adapter.ProfileStateReader
 	writers    *ProfileStateWriterRegistry
 	publishers *ResumePublisherRegistry
+	revisions  storage.ProfileStateRevisionRepository
+	clock      Clock
 }
 
-func NewResumeUpdateHandler(planner ResumeUpdatePlanner, readers map[core.ProfileID]adapter.ProfileStateReader, writers *ProfileStateWriterRegistry, publishers *ResumePublisherRegistry) (*ResumeUpdateHandler, error) {
-	if planner == nil || writers == nil || publishers == nil {
-		return nil, errors.New("resume update handler requires planner, writers and publishers")
+func NewResumeUpdateHandler(planner ResumeUpdatePlanner, readers map[core.ProfileID]adapter.ProfileStateReader, writers *ProfileStateWriterRegistry, publishers *ResumePublisherRegistry, revisions storage.ProfileStateRevisionRepository, clock Clock) (*ResumeUpdateHandler, error) {
+	if planner == nil || writers == nil || publishers == nil || revisions == nil || clock == nil {
+		return nil, errors.New("resume update handler requires planner, writers, publishers, revisions and clock")
 	}
-	return &ResumeUpdateHandler{planner: planner, readers: readers, writers: writers, publishers: publishers}, nil
+	return &ResumeUpdateHandler{planner: planner, readers: readers, writers: writers, publishers: publishers, revisions: revisions, clock: clock}, nil
 }
 
 func (handler *ResumeUpdateHandler) Handle(ctx context.Context, task core.Task) error {
@@ -69,6 +72,13 @@ func (handler *ResumeUpdateHandler) Handle(ctx context.Context, task core.Task) 
 			return err
 		}
 		if _, err := writer.ApplyProfileState(ctx, proposal); err != nil {
+			return err
+		}
+		revision, err := core.NewProfileStateRevision(proposal, task.Source, handler.clock.Now())
+		if err != nil {
+			return err
+		}
+		if _, _, err := handler.revisions.CreateProfileStateRevision(ctx, revision); err != nil {
 			return err
 		}
 	}

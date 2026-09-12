@@ -484,6 +484,72 @@ func (proposal ProfileStateProposal) ChangesToApply(observation ProfileStateObse
 	return pending, nil
 }
 
+// ProfileStateRevision is the durable, redacted record that one immutable
+// proposal was confirmed against the platform. It stores before/after digests
+// and changed JSON Pointers, never desired or observed values.
+type ProfileStateRevision struct {
+	ProposalID     ProfileStateProposalID `json:"proposal_id"`
+	ResourceTag    string                 `json:"resource_tag"`
+	ProfileID      ProfileID              `json:"profile_id"`
+	ManifestDigest string                 `json:"manifest_digest"`
+	ObservedDigest string                 `json:"observed_digest"`
+	DesiredDigest  string                 `json:"desired_digest"`
+	RemoteRevision string                 `json:"remote_revision,omitempty"`
+	Changes        []ProfileStateChange   `json:"changes"`
+	Source         string                 `json:"source"`
+	AppliedAt      time.Time              `json:"applied_at"`
+}
+
+func NewProfileStateRevision(proposal ProfileStateProposal, source string, appliedAt time.Time) (ProfileStateRevision, error) {
+	if err := proposal.Validate(); err != nil {
+		return ProfileStateRevision{}, fmt.Errorf("profile state revision proposal: %w", err)
+	}
+	if proposal.Status != ProfileStateProposalPlanned || len(proposal.Changes) == 0 {
+		return ProfileStateRevision{}, errors.New("profile state revision requires a proposal with changes")
+	}
+	source = strings.TrimSpace(source)
+	if source == "" || appliedAt.IsZero() {
+		return ProfileStateRevision{}, errors.New("profile state revision requires source and applied time")
+	}
+	revision := ProfileStateRevision{
+		ProposalID: proposal.ID, ResourceTag: proposal.ResourceTag, ProfileID: proposal.ProfileID,
+		ManifestDigest: proposal.ManifestDigest, ObservedDigest: proposal.ObservedDigest,
+		DesiredDigest: proposal.DesiredDigest, RemoteRevision: proposal.RemoteRevision,
+		Changes: append([]ProfileStateChange(nil), proposal.Changes...),
+		Source:  source, AppliedAt: appliedAt.UTC(),
+	}
+	if err := revision.Validate(); err != nil {
+		return ProfileStateRevision{}, err
+	}
+	return revision, nil
+}
+
+func (revision ProfileStateRevision) Validate() error {
+	if revision.ProposalID == "" || strings.TrimSpace(revision.ResourceTag) == "" || revision.ProfileID == "" {
+		return errors.New("profile state revision requires proposal, resource tag and profile")
+	}
+	if revision.ManifestDigest == "" || revision.ObservedDigest == "" || revision.DesiredDigest == "" {
+		return errors.New("profile state revision requires manifest, observed and desired digests")
+	}
+	if strings.TrimSpace(revision.Source) == "" || revision.AppliedAt.IsZero() {
+		return errors.New("profile state revision requires source and applied time")
+	}
+	if len(revision.Changes) == 0 || len(revision.Changes) > maximumProfileStateChanges {
+		return errors.New("profile state revision requires a bounded non-empty change set")
+	}
+	previous := ""
+	for _, change := range revision.Changes {
+		if change.Path == "" || change.Path <= previous || change.Operation != "set" && change.Operation != "clear" || change.AfterDigest == "" {
+			return errors.New("profile state revision contains invalid or unsorted changes")
+		}
+		if change.BeforePresent != (change.BeforeDigest != "") {
+			return errors.New("profile state revision change presence does not match before digest")
+		}
+		previous = change.Path
+	}
+	return nil
+}
+
 func diffProfileState(observedRaw, desiredRaw json.RawMessage) ([]ProfileStateChange, error) {
 	observed, err := decodeJSONValue(observedRaw)
 	if err != nil {

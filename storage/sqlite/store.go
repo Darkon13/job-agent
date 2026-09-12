@@ -499,6 +499,7 @@ func (store *Store) Stats(ctx context.Context) (Stats, error) {
 		{"conversations", &stats.Conversations}, {"conversation_messages", &stats.Messages},
 		{"conversation_follow_ups", &stats.FollowUps},
 		{"profile_state_proposals", &stats.ProfileStateProposals},
+		{"profile_state_revisions", &stats.ProfileStateRevisions},
 		{"profile_activity", &stats.ProfileActivity},
 		{"profile_activity_snapshots", &stats.ActivitySnapshots},
 	} {

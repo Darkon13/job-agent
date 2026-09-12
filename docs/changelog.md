@@ -124,6 +124,10 @@
   подтверждения; при platform cooldown задача ждёт `Retry-After`, а scheduler
   не создаёт дубликат активного запуска. Worker `resume.update` регистрируется
   при наличии writer, без publisher допускается только apply.
+- История ревизий profile state (миграция 29): каждый подтверждённый apply
+  записывает redacted revision (before/after digests, изменённые paths,
+  `source`, `applied_at`); API `GET /api/v1/profile-state/revisions` с
+  фильтрами и панель «История ревизий» в dashboard.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

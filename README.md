@@ -216,11 +216,17 @@ Read/plan API не принимает observation от клиента:
   текущего и желаемого текста;
 - `POST /api/v1/profile-state/proposals/{id}/apply` явно ставит immutable plan
   в очередь. Task содержит только `proposal_id`, точный snapshot загружается
-  worker'ом из SQLite.
+  worker'ом из SQLite;
+- `GET /api/v1/profile-state/revisions` возвращает историю подтверждённых apply:
+  before/after digests, изменённые JSON Pointer paths, `source` и `applied_at`,
+  без значений полей. Фильтры `resource_tag`, `profile_id` и `limit`
+  (1–200, по умолчанию 50).
 
 Dashboard показывает ресурсы, объявленные пути и redacted diff и разделяет
 кнопки «Построить план» и «Применить». Команда «Сверить и применить» ставит
-асинхронный reconcile, не выполняя HH-запрос внутри HTTP request. Сейчас HH
+асинхронный reconcile, не выполняя HH-запрос внутри HTTP request. Кнопка
+«История ревизий» загружает redacted-историю подтверждённых apply по ресурсу.
+Сейчас HH
 Browser writer через текущую cookie-сессию поддерживает allowlisted поля
 web-редактора: личные данные, позицию, опыт, key skills, «О себе», форматы и
 образование. OAuth writer дополнительно поддерживает native `resume_profile`

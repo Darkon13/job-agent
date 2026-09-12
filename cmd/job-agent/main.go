@@ -467,7 +467,7 @@ func main() {
 		log.Fatalf("create profile state reconcile workflow: %v", err)
 	}
 	profileStateAPI, err := httpapi.NewProfileStateAPI(
-		profileStatePlanner, profileStateApplyWorkflow, profileStateReconcileWorkflow, store, profileStateReaders,
+		profileStatePlanner, profileStateApplyWorkflow, profileStateReconcileWorkflow, store, store, profileStateReaders,
 	)
 	if err != nil {
 		log.Fatalf("create profile state API: %v", err)
@@ -508,7 +508,7 @@ func main() {
 		workers = append(workers, profileStateReconcileWorker)
 	}
 	if profileStateWriters.Count() > 0 {
-		profileStateHandler, err := taskworker.NewProfileStateApplyHandler(store, profileStateWriters)
+		profileStateHandler, err := taskworker.NewProfileStateApplyHandler(store, store, profileStateWriters, taskworker.SystemClock{})
 		if err != nil {
 			log.Fatalf("create profile state apply handler: %v", err)
 		}
@@ -661,7 +661,7 @@ func main() {
 	}
 	workers = append(workers, reviewAnswerWorker)
 	if profileStateWriters.Count() > 0 {
-		resumeUpdateHandler, err := taskworker.NewResumeUpdateHandler(profileStatePlanner, profileStateReaders, profileStateWriters, resumePublishers)
+		resumeUpdateHandler, err := taskworker.NewResumeUpdateHandler(profileStatePlanner, profileStateReaders, profileStateWriters, resumePublishers, store, taskworker.SystemClock{})
 		if err != nil {
 			log.Fatalf("create resume update handler: %v", err)
 		}

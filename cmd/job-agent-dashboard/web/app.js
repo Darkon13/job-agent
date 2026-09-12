@@ -3,7 +3,7 @@ const state = {
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false,
-  profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
+  profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
@@ -349,10 +349,25 @@ function renderProfileResources() {
       for (const change of plan.changes || []) result.append(text("code", `${change.operation} ${change.path}`));
       card.append(result);
     }
+    const revisions = state.profileRevisions.get(resource.tag);
+    if (revisions) {
+      const history = document.createElement("div"); history.className = "revision-history";
+      history.append(text("strong", `История ревизий: ${revisions.length}`));
+      if (!revisions.length) history.append(text("p", "Применённых ревизий пока нет.", "muted"));
+      for (const revision of revisions) {
+        const item = document.createElement("div"); item.className = "revision-item";
+        item.append(text("span", `${formatDate(revision.applied_at)} · ${revision.source}`, "muted"));
+        for (const change of revision.changes || []) item.append(text("code", `${change.operation} ${change.path}`));
+        history.append(item);
+      }
+      card.append(history);
+    }
     const actions = document.createElement("div"); actions.className = "resource-actions";
     const status = text("span", state.profileMessages.get(resource.tag) || "", "muted");
     const planButton = text("button", "Построить план"); planButton.type = "button"; planButton.disabled = !resource.readable || state.profileBusy.has(resource.tag);
     planButton.addEventListener("click", () => planProfileState(resource, planButton)); actions.append(status, planButton);
+    const historyButton = text("button", revisions ? "Обновить историю" : "История ревизий", "secondary"); historyButton.type = "button"; historyButton.disabled = state.profileBusy.has(resource.tag);
+    historyButton.addEventListener("click", () => loadProfileRevisions(resource)); actions.append(historyButton);
     if ((resource.editable_paths || []).length) {
       const editButton = text("button", editor ? "Редактор открыт" : "Изменить desired", "secondary"); editButton.type = "button"; editButton.disabled = !resource.readable || Boolean(editor) || state.profileBusy.has(resource.tag);
       editButton.addEventListener("click", () => loadProfileEditor(resource)); actions.append(editButton);
@@ -397,6 +412,17 @@ async function loadProfileEditor(resource) {
     const editor = await request(`/api/v1/profile-state/resources/${encodeURIComponent(resource.tag)}/editor`);
     editor.fields = (editor.fields || []).map((field) => ({ ...field, draftValue: field.value ?? "" }));
     state.profileEditors.set(resource.tag, editor); state.profileMessages.set(resource.tag, "Редактируется одноразовый override");
+  } catch (error) { state.profileMessages.set(resource.tag, error.message); }
+  state.profileBusy.delete(resource.tag); renderProfileResources();
+}
+
+async function loadProfileRevisions(resource) {
+  state.profileBusy.add(resource.tag); state.profileMessages.set(resource.tag, "Загружаю историю ревизий…"); renderProfileResources();
+  try {
+    const result = await request(`/api/v1/profile-state/revisions?resource_tag=${encodeURIComponent(resource.tag)}&limit=20`);
+    const revisions = result.items || [];
+    state.profileRevisions.set(resource.tag, revisions);
+    state.profileMessages.set(resource.tag, revisions.length ? `Ревизий: ${revisions.length}` : "Применённых ревизий пока нет");
   } catch (error) { state.profileMessages.set(resource.tag, error.message); }
   state.profileBusy.delete(resource.tag); renderProfileResources();
 }
