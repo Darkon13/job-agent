@@ -12,9 +12,10 @@
   что JSON mode не проверяет форму. Без схемы DeepSeek возвращал свои имена
   полей, а `deepseek-flash` тратил весь `max_tokens` на reasoning.
 
-- Tailoring навыков умеет удалять нерелевантные теги: `allow_removals: true`
-  разрешает модели решение `remove` с evidence, validator запрещает удаление
-  несуществующих и всех навыков, детерминированный fallback не удаляет ничего.
+- Tailoring навыков умеет удалять теги только под добавления: `allow_removals`
+  разрешает модели решение `remove` с evidence, validator применяет ровно
+  столько удалений, сколько нужно для лимита после добавлений, игнорирует
+  лишние и запрещает удаление несуществующих и всех навыков.
 
 - Второй тип model provider — `openai_chat` (OpenAI-совместимый chat
   completions, по умолчанию DeepSeek): structured output через JSON mode и

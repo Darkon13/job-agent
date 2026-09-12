@@ -218,7 +218,7 @@ plan → apply → read-back и, если нужно, публикацию. Зн
         "skills": {
           "enabled": true,                // включить подбор навыков
           "maximum": 8,                   // сколько навыков максимум
-          "allow_removals": true,         // разрешить модели убирать нерелевантные
+          "allow_removals": true,         // убирать столько, сколько добавляешь
           "model": {                      // необязательно: выбор через ИИ
             "provider": "openai",
             "prompt_version": "v1",
