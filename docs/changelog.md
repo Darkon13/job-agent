@@ -136,6 +136,10 @@
   resume-scoped leaves со значением text/`null`, а не только `about`;
   массивы, объекты, числа и boolean остаются вне формы, writer
   по-прежнему проверяет allowlist и подтверждает read-back.
+- Контракт model fallback для неизвестных вопросов тестов и опросников:
+  цепочка known-answer → model (validator) → manual, границы
+  contextual/code, provenance и режимы `auto_submit`/`review_only`
+  (`docs/next-answer-model-fallback.md`); реализация не начата.
 
 Это development-версия, не production-релиз `v1`. Миграции и GC на рабочей базе
 в рамках разработки не запускались; режим отправки откликов не менялся.

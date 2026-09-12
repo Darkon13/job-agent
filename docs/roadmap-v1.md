@@ -95,7 +95,9 @@
       доступен через `POST /profiles/{profile}/qualifications/{offering}/start`
       и CLI `job-agent qualification catalog|sync|start`. Осталось: live
       assessment transport (start/current/submit/result) и model fallback для
-      неизвестных вопросов (контракт prompt/validator ещё не зафиксирован).
+      неизвестных вопросов; контракт зафиксирован в
+      `docs/next-answer-model-fallback.md`, реализация — после решения по
+      `auto_submit`.
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через
