@@ -166,10 +166,14 @@ func compileApplicationModel(config *ApplicationModelConfig) (*compiledApplicati
 func (model *compiledApplicationModel) generate(ctx context.Context, application core.Application, vacancy core.Vacancy, resume *ApplicationResumeContext) (ApplicationModelResponse, string, error) {
 	modelCtx, cancel := context.WithTimeout(ctx, model.timeout)
 	defer cancel()
+	contextData, placeholders, err := anonymizeApplicationTemplateData(newApplicationTemplateData(application, vacancy, resume))
+	if err != nil {
+		return ApplicationModelResponse{}, "", &ModelError{Kind: ModelFailurePermanent, Operation: "applications.model", Message: "anonymize model context", Cause: err}
+	}
 	request := ApplicationModelRequest{
 		Instruction:   applicationModelInstruction + "\n\n" + model.instruction,
 		PromptVersion: model.promptVersion,
-		Context:       newApplicationTemplateData(application, vacancy, resume),
+		Context:       contextData,
 	}
 	encodedRequest, err := json.Marshal(request)
 	if err != nil {
@@ -187,12 +191,17 @@ func (model *compiledApplicationModel) generate(ctx context.Context, application
 	if !utf8.ValidString(response.Text) || utf8.RuneCountInString(response.Text) > maximumApplicationMessageRunes {
 		return ApplicationModelResponse{}, inputDigest, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: "model returned invalid or oversized text"}
 	}
-	if err := validateApplicationModelText(response.Text, request.Context); err != nil {
+	if err := validateApplicationModelText(response.Text, request.Context, placeholders); err != nil {
 		return ApplicationModelResponse{}, inputDigest, err
 	}
 	if err := validateApplicationModelEvidence(response.Text, response.Evidence, request.Context); err != nil {
 		return ApplicationModelResponse{}, inputDigest, err
 	}
+	substituted, err := substituteApplicationPlaceholders(response.Text, placeholders)
+	if err != nil {
+		return ApplicationModelResponse{}, inputDigest, &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: err.Error()}
+	}
+	response.Text = substituted
 	response.EvidenceDigest, err = applicationModelEvidenceDigest(response.Evidence)
 	if err != nil {
 		return ApplicationModelResponse{}, inputDigest, &ModelError{Kind: ModelFailurePermanent, Operation: "applications.model", Message: "encode model evidence", Cause: err}
@@ -388,12 +397,15 @@ func applicationModelEvidenceDigest(evidence []ApplicationModelEvidence) (string
 	return applicationBytesDigest(encoded), nil
 }
 
-func validateApplicationModelText(text string, data ApplicationTemplateData) error {
+func validateApplicationModelText(text string, data ApplicationTemplateData, placeholders map[string]string) error {
 	invalid := func(message string) error {
 		return &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: message}
 	}
 	if strings.Contains(text, "{{") || strings.Contains(text, "}}") {
 		return invalid("model returned an unresolved placeholder")
+	}
+	if undeclared := undeclaredApplicationPlaceholders(text, placeholders); len(undeclared) != 0 {
+		return invalid("model returned an undeclared placeholder " + undeclared[0])
 	}
 	if strings.Contains(text, "```") {
 		return invalid("model returned a fenced service response")
