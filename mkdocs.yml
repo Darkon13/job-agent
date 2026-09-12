@@ -45,6 +45,7 @@ nav:
       - Runbook: runbook.md
   - Справочник:
       - Конфигурация: reference/configuration.md
+      - Письма и пулы: reference/messages.md
       - Шпаргалки и рецепты: reference/recipes.md
   - Профиль и состояние:
       - Desired state: profile-desired-state-and-routing.md
