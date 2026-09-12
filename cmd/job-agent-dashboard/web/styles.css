@@ -109,6 +109,8 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .resource-actions .muted { margin-right: auto; overflow-wrap: anywhere; }
 .chat-layout { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); gap: 1rem; min-height: 520px; }
 .review-layout { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); gap: 1rem; min-height: 360px; }
+.review-layout.empty { grid-template-columns: 1fr; }
+.review-layout.empty .review-panel { display: none; }
 .review-list { overflow: auto; padding: .45rem; }
 .review-session { width: 100%; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; }
 .review-session:hover, .review-session.active { border-color: var(--line); background: var(--surface-2); filter: none; }

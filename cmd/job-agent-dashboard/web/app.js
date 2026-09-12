@@ -270,7 +270,7 @@ function renderActivityObservations(items = []) {
   const latest = [];
   const seen = new Set();
   for (const item of items) {
-    const key = `${item.platform}\u0000${item.profile_id}\u0000${item.resume_id}`;
+    const key = `${item.platform}\u0000${item.profile_id}`;
     if (seen.has(key)) continue;
     seen.add(key); latest.push(item);
   }
@@ -531,7 +531,13 @@ async function refreshReviewSessions() {
 }
 
 function renderReviewSessions() {
+  const layout = elements.reviewSessions.closest(".review-layout");
+  if (layout) layout.classList.toggle("empty", !state.reviewSessions.length);
   if (!state.reviewSessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
+  if (!state.reviewSelected || !state.reviewSessions.some((item) => item.id === state.reviewSelected.id)) {
+    selectReviewSession(state.reviewSessions[0]);
+    return;
+  }
   elements.reviewSessions.replaceChildren(...state.reviewSessions.map((session) => {
     const button = document.createElement("button"); button.type = "button";
     button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
@@ -788,6 +794,7 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
   let stream = null;
 
   const setState = (text) => { state.textContent = text; };
+  const valueRow = document.getElementById("auth-value-row");
 
   const renderSession = (session) => {
     sessionId = session.id;
@@ -804,8 +811,13 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
       captcha.removeAttribute("src");
     }
     const active = kindByStatus[session.status] !== undefined;
+    const finished = terminal.includes(session.status);
+    valueRow.hidden = !active;
     submitButton.disabled = !active;
     valueInput.disabled = !active;
+    cancelButton.hidden = finished || !active && !sessionId;
+    profileInput.disabled = !finished && Boolean(sessionId);
+    if (finished) sessionId = "";
   };
 
   const subscribe = (id) => {
