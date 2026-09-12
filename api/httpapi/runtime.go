@@ -29,11 +29,13 @@ type RuntimeReadRepository interface {
 
 type RuntimeAPI struct {
 	repository RuntimeReadRepository
+	profiles   []core.ProfileID
 	now        func() time.Time
 }
 
 type DashboardSummary struct {
 	GeneratedAt       time.Time                      `json:"generated_at"`
+	Profiles          []core.ProfileID               `json:"profiles,omitempty"`
 	Stats             storage.RuntimeStats           `json:"stats"`
 	Tasks             []storage.TaskCount            `json:"tasks"`
 	Applications      []storage.ApplicationCount     `json:"applications"`
@@ -105,11 +107,11 @@ type ApplicationTailoringSummary struct {
 	UpdatedAt        time.Time                         `json:"updated_at"`
 }
 
-func NewRuntimeAPI(repository RuntimeReadRepository) (*RuntimeAPI, error) {
+func NewRuntimeAPI(repository RuntimeReadRepository, profiles []core.ProfileID) (*RuntimeAPI, error) {
 	if repository == nil {
 		return nil, errors.New("runtime API requires repository")
 	}
-	return &RuntimeAPI{repository: repository, now: time.Now}, nil
+	return &RuntimeAPI{repository: repository, profiles: append([]core.ProfileID(nil), profiles...), now: time.Now}, nil
 }
 
 // Handler adds health and dashboard routes in front of the supplied product
@@ -219,6 +221,7 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, DashboardSummary{
 		GeneratedAt:       api.now().UTC(),
+		Profiles:          api.profiles,
 		Stats:             stats,
 		Tasks:             tasks,
 		Applications:      applications,

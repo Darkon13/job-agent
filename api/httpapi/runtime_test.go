@@ -165,7 +165,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		conversations: []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
 		tailoring:     &tailoring,
 	}
-	api, err := NewRuntimeAPI(repository)
+	api, err := NewRuntimeAPI(repository, nil)
 	if err != nil {
 		t.Fatalf("new runtime API: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 func intPointer(value int) *int { return &value }
 
 func TestRuntimeAPIReadinessDoesNotLeakStorageError(t *testing.T) {
-	api, err := NewRuntimeAPI(&runtimeRepository{err: errors.New("database /secret/path failed")})
+	api, err := NewRuntimeAPI(&runtimeRepository{err: errors.New("database /secret/path failed")}, nil)
 	if err != nil {
 		t.Fatalf("new runtime API: %v", err)
 	}

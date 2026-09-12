@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,15 +18,22 @@ import (
 // submits anything to the platform: it records the selection and the
 // review.answer worker continues the chain.
 type ReviewAPI struct {
-	reviews  storage.ReviewRepository
-	workflow *workflow.VacancyTestWorkflow
+	reviews   storage.ReviewRepository
+	workflow  *workflow.VacancyTestWorkflow
+	vacancies reviewVacancyRepository
 }
 
-func NewReviewAPI(reviews storage.ReviewRepository, workflow *workflow.VacancyTestWorkflow) (*ReviewAPI, error) {
+// reviewVacancyRepository resolves the vacancy a vacancy questionnaire belongs
+// to. Qualification sessions expose no vacancy and stay without one.
+type reviewVacancyRepository interface {
+	Vacancy(context.Context, core.VacancyKey) (core.Vacancy, error)
+}
+
+func NewReviewAPI(reviews storage.ReviewRepository, workflow *workflow.VacancyTestWorkflow, vacancies reviewVacancyRepository) (*ReviewAPI, error) {
 	if reviews == nil || workflow == nil {
 		return nil, errors.New("review API requires repository and workflow")
 	}
-	return &ReviewAPI{reviews: reviews, workflow: workflow}, nil
+	return &ReviewAPI{reviews: reviews, workflow: workflow, vacancies: vacancies}, nil
 }
 
 func (api *ReviewAPI) Handler(next http.Handler) http.Handler {
@@ -40,6 +48,13 @@ func (api *ReviewAPI) Handler(next http.Handler) http.Handler {
 	return mux
 }
 
+type reviewVacancyInfo struct {
+	ExternalID string `json:"external_id"`
+	Title      string `json:"title,omitempty"`
+	Employer   string `json:"employer,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
 type reviewSessionResponse struct {
 	ID               core.ReviewSessionID     `json:"id"`
 	TestDefinitionID core.TestDefinitionID    `json:"test_definition_id"`
@@ -51,6 +66,7 @@ type reviewSessionResponse struct {
 	UpdatedAt        time.Time                `json:"updated_at"`
 	Prompt           *core.ReviewPrompt       `json:"prompt,omitempty"`
 	Selections       []core.ReviewSelection   `json:"selections,omitempty"`
+	Vacancy          *reviewVacancyInfo       `json:"vacancy,omitempty"`
 }
 
 type reviewSessionListItem struct {
@@ -64,6 +80,28 @@ type reviewSessionListItem struct {
 	UpdatedAt        time.Time                `json:"updated_at"`
 	Question         string                   `json:"question,omitempty"`
 	QuestionKind     core.QuestionKind        `json:"question_kind,omitempty"`
+	Vacancy          *reviewVacancyInfo       `json:"vacancy,omitempty"`
+}
+
+// sessionVacancy attributes a vacancy questionnaire session to its vacancy.
+// The external id is still reported when the vacancy row is not (yet) stored.
+func (api *ReviewAPI) sessionVacancy(ctx context.Context, session core.ReviewSession) *reviewVacancyInfo {
+	if api.vacancies == nil {
+		return nil
+	}
+	externalID, ok := core.VacancyExternalIDFromTestDefinitionID(session.Platform, session.TestDefinitionID)
+	if !ok {
+		return nil
+	}
+	info := reviewVacancyInfo{ExternalID: externalID}
+	vacancy, err := api.vacancies.Vacancy(ctx, core.VacancyKey{Platform: session.Platform, ExternalID: externalID})
+	if err != nil {
+		return &info
+	}
+	info.Title = vacancy.Title
+	info.Employer = vacancy.Employer
+	info.URL = vacancy.URL
+	return &info
 }
 
 const (
@@ -101,6 +139,7 @@ func (api *ReviewAPI) listSessions(response http.ResponseWriter, request *http.R
 			ID: session.ID, TestDefinitionID: session.TestDefinitionID, Platform: session.Platform,
 			ProfileID: session.ProfileID, Status: session.Status, Revision: session.Revision,
 			CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
+			Vacancy: api.sessionVacancy(request.Context(), session),
 		}
 		if prompt, err := api.reviews.ReviewPrompt(request.Context(), reviewPromptID(session)); err == nil {
 			item.Question = prompt.Question.Text
@@ -132,6 +171,7 @@ func (api *ReviewAPI) getSession(response http.ResponseWriter, request *http.Req
 		ID: session.ID, TestDefinitionID: session.TestDefinitionID, Platform: session.Platform,
 		ProfileID: session.ProfileID, Status: session.Status, Revision: session.Revision,
 		CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
+		Vacancy: api.sessionVacancy(request.Context(), session),
 	}
 	if prompt, err := api.reviews.ReviewPrompt(request.Context(), reviewPromptID(session)); err == nil {
 		view.Prompt = &prompt

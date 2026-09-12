@@ -1,4 +1,6 @@
+function storedAccount() { try { return window.localStorage.getItem("job-agent-account") || ""; } catch { return ""; } }
 const state = {
+  account: storedAccount(),
   applicationOffset: 0, applicationTotal: 0, applicationGroups: {}, applicationRequest: 0, applicationLoading: false,
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
@@ -8,7 +10,7 @@ const state = {
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
-  "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form",
+  "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
   "review-state", "review-filter", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
@@ -132,7 +134,9 @@ async function retryApplication(item, button) {
   state.applicationActionBusy = false; renderApplicationObjects();
 }
 function applicationListURL() {
-  return "/api/v1/applications?" + new URLSearchParams({limit: "200", offset: String(state.applicationOffset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter});
+  const parameters = {limit: "200", offset: String(state.applicationOffset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter};
+  if (state.account) parameters.profile_id = state.account;
+  return "/api/v1/applications?" + new URLSearchParams(parameters);
 }
 async function refreshApplications() {
   const generation = ++state.applicationRequest;
@@ -211,6 +215,7 @@ function renderTasks(items = []) {
   }));
 }
 function renderJobs(items = []) {
+  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell); elements.jobs.replaceChildren(row); return; }
   elements.jobs.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -223,6 +228,7 @@ function renderJobs(items = []) {
   }));
 }
 function renderFailedTasks(items = []) {
+  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
   elements.failedTasks.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -250,6 +256,7 @@ function renderCampaigns(items = []) {
   }));
 }
 function renderActivity(items = []) {
+  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
   elements.activity.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -259,6 +266,7 @@ function renderActivity(items = []) {
 }
 function counter(value) { return value === null || value === undefined ? "—" : String(value); }
 function renderActivityObservations(items = []) {
+  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
   const latest = [];
   const seen = new Set();
   for (const item of items) {
@@ -284,6 +292,7 @@ function renderActivityObservations(items = []) {
 function visibleConversations(items = []) {
   const query = state.conversationQuery.trim().toLocaleLowerCase("ru");
   const filtered = items.filter((item) => {
+    if (state.account && item.profile_id !== state.account) return false;
     if (state.conversationFilter === "unread" && !item.unread_count) return false;
     if (state.conversationFilter && state.conversationFilter !== "unread" && item.status !== state.conversationFilter) return false;
     return !query || [item.vacancy_title, item.employer, item.profile_id, conversationStatusLabels[item.status]].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
@@ -484,12 +493,33 @@ async function reconcileProfileState(resource) {
   state.profileBusy.delete(resource.tag); renderProfileResources();
 }
 
+function renderAccountSwitcher(profiles = []) {
+  const values = new Set(profiles);
+  for (const item of state.summary?.conversations || []) values.add(item.profile_id);
+  for (const item of state.summary?.activity || []) values.add(item.profile_id);
+  for (const item of state.failedTasks || []) values.add(item.profile_id);
+  for (const item of state.jobs || []) values.add(item.profile_id);
+  for (const item of state.reviewSessions || []) values.add(item.profile_id);
+  for (const item of state.applicationObjects || []) values.add(item.profile_id);
+  values.delete(""); values.delete(undefined); values.delete(null);
+  const options = [...values].sort();
+  if (state.account && !options.includes(state.account)) state.account = "";
+  const select = elements.accountSwitcher;
+  const all = document.createElement("option"); all.value = ""; all.textContent = "Все аккаунты";
+  select.replaceChildren(all, ...options.map((value) => {
+    const option = document.createElement("option"); option.value = value; option.textContent = value; return option;
+  }));
+  select.value = state.account;
+}
+
 function reviewStatusLabel(value) { return reviewStatusLabels[value] || value || "—"; }
 
 async function refreshReviewSessions() {
   try {
-    const filter = elements.reviewFilter.value;
-    const query = filter ? `?status=${encodeURIComponent(filter)}&limit=50` : "?limit=50";
+    const parameters = new URLSearchParams({limit: "50"});
+    if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
+    if (state.account) parameters.set("profile_id", state.account);
+    const query = `?${parameters}`;
     const result = await request(`/api/v1/review-sessions${query}`);
     state.reviewSessions = result.items || [];
     elements.reviewState.textContent = state.reviewSessions.length ? `Сессий: ${state.reviewSessions.length}` : "Нет сессий";
@@ -505,8 +535,12 @@ function renderReviewSessions() {
   elements.reviewSessions.replaceChildren(...state.reviewSessions.map((session) => {
     const button = document.createElement("button"); button.type = "button";
     button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
-    button.append(text("strong", session.question || `Проверка ${compactID(session.id)}`));
-    button.append(text("small", `${reviewStatusLabel(session.status)} · ${session.platform} · ${session.profile_id} · ${formatDate(session.updated_at)}`));
+    const vacancy = session.vacancy || {};
+    button.append(text("strong", vacancy.title || session.question || `Проверка ${compactID(session.id)}`));
+    const details = vacancy.title
+      ? [vacancy.employer || "Компания не определена", session.question, reviewStatusLabel(session.status), formatDate(session.updated_at)]
+      : [reviewStatusLabel(session.status), session.platform, session.profile_id, formatDate(session.updated_at)];
+    button.append(text("small", details.filter(Boolean).join(" · ")));
     button.addEventListener("click", () => selectReviewSession(session));
     return button;
   }));
@@ -514,8 +548,17 @@ function renderReviewSessions() {
 
 async function selectReviewSession(session) {
   state.reviewSelected = session; state.reviewMessage = ""; renderReviewSessions();
-  elements.reviewSessionTitle.textContent = `Проверка ${compactID(session.id)}`;
-  elements.reviewSessionMeta.textContent = `${reviewStatusLabel(session.status)} · ${session.platform} · профиль ${session.profile_id} · revision ${session.revision}`;
+  const vacancy = session.vacancy || {};
+  elements.reviewSessionTitle.textContent = vacancy.title || `Проверка ${compactID(session.id)}`;
+  const meta = vacancy.title
+    ? [vacancy.employer || "Компания не определена", reviewStatusLabel(session.status), `профиль ${session.profile_id}`]
+    : [reviewStatusLabel(session.status), session.platform, `профиль ${session.profile_id}`, `revision ${session.revision}`];
+  elements.reviewSessionMeta.textContent = meta.join(" · ");
+  if (vacancy.url) {
+    const link = document.createElement("a"); link.href = safeExternalURL(vacancy.url) || vacancy.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+    link.textContent = " Открыть вакансию ↗"; link.className = "table-link";
+    elements.reviewSessionMeta.append(link);
+  }
   elements.reviewPrompt.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
     state.reviewDetail = await request(`/api/v1/review-sessions/${encodeURIComponent(session.id)}`);
@@ -625,6 +668,7 @@ async function refreshSummary() {
     const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
     state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
+    renderAccountSwitcher(summary.profiles || []);
     renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
@@ -712,6 +756,13 @@ elements.conversationFilter.addEventListener("change", () => { state.conversatio
 elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.summary?.conversations || []); });
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); });
 elements.reviewRefresh.addEventListener("click", () => refreshReviewSessions());
+elements.accountSwitcher.addEventListener("change", () => {
+  state.account = elements.accountSwitcher.value;
+  try { window.localStorage.setItem("job-agent-account", state.account); } catch {}
+  state.selectedApplications.clear(); state.applicationOffset = 0; state.applicationTotal = 0;
+  state.reviewSelected = null; state.reviewDetail = null;
+  refreshSummary(); refreshReviewSessions();
+});
 elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 

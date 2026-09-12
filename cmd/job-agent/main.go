@@ -37,6 +37,19 @@ type mainOptions struct {
 	migrateUp  bool
 }
 
+// dashboardProfiles lists enabled profile tags for the dashboard account
+// switcher. It exposes configuration identities only, never credentials.
+func dashboardProfiles(cfg appconfig.Config) []core.ProfileID {
+	profiles := make([]core.ProfileID, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		if !profile.Enabled {
+			continue
+		}
+		profiles = append(profiles, core.ProfileID(profile.Tag))
+	}
+	return profiles
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if buildinfo.Requested(os.Args[1:]) {
@@ -188,7 +201,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create vacancy test workflow: %v", err)
 	}
-	reviewAPI, err := httpapi.NewReviewAPI(store, vacancyTestWorkflow)
+	reviewAPI, err := httpapi.NewReviewAPI(store, vacancyTestWorkflow, store)
 	if err != nil {
 		log.Fatalf("create review API: %v", err)
 	}
@@ -209,7 +222,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
 	}
-	runtimeAPI, err := httpapi.NewRuntimeAPI(store)
+	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg))
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
 	}

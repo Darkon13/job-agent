@@ -56,11 +56,45 @@ func newReviewAPI(t *testing.T) (http.Handler, *storagememory.Repository) {
 	if err != nil {
 		t.Fatalf("workflow: %v", err)
 	}
-	api, err := NewReviewAPI(repository, workflow)
+	api, err := NewReviewAPI(repository, workflow, repository)
 	if err != nil {
 		t.Fatalf("api: %v", err)
 	}
 	return api.Handler(nil), repository
+}
+
+func TestReviewAPIExposesSessionVacancy(t *testing.T) {
+	handler, repository := newReviewAPI(t)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	if _, err := repository.UpsertVacancy(context.Background(), core.Vacancy{
+		Platform: "hh", ExternalID: "42", URL: "https://hh.ru/vacancy/42",
+		Title: "Go developer", Employer: "Acme", State: core.VacancyStateOpen, ObservedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert vacancy: %v", err)
+	}
+	response := performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions/review-1", "", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var body reviewSessionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Vacancy == nil || body.Vacancy.Title != "Go developer" || body.Vacancy.Employer != "Acme" ||
+		body.Vacancy.ExternalID != "42" || body.Vacancy.URL != "https://hh.ru/vacancy/42" {
+		t.Fatalf("vacancy = %#v", body.Vacancy)
+	}
+	response = performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions", "", "", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", response.Code, response.Body.String())
+	}
+	var list listResponse[reviewSessionListItem]
+	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].Vacancy == nil || list.Items[0].Vacancy.Title != "Go developer" {
+		t.Fatalf("list = %#v", list.Items)
+	}
 }
 
 func TestReviewAPIExposesWaitingPrompt(t *testing.T) {

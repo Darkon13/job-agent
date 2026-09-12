@@ -137,6 +137,8 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .conversation-employer { display: block; margin-top: .25rem; overflow: hidden; color: var(--text); font-size: .78rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .conversation small { margin-top: .35rem; color: var(--muted); font-weight: 400; }
 .chat-actions { display: flex; align-items: center; gap: .7rem; }
+.account-switcher-label { color: var(--muted); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+#account-switcher { max-width: 11rem; }
 .section-actions { display: flex; align-items: center; justify-content: flex-end; gap: .7rem; }
 .conversation-toolbar { display: grid; grid-template-columns: minmax(14rem, 1fr) minmax(10rem, 14rem) minmax(11rem, 15rem); gap: .6rem; margin-bottom: .8rem; }
 .button-link { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .75rem; font-size: .78rem; }
