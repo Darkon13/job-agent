@@ -108,13 +108,14 @@ func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *h
 
 type ApplicationAPI struct {
 	removal *workflow.ApplicationRemovalWorkflow
+	retry   *workflow.ApplicationRetryWorkflow
 }
 
-func NewApplicationAPI(removal *workflow.ApplicationRemovalWorkflow) (*ApplicationAPI, error) {
-	if removal == nil {
-		return nil, errors.New("application API requires removal workflow")
+func NewApplicationAPI(removal *workflow.ApplicationRemovalWorkflow, retry *workflow.ApplicationRetryWorkflow) (*ApplicationAPI, error) {
+	if removal == nil || retry == nil {
+		return nil, errors.New("application API requires removal and retry workflows")
 	}
-	return &ApplicationAPI{removal: removal}, nil
+	return &ApplicationAPI{removal: removal, retry: retry}, nil
 }
 
 func (api *ApplicationAPI) Handler(next http.Handler) http.Handler {
@@ -123,8 +124,33 @@ func (api *ApplicationAPI) Handler(next http.Handler) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/applications/remove", api.remove)
+	mux.HandleFunc("POST /api/v1/applications/{application_id}/retry", api.retryApplication)
 	mux.Handle("/", next)
 	return mux
+}
+
+// retryApplication releases one blocked application: it clears the recorded
+// decision and lets the durable submit workflow re-read the platform state.
+func (api *ApplicationAPI) retryApplication(response http.ResponseWriter, request *http.Request) {
+	if !emptyRequestBody(response, request) {
+		return
+	}
+	requestKey, ok := requireIdempotencyKey(response, request)
+	if !ok {
+		return
+	}
+	applicationID := core.ApplicationID(strings.TrimSpace(request.PathValue("application_id")))
+	task, created, err := api.retry.Enqueue(request.Context(), applicationID, requestKey)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusAccepted
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, taskResponse{TaskID: task.ID, Created: created})
 }
 
 type removeApplicationsRequest struct {

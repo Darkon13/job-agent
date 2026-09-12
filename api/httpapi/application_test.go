@@ -59,7 +59,11 @@ func TestApplicationAPIRemovesSelectedObjectsThroughIdempotentTasks(t *testing.T
 	if err != nil {
 		t.Fatalf("new workflow: %v", err)
 	}
-	api, err := NewApplicationAPI(removal)
+	retry, err := workflow.NewApplicationRetryWorkflow(repository, queue, applicationAPIClock{now: now.Add(time.Minute)}, &applicationAPIIDs{next: 100})
+	if err != nil {
+		t.Fatalf("new retry workflow: %v", err)
+	}
+	api, err := NewApplicationAPI(removal, retry)
 	if err != nil {
 		t.Fatalf("new API: %v", err)
 	}
@@ -88,9 +92,88 @@ func TestApplicationAPIValidatesBulkSelection(t *testing.T) {
 	repository := storagememory.NewRepository()
 	queue := brokermemory.NewQueue()
 	removal, _ := workflow.NewApplicationRemovalWorkflow(repository, queue, applicationAPIClock{now: time.Now()}, &applicationAPIIDs{})
-	api, _ := NewApplicationAPI(removal)
+	retry, _ := workflow.NewApplicationRetryWorkflow(repository, queue, applicationAPIClock{now: time.Now()}, &applicationAPIIDs{})
+	api, _ := NewApplicationAPI(removal, retry)
 	response := performRequest(t, api.Handler(nil), http.MethodPost, "/api/v1/applications/remove", "remove-empty", "", removeApplicationsRequest{})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("empty selection status: %d body=%s", response.Code, response.Body.String())
 	}
+}
+
+func TestApplicationAPIRetriesBlockedApplication(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	application, err := core.NewApplication(
+		"application-1",
+		core.ApplicationKey{ProfileID: "primary", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "vacancy-1"}},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if _, _, err := repository.CreateApplication(ctx, application); err != nil {
+		t.Fatalf("store application: %v", err)
+	}
+	stored, _ := repository.ApplicationByID(ctx, application.ID)
+	if err := stored.Transition(core.ApplicationPreparing, now.Add(time.Second)); err != nil {
+		t.Fatalf("transition preparing: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, stored, core.ApplicationNew); err != nil {
+		t.Fatalf("save preparing: %v", err)
+	}
+	if err := stored.RecordPreparation("questionnaire_required", "vacancy requires a questionnaire", "", "", now.Add(2*time.Second)); err != nil {
+		t.Fatalf("record preparation: %v", err)
+	}
+	if err := stored.Transition(core.ApplicationWaitingValidation, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("transition waiting validation: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, stored, core.ApplicationPreparing); err != nil {
+		t.Fatalf("save waiting validation: %v", err)
+	}
+	retry, err := workflow.NewApplicationRetryWorkflow(repository, queue, applicationAPIClock{now: now.Add(time.Minute)}, &applicationAPIIDs{})
+	if err != nil {
+		t.Fatalf("new retry workflow: %v", err)
+	}
+	api, err := NewApplicationAPI(
+		mustRemovalWorkflow(t, repository, queue, now), retry,
+	)
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	handler := api.Handler(nil)
+	response := performRequest(t, handler, http.MethodPost, "/api/v1/applications/application-1/retry", "retry-1", "", nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry status: %d body=%s", response.Code, response.Body.String())
+	}
+	if len(queue.Tasks()) != 1 || queue.Tasks()[0].Type != core.TaskApplicationSubmit || queue.Tasks()[0].Source != "manual:application.retry" {
+		t.Fatalf("retry tasks = %#v", queue.Tasks())
+	}
+	retried, err := repository.ApplicationByID(ctx, application.ID)
+	if err != nil || retried.Status != core.ApplicationReady || retried.DecisionCode != "" || retried.PreparedAt != nil {
+		t.Fatalf("retried application = %#v err=%v", retried, err)
+	}
+	response = performRequest(t, handler, http.MethodPost, "/api/v1/applications/application-1/retry", "retry-1", "", nil)
+	var replay taskResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &replay); err != nil || response.Code != http.StatusOK || replay.Created || len(queue.Tasks()) != 1 {
+		t.Fatalf("replayed retry = %d %s err=%v", response.Code, response.Body.String(), err)
+	}
+	response = performRequest(t, handler, http.MethodPost, "/api/v1/applications/application-1/retry", "retry-2", "", nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("second retry status: %d body=%s", response.Code, response.Body.String())
+	}
+	response = performRequest(t, handler, http.MethodPost, "/api/v1/applications/missing/retry", "retry-3", "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing application status: %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func mustRemovalWorkflow(t *testing.T, repository *storagememory.Repository, queue *brokermemory.Queue, now time.Time) *workflow.ApplicationRemovalWorkflow {
+	t.Helper()
+	removal, err := workflow.NewApplicationRemovalWorkflow(repository, queue, applicationAPIClock{now: now.Add(time.Minute)}, &applicationAPIIDs{next: 500})
+	if err != nil {
+		t.Fatalf("new removal workflow: %v", err)
+	}
+	return removal
 }

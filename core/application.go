@@ -229,6 +229,29 @@ func (application *Application) Fail(operationError *OperationError, now time.Ti
 	return nil
 }
 
+// ResetForRetry clears a blocked preparation so the submit workflow re-reads
+// the platform state and re-runs preflight. Only an application waiting for
+// validation can be reset; blocked questionnaire, test and suitability
+// decisions are never reused as-is.
+func (application *Application) ResetForRetry(now time.Time) error {
+	if application == nil {
+		return errors.New("application is nil")
+	}
+	if application.Status != ApplicationWaitingValidation {
+		return fmt.Errorf("application cannot be retried from status %s", application.Status)
+	}
+	if err := application.Transition(ApplicationReady, now); err != nil {
+		return err
+	}
+	application.DecisionCode = ""
+	application.DecisionReason = ""
+	application.PreparedResumeID = ""
+	application.PreparedMessage = ""
+	application.PreparationProvenance = ApplicationPreparationProvenance{}
+	application.PreparedAt = nil
+	return nil
+}
+
 // RecordPreparation stores the exact decision input to the unsafe external
 // action. A retry reuses PreparedResumeID and PreparedMessage instead of
 // consulting mutable configuration or invoking an operator again.

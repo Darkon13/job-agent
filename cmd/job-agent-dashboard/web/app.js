@@ -121,6 +121,16 @@ function renderApplicationFilters(items = []) {
 }
 function visibleApplicationObjects() { return state.applicationObjects; }
 function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed"].includes(item.status); }
+
+async function retryApplication(item, button) {
+  state.applicationActionBusy = true; button.disabled = true; state.applicationActionMessage = "Ставлю повторную подготовку…"; renderApplicationObjects();
+  try {
+    const task = await enqueue(`/api/v1/applications/${encodeURIComponent(item.id)}/retry`);
+    state.applicationActionMessage = `Отклик ${item.id}: задача ${task.task_id}`;
+    await refreshApplications();
+  } catch (error) { state.applicationActionMessage = error.message; }
+  state.applicationActionBusy = false; renderApplicationObjects();
+}
 function applicationListURL() {
   return "/api/v1/applications?" + new URLSearchParams({limit: "200", offset: String(state.applicationOffset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter});
 }
@@ -167,7 +177,13 @@ function renderApplicationObjects() {
     checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
-    if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); } else action.textContent = "—";
+    if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); }
+    if (item.status === "waiting_validation") {
+      if (action.childNodes.length) action.append(document.createTextNode(" "));
+      const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
+      retry.addEventListener("click", () => retryApplication(item, retry)); action.append(retry);
+    }
+    if (!action.childNodes.length) action.textContent = "—";
     const group = applicationGroup(item);
     row.append(selection, vacancy, text("td", item.employer || "—"), text("td", item.profile_id), statusCell(applicationGroupLabels[group], `status-${group}`), tailoringCell(item), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;

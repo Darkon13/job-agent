@@ -216,7 +216,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create application removal workflow: %v", err)
 	}
-	applicationAPI, err := httpapi.NewApplicationAPI(applicationRemovalWorkflow)
+	applicationRetryWorkflow, err := workflow.NewApplicationRetryWorkflow(
+		store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{},
+	)
+	if err != nil {
+		log.Fatalf("create application retry workflow: %v", err)
+	}
+	applicationAPI, err := httpapi.NewApplicationAPI(applicationRemovalWorkflow, applicationRetryWorkflow)
 	if err != nil {
 		log.Fatalf("create application API: %v", err)
 	}

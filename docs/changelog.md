@@ -154,6 +154,11 @@
 - Fix: SQLite сохраняет `review_sessions.answer_block_tag` (миграция 30).
   Колонки не было, поэтому review-сессия квалификации читалась без целевого
   блока и worker не мог дополнить family/level ревизию.
+- Операторский retry заблокированного отклика:
+  `POST /api/v1/applications/{id}/retry` (Idempotency-Key) очищает decision,
+  возвращает отклик в `ready` и ставит новый durable `application.submit`;
+  повтор ключа идемпотентен, dashboard показывает кнопку «Повторить» для
+  `waiting_validation`.
 - Наблюдаемость задач: worker логирует `task retry scheduled` и
   `task failed` с type/category/error, поэтому `handler failed` больше не
   скрывает причину в логах. Исчерпанные revision-конфликты conversation

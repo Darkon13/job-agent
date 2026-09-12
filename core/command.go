@@ -397,6 +397,18 @@ func ApplicationSubmitIdempotencyKey(key ApplicationKey) (string, error) {
 	return "application.submit:" + hex.EncodeToString(digest[:]), nil
 }
 
+// ApplicationRetryIdempotencyKey scopes one operator retry request. A replayed
+// request returns the already enqueued task instead of resetting the
+// application and submitting it twice.
+func ApplicationRetryIdempotencyKey(applicationID ApplicationID, requestKey string) (string, error) {
+	requestKey = strings.TrimSpace(requestKey)
+	if applicationID == "" || requestKey == "" {
+		return "", errors.New("application retry idempotency requires application and request key")
+	}
+	digest := sha256.Sum256([]byte(string(applicationID) + "\x00" + requestKey))
+	return "application.retry:" + hex.EncodeToString(digest[:]), nil
+}
+
 type ConversationSendPayload struct {
 	ConversationID ConversationID `json:"conversation_id"`
 	ReplyToID      MessageID      `json:"reply_to_id,omitempty"`
