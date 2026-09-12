@@ -16,6 +16,7 @@ test("config applies defaults", () => {
   assert.equal(config.maxInFlight, 4)
   assert.equal(config.maxTimeoutMs, 120_000)
   assert.equal(config.channel, undefined)
+  assert.equal(config.executablePath, undefined)
 })
 
 test("config parses overrides", () => {
@@ -28,6 +29,7 @@ test("config parses overrides", () => {
     BROWSER_WORKER_MAX_IN_FLIGHT: "8",
     BROWSER_WORKER_MAX_TIMEOUT_MS: "30000",
     BROWSER_WORKER_CHANNEL: "chrome",
+    BROWSER_WORKER_EXECUTABLE: "/usr/bin/google-chrome-stable",
   })
   assert.equal(config.host, "0.0.0.0")
   assert.equal(config.port, 9090)
@@ -36,6 +38,7 @@ test("config parses overrides", () => {
   assert.equal(config.maxInFlight, 8)
   assert.equal(config.maxTimeoutMs, 30_000)
   assert.equal(config.channel, "chrome")
+  assert.equal(config.executablePath, "/usr/bin/google-chrome-stable")
 })
 
 test("config rejects out-of-range integers", () => {

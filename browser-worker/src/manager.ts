@@ -252,6 +252,7 @@ export class BrowserManager {
     if (!instance) {
       instance = chromium.launch({
         headless,
+        ...(this.config.executablePath ? { executablePath: this.config.executablePath } : {}),
         ...(this.config.channel ? { channel: this.config.channel } : {}),
       })
       this.browsers.set(headless, instance)

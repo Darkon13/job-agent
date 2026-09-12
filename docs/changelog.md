@@ -154,6 +154,9 @@
 - Fix: SQLite сохраняет `review_sessions.answer_block_tag` (миграция 30).
   Колонки не было, поэтому review-сессия квалификации читалась без целевого
   блока и worker не мог дополнить family/level ревизию.
+- Browser worker: `BROWSER_WORKER_EXECUTABLE` позволяет запускать worker на
+  системном браузере, когда Playwright не находит его в стандартных путях;
+  `BROWSER_WORKER_CHANNEL=chrome` для этого недостаточно.
 - Операторский retry заблокированного отклика:
   `POST /api/v1/applications/{id}/retry` (Idempotency-Key) очищает decision,
   возвращает отклик в `ready` и ставит новый durable `application.submit`;

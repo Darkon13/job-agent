@@ -148,6 +148,9 @@ POST /v1/profiles/{profile}/locator
 - Каталог создаётся с правами `0700`, файлы Playwright остаются локальными.
 - Headed-режим для VNC включается `BROWSER_WORKER_HEADLESS=0` и `DISPLAY=:1`;
   per-profile override `headless` в `ensure` имеет приоритет.
+- Если Playwright не находит браузер в стандартных путях, можно указать
+  `BROWSER_WORKER_EXECUTABLE=/path/to/google-chrome-stable`; в контейнере
+  обычно достаточно встроенного Chromium.
 - Worker не публикует порт на host в Compose; Go обращается по внутренней сети.
 
 ## Проверки
