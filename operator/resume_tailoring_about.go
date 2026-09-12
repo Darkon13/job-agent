@@ -17,6 +17,7 @@ import (
 const resumeTailoringAboutInstruction = `Rewrite the resume "About" section for one application.
 Use only the current about text, the resume context and the vacancy context supplied below. Do not invent experience, skills, employers, education, numbers, contacts or availability.
 Keep the first-person voice, stay concise and prefer the themes that matter for this vacancy.
+If the current about starts with sender contacts, keep Telegram and email at the very top using the declared placeholders.
 Return one short paragraph. Declared placeholders like {name} may be used verbatim and must not be reworded.`
 
 // ResumeTailoringAboutRequest is the provider-neutral model input for the
@@ -50,6 +51,7 @@ type ModelResumeTailoringAboutConfig struct {
 	MaximumRunes  int
 	Timeout       time.Duration
 	Facts         *ApplicationResumeContext
+	Contacts      ApplicationProfileContext
 	Model         ResumeTailoringAboutModel
 }
 
@@ -64,6 +66,7 @@ type ModelResumeTailoringAboutProcessor struct {
 	maximumRunes  int
 	timeout       time.Duration
 	facts         *ApplicationResumeContext
+	contacts      ApplicationProfileContext
 	model         ResumeTailoringAboutModel
 }
 
@@ -71,7 +74,10 @@ func NewModelResumeTailoringAboutProcessor(config ModelResumeTailoringAboutConfi
 	processor := &ModelResumeTailoringAboutProcessor{
 		tag: strings.TrimSpace(config.Tag), promptVersion: strings.TrimSpace(config.PromptVersion),
 		instruction: strings.TrimSpace(config.Instruction), maximumRunes: config.MaximumRunes,
-		timeout: config.Timeout, facts: config.Facts, model: config.Model,
+		timeout: config.Timeout, facts: config.Facts, contacts: config.Contacts, model: config.Model,
+	}
+	if err := config.Contacts.Validate(); err != nil {
+		return nil, err
 	}
 	if processor.tag == "" || processor.promptVersion == "" || processor.instruction == "" {
 		return nil, errors.New("model resume tailoring about requires tag, prompt version and instruction")
@@ -202,21 +208,39 @@ func (processor *ModelResumeTailoringAboutProcessor) emptyPlan(input ResumeTailo
 	}
 }
 
-// anonymize replaces declared personal values with placeholders in the about
-// text, the observed resume context and the optional explicit facts.
+// anonymize replaces declared personal values and sender contacts with
+// placeholders in the about text, the observed resume context and the optional
+// explicit facts.
 func (processor *ModelResumeTailoringAboutProcessor) anonymize(input ResumeTailoringInput, resumeContext map[string]any, about string) (map[string]any, map[string]any, string, map[string]string, error) {
-	placeholders := map[string]string{}
-	if processor.facts == nil {
-		return resumeContext, nil, about, placeholders, nil
+	declared := map[string]string{}
+	var facts map[string]any
+	if processor.facts != nil {
+		fromFacts, err := declaredApplicationPlaceholders(processor.facts.Facts[applicationModelPlaceholdersFactKey])
+		if err != nil {
+			return nil, nil, "", nil, err
+		}
+		declared = fromFacts
+		facts = processor.facts.Facts
 	}
-	declared, err := declaredApplicationPlaceholders(processor.facts.Facts[applicationModelPlaceholdersFactKey])
-	if err != nil {
-		return nil, nil, "", nil, err
+	for name, value := range map[string]string{
+		"first_name": processor.contacts.FirstName, "last_name": processor.contacts.LastName,
+		"email": processor.contacts.Email, "telegram": processor.contacts.Telegram,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			declared[name] = value
+		}
+	}
+	if len(declared) == 0 {
+		return resumeContext, facts, about, declared, nil
 	}
 	replacements := applicationPlaceholderReplacements(declared)
-	anonymousFacts, err := anonymizedFacts(processor.facts.Facts, replacements)
-	if err != nil {
-		return nil, nil, "", nil, err
+	var anonymousFacts map[string]any
+	if facts != nil {
+		anonymized, err := anonymizedFacts(facts, replacements)
+		if err != nil {
+			return nil, nil, "", nil, err
+		}
+		anonymousFacts = anonymized
 	}
 	anonymousContext, ok := replaceApplicationPlaceholderValues(resumeContext, replacements).(map[string]any)
 	if !ok {

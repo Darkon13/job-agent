@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,54 @@ func TestModelResumeTailoringAboutKeepsTextOnModelError(t *testing.T) {
 	}
 	if model.calls != 2 {
 		t.Fatalf("calls=%d, want one retry", model.calls)
+	}
+}
+
+func TestModelResumeTailoringAboutKeepsContactPlaceholders(t *testing.T) {
+	input := resumeTailoringAboutFixture(t)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	state, err := json.Marshal(map[string]any{
+		"resumes": map[string]any{"resume-1": map[string]any{
+			"web": map[string]any{
+				"title":     "Go developer",
+				"keySkills": []string{"Go"},
+				"skills":    []string{"Почта: user@example.test\nТелеграм: @qworteex\nGo backend"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal current state: %v", err)
+	}
+	observation, err := core.NewProfileStateObservation("primary", state, "revision-2", now)
+	if err != nil {
+		t.Fatalf("new observation: %v", err)
+	}
+	input.CurrentState = observation
+	model := &fakeResumeTailoringAboutModel{response: ResumeTailoringAboutResponse{
+		About: "Telegram: {telegram}\nEmail: {email}\n\nПишу на Go.",
+	}}
+	processor, err := NewModelResumeTailoringAboutProcessor(ModelResumeTailoringAboutConfig{
+		Tag: "openai-test", PromptVersion: "v1", Instruction: "Highlight Go", MaximumRunes: 200,
+		Timeout: 5 * time.Second, Model: model,
+		Contacts: ApplicationProfileContext{Email: "user@example.test", Telegram: "@qworteex"},
+	})
+	if err != nil {
+		t.Fatalf("new about processor: %v", err)
+	}
+	plan, err := processor.Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if got := decodeTailoredAbout(t, plan); got != "Telegram: @qworteex\nEmail: user@example.test\n\nПишу на Go." {
+		t.Fatalf("about=%q", got)
+	}
+	if !strings.Contains(model.request.CurrentAbout, "{telegram}") || !strings.Contains(model.request.CurrentAbout, "{email}") {
+		t.Fatalf("current about was not masked: %q", model.request.CurrentAbout)
+	}
+	for _, secret := range []string{"user@example.test", "@qworteex"} {
+		if strings.Contains(model.request.CurrentAbout, secret) {
+			t.Fatalf("model request leaked %q: %q", secret, model.request.CurrentAbout)
+		}
 	}
 }
 

@@ -42,6 +42,17 @@ func anonymizeApplicationTemplateData(data ApplicationTemplateData) (Application
 	if employer := strings.TrimSpace(data.Vacancy.Employer); employer != "" {
 		declared[applicationModelCompanyPlaceholder] = employer
 	}
+	profilePlaceholders := map[string]string{}
+	for name, value := range map[string]string{
+		"first_name": data.Profile.FirstName, "last_name": data.Profile.LastName,
+		"email": data.Profile.Email, "telegram": data.Profile.Telegram,
+	} {
+		if value = strings.TrimSpace(value); value == "" {
+			continue
+		}
+		declared[name] = value
+		profilePlaceholders[name] = value
+	}
 	if len(declared) == 0 {
 		return data, map[string]string{}, nil
 	}
@@ -55,6 +66,18 @@ func anonymizeApplicationTemplateData(data ApplicationTemplateData) (Application
 	result := data
 	result.Vacancy = vacancy
 	result.Employer = vacancy.Employer
+	for name := range profilePlaceholders {
+		switch name {
+		case "first_name":
+			result.Profile.FirstName = "{" + name + "}"
+		case "last_name":
+			result.Profile.LastName = "{" + name + "}"
+		case "email":
+			result.Profile.Email = "{" + name + "}"
+		case "telegram":
+			result.Profile.Telegram = "{" + name + "}"
+		}
+	}
 	if data.Resume != nil {
 		facts, err := anonymizedFacts(data.Resume.Facts, replacements)
 		if err != nil {

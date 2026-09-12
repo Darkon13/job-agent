@@ -1128,6 +1128,16 @@ func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (strin
 	return nil
 }
 
+func applicationProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
+	if profile.Contacts == nil {
+		return applicationoperator.ApplicationProfileContext{}
+	}
+	return applicationoperator.ApplicationProfileContext{
+		FirstName: profile.Contacts.FirstName, LastName: profile.Contacts.LastName,
+		Email: profile.Contacts.Email, Telegram: profile.Contacts.Telegram,
+	}
+}
+
 func applicationPreparer(profile appconfig.Profile, employerMatcher *applicationoperator.EmployerGroupMatcher, models map[string]applicationoperator.ApplicationMessageModel) (applicationoperator.ApplicationPreparer, error) {
 	var messagePool *applicationoperator.MessagePoolConfig
 	var resumeContext *applicationoperator.ApplicationResumeContext
@@ -1168,6 +1178,7 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		MessagePool:     messagePool,
 		Model:           model,
 		Resume:          resumeContext,
+		Profile:         applicationProfileContacts(profile),
 		EmployerMatcher: employerMatcher,
 		EmployerRules:   employerRules,
 	})
@@ -1319,6 +1330,7 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		aboutProcessor, err := applicationoperator.NewModelResumeTailoringAboutProcessor(applicationoperator.ModelResumeTailoringAboutConfig{
 			Tag: provider, PromptVersion: about.Model.PromptVersion, Instruction: about.Model.Instruction,
 			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel, Facts: resumeFacts,
+			Contacts: applicationProfileContacts(profile),
 		})
 		if err != nil {
 			return nil, nil, err
