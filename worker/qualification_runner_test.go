@@ -98,11 +98,16 @@ func qualificationRunnerFixture(t *testing.T, blockQuestions int) (*Qualificatio
 		Tag: "hh-go-medium", Name: "Go medium", Kind: core.AnswerBlockQualification,
 		Platform: "hh", Qualification: &descriptor, Answers: answers,
 	}
-	registry, err := core.NewAnswerBlockRegistry(block)
-	if err != nil {
-		t.Fatalf("registry: %v", err)
+	var blocks QualificationAnswerBlocks
+	if blockQuestions > 0 {
+		registry, err := core.NewAnswerBlockRegistry(block)
+		if err != nil {
+			t.Fatalf("registry: %v", err)
+		}
+		blocks = staticQualificationBlocks{registry: registry}
+	} else {
+		blocks = staticQualificationBlocks{}
 	}
-	blocks := staticQualificationBlocks{registry: registry}
 	service := &fakeQualificationAttemptService{questions: questions, result: core.QualificationResult{
 		Status: core.QualificationPassed, Score: &score, MaxScore: &maxScore,
 		Verified: true, AnswerBlockTag: "hh-go-medium", CompletedAt: now,
@@ -111,7 +116,7 @@ func qualificationRunnerFixture(t *testing.T, blockQuestions int) (*Qualificatio
 	if err := attempts.Register("primary", service); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	handler, err := NewQualificationStartHandler(attempts, repository, repository, repository, blocks, repository, fixedClock{now: now})
+	handler, err := NewQualificationStartHandler(attempts, repository, repository, repository, blocks, repository, repository, fixedClock{now: now})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -185,8 +190,42 @@ type staticQualificationBlocks struct {
 }
 
 func (blocks staticQualificationBlocks) FindQualificationLevel(_ context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error) {
+	if blocks.registry == nil {
+		return core.AnswerBlock{}, false, nil
+	}
 	block, found := blocks.registry.FindQualificationLevel(platform, familyID, levelID)
 	return block, found, nil
+}
+
+type fakeQualificationAnswerModel struct {
+	tag     string
+	answers map[string]string
+	err     error
+	calls   int
+}
+
+func (model *fakeQualificationAnswerModel) Tag() string { return model.tag }
+
+func (model *fakeQualificationAnswerModel) Resolve(_ context.Context, _ core.Platform, question core.Question) (core.StoredAnswer, error) {
+	model.calls++
+	if model.err != nil {
+		return core.StoredAnswer{}, model.err
+	}
+	text, exists := model.answers[question.Text]
+	if !exists {
+		return core.StoredAnswer{}, errors.New("fake model has no answer for " + question.Text)
+	}
+	fingerprint, err := core.QuestionFingerprint(question)
+	if err != nil {
+		return core.StoredAnswer{}, err
+	}
+	return core.StoredAnswer{
+		Question: question.Text, QuestionFingerprint: fingerprint, Text: text,
+		Provenance: &core.AnswerProvenance{
+			Resolver: core.AnswerResolverModel, ModelTag: model.tag, ProviderModel: "fake-model",
+			PromptVersion: "v1", ResponseID: "resp-1", Confidence: core.AnswerConfidenceHigh,
+		},
+	}, nil
 }
 
 func requireQualificationCategory(t *testing.T, err error, category core.ErrorCategory) {
@@ -224,5 +263,67 @@ func TestQualificationStartCreatesReviewForUnknownQuestion(t *testing.T) {
 	prompt, err := repository.ReviewPrompt(context.Background(), promptID)
 	if err != nil || prompt.Question.Text != "Describe a project" {
 		t.Fatalf("prompt = %#v err=%v", prompt, err)
+	}
+}
+
+func TestQualificationStartUsesAnswerModelForUnknownQuestion(t *testing.T) {
+	handler, service, repository, _ := qualificationRunnerFixture(t, 1)
+	model := &fakeQualificationAnswerModel{
+		tag: "test-model", answers: map[string]string{"Describe a project": "Model answer for runtime-2"},
+	}
+	handler.ConfigureAnswerModels(map[core.ProfileID]QualificationAnswerModel{"primary": model})
+	if err := handler.Handle(context.Background(), qualificationStartTask(t)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if model.calls != 1 || len(service.submitted) != 2 || service.submitted[1].Text != "Model answer for runtime-2" {
+		t.Fatalf("model calls=%d submitted=%#v", model.calls, service.submitted)
+	}
+	revision, exists, err := repository.LatestAnswerBlockRevision(context.Background(), "hh-go-medium")
+	if err != nil || !exists {
+		t.Fatalf("revision: exists=%v err=%v", exists, err)
+	}
+	if revision.Source != "model:test-model" || len(revision.Answers) != 2 {
+		t.Fatalf("revision = %#v", revision)
+	}
+	modelAnswer := revision.Answers[1]
+	if modelAnswer.Provenance == nil || !modelAnswer.Provenance.Verified || modelAnswer.Provenance.Resolver != core.AnswerResolverModel {
+		t.Fatalf("model answer provenance = %#v", modelAnswer.Provenance)
+	}
+	best, found, err := repository.BestQualificationResult(context.Background(), "hh", "primary", "go", "medium")
+	if err != nil || !found || !best.Passed() || best.AnswerBlockTag != "hh-go-medium" {
+		t.Fatalf("best = %#v found=%v err=%v", best, found, err)
+	}
+}
+
+func TestQualificationStartModelFailureFallsBackToReview(t *testing.T) {
+	handler, service, repository, _ := qualificationRunnerFixture(t, 1)
+	model := &fakeQualificationAnswerModel{tag: "test-model", err: errors.New("model unavailable")}
+	handler.ConfigureAnswerModels(map[core.ProfileID]QualificationAnswerModel{"primary": model})
+	err := handler.Handle(context.Background(), qualificationStartTask(t))
+	requireQualificationCategory(t, err, core.ErrorValidationRequired)
+	if service.finishCalls != 1 || len(service.submitted) != 1 {
+		t.Fatalf("service = %#v", service)
+	}
+	if revision, exists, _ := repository.LatestAnswerBlockRevision(context.Background(), "hh-go-medium"); exists {
+		t.Fatalf("failed model answer was persisted: %#v", revision)
+	}
+}
+
+func TestQualificationStartWithoutBlockUsesConventionalTag(t *testing.T) {
+	handler, service, repository, _ := qualificationRunnerFixture(t, 0)
+	model := &fakeQualificationAnswerModel{tag: "test-model", answers: map[string]string{
+		"Explain experience": "Model answer for runtime-1",
+		"Describe a project": "Model answer for runtime-2",
+	}}
+	handler.ConfigureAnswerModels(map[core.ProfileID]QualificationAnswerModel{"primary": model})
+	if err := handler.Handle(context.Background(), qualificationStartTask(t)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if model.calls != 2 || len(service.submitted) != 2 {
+		t.Fatalf("model calls=%d submitted=%#v", model.calls, service.submitted)
+	}
+	revision, exists, err := repository.LatestAnswerBlockRevision(context.Background(), "hh-go-medium-reviewed")
+	if err != nil || !exists || len(revision.Answers) != 2 {
+		t.Fatalf("revision = %#v exists=%v err=%v", revision, exists, err)
 	}
 }

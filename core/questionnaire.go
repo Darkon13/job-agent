@@ -47,10 +47,69 @@ type Questionnaire struct {
 // StoredAnswer is portable between questionnaire instances because it refers
 // to question and option text rather than platform-specific IDs or positions.
 type StoredAnswer struct {
-	Question            string   `json:"question"`
-	QuestionFingerprint string   `json:"question_fingerprint,omitempty"`
-	SelectedOptions     []string `json:"selected_options,omitempty"`
-	Text                string   `json:"text,omitempty"`
+	Question            string            `json:"question"`
+	QuestionFingerprint string            `json:"question_fingerprint,omitempty"`
+	SelectedOptions     []string          `json:"selected_options,omitempty"`
+	Text                string            `json:"text,omitempty"`
+	Provenance          *AnswerProvenance `json:"provenance,omitempty"`
+}
+
+// AnswerProvenance records how a stored answer was produced. Hand-written
+// reviewed answers may omit it; model answers carry the provider metadata and
+// stay unverified until the platform result or a human confirms them.
+type AnswerProvenance struct {
+	Resolver      string `json:"resolver"`
+	ModelTag      string `json:"model_tag,omitempty"`
+	ProviderModel string `json:"provider_model,omitempty"`
+	PromptVersion string `json:"prompt_version,omitempty"`
+	ResponseID    string `json:"response_id,omitempty"`
+	InputDigest   string `json:"input_digest,omitempty"`
+	OutputDigest  string `json:"output_digest,omitempty"`
+	Confidence    string `json:"confidence,omitempty"`
+	Verified      bool   `json:"verified,omitempty"`
+}
+
+const (
+	AnswerResolverModel     = "model"
+	AnswerResolverHuman     = "human"
+	AnswerResolverKnown     = "known_answer"
+	AnswerResolverStudyBank = "study_bank"
+	AnswerConfidenceHigh    = "high"
+	AnswerConfidenceMedium  = "medium"
+	AnswerConfidenceLow     = "low"
+)
+
+func (provenance *AnswerProvenance) Validate() error {
+	if provenance == nil {
+		return nil
+	}
+	switch provenance.Resolver {
+	case AnswerResolverModel, AnswerResolverHuman, AnswerResolverKnown, AnswerResolverStudyBank:
+	default:
+		return fmt.Errorf("answer provenance has unsupported resolver %q", provenance.Resolver)
+	}
+	if provenance.Resolver == AnswerResolverModel {
+		if strings.TrimSpace(provenance.ModelTag) == "" || strings.TrimSpace(provenance.ProviderModel) == "" ||
+			strings.TrimSpace(provenance.PromptVersion) == "" {
+			return errors.New("model answer provenance requires model tag, provider model and prompt version")
+		}
+	}
+	if provenance.Confidence != "" {
+		switch provenance.Confidence {
+		case AnswerConfidenceHigh, AnswerConfidenceMedium, AnswerConfidenceLow:
+		default:
+			return fmt.Errorf("answer provenance has unsupported confidence %q", provenance.Confidence)
+		}
+	}
+	return nil
+}
+
+func cloneAnswerProvenance(provenance *AnswerProvenance) *AnswerProvenance {
+	if provenance == nil {
+		return nil
+	}
+	copied := *provenance
+	return &copied
 }
 
 type AnswerBlockKind string
@@ -62,6 +121,12 @@ const (
 	// It is matched by platform only: such tests expose no family or level.
 	AnswerBlockVacancy AnswerBlockKind = "vacancy"
 )
+
+// QualificationReviewedBlockTag is the durable block tag human reviews and
+// platform-verified model answers extend when a level has no declarative block.
+func QualificationReviewedBlockTag(platform Platform, familyID, levelID string) string {
+	return string(platform) + "-" + familyID + "-" + levelID + "-reviewed"
+}
 
 type AnswerBlockMatcher struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
@@ -370,6 +435,9 @@ func ValidateAnswerBlock(block AnswerBlock) error {
 		}
 		if answer.Text != "" && len(answer.SelectedOptions) != 0 {
 			return fmt.Errorf("answer for question %q mixes text and selected options", answer.Question)
+		}
+		if err := answer.Provenance.Validate(); err != nil {
+			return fmt.Errorf("answer for question %q: %w", answer.Question, err)
 		}
 	}
 	return nil

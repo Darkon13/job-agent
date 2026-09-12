@@ -85,7 +85,7 @@ func (client *Client) SelectResumeTailoringSkills(ctx context.Context, request a
 		}
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return applicationoperator.ResumeTailoringModelResponse{}, responseStatusError(response.StatusCode, body)
+		return applicationoperator.ResumeTailoringModelResponse{}, responseStatusError("responses.create", response.StatusCode, body)
 	}
 	var decoded responseEnvelope
 	if err := json.Unmarshal(body, &decoded); err != nil {

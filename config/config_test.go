@@ -796,3 +796,34 @@ func TestProfileStateReconcileJobValidation(t *testing.T) {
 		t.Fatal("expected unknown profile state resource to fail")
 	}
 }
+
+func TestProfileAnswerModelPolicyValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Models: []ModelProviderConfig{{
+			Tag: "mini", Type: ModelProviderOpenAIResponses, Model: "gpt-test", APIKeyEnv: "JOB_AGENT_TEST_MODEL_KEY",
+		}},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{
+			Tag: "primary", Adapter: "hh-main", Enabled: true,
+			Answers: &AnswerPolicy{Model: &AnswerModelPolicy{
+				Provider: "mini", PromptVersion: "v1", Instruction: "Pick one option.", Timeout: "30s",
+			}},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid answer model policy: %v", err)
+	}
+	config.Profiles[0].Answers.Model.Provider = "missing"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown provider to fail")
+	}
+	config.Profiles[0].Answers.Model = &AnswerModelPolicy{Provider: "mini", PromptVersion: "v1", Instruction: "Pick one.", Timeout: "0s"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected non-positive timeout to fail")
+	}
+	config.Profiles[0].Answers.Model = &AnswerModelPolicy{Provider: "mini", Instruction: "Pick one.", Timeout: "30s"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected missing prompt version to fail")
+	}
+}

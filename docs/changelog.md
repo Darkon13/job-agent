@@ -140,6 +140,12 @@
   цепочка known-answer → model (validator) → manual, границы
   contextual/code, provenance и режимы `auto_submit`/`review_only`
   (`docs/next-answer-model-fallback.md`); реализация не начата.
+- Model fallback для qualification в режиме auto: профиль может задать
+  `answers.model` (provider/prompt_version/instruction/timeout). Ответ модели
+  проходит локальный validator по показанным вариантам, `code` и ошибки модели
+  уходят в обычный review, успешный `QualificationResult` дописывает verified
+  ответ с provenance в qualification-блок; без declarative-блока используется
+  conventional reviewed tag.
 - Порядок HTTP-обвязки: `RequestID` теперь снаружи access-log, поэтому
   `request_id` всегда заполнен; Bearer-токен защищает `/metrics` и
   auth-endpoints, access-log покрывает auth-запросы. Запросы, отклонённые

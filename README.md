@@ -282,6 +282,29 @@ dashboard: секция «Проверки и опросники» показы�
 single/multiple/text prompt и записывает ответ через тот же durable
 `review.answer` с Idempotency-Key.
 
+Неизвестный вопрос qualification может автоматически решить модель:
+
+```json
+"answers": {
+  "model": {
+    "provider": "mini",
+    "prompt_version": "answer-fallback-v1",
+    "instruction": "Выбери ответ только из предложенных вариантов.",
+    "timeout": "30s"
+  }
+}
+```
+
+Провайдер ссылается на top-level `models`. Модель получает только текст вопроса
+и показанные варианты; локальный validator принимает ответ лишь при точном
+совпадении с вариантом (single/multiple) или корректном ограниченном тексте, а
+`code` и contextual-вопросы в модель не уходят. Timeout, rate limit и
+invalid output не блокируют попытку: вопрос переходит в обычный review. Ответ,
+подтверждённый успешным `QualificationResult`, дописывается в
+qualification-блок как verified revision с provenance (model tag, provider
+model, prompt version, response ID и digests) и переиспользуется дальше.
+Контракт целиком — `docs/next-answer-model-fallback.md`.
+
 Conversation storage сохраняет нормализованные диалоги, упорядоченный timeline
 сообщений и follow-up таймеры. Внешние chat/message ID и idempotency key
 дедуплицируются, обновление таймера защищено revision CAS, а выборка scheduled

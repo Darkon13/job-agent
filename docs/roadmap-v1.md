@@ -94,11 +94,13 @@
       не перезапускается. Review-ответы расширяют qualification-блок
       (`AnswerBlockTag` в review session, append-only ревизии), старт попытки
       доступен через `POST /profiles/{profile}/qualifications/{offering}/start`
-      и CLI `job-agent qualification catalog|sync|start`. Осталось: live
-      assessment transport (start/current/submit/result) и model fallback для
-      неизвестных вопросов; контракт зафиксирован в
-      `docs/next-answer-model-fallback.md`, реализация — после решения по
-      `auto_submit`.
+      и CLI `job-agent qualification catalog|sync|start`. Model fallback
+      реализован для auto-режима (`answers.model`): known-answer → model
+      (локальный validator) → review; verified-ответы с provenance
+      дописываются в qualification-блок. Осталось: live assessment transport
+      (start/current/submit/result) и live-проверка model-ответа;
+      `review_only`, кэш и лимиты — необязательные расширения
+      (`docs/next-answer-model-fallback.md`).
 - [x] Worker `test.capture`: browser capture → прогрессивный тестовый
       каталог (монотонный upsert, без попытки и submit).
 - [x] Worker `questionnaire.answer`: submit заранее resolved ответов через

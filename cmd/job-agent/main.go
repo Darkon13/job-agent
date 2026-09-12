@@ -243,6 +243,7 @@ func main() {
 	qualificationReaders := taskworker.NewQualificationCatalogRegistry()
 	qualificationAttempts := taskworker.NewQualificationAttemptRegistry()
 	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
+	qualificationAnswerModels := make(map[core.ProfileID]taskworker.QualificationAnswerModel)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := make(taskworker.StaticApplicationPlans)
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -255,6 +256,16 @@ func main() {
 			continue
 		}
 		profileID := core.ProfileID(profile.Tag)
+		if profile.Answers != nil && profile.Answers.Model != nil {
+			model, err := answerModel(profile.Answers.Model, applicationModels)
+			if err != nil {
+				log.Fatalf("build answer model for profile %q: %v", profile.Tag, err)
+			}
+			if model != nil {
+				qualificationAnswerModels[profileID] = model
+				logf("profile %q answers unknown questions through model %q", profile.Tag, model.Tag())
+			}
+		}
 		runtime := profiles[profileID]
 		instance := instances[profile.Adapter]
 		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
@@ -637,11 +648,12 @@ func main() {
 	}
 	if qualificationAttempts.Count() > 0 && answerResolver != nil {
 		qualificationStartHandler, err := taskworker.NewQualificationStartHandler(
-			qualificationAttempts, store, store, store, answerResolver, store, taskworker.SystemClock{},
+			qualificationAttempts, store, store, store, answerResolver, store, store, taskworker.SystemClock{},
 		)
 		if err != nil {
 			log.Fatalf("create qualification start handler: %v", err)
 		}
+		qualificationStartHandler.ConfigureAnswerModels(qualificationAnswerModels)
 		qualificationStartWorker, err := newTaskWorker(store, core.TaskSkillVerificationStart, qualificationStartHandler.Handle)
 		if err != nil {
 			log.Fatalf("create qualification start worker: %v", err)
@@ -1159,6 +1171,25 @@ func applicationModel(configured *appconfig.ApplicationModelPolicy, models map[s
 		Tag: provider, PromptVersion: configured.PromptVersion,
 		Instruction: configured.Instruction, Timeout: timeout, Generator: generator,
 	}, nil
+}
+
+func answerModel(configured *appconfig.AnswerModelPolicy, models map[string]applicationoperator.ApplicationMessageModel) (*applicationoperator.AnswerModel, error) {
+	if configured == nil {
+		return nil, nil
+	}
+	provider := strings.TrimSpace(configured.Provider)
+	generator, ok := models[provider].(applicationoperator.AnswerGenerator)
+	if !ok || generator == nil {
+		return nil, fmt.Errorf("answer model references unavailable provider %q", provider)
+	}
+	timeout, err := configured.TimeoutDuration()
+	if err != nil || timeout <= 0 {
+		return nil, fmt.Errorf("answer model provider %q has invalid timeout %q", provider, configured.Timeout)
+	}
+	return applicationoperator.CompileAnswerModel(&applicationoperator.AnswerModelConfig{
+		Tag: provider, PromptVersion: configured.PromptVersion,
+		Instruction: configured.Instruction, Timeout: timeout, Generator: generator,
+	})
 }
 
 func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applicationoperator.MessagePoolConfig {

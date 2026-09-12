@@ -270,6 +270,7 @@ type Profile struct {
 	Bootstrap           *ProfileBootstrap  `json:"bootstrap,omitempty"`
 	Applications        ApplicationPolicy  `json:"applications,omitempty"`
 	Conversations       ConversationPolicy `json:"conversations,omitempty"`
+	Answers             *AnswerPolicy      `json:"answers,omitempty"`
 	resolvedResumeFacts *ApplicationResumeFacts
 }
 
@@ -290,6 +291,24 @@ func (profile Profile) ResolvedResumeFacts() (ApplicationResumeFacts, bool) {
 type ConversationPolicy struct {
 	AllowSend     bool `json:"allow_send,omitempty"`
 	AllowMarkRead bool `json:"allow_mark_read,omitempty"`
+}
+
+// AnswerPolicy configures how unknown questions are resolved after the
+// reviewed answer block. The model mode submits a locally validated answer and
+// records its provenance; there is no approval step for qualification attempts.
+type AnswerPolicy struct {
+	Model *AnswerModelPolicy `json:"model,omitempty"`
+}
+
+type AnswerModelPolicy struct {
+	Provider      string `json:"provider"`
+	PromptVersion string `json:"prompt_version"`
+	Instruction   string `json:"instruction"`
+	Timeout       string `json:"timeout"`
+}
+
+func (policy AnswerModelPolicy) TimeoutDuration() (time.Duration, error) {
+	return time.ParseDuration(strings.TrimSpace(policy.Timeout))
 }
 
 type ApplicationPolicy struct {
@@ -1028,6 +1047,23 @@ func validateApplicationModelPolicy(label string, policy *ApplicationModelPolicy
 	return nil
 }
 
+func validateAnswerModelPolicy(label string, policy *AnswerModelPolicy, providers map[string]struct{}) error {
+	if policy == nil {
+		return nil
+	}
+	if _, exists := providers[strings.TrimSpace(policy.Provider)]; !exists {
+		return fmt.Errorf("%s references unknown model provider %q", label, policy.Provider)
+	}
+	if strings.TrimSpace(policy.PromptVersion) == "" || strings.TrimSpace(policy.Instruction) == "" {
+		return fmt.Errorf("%s model requires prompt_version and instruction", label)
+	}
+	timeout, err := policy.TimeoutDuration()
+	if err != nil || timeout <= 0 || timeout > 5*time.Minute {
+		return fmt.Errorf("%s model timeout must be a positive duration no greater than 5m", label)
+	}
+	return nil
+}
+
 func (c Config) Validate() error {
 	if c.SchemaVersion != 0 && c.SchemaVersion != CurrentConfigSchemaVersion {
 		return fmt.Errorf("config schema_version %d is not supported (current %d)", c.SchemaVersion, CurrentConfigSchemaVersion)
@@ -1204,6 +1240,11 @@ func (c Config) Validate() error {
 		}
 		if profile.Applications.MessageTemplateFile != "" && profile.Applications.resolvedMessagePool == nil {
 			return fmt.Errorf("profile %q message_template_file must be resolved by config loader", profile.Tag)
+		}
+		if profile.Answers != nil {
+			if err := validateAnswerModelPolicy(fmt.Sprintf("profile %q answers", profile.Tag), profile.Answers.Model, modelProviders); err != nil {
+				return err
+			}
 		}
 		if pool := profile.Applications.resolvedMessagePool; pool != nil {
 			if err := validateApplicationMessagePool(*pool); err != nil {

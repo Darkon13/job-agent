@@ -65,29 +65,48 @@ type QualificationAnswerBlocks interface {
 	FindQualificationLevel(ctx context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error)
 }
 
+// QualificationAnswerModel resolves one unknown question through the
+// configured provider. The returned answer already passed the operator's local
+// validator, so the runner may submit it; provenance travels with the answer.
+type QualificationAnswerModel interface {
+	Tag() string
+	Resolve(ctx context.Context, platform core.Platform, question core.Question) (core.StoredAnswer, error)
+}
+
 // QualificationStartHandler runs an explicitly started qualification attempt
-// and answers it from a reusable reviewed block. It never submits a guessed
-// answer: a missing question finishes the attempt early and reports the
-// fingerprint for review.
+// and answers it from a reusable reviewed block. Unknown questions are either
+// resolved by the configured answer model or finish the attempt early with a
+// review session; a guessed answer is never submitted.
 type QualificationStartHandler struct {
-	registry QualificationAttemptRegistryReader
-	catalog  storage.QualificationCatalogRepository
-	results  storage.QualificationRepository
-	tests    storage.TestCatalogRepository
-	blocks   QualificationAnswerBlocks
-	reviews  storage.ReviewRepository
-	clock    Clock
+	registry     QualificationAttemptRegistryReader
+	catalog      storage.QualificationCatalogRepository
+	results      storage.QualificationRepository
+	tests        storage.TestCatalogRepository
+	blocks       QualificationAnswerBlocks
+	reviews      storage.ReviewRepository
+	revisions    storage.AnswerBlockRevisionRepository
+	answerModels map[core.ProfileID]QualificationAnswerModel
+	clock        Clock
 }
 
 type QualificationAttemptRegistryReader interface {
 	Resolve(profileID core.ProfileID) (adapter.QualificationAttemptService, error)
 }
 
-func NewQualificationStartHandler(registry QualificationAttemptRegistryReader, catalog storage.QualificationCatalogRepository, results storage.QualificationRepository, tests storage.TestCatalogRepository, blocks QualificationAnswerBlocks, reviews storage.ReviewRepository, clock Clock) (*QualificationStartHandler, error) {
+func NewQualificationStartHandler(registry QualificationAttemptRegistryReader, catalog storage.QualificationCatalogRepository, results storage.QualificationRepository, tests storage.TestCatalogRepository, blocks QualificationAnswerBlocks, reviews storage.ReviewRepository, revisions storage.AnswerBlockRevisionRepository, clock Clock) (*QualificationStartHandler, error) {
 	if registry == nil || catalog == nil || results == nil || tests == nil || blocks == nil || clock == nil {
 		return nil, errors.New("qualification start handler requires registry, catalog, results, test catalog, blocks and clock")
 	}
-	return &QualificationStartHandler{registry: registry, catalog: catalog, results: results, tests: tests, blocks: blocks, reviews: reviews, clock: clock}, nil
+	return &QualificationStartHandler{registry: registry, catalog: catalog, results: results, tests: tests, blocks: blocks, reviews: reviews, revisions: revisions, clock: clock}, nil
+}
+
+// ConfigureAnswerModels attaches the profile-scoped auto-answer fallback. A
+// profile without a model keeps the reviewed-block-only behaviour.
+func (handler *QualificationStartHandler) ConfigureAnswerModels(models map[core.ProfileID]QualificationAnswerModel) {
+	if handler == nil || len(models) == 0 {
+		return
+	}
+	handler.answerModels = models
 }
 
 func (handler *QualificationStartHandler) Handle(ctx context.Context, task core.Task) error {
@@ -123,17 +142,26 @@ func (handler *QualificationStartHandler) Handle(ctx context.Context, task core.
 	if err != nil {
 		return err
 	}
-	if !found {
+	model := handler.answerModels[payload.ProfileID]
+	if !found && model == nil {
 		return qualificationStartError("no reviewed answer block for this level; run a reviewed attempt first")
+	}
+	if !found {
+		qualification := offering.Qualification
+		block = core.AnswerBlock{
+			Tag:  core.QualificationReviewedBlockTag(payload.Platform, qualification.FamilyID, qualification.LevelID),
+			Name: strings.TrimSpace(qualification.FamilyName + " " + qualification.LevelName),
+			Kind: core.AnswerBlockQualification, Platform: payload.Platform, Qualification: &qualification,
+		}
 	}
 	service, err := handler.registry.Resolve(payload.ProfileID)
 	if err != nil {
 		return err
 	}
-	return handler.runAttempt(ctx, service, payload, offering, block, task.CorrelationID)
+	return handler.runAttempt(ctx, service, payload, offering, block, model, task.CorrelationID)
 }
 
-func (handler *QualificationStartHandler) runAttempt(ctx context.Context, service adapter.QualificationAttemptService, payload core.SkillVerificationStartPayload, offering core.QualificationOffering, block core.AnswerBlock, correlationID core.CorrelationID) error {
+func (handler *QualificationStartHandler) runAttempt(ctx context.Context, service adapter.QualificationAttemptService, payload core.SkillVerificationStartPayload, offering core.QualificationOffering, block core.AnswerBlock, model QualificationAnswerModel, correlationID core.CorrelationID) error {
 	now := handler.clock.Now()
 	session, err := service.StartQualification(ctx, payload.ProfileID, payload.OfferingID)
 	if err != nil {
@@ -143,6 +171,7 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 	if err != nil {
 		return err
 	}
+	modelAnswers := make([]core.StoredAnswer, 0)
 	for questionCount := 0; questionCount < maximumQualificationQuestions; questionCount++ {
 		question, err := service.CurrentQuestion(ctx, session)
 		if err != nil {
@@ -156,6 +185,19 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 			return err
 		}
 		resolved, err := core.ResolveQuestionAnswer(question, block)
+		if err != nil && model != nil {
+			if stored, modelErr := model.Resolve(ctx, payload.Platform, question); modelErr == nil {
+				if candidate, resolveErr := core.ResolveStoredAnswer(question, stored); resolveErr == nil {
+					resolved = candidate
+					err = nil
+					modelAnswers = append(modelAnswers, stored)
+				} else {
+					err = resolveErr
+				}
+			} else {
+				err = modelErr
+			}
+		}
 		if err != nil {
 			if handler.reviews != nil {
 				if reviewErr := handler.recordReview(ctx, payload, offering, definition, question, fingerprint, block.Tag, correlationID); reviewErr != nil {
@@ -182,6 +224,12 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 			Qualification: offering.Qualification, Result: result,
 			AttemptFingerprint: definition.LastAttemptFingerprint,
 		}
+		attempt.Result.AnswerBlockTag = block.Tag
+		if result.Passed() && len(modelAnswers) > 0 {
+			if err := handler.persistModelAnswers(ctx, block, modelAnswers, model, handler.clock.Now()); err != nil {
+				return err
+			}
+		}
 		if _, _, err := handler.results.SaveQualificationAttempt(ctx, attempt, handler.clock.Now()); err != nil {
 			return err
 		}
@@ -191,6 +239,62 @@ func (handler *QualificationStartHandler) runAttempt(ctx context.Context, servic
 		return err
 	}
 	return qualificationStartError("qualification attempt exceeded the question bound")
+}
+
+// persistModelAnswers extends the qualification block with the answers the
+// platform just confirmed. Only a passed attempt reaches this path, so the
+// appended answers carry verified model provenance and become reusable.
+func (handler *QualificationStartHandler) persistModelAnswers(ctx context.Context, block core.AnswerBlock, answers []core.StoredAnswer, model QualificationAnswerModel, now time.Time) error {
+	if handler.revisions == nil || model == nil {
+		return nil
+	}
+	merged := make([]core.StoredAnswer, 0, len(block.Answers)+len(answers))
+	position := make(map[string]int, len(block.Answers))
+	for _, answer := range block.Answers {
+		position[core.NormalizeQuestionText(answer.Question)] = len(merged)
+		merged = append(merged, answer)
+	}
+	for _, answer := range answers {
+		verified := answer
+		if verified.Provenance != nil {
+			provenance := *verified.Provenance
+			provenance.Verified = true
+			verified.Provenance = &provenance
+		}
+		key := core.NormalizeQuestionText(verified.Question)
+		if index, exists := position[key]; exists {
+			merged[index] = verified
+			continue
+		}
+		position[key] = len(merged)
+		merged = append(merged, verified)
+	}
+	latest, exists, err := handler.revisions.LatestAnswerBlockRevision(ctx, block.Tag)
+	if err != nil {
+		return err
+	}
+	if exists {
+		latestDigest, err := core.StoredAnswersDigest(latest.Answers)
+		if err != nil {
+			return err
+		}
+		nextDigest, err := core.StoredAnswersDigest(merged)
+		if err != nil {
+			return err
+		}
+		if latestDigest == nextDigest {
+			return nil
+		}
+	}
+	name := block.Name
+	if strings.TrimSpace(name) == "" {
+		name = block.Tag
+	}
+	_, err = handler.revisions.AppendAnswerBlockRevision(ctx, core.AnswerBlockRevision{
+		BlockTag: block.Tag, Name: name, Kind: core.AnswerBlockQualification, Platform: block.Platform,
+		Source: "model:" + model.Tag(), Answers: merged, CreatedAt: now,
+	})
+	return err
 }
 
 // recordReview stores a durable review session for the unknown question. Human
@@ -207,7 +311,9 @@ func (handler *QualificationStartHandler) recordReview(ctx context.Context, payl
 	if tag := strings.TrimSpace(blockTag); tag != "" {
 		session.AnswerBlockTag = tag
 	} else {
-		session.AnswerBlockTag = string(offering.Platform) + "-" + offering.Qualification.FamilyID + "-" + offering.Qualification.LevelID + "-reviewed"
+		session.AnswerBlockTag = core.QualificationReviewedBlockTag(
+			offering.Platform, offering.Qualification.FamilyID, offering.Qualification.LevelID,
+		)
 	}
 	prompt := core.ReviewPrompt{ID: promptID, SessionID: session.ID, Revision: session.Revision, Question: question, CreatedAt: now}
 	created, err := handler.reviews.CreateReviewSession(ctx, session)

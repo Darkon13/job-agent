@@ -46,17 +46,15 @@ func (resolver *ReviewedVacancyAnswers) FindVacancy(ctx context.Context, platfor
 }
 
 // FindQualificationLevel returns the reviewed qualification block of one
-// family/level with the latest appended revision applied.
+// family/level with the latest appended revision applied. A level without a
+// declarative block falls back to the conventional reviewed tag, so verified
+// model answers stay discoverable after the first passed attempt.
 func (resolver *ReviewedVacancyAnswers) FindQualificationLevel(ctx context.Context, platform core.Platform, familyID, levelID string) (core.AnswerBlock, bool, error) {
 	base, found := resolver.registry.FindQualificationLevel(platform, familyID, levelID)
-	if !found {
-		return core.AnswerBlock{}, false, nil
+	if found {
+		return resolver.Get(ctx, base.Tag)
 	}
-	block, found, err := resolver.Get(ctx, base.Tag)
-	if err != nil {
-		return core.AnswerBlock{}, false, err
-	}
-	return block, found, nil
+	return resolver.Get(ctx, core.QualificationReviewedBlockTag(platform, familyID, levelID))
 }
 
 // Get returns a reviewed block by tag, merging the latest appended revision.

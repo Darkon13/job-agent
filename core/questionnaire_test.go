@@ -107,3 +107,45 @@ func TestResolveAnswerBlockRejectsChangedOption(t *testing.T) {
 		t.Fatal("expected changed option to be rejected")
 	}
 }
+
+func TestAnswerProvenanceValidation(t *testing.T) {
+	valid := AnswerProvenance{
+		Resolver: AnswerResolverModel, ModelTag: "mini", ProviderModel: "gpt-test",
+		PromptVersion: "v1", Confidence: AnswerConfidenceHigh, Verified: true,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid provenance: %v", err)
+	}
+	missing := valid
+	missing.ProviderModel = ""
+	if err := missing.Validate(); err == nil {
+		t.Fatal("expected model provenance without provider model to fail")
+	}
+	human := AnswerProvenance{Resolver: AnswerResolverHuman, Verified: true}
+	if err := human.Validate(); err != nil {
+		t.Fatalf("human provenance: %v", err)
+	}
+	unknown := valid
+	unknown.Resolver = "vibes"
+	if err := unknown.Validate(); err == nil {
+		t.Fatal("expected unknown resolver to fail")
+	}
+	badConfidence := valid
+	badConfidence.Confidence = "maybe"
+	if err := badConfidence.Validate(); err == nil {
+		t.Fatal("expected unknown confidence to fail")
+	}
+	block := AnswerBlock{
+		Tag: "hh-go-medium", Name: "Go medium", Kind: AnswerBlockQualification, Platform: "hh",
+		Answers: []StoredAnswer{{
+			Question: "Q", Text: "A", Provenance: &valid,
+		}},
+	}
+	if err := ValidateAnswerBlock(block); err != nil {
+		t.Fatalf("block with provenance: %v", err)
+	}
+	block.Answers[0].Provenance = &unknown
+	if err := ValidateAnswerBlock(block); err == nil {
+		t.Fatal("expected invalid provenance to fail the block")
+	}
+}

@@ -46,3 +46,34 @@ func TestReviewedVacancyAnswersMergeLatestRevision(t *testing.T) {
 		t.Fatalf("unknown platform: found=%v err=%v", found, err)
 	}
 }
+
+func TestReviewedVacancyAnswersFindQualificationLevelByConventionalTag(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	if _, err := repository.AppendAnswerBlockRevision(ctx, core.AnswerBlockRevision{
+		BlockTag: core.QualificationReviewedBlockTag("hh", "go", "medium"), Name: "Go medium",
+		Kind: core.AnswerBlockQualification, Platform: "hh", Source: "model:test-model", CreatedAt: now,
+		Answers: []core.StoredAnswer{{
+			Question: "Explain experience", Text: "Verified model answer",
+			Provenance: &core.AnswerProvenance{Resolver: core.AnswerResolverModel, ModelTag: "test-model", ProviderModel: "fake", PromptVersion: "v1", Verified: true},
+		}},
+	}); err != nil {
+		t.Fatalf("append revision: %v", err)
+	}
+	registry, err := core.NewAnswerBlockRegistry()
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	block, found, err := resolver.FindQualificationLevel(ctx, "hh", "go", "medium")
+	if err != nil || !found || len(block.Answers) != 1 || block.Answers[0].Text != "Verified model answer" {
+		t.Fatalf("block = %#v found=%v err=%v", block, found, err)
+	}
+	if _, found, err := resolver.FindQualificationLevel(ctx, "hh", "go", "advanced"); err != nil || found {
+		t.Fatalf("missing level: found=%v err=%v", found, err)
+	}
+}

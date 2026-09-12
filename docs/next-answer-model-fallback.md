@@ -1,8 +1,10 @@
 # Model fallback для вопросов тестов и опросников
 
-Статус: контракт зафиксирован, реализация не начата. Документ владеет
-конкретным срезом «неизвестный вопрос → model → ручное ревью». Общий контракт
-processor-ов и provider-neutral model port описан в
+Статус: контракт зафиксирован; для qualification реализован режим `auto`
+(`answers.model` в профиле). Ручной `review_only` пока не реализован: без
+настроенной policy поведение прежнее. Документ владеет конкретным срезом
+«неизвестный вопрос → model → ручное ревью». Общий контракт processor-ов и
+provider-neutral model port описан в
 [`docs/profile-desired-state-and-routing.md`](profile-desired-state-and-routing.md);
 application-срез model operator уже реализован и описан в
 [`docs/next-cover-letter-routing.md`](next-cover-letter-routing.md).
@@ -111,27 +113,31 @@ human review может показать краткое объяснение т�
 - При настроенной policy модель вызывается один раз на вопрос; timeout, rate
   limit, отмена или invalid output не блокируют попытку, а переводят вопрос в
   manual review.
-- `auto_submit` включается только явной policy. Для qualification он означает,
-  что валидный ответ модели отправляется платформе, а успешный результат
-  становится подтверждением, как для human-ответа. Для `review_only` модель
-  только предлагает вариант, который человек принимает или отклоняет.
-- Model suggestions для одного и того же `question_fingerprint` кэшируются по
-  fingerprint + prompt version + provider model, чтобы не платить за повторный
-  вызов; кэш не считается ответом и не используется при submit без validator.
+- Режим `auto` включается policy `answers.model` профиля: валидный ответ
+  отправляется платформе, а успешный `QualificationResult` помечает его
+  `verified` и дописывает в qualification-блок как reusable revision с
+  provenance. Режим `review_only` (модель только предлагает вариант человеку)
+  остаётся необязательным расширением и в v1 не реализован.
+- Кэш model suggestions по fingerprint + prompt version + provider model в v1 не
+  реализован: вызов выполняется заново для каждой неизвестной попытки.
 
 ## Порядок реализации
 
-1. Зафиксировать контракт; решение по `auto_submit` для qualification принимает
-   пользователь.
-2. Типы `AnswerModelRequest/Response`, локальный validator и тесты с fake
-   generator; переиспользовать `ModelFailureKind` и timeout/error taxonomy.
-3. Config policy на уровне профиля/answer routing: provider tag, prompt version,
-   timeout, `auto_submit`/`review_only`.
-4. Хранение suggestion (`review_only`) рядом с review prompt и API/dashboard
-   рендер; в `auto` сохраняется только provenance.
-5. Встроить цепочку в создание review session и qualification runner.
-6. Live-проверка на реальном неизвестном вопросе: exact option match, read-back,
-   запись provenance и последующая попытка из подтверждённого блока.
+1. ✅ Контракт зафиксирован; выбран режим `auto` для qualification.
+2. ✅ Типы `AnswerModelRequest/Response`, локальный validator, provenance и
+   тесты с fake generator; переиспользованы `ModelFailureKind` и timeout/error
+   taxonomy.
+3. ✅ Config policy `answers.model` профиля: provider tag, prompt version,
+   instruction, timeout.
+4. ✅ Хранение: provenance входит в `StoredAnswer`, verified-ответы
+   дописываются revision в qualification-блок; отдельного suggestion-хранилища
+   для `review_only` нет.
+5. ✅ Цепочка встроена в qualification runner: known-answer → model → review;
+   без declarative-блока используется conventional reviewed tag.
+6. ⏳ Live-проверка на реальном неизвестном вопросе: exact option match,
+   read-back, запись provenance и последующая попытка из подтверждённого блока.
+7. ⏳ Осталось: интеграция vacancy questionnaire, `review_only`, кэш и лимиты
+   стоимости, `study_bank`.
 
 ## Открытые решения
 

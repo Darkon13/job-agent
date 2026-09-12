@@ -105,5 +105,6 @@ func MergeAnswerBlocks(base, latest AnswerBlock) (AnswerBlock, error) {
 
 func cloneStoredAnswer(answer StoredAnswer) StoredAnswer {
 	answer.SelectedOptions = append([]string(nil), answer.SelectedOptions...)
+	answer.Provenance = cloneAnswerProvenance(answer.Provenance)
 	return answer
 }

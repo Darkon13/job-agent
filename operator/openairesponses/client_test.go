@@ -160,3 +160,64 @@ func TestClientRejectsMalformedStructuredOutput(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestClientGeneratesStructuredAnswer(t *testing.T) {
+	var received struct {
+		Instructions string              `json:"instructions"`
+		Input        string              `json:"input"`
+		Text         responsesTextConfig `json:"text"`
+		Store        bool                `json:"store"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"id":"response-answer","model":"gpt-answer","status":"completed",
+			"output":[{"type":"message","content":[
+				{"type":"output_text","text":"{\"selected_options\":[\"INNER JOIN\"],\"text\":\"\",\"confidence\":\"high\"}"}
+			]}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "gpt-answer"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	result, err := client.GenerateAnswer(context.Background(), applicationoperator.AnswerModelRequest{
+		Platform: "hh", QuestionKind: "single", QuestionText: "Which join keeps unmatched rows?",
+		Options: []string{"INNER JOIN", "LEFT JOIN"}, PromptVersion: "v1", Instruction: "Pick one option.",
+	})
+	if err != nil {
+		t.Fatalf("generate answer: %v", err)
+	}
+	if len(result.SelectedOptions) != 1 || result.SelectedOptions[0] != "INNER JOIN" ||
+		result.Text != "" || result.Confidence != "high" || result.Model != "gpt-answer" || result.ResponseID != "response-answer" {
+		t.Fatalf("result = %#v", result)
+	}
+	if received.Store || received.Instructions != "Pick one option." ||
+		!strings.Contains(received.Input, `"question_text":"Which join keeps unmatched rows?"`) ||
+		received.Text.Format.Name != "qualification_answer" || !received.Text.Format.Strict {
+		t.Fatalf("request body = %#v", received)
+	}
+}
+
+func TestClientRejectsMalformedAnswerOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"id":"response-1","model":"gpt-answer","status":"completed","output_text":"{\"selected_options\":[\"A\"],\"unexpected\":true}"}`))
+	}))
+	defer server.Close()
+	client, err := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "gpt-answer"})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	_, err = client.GenerateAnswer(context.Background(), applicationoperator.AnswerModelRequest{
+		Platform: "hh", QuestionKind: "single", QuestionText: "Question", Options: []string{"A", "B"},
+		PromptVersion: "v1", Instruction: "Pick one option.",
+	})
+	if applicationoperator.ModelFailureKindOf(err) != applicationoperator.ModelFailureInvalidOutput {
+		t.Fatalf("error = %v, want invalid output", err)
+	}
+}
