@@ -54,6 +54,17 @@ func TestNormalizeErrorKeepsHandlerCause(t *testing.T) {
 	}
 }
 
+func TestNormalizeErrorRetriesSQLiteBusy(t *testing.T) {
+	busy := normalizeError(errors.New("insert conversation message (5) (SQLITE_BUSY): database is locked"), core.TaskConversationSync)
+	if busy.Category != core.ErrorTemporaryFailure {
+		t.Fatalf("busy category = %q", busy.Category)
+	}
+	other := normalizeError(errors.New("unknown column name"), core.TaskConversationSync)
+	if other.Category != core.ErrorPermanentFailure {
+		t.Fatalf("plain error category = %q", other.Category)
+	}
+}
+
 func TestWorkerClaimsOnlyConfiguredTaskType(t *testing.T) {
 	now := time.Date(2026, 7, 19, 13, 0, 0, 0, time.UTC)
 	queue := brokermemory.NewQueue()

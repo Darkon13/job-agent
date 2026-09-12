@@ -631,7 +631,7 @@ func dataSourceName(path string) (string, error) {
 	}
 	value := url.URL{Scheme: "file", Path: absolute}
 	query := value.Query()
-	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "busy_timeout(30000)")
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	value.RawQuery = query.Encode()
