@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "database": {
     "driver": "sqlite",
     "path": "/data/job-agent.db"
@@ -15,11 +16,130 @@
       "type": "hh",
       "settings": {
         "api_delay_ms": 350,
-        "user_agent": "JobAgent/0.1 (replace-with-contact-email)"
+        "user_agent": "JobAgent/1.0 (replace-with-contact-email)"
       }
     }
   ],
-  "profiles": [],
-  "jobs": [],
-  "searches": []
+  "profiles": [
+    {
+      "tag": "main",
+      "adapter": "hh-main",
+      "resume": "replace-with-hh-resume-id",
+      "state_file": "/data/profiles/main.json",
+      "applications": {
+        "mode": "dry_run",
+        "message_template_file": "messages/backend.json",
+        "qualification": {
+          "include_any": ["Go", "Golang", "Backend"],
+          "exclude_any": ["руководитель", "team lead", "tech lead"]
+        },
+        "timezone": "Europe/Moscow"
+      },
+      "conversations": {
+        "allow_send": false,
+        "allow_mark_read": false
+      },
+      "enabled": true
+    }
+  ],
+  "searches": [
+    {
+      "tag": "golang-global",
+      "adapter": "hh-main",
+      "profiles": ["main"],
+      "priority": 100,
+      "target_applications": 20,
+      "fallback": "golang-similar",
+      "query": {
+        "source": "global",
+        "text": "Golang developer",
+        "area": ["1"],
+        "order_by": "publication_time",
+        "period": 7,
+        "page_size": 20,
+        "max_pages": 2
+      }
+    },
+    {
+      "tag": "golang-similar",
+      "adapter": "hh-main",
+      "profiles": ["main"],
+      "priority": 50,
+      "target_applications": 10,
+      "query": {
+        "source": "similar_resume",
+        "resume": "replace-with-hh-resume-id",
+        "area": ["1"],
+        "page_size": 20,
+        "max_pages": 1
+      }
+    }
+  ],
+  "jobs": [
+    {
+      "tag": "touch-main-resume",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 10 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {"min": "5m", "max": "30m"}
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {"type": "resume.touch", "profile": "main"}
+    },
+    {
+      "tag": "daily-applications",
+      "enabled": true,
+      "priority": 100,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "30 9 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {"min": "1m", "max": "10m"}
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "application.campaign",
+        "profiles": ["main"],
+        "routes": ["golang-global", "golang-similar"],
+        "target_successful": 20,
+        "max_in_flight": 2
+      }
+    },
+    {
+      "tag": "observe-main-activity",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/30 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {"type": "profile.activity.observe", "profile": "main"}
+    },
+    {
+      "tag": "sync-main-conversations",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/10 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {"type": "conversation.sync", "profile": "main"}
+    }
+  ]
 }

@@ -1,195 +1,202 @@
-# Quickstart: с нуля до первых откликов
+# Quickstart: конфиг → работающие отклики
 
-Маршрут поднимает Job Agent с пустого каталога `data/`: конфигурация, вход в
-HH, пробная кампания в `dry_run` и переход к реальным откликам. Варианты
-запуска — Docker Compose (проще) или локальные бинарники (для разработки).
+Job Agent управляется декларативной конфигурацией в духе Xray и sing-box. Вы
+описываете адаптер, профили, поиски и jobs — дальше сервис сам ищет вакансии,
+готовит письма, отправляет отклики, проходит анкеты и по расписанию поднимает
+резюме. Dashboard и интерактивный вход через браузер — **опциональные**
+удобства: без них достаточно конфига и одного сохранённого входа.
 
-Самый быстрый путь — взять готовый пример и поменять в нём резюме:
+Готовый стартовый конфиг лежит в
+[`deploy/config.example.json`](../deploy/config.example.json): один профиль,
+два поиска с fallback, ежедневное автоподнятие резюме и ежедневная кампания
+откликов. Ниже — как его запустить и что означают блоки.
+
+## 1. Настройте конфиг
 
 ```sh
 git clone https://github.com/Darkon13/job-agent.git
 cd job-agent
-cp -r config/example deploy
+cp deploy/config.example.json deploy/config.json
 mkdir -p data
 ```
 
-Дальше достаточно заменить `replace-with-hh-resume-id` в `deploy/config.json`
-на ID своего резюме HH, экспортировать токен API и запустить:
+Откройте `deploy/config.json` и замените `replace-with-hh-resume-id` на ID
+своего резюме HH (виден в ссылке на резюме в кабинете). Имя профиля `main` —
+это **ваш произвольный тег объекта**: назовите его как угодно (`backend`,
+`account-1`, `hh-main`), главное — используйте одно имя во всех ссылках.
 
-```sh
-export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_DATA_DIR=./data \
-  docker compose --profile browser up -d --build
-```
+Ключевые блоки стартового конфига:
 
-Если хочется понять, из чего собран пример, — ниже разобран эквивалент с нуля.
-
-## 1. Конфигурация
-
-```text
-job-agent/
-|- deploy/
-|  |- config.json
-|  |- profiles.json
-|  |- messages/backend.json
-|  `- searches/golang.json
-`- data/
-```
-
-`deploy/config.json` — единственный файл с `database`, `server` и `include`
-(остальные объекты можно держать в include-файлах):
-
-```json
+```jsonc
 {
-  "schema_version": 1,
-  "database": {"driver": "sqlite", "path": "./data/job-agent.db"},
-  "server": {
-    "listen": "127.0.0.1:8080",
-    "api_token_env": "JOB_AGENT_API_TOKEN"
-  },
-  "include": ["profiles.json", "searches/*.json"]
+  "adapters": [{"tag": "hh-main", "type": "hh"}],
+  "profiles": [{
+    "tag": "main",                       // ваш тег профиля
+    "adapter": "hh-main",
+    "resume": "replace-with-hh-resume-id",
+    "state_file": "/data/profiles/main.json",
+    "applications": {
+      "mode": "dry_run",                 // сначала безопасный режим
+      "message_template_file": "messages/backend.json",
+      "qualification": {"include_any": ["Go", "Golang", "Backend"]},
+      "timezone": "Europe/Moscow"
+    },
+    "conversations": {"allow_send": false, "allow_mark_read": false}
+  }],
+  "searches": [
+    {
+      "tag": "golang-global",
+      "adapter": "hh-main",
+      "profiles": ["main"],
+      "priority": 100,
+      "target_applications": 20,
+      "fallback": "golang-similar",      // когда выдача исчерпана
+      "query": {"source": "global", "text": "Golang developer", "area": ["1"], "page_size": 20, "max_pages": 2}
+    },
+    {
+      "tag": "golang-similar",
+      "adapter": "hh-main",
+      "profiles": ["main"],
+      "priority": 50,
+      "query": {"source": "similar_resume", "resume": "replace-with-hh-resume-id", "area": ["1"]}
+    }
+  ],
+  "jobs": [
+    {"tag": "touch-main-resume", "triggers": [{"type": "cron", "expression": "0 10 * * *", "timezone": "Europe/Moscow"}],
+     "action": {"type": "resume.touch", "profile": "main"}},
+    {"tag": "daily-applications", "triggers": [{"type": "cron", "expression": "30 9 * * *", "timezone": "Europe/Moscow"}],
+     "action": {"type": "application.campaign", "profiles": ["main"], "routes": ["golang-global", "golang-similar"], "target_successful": 20, "max_in_flight": 2}}
+  ]
 }
 ```
 
-`deploy/profiles.json` описывает адаптер и профиль:
+Что здесь происходит:
+
+- **`searches`** — что искать. `source: global` — обычная выдача;
+  `source: similar_resume` — похожие на ваше резюме. `fallback` задаёт
+  следующий поиск, если текущая выдача закончилась, а цель по откликам не
+  достигнута.
+- **`jobs`** — расписание. `resume.touch` поднимает резюме (в примере — раз в
+  день), `application.campaign` запускает отклики по маршрутам `routes` в
+  порядке приоритета.
+- **`profiles`** — аккаунты. Фильтры `qualification` и тексты писем живут в
+  профиле, поэтому у разных аккаунтов могут быть разные правила.
+- Сообщения лежат рядом с конфигом: `deploy/messages/backend.json`.
+
+## 2. Один раз войдите в HH
+
+Вход сохраняется в browser storage state профиля (`state_file`) и переживает
+перезапуск. Выберите любой способ:
+
+- **CLI**: `job-agent auth login --profile main --state-output ./data/profiles/main.json`
+  (попросит e-mail и код);
+- **Dashboard** (опционально): секция «Вход в HH» → профиль `main` → «Начать
+  вход»;
+- **Импорт готовой сессии**: `job-agent auth import --source export.json --state-output ./data/profiles/main.json --force`.
+
+Если у вас OAuth-доступ к API HH, браузерный вход не обязателен: укажите
+`credentials_ref` в профиле, и API-операции пойдут без cookies.
+
+> Дальше ничего нажимать не нужно: cron внутри сервиса сам выполнит поиск,
+> поднятие резюме и отклики по расписанию из конфига.
+
+## 3. Запуск
+
+### Docker Compose
+
+```sh
+export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
+JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_DIR=./data \
+  docker compose --profile browser up -d --build
+```
+
+Профиль `browser` добавляет worker для входа и browser-only операций. Без него
+сервис тоже работает, но login и анкеты будут недоступны.
+
+### Локально без Docker
+
+```sh
+make build
+./dist/job-agent-migrate -config ./deploy/config.json up
+./dist/job-agent ./deploy/config.json
+```
+
+Dashboard (опционально) — `./dist/job-agent-dashboard`. Для browser-операций
+запустите worker: `cd browser-worker && npm ci && npm run build && npm start`.
+
+## 4. Несколько профилей HH
+
+Каждый аккаунт — отдельный профиль со своим тегом, резюме, state-файлом и
+политикой. Вакансия хранится в базе один раз, а отклик — отдельно для пары
+профиль/вакансия, поэтому один и тот же поиск может распределяться между
+аккаунтами без дублей.
 
 ```json
 {
   "adapters": [{"tag": "hh-main", "type": "hh"}],
   "profiles": [
     {
-      "tag": "primary",
+      "tag": "backend",
       "adapter": "hh-main",
-      "resume": "replace-with-hh-resume-id",
-      "state_file": "./data/profiles/primary.json",
-      "enabled": true,
+      "resume": "resume-id-backend",
+      "state_file": "/data/profiles/backend.json",
       "applications": {
-        "mode": "dry_run",
+        "mode": "submit",
+        "daily_limit": 30,
+        "submit_jitter": {"min": "15s", "max": "30s"},
         "message_template_file": "messages/backend.json",
-        "qualification": {"include_any": ["Go", "Golang", "Backend"]},
         "timezone": "Europe/Moscow"
-      },
-      "conversations": {"allow_send": false, "allow_mark_read": false}
-    }
-  ]
-}
-```
-
-`deploy/messages/backend.json` — пул сопроводительных:
-
-```json
-{
-  "strategy": "stable_hash",
-  "templates": [
-    {
-      "tag": "concise",
-      "template": "Здравствуйте! Заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Буду рад обсудить задачи команды."
-    }
-  ]
-}
-```
-
-`deploy/searches/golang.json` добавляет поиск:
-
-```json
-{
-  "searches": [
+      }
+    },
     {
       "tag": "golang",
       "adapter": "hh-main",
-      "profiles": ["primary"],
-      "query": {"source": "global", "text": "Golang developer", "area": ["1"], "page_size": 20}
+      "resume": "resume-id-golang",
+      "state_file": "/data/profiles/golang.json",
+      "applications": {
+        "mode": "dry_run",
+        "message_template_file": "messages/backend.json",
+        "timezone": "Europe/Moscow"
+      }
+    }
+  ],
+  "searches": [
+    {
+      "tag": "golang-global",
+      "adapter": "hh-main",
+      "profiles": ["backend", "golang"],
+      "query": {"source": "global", "text": "Golang developer", "area": ["1"]}
+    }
+  ],
+  "jobs": [
+    {
+      "tag": "daily-applications",
+      "triggers": [{"type": "cron", "expression": "30 9 * * *", "timezone": "Europe/Moscow"}],
+      "action": {
+        "type": "application.campaign",
+        "profiles": ["backend", "golang"],
+        "routes": ["golang-global"],
+        "target_successful": 40,
+        "max_in_flight": 2
+      }
     }
   ]
 }
 ```
 
-Начните с `"mode": "dry_run"`: письма и решения готовятся, платформа не
-меняется. Реальный submit включается после проверки письма, лимитов и
-pacing-политики.
+Правила:
 
-## 2. Запуск
+- `tag` профиля выбираете вы — это просто имя объекта для ссылок;
+- у каждого профиля собственные `resume`, `state_file`, `daily_limit` и
+  `submit_jitter`; один аккаунт может быть в `submit`, другой в `dry_run`;
+- `searches[].profiles` и `job.action.profiles` перечисляют, какие профили
+  участвуют; отклики не пересекаются благодаря ключу профиль/вакансия;
+- вход выполняется один раз для каждого профиля.
 
-### Docker Compose
+## 5. От dry-run к реальным откликам
 
-```sh
-export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_DATA_DIR=./data \
-  docker compose --profile browser up -d --build
-```
-
-Профиль `browser` добавляет browser worker, который нужен для входа в HH и
-browser-only операций (анкеты, тесты, чаты). Проверка:
-
-```sh
-curl -sf -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
-  http://127.0.0.1:8080/api/v1/version
-curl -sf http://127.0.0.1:8081/dashboard-healthz
-```
-
-### Локальные бинарники
-
-```sh
-make build
-export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-./dist/job-agent-migrate -config ./deploy/config.json up
-./dist/job-agent ./deploy/config.json
-```
-
-Backend слушает `127.0.0.1:8080`. Dashboard запускается отдельно
-(`./dist/job-agent-dashboard`, `127.0.0.1:8081`). Для browser-операций
-запустите worker: `cd browser-worker && npm ci && npm run build && npm start`.
-
-## 3. Вход в HH
-
-Через dashboard: секция «Вход в HH» → профиль `primary` → «Начать вход» →
-e-mail и код из письма (или captcha). Сессия сохранится в browser storage
-state профиля (`data/profiles/primary.json`) и переживёт перезапуск.
-
-Через CLI (нужен запущенный browser worker):
-
-```sh
-job-agent auth login --profile primary --state-output ./data/profiles/primary.json
-```
-
-Если state уже есть (например, экспорт Playwright), используйте импорт:
-
-```sh
-job-agent auth import --source export.json \
-  --state-output ./data/profiles/primary.json --force
-```
-
-Проверить статус профиля можно в dashboard или через `job-agent auth status
---profile primary --watch` (следит за сессией через SSE).
-
-## 4. Первый поиск и dry-run отклик
-
-Перезапустите backend после правок конфигурации и запустите job вручную из
-dashboard (раздел «Задания» → «Запустить») или через API:
-
-```sh
-curl -sf -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  http://127.0.0.1:8080/api/v1/jobs/<job-tag>/runs
-```
-
-`<job-tag>` — тег job из конфигурации (в примере —
-`daily-backend-applications`). Смотрите результат в dashboard («Отклики»,
-«Очередь», «Задания») или через API:
-
-```sh
-curl -s -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
-  "http://127.0.0.1:8080/api/v1/applications?limit=20"
-```
-
-В `dry_run` отклики остаются в состоянии подготовки: проверьте письмо,
-decision reason и фильтры. Если вакансия требует анкету, в разделе «Проверки
-и опросники» появится сессия — заполните её, и отправка продолжится
-автоматически.
-
-## 5. Реальные отклики
-
-В профиле:
+Пока `"mode": "dry_run"`, сервис готовит письма и решения, но не меняет
+платформу. Проверьте причины решений и тексты, затем включите submit:
 
 ```json
 "applications": {
@@ -200,18 +207,23 @@ decision reason и фильтры. Если вакансия требует ан
 ```
 
 `daily_limit` — потолок откликов в день на профиль/платформу,
-`submit_jitter` — пауза между отправками. Перезапустите сервис и начинайте с
-небольших значений, проверяя dashboard после каждого запуска. Платформа может
-сама остановить отправку (`rate_limited`, `quota_exceeded`) — job дождётся
-разрешённого времени или остановится с понятной причиной.
+`submit_jitter` — пауза между отправками. Начинайте с небольших значений. Если
+вакансия требует анкету, отклик остановится до вашего ответа: заполните форму
+в разделе «Проверки и опросники» (dashboard) или ответьте на вопрос в чате —
+отправка продолжится автоматически.
 
-## 6. Обслуживание
+## 6. Наблюдение и обслуживание
+
+Без dashboard всё доступно через CLI и API:
 
 ```sh
 job-agent-check ./deploy/config.json               # ready | degraded | blocked
-job-agent db backup --config ./deploy/config.json  # снимок SQLite
+curl -s -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" "http://127.0.0.1:8080/api/v1/applications?limit=20"
+curl -s -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  "http://127.0.0.1:8080/api/v1/jobs/daily-applications/runs"
+job-agent db backup --config ./deploy/config.json
 job-agent db restore --config ./deploy/config.json --input <backup> --force
 ```
 
 Upgrade и restore выполняются на остановленном сервисе, после backup.
-Типовые сбои и порядок восстановления — в [`runbook.md`](runbook.md).
+Типовые сбои и восстановление — в [`runbook.md`](runbook.md).
