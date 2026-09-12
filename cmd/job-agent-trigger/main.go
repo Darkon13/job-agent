@@ -135,6 +135,13 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 		}
 		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
 		return core.TaskProfileActivityObserve, core.ProfileID(profile.Tag), payload, err
+	case appconfig.JobActionProfileSessionRefresh:
+		profile, ok := configuredProfile(cfg, job.Action.Profile)
+		if !ok {
+			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+		}
+		payload, err := json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: core.ProfileID(profile.Tag)})
+		return core.TaskProfileSessionRefresh, core.ProfileID(profile.Tag), payload, err
 	case appconfig.JobActionConversationSync:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
@@ -184,7 +191,7 @@ func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core
 
 func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {
 	switch job.Action.Type {
-	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve, appconfig.JobActionConversationSync, appconfig.JobActionConversationFollowUpSelect:
+	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve, appconfig.JobActionProfileSessionRefresh, appconfig.JobActionConversationSync, appconfig.JobActionConversationFollowUpSelect:
 		profile, ok := configuredProfile(cfg, job.Action.Profile)
 		if !ok {
 			return "", fmt.Errorf("job %q references an unknown profile", job.Tag)

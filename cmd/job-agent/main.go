@@ -282,6 +282,7 @@ func main() {
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
+	sessionRefreshers := taskworker.NewSessionRefresherRegistry()
 	resumePublishers := taskworker.NewResumePublisherRegistry()
 	testCapturers := taskworker.NewVacancyTestCapturerRegistry()
 	testSubmitters := taskworker.NewVacancyTestSubmitterRegistry()
@@ -656,6 +657,37 @@ func main() {
 		}
 		workers = append(workers, resumeWorker)
 	}
+	if refreshClient, err := browserWorkerHTTPClient(); err != nil {
+		logf("profile session refresh is disabled: %v", err)
+	} else if refreshClient != nil {
+		for _, profile := range cfg.Profiles {
+			if !profile.Enabled || strings.TrimSpace(profile.StateFile) == "" {
+				continue
+			}
+			if instances[profile.Adapter].Name() != hh.Name {
+				continue
+			}
+			profileID := core.ProfileID(profile.Tag)
+			if err := sessionRefreshers.Register(profileID, refreshClient, profile.StateFile); err != nil {
+				log.Fatalf("register session refresher for profile %q: %v", profile.Tag, err)
+			}
+		}
+		if sessionRefreshers.Count() > 0 {
+			sessionHandler, err := taskworker.NewSessionRefreshHandler(sessionRefreshers, func(data []byte) ([]byte, error) {
+				sanitized, _, err := hh.SanitizeBrowserStorageStateData(data)
+				return sanitized, err
+			})
+			if err != nil {
+				log.Fatalf("create session refresh handler: %v", err)
+			}
+			sessionWorker, err := newTaskWorker(store, core.TaskProfileSessionRefresh, sessionHandler.Handle)
+			if err != nil {
+				log.Fatalf("create session refresh worker: %v", err)
+			}
+			workers = append(workers, sessionWorker)
+			logf("profile session refresh is enabled for %d profile(s)", sessionRefreshers.Count())
+		}
+	}
 	if testCapturers.Count() > 0 {
 		testCaptureHandler, err := taskworker.NewVacancyTestCaptureHandler(testCapturers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -794,6 +826,11 @@ func main() {
 		log.Fatalf("build resume publish scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, resumePublishDefinitions...)
+	sessionRefreshScheduled, err := sessionRefreshDefinitions(cfg, sessionRefreshers)
+	if err != nil {
+		log.Fatalf("build profile session refresh jobs: %v", err)
+	}
+	definitions = append(definitions, sessionRefreshScheduled...)
 	activityDefinitions, err := profileActivityDefinitions(cfg, instances, activityObservers)
 	if err != nil {
 		log.Fatalf("build profile activity scheduled jobs: %v", err)
@@ -1790,6 +1827,46 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 		}
 	}
 	return definitions, nil
+}
+
+func sessionRefreshDefinitions(cfg appconfig.Config, refreshers *taskworker.SessionRefresherRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileSessionRefresh {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled || !refreshers.Has(profileID) {
+			continue
+		}
+		payload, err := json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: profileID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskProfileSessionRefresh, Platform: core.Platform(hh.Name), ProfileID: profileID,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func browserWorkerHTTPClient() (*browser.HTTPClient, error) {
+	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
+	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
+	if baseURL == "" || token == "" {
+		return nil, nil
+	}
+	return browser.NewHTTPClient(browser.HTTPConfig{BaseURL: baseURL, Token: token})
 }
 
 func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, publishers *taskworker.ResumePublisherRegistry) ([]jobscheduler.Definition, error) {

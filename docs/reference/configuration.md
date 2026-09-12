@@ -263,6 +263,7 @@ model-контексте заменяются на `{email}`, `{telegram}`, `{fi
 | `resume.publish` | `profile`, `resume` | публикует резюме |
 | `resume.update` | `profile`, `resource`, `publish` | plan → apply → read-back для desired state |
 | `profile.activity.observe` | `profile` | снимок активности резюме |
+| `profile.session_refresh` | `profile` | перечитывает cookies из live browser-контекста и обновляет `state_file` (страховка от протухшей сессии) |
 | `profile_state.reconcile` | `resource` | сверяет объявленный resource с платформой |
 | `conversation.sync` | `profile` | синхронизирует историю чатов |
 | `conversation.follow_up.select` | `profile`, `follow_up` | выбирает чат и планирует напоминание |
