@@ -66,6 +66,7 @@ type reviewSessionResponse struct {
 	UpdatedAt        time.Time                `json:"updated_at"`
 	Prompt           *core.ReviewPrompt       `json:"prompt,omitempty"`
 	Selections       []core.ReviewSelection   `json:"selections,omitempty"`
+	Questions        []core.Question          `json:"questions,omitempty"`
 	Vacancy          *reviewVacancyInfo       `json:"vacancy,omitempty"`
 }
 
@@ -182,15 +183,23 @@ func (api *ReviewAPI) getSession(response http.ResponseWriter, request *http.Req
 		return
 	}
 	view.Selections = selections
+	view.Questions = api.remainingQuestions(request.Context(), session)
 	writeJSON(response, http.StatusOK, view)
 }
 
 type reviewAnswerRequest struct {
-	PromptID         core.ReviewPromptID `json:"prompt_id"`
-	ExpectedRevision uint64              `json:"expected_revision"`
-	SelectedOptions  []string            `json:"selected_options,omitempty"`
-	Text             string              `json:"text,omitempty"`
-	Source           string              `json:"source"`
+	PromptID         core.ReviewPromptID        `json:"prompt_id"`
+	ExpectedRevision uint64                     `json:"expected_revision"`
+	SelectedOptions  []string                   `json:"selected_options,omitempty"`
+	Text             string                     `json:"text,omitempty"`
+	Source           string                     `json:"source"`
+	Answers          []reviewBatchAnswerRequest `json:"answers,omitempty"`
+}
+
+type reviewBatchAnswerRequest struct {
+	QuestionID      string   `json:"question_id"`
+	SelectedOptions []string `json:"selected_options,omitempty"`
+	Text            string   `json:"text,omitempty"`
 }
 
 func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request) {
@@ -207,15 +216,46 @@ func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request
 		writeError(response, err)
 		return
 	}
-	task, created, err := api.workflow.EnqueueReviewAnswer(request.Context(), session, core.ReviewAnswerPayload{
+	payload := core.ReviewAnswerPayload{
 		SessionID: session.ID, PromptID: body.PromptID, ExpectedRevision: body.ExpectedRevision,
 		SelectedOptions: body.SelectedOptions, Text: body.Text, Source: body.Source,
-	}, key)
+	}
+	for _, answer := range body.Answers {
+		payload.Answers = append(payload.Answers, core.ReviewAnswerEntry{
+			QuestionID: answer.QuestionID, SelectedOptions: answer.SelectedOptions, Text: answer.Text,
+		})
+	}
+	task, created, err := api.workflow.EnqueueReviewAnswer(request.Context(), session, payload, key)
 	if err != nil {
 		writeError(response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, taskResponse{TaskID: task.ID, Created: created})
+}
+
+// remainingQuestions lists the observed questionnaire questions that have no
+// recorded answer yet. Each answered question left its prompt row behind, so
+// the prompt ids below the current revision identify the answered set.
+func (api *ReviewAPI) remainingQuestions(ctx context.Context, session core.ReviewSession) []core.Question {
+	if len(session.Questionnaire.Questions) == 0 {
+		return nil
+	}
+	answered := make(map[string]struct{}, session.Revision)
+	for revision := uint64(1); revision < session.Revision; revision++ {
+		promptID := core.ReviewPromptID(fmt.Sprintf("%s-prompt-%d", session.ID, revision))
+		prompt, err := api.reviews.ReviewPrompt(ctx, promptID)
+		if err != nil {
+			continue
+		}
+		answered[prompt.Question.ID] = struct{}{}
+	}
+	remaining := make([]core.Question, 0, len(session.Questionnaire.Questions))
+	for _, question := range session.Questionnaire.Questions {
+		if _, ok := answered[question.ID]; !ok {
+			remaining = append(remaining, question)
+		}
+	}
+	return remaining
 }
 
 func reviewPromptID(session core.ReviewSession) core.ReviewPromptID {

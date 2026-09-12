@@ -91,7 +91,11 @@ func (workflow *VacancyTestWorkflow) EnqueueReviewAnswer(ctx context.Context, se
 	if requestKey == "" {
 		return core.Task{}, false, errors.New("review answer requires request key")
 	}
-	key, err := core.ReviewAnswerIdempotencyKey(payload.SessionID, payload.PromptID, payload.ExpectedRevision)
+	keyPart := payload.PromptID
+	if len(payload.Answers) != 0 {
+		keyPart = core.ReviewPromptID("batch")
+	}
+	key, err := core.ReviewAnswerIdempotencyKey(payload.SessionID, keyPart, payload.ExpectedRevision)
 	if err != nil {
 		return core.Task{}, false, err
 	}

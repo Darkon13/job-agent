@@ -110,6 +110,9 @@ func TestReviewAPIExposesWaitingPrompt(t *testing.T) {
 	if body.Status != core.ReviewWaiting || body.Revision != 1 || body.Prompt == nil || body.Prompt.Question.Text != "Pick a language" {
 		t.Fatalf("response = %#v", body)
 	}
+	if len(body.Questions) != 1 || body.Questions[0].ID != "1" {
+		t.Fatalf("questions = %#v", body.Questions)
+	}
 }
 
 func TestReviewAPIEnqueuesIdempotentAnswer(t *testing.T) {
@@ -175,5 +178,16 @@ func TestReviewAPIListFiltersWaitingSessions(t *testing.T) {
 	response = performRequest(t, handler, http.MethodGet, "/api/v1/review-sessions?limit=0", "", "", nil)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestReviewAPIAcceptsBatchAnswers(t *testing.T) {
+	handler, _ := newReviewAPI(t)
+	response := performRequest(t, handler, http.MethodPost, "/api/v1/review-sessions/review-1/answers", "batch-1", "", reviewAnswerRequest{
+		ExpectedRevision: 1, Source: "dashboard",
+		Answers: []reviewBatchAnswerRequest{{QuestionID: "1", SelectedOptions: []string{"Go"}}},
+	})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -64,6 +64,9 @@ func (handler *ReviewAnswerHandler) Handle(ctx context.Context, task core.Task) 
 	if err != nil {
 		return err
 	}
+	if len(payload.Answers) != 0 {
+		return handler.handleBatch(ctx, session, payload)
+	}
 	prompt, err := handler.reviews.ReviewPrompt(ctx, payload.PromptID)
 	if err != nil {
 		return err
@@ -85,6 +88,130 @@ func (handler *ReviewAnswerHandler) Handle(ctx context.Context, task core.Task) 
 		}
 	}
 	return handler.continueChain(ctx, session, prompt, selection, now)
+}
+
+// handleBatch records the whole questionnaire in one durable task. Answers are
+// applied in question order, each advancing the session revision, and the
+// submit chain continues once every question is covered.
+func (handler *ReviewAnswerHandler) handleBatch(ctx context.Context, session core.ReviewSession, payload core.ReviewAnswerPayload) error {
+	if len(session.Questionnaire.Questions) == 0 {
+		return errors.New("review session has no observed questionnaire")
+	}
+	if session.Status != core.ReviewWaiting {
+		return fmt.Errorf("review session is not waiting for an answer: %q", session.Status)
+	}
+	if payload.ExpectedRevision != session.Revision {
+		return fmt.Errorf("stale review revision: got %d, current %d", payload.ExpectedRevision, session.Revision)
+	}
+	block, _, err := handler.reviewedBlock(ctx, session)
+	if err != nil {
+		return err
+	}
+	var missing []core.Question
+	if len(block.Answers) == 0 {
+		missing = append(missing, session.Questionnaire.Questions...)
+	} else {
+		missing, err = core.UncoveredQuestions(session.Questionnaire, block)
+		if err != nil {
+			return err
+		}
+	}
+	if len(missing) == 0 {
+		return errors.New("review questionnaire has no missing questions")
+	}
+	entries := make(map[string]core.ReviewAnswerEntry, len(payload.Answers))
+	for _, entry := range payload.Answers {
+		entries[strings.TrimSpace(entry.QuestionID)] = entry
+	}
+	if len(entries) != len(missing) {
+		return errors.New("batch review answers must cover every missing question")
+	}
+	now := handler.clock.Now()
+	selections := make([]core.ReviewSelection, 0, len(missing))
+	for index, question := range missing {
+		entry, ok := entries[question.ID]
+		if !ok {
+			return fmt.Errorf("batch review answers miss question %q", question.ID)
+		}
+		prompt := core.ReviewPrompt{
+			ID:        core.ReviewPromptID(fmt.Sprintf("%s-prompt-%d", session.ID, session.Revision)),
+			SessionID: session.ID, Revision: session.Revision, Question: question, CreatedAt: now,
+		}
+		if index != 0 {
+			if err := session.WaitForAnswer(prompt, now); err != nil {
+				return err
+			}
+			if err := handler.reviews.SaveReviewPrompt(ctx, session, prompt, session.Revision); err != nil {
+				return err
+			}
+		}
+		selection, err := session.RecordSelection(prompt, entry.SelectedOptions, entry.Text, payload.Source, session.Revision, now)
+		if err != nil {
+			return err
+		}
+		if err := handler.reviews.AppendReviewSelection(ctx, session, selection, selection.Revision); err != nil {
+			return err
+		}
+		if handler.revisions != nil {
+			if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
+				return err
+			}
+		}
+		selections = append(selections, selection)
+	}
+	return handler.continueBatch(ctx, session, selections, missing)
+}
+
+// continueBatch enqueues the vacancy questionnaire submit once the batch has
+// covered every question.
+func (handler *ReviewAnswerHandler) continueBatch(ctx context.Context, session core.ReviewSession, selections []core.ReviewSelection, missing []core.Question) error {
+	if handler.resolver == nil || handler.chain == nil {
+		return nil
+	}
+	if session.AnswerBlockTag != "" {
+		return nil
+	}
+	externalID, ok := core.VacancyExternalIDFromTestDefinitionID(session.Platform, session.TestDefinitionID)
+	if !ok {
+		return nil
+	}
+	block, _, err := handler.reviewedBlock(ctx, session)
+	if err != nil {
+		return err
+	}
+	byQuestion := make(map[string]core.ReviewSelection, len(selections))
+	for index, selection := range selections {
+		byQuestion[missing[index].ID] = selection
+	}
+	storedByText := make(map[string]core.StoredAnswer, len(block.Answers))
+	for _, answer := range block.Answers {
+		storedByText[core.NormalizeQuestionText(answer.Question)] = answer
+	}
+	answers := make([]core.ResolvedAnswer, 0, len(session.Questionnaire.Questions))
+	for _, question := range session.Questionnaire.Questions {
+		if selection, exists := byQuestion[question.ID]; exists {
+			resolved, err := core.ResolveStoredAnswer(question, core.StoredAnswer{
+				Question: question.Text, SelectedOptions: selection.SelectedOptions, Text: selection.Text,
+			})
+			if err != nil {
+				return err
+			}
+			answers = append(answers, resolved)
+			continue
+		}
+		stored, exists := storedByText[core.NormalizeQuestionText(question.Text)]
+		if !exists {
+			return fmt.Errorf("answer block %q has no reviewed answer for question %q", block.Tag, question.Text)
+		}
+		resolved, err := core.ResolveStoredAnswer(question, stored)
+		if err != nil {
+			return err
+		}
+		answers = append(answers, resolved)
+	}
+	requestKey := fmt.Sprintf("review:%s:%d", session.ID, session.Revision)
+	_, err = handler.chain.EnqueueAnswer(ctx, session.ProfileID, session.Platform, externalID, answers, requestKey)
+	return err
 }
 
 // appendRevision extends the platform vacancy block with the human answer.

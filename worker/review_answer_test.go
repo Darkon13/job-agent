@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +207,70 @@ func TestReviewAnswerCreatesFirstVacancyRevisionWithoutBaseBlock(t *testing.T) {
 	}
 	if next.Question.ID != "2" {
 		t.Fatalf("next prompt = %#v", next)
+	}
+}
+
+func TestReviewAnswerRecordsWholeBatchWithoutBaseBlock(t *testing.T) {
+	questions := []core.Question{
+		{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{
+			{ID: "10", Text: "Go"}, {ID: "11", Text: "Python"},
+		}},
+		{ID: "2", Text: "Explain experience", Kind: core.QuestionText},
+	}
+	handler, repository, _, _, chain := reviewFixture(t, questions, 0, core.AnswerBlock{})
+	registry, err := core.NewAnswerBlockRegistry()
+	if err != nil {
+		t.Fatalf("empty registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	handler.ConfigureContinuation(resolver, repository, chain)
+	err = handler.Handle(context.Background(), reviewAnswerTask(t, core.ReviewAnswerPayload{
+		SessionID: "review-1", ExpectedRevision: 1, Source: "dashboard",
+		Answers: []core.ReviewAnswerEntry{
+			{QuestionID: "1", SelectedOptions: []string{"Go"}},
+			{QuestionID: "2", Text: "Five years of Go"},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("handle batch: %v", err)
+	}
+	if len(chain.answers) != 1 || len(chain.answers[0]) != 2 {
+		t.Fatalf("answers = %#v", chain.answers)
+	}
+	if chain.answers[0][0].SelectedOptionIDs[0] != "10" || chain.answers[0][1].Text != "Five years of Go" {
+		t.Fatalf("resolved answers = %#v", chain.answers[0])
+	}
+	session, err := repository.ReviewSession(context.Background(), "review-1")
+	if err != nil || session.Status != core.ReviewAnswered || session.Revision != 3 {
+		t.Fatalf("session = %#v err=%v", session, err)
+	}
+	selections, err := repository.ReviewSelections(context.Background(), "review-1")
+	if err != nil || len(selections) != 2 || selections[1].Text != "Five years of Go" {
+		t.Fatalf("selections = %#v err=%v", selections, err)
+	}
+	latest, exists, err := repository.LatestAnswerBlockRevision(context.Background(), "hh-vacancy-reviewed")
+	if err != nil || !exists || len(latest.Answers) != 2 {
+		t.Fatalf("revision = %#v exists=%v err=%v", latest, exists, err)
+	}
+}
+
+func TestReviewAnswerBatchRequiresFullCoverage(t *testing.T) {
+	questions := []core.Question{
+		{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{
+			{ID: "10", Text: "Go"}, {ID: "11", Text: "Python"},
+		}},
+		{ID: "2", Text: "Explain experience", Kind: core.QuestionText},
+	}
+	handler, _, _, _, _ := reviewFixture(t, questions, 0, core.AnswerBlock{})
+	err := handler.Handle(context.Background(), reviewAnswerTask(t, core.ReviewAnswerPayload{
+		SessionID: "review-1", ExpectedRevision: 1, Source: "dashboard",
+		Answers: []core.ReviewAnswerEntry{{QuestionID: "1", SelectedOptions: []string{"Go"}}},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "cover every missing question") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

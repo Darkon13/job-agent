@@ -222,18 +222,26 @@ func TestCompleteIdempotencyKey(platform Platform, externalID string, profileID 
 // ReviewAnswerPayload carries one human selection for the current review
 // prompt. It is append-only and uses optimistic concurrency, so a stale client
 // never overwrites a newer answer.
+// ReviewAnswerEntry is one human answer inside a batch review submission.
+type ReviewAnswerEntry struct {
+	QuestionID      string   `json:"question_id"`
+	SelectedOptions []string `json:"selected_options,omitempty"`
+	Text            string   `json:"text,omitempty"`
+}
+
 type ReviewAnswerPayload struct {
-	SessionID        ReviewSessionID `json:"session_id"`
-	PromptID         ReviewPromptID  `json:"prompt_id"`
-	ExpectedRevision uint64          `json:"expected_revision"`
-	SelectedOptions  []string        `json:"selected_options,omitempty"`
-	Text             string          `json:"text,omitempty"`
-	Source           string          `json:"source"`
+	SessionID        ReviewSessionID     `json:"session_id"`
+	PromptID         ReviewPromptID      `json:"prompt_id,omitempty"`
+	ExpectedRevision uint64              `json:"expected_revision"`
+	SelectedOptions  []string            `json:"selected_options,omitempty"`
+	Text             string              `json:"text,omitempty"`
+	Source           string              `json:"source"`
+	Answers          []ReviewAnswerEntry `json:"answers,omitempty"`
 }
 
 func (payload ReviewAnswerPayload) Validate() error {
-	if payload.SessionID == "" || payload.PromptID == "" {
-		return errors.New("review answer requires session and prompt")
+	if payload.SessionID == "" {
+		return errors.New("review answer requires session")
 	}
 	if payload.ExpectedRevision == 0 {
 		return errors.New("review answer requires expected revision")
@@ -241,15 +249,42 @@ func (payload ReviewAnswerPayload) Validate() error {
 	if strings.TrimSpace(payload.Source) == "" {
 		return errors.New("review answer requires source")
 	}
-	if payload.Text == "" && len(payload.SelectedOptions) == 0 {
-		return errors.New("review answer requires text or selected options")
+	if len(payload.Answers) != 0 {
+		if payload.PromptID != "" || payload.Text != "" || len(payload.SelectedOptions) != 0 {
+			return errors.New("batch review answers must not mix a single prompt answer")
+		}
+		seen := make(map[string]struct{}, len(payload.Answers))
+		for _, entry := range payload.Answers {
+			questionID := strings.TrimSpace(entry.QuestionID)
+			if questionID == "" {
+				return errors.New("batch review answer requires question id")
+			}
+			if _, exists := seen[questionID]; exists {
+				return fmt.Errorf("batch review answer repeats question %q", entry.QuestionID)
+			}
+			seen[questionID] = struct{}{}
+			if err := validateReviewAnswerValue(entry.SelectedOptions, entry.Text); err != nil {
+				return fmt.Errorf("batch review answer for question %q: %w", entry.QuestionID, err)
+			}
+		}
+		return nil
 	}
-	if payload.Text != "" && len(payload.SelectedOptions) != 0 {
-		return errors.New("review answer mixes text and selected options")
+	if payload.PromptID == "" {
+		return errors.New("review answer requires session and prompt")
 	}
-	for _, option := range payload.SelectedOptions {
+	return validateReviewAnswerValue(payload.SelectedOptions, payload.Text)
+}
+
+func validateReviewAnswerValue(selectedOptions []string, text string) error {
+	if text == "" && len(selectedOptions) == 0 {
+		return errors.New("answer requires text or selected options")
+	}
+	if text != "" && len(selectedOptions) != 0 {
+		return errors.New("answer mixes text and selected options")
+	}
+	for _, option := range selectedOptions {
 		if strings.TrimSpace(option) == "" {
-			return errors.New("review answer contains an empty option")
+			return errors.New("answer contains an empty option")
 		}
 	}
 	return nil

@@ -122,6 +122,7 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .review-prompt { flex: 1; }
 .review-form { display: grid; gap: .9rem; }
 .review-question { margin: 0; color: var(--text); font-weight: 600; }
+.review-question-block { display: grid; gap: .4rem; padding-bottom: .7rem; border-bottom: 1px solid var(--line); }
 .review-options { display: grid; gap: .45rem; }
 .review-option { display: flex; align-items: center; gap: .55rem; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: #191e29; cursor: pointer; }
 .review-option input { accent-color: var(--cyan); }

@@ -576,6 +576,10 @@ async function selectReviewSession(session) {
 
 function renderReviewPrompt() {
   const detail = state.reviewDetail;
+  if (detail?.questions?.length && detail.status === "waiting_answer") {
+    renderReviewBatch(detail);
+    return;
+  }
   if (!detail?.prompt) {
     elements.reviewPrompt.replaceChildren(text("p", "Для этой сессии нет ожидающего вопроса.", "empty"));
     return;
@@ -608,6 +612,79 @@ function renderReviewPrompt() {
   footer.append(text("span", state.reviewMessage, "muted"), submit); form.append(footer);
   form.addEventListener("submit", (event) => { event.preventDefault(); submitReviewAnswer(prompt, form, input, kind); });
   elements.reviewPrompt.replaceChildren(form);
+}
+
+function reviewControlName(questionID) { return `review-answer-${questionID}`; }
+
+function renderReviewBatch(detail) {
+  const form = document.createElement("form"); form.className = "review-form";
+  const fields = [];
+  let unsupported = false;
+  for (const question of detail.questions) {
+    const block = document.createElement("div"); block.className = "review-question-block";
+    block.append(text("p", question.text, "review-question"));
+    let input;
+    if (question.kind === "text") {
+      input = document.createElement("textarea"); input.rows = 4; input.placeholder = "Ответ"; input.required = true;
+    } else if (question.kind === "single" || question.kind === "multiple") {
+      input = document.createElement("div"); input.className = "review-options";
+      for (const option of question.options || []) {
+        const label = document.createElement("label"); label.className = "review-option";
+        const control = document.createElement("input");
+        control.type = question.kind === "single" ? "radio" : "checkbox";
+        control.name = reviewControlName(question.id); control.value = option.text;
+        label.append(control, text("span", option.text));
+        input.append(label);
+      }
+    } else {
+      unsupported = true;
+      input = text("p", `Тип вопроса «${question.kind}» пока не поддерживается интерактивно.`, "empty");
+    }
+    block.append(input); form.append(block);
+    fields.push({ question, input });
+  }
+  const footer = document.createElement("div"); footer.className = "review-actions";
+  const submit = text("button", "Сохранить все ответы"); submit.type = "submit";
+  submit.disabled = state.reviewBusy || unsupported;
+  footer.append(text("span", state.reviewMessage, "muted"), submit); form.append(footer);
+  form.addEventListener("submit", (event) => { event.preventDefault(); submitReviewBatch(detail, fields); });
+  elements.reviewPrompt.replaceChildren(form);
+}
+
+async function submitReviewBatch(detail, fields) {
+  if (state.reviewBusy) return;
+  const answers = [];
+  for (const { question, input } of fields) {
+    if (question.kind === "text") {
+      const value = input.value.trim();
+      if (!value) { state.reviewMessage = `Заполните: ${question.text}`; renderReviewPrompt(); return; }
+      answers.push({ question_id: question.id, text: value });
+      continue;
+    }
+    if (question.kind === "single" || question.kind === "multiple") {
+      const selected = [...input.querySelectorAll("input:checked")].map((control) => control.value);
+      if (question.kind === "single" && selected.length !== 1) { state.reviewMessage = `Выберите один вариант: ${question.text}`; renderReviewPrompt(); return; }
+      if (question.kind === "multiple" && selected.length === 0) { state.reviewMessage = `Выберите хотя бы один вариант: ${question.text}`; renderReviewPrompt(); return; }
+      answers.push({ question_id: question.id, selected_options: selected });
+      continue;
+    }
+    state.reviewMessage = `Вопрос «${question.text}» не поддерживается`; renderReviewPrompt(); return;
+  }
+  state.reviewBusy = true; state.reviewMessage = "Отправляю…"; renderReviewPrompt();
+  try {
+    await enqueue(`/api/v1/review-sessions/${encodeURIComponent(detail.id)}/answers`, {
+      expected_revision: detail.revision, source: "dashboard", answers,
+    });
+    state.reviewMessage = "Ответы записаны, задача на отправку поставлена в очередь";
+    await refreshSummary();
+    globalThis.setTimeout(async () => {
+      await refreshReviewSessions();
+      if (state.reviewSelected) await selectReviewSession(state.reviewSelected);
+    }, 1500);
+  } catch (error) {
+    state.reviewMessage = error.message;
+  }
+  state.reviewBusy = false; renderReviewPrompt();
 }
 
 async function submitReviewAnswer(prompt, form, input, kind) {
