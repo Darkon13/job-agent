@@ -1,0 +1,427 @@
+{
+  "schema_version": 1,
+  "database": {
+    "driver": "sqlite",
+    "path": "/data/job-agent.db"
+  },
+  "server": {
+    "listen": "127.0.0.1:8080",
+    "follow_up_reconcile_interval": "30s",
+    "scheduler_reconcile_interval": "15s"
+  },
+  "adapters": [
+    {
+      "tag": "hh-main",
+      "type": "hh",
+      "settings": {
+        "api_delay_ms": 350
+      }
+    }
+  ],
+  "models": [
+    {
+      "tag": "deepseek",
+      "type": "openai_chat",
+      "model": "deepseek-flash",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "max_output_tokens": 4000,
+      "reasoning_effort": "none"
+    }
+  ],
+  "profiles": [
+    {
+      "tag": "primary",
+      "adapter": "hh-main",
+      "resume": "0123456789abcdef0123456789abcdef01234567",
+      "state_file": "/data/profiles/primary.json",
+      "applications": {
+        "mode": "submit",
+        "message_template_file": "messages/backend.json",
+        "allow_visibility_change": false,
+        "qualification": {
+          "include_any": [
+            "Go",
+            "Golang",
+            "Backend"
+          ],
+          "exclude_any": [
+            "руководитель",
+            "team lead",
+            "tech lead"
+          ]
+        },
+        "timezone": "Europe/Moscow",
+        "submit_jitter": {
+          "min": "15s",
+          "max": "30s"
+        },
+        "daily_limit": 200,
+        "validation_action": "skip"
+      },
+      "conversations": {
+        "allow_send": true,
+        "allow_mark_read": true,
+        "answer_known": true
+      },
+      "enabled": true,
+      "contacts": {
+        "first_name": "Иван",
+        "last_name": "Примеров",
+        "email": "user@example.test",
+        "telegram": "@example_user"
+      }
+    },
+    {
+      "tag": "secondary",
+      "adapter": "hh-main",
+      "resume": "fedcba9876543210fedcba9876543210fedcba98",
+      "state_file": "/data/profiles/secondary.json",
+      "applications": {
+        "mode": "submit",
+        "message_template_file": "messages/backend.json",
+        "allow_visibility_change": false,
+        "qualification": {
+          "include_any": [
+            "Go",
+            "Golang",
+            "Backend"
+          ],
+          "exclude_any": [
+            "руководитель",
+            "team lead",
+            "tech lead"
+          ]
+        },
+        "timezone": "Europe/Moscow",
+        "submit_jitter": {
+          "min": "15s",
+          "max": "30s"
+        },
+        "tailoring": {
+          "about": {
+            "enabled": false,
+            "maximum_runes": 600,
+            "model": {
+              "provider": "deepseek",
+              "prompt_version": "v1",
+              "instruction": "Исправь формулировки раздела «О себе» и подгони его под вакансию: сделай акцент на опыте и навыках, наиболее релевантных этой вакансии. Опирайся только на факты из резюме и контекста вакансии, ничего не выдумывай.",
+              "timeout": "60s"
+            }
+          },
+          "skills": {
+            "enabled": false,
+            "maximum": 30,
+            "allow_removals": true,
+            "model": {
+              "provider": "deepseek",
+              "prompt_version": "v1",
+              "instruction": "Добавь в резюме самые релевантные навыки из вакансии. Убирай ровно столько текущих навыков, сколько нужно, чтобы добавленные поместились в лимит: если ничего не добавляешь или места достаточно, ничего не удаляй. Для каждого решения укажи evidence.",
+              "timeout": "60s"
+            }
+          }
+        },
+        "daily_limit": 200,
+        "validation_action": "skip"
+      },
+      "conversations": {
+        "allow_send": true,
+        "allow_mark_read": true,
+        "answer_known": true
+      },
+      "enabled": true,
+      "contacts": {
+        "first_name": "Иван",
+        "last_name": "Примеров",
+        "email": "user@example.test",
+        "telegram": "@example_user"
+      }
+    }
+  ],
+  "searches": [
+    {
+      "tag": "secondary-similar",
+      "adapter": "hh-main",
+      "profiles": [
+        "secondary"
+      ],
+      "priority": 100,
+      "target_applications": 200,
+      "query": {
+        "source": "similar_resume",
+        "resume": "fedcba9876543210fedcba9876543210fedcba98",
+        "area": [
+          "1"
+        ],
+        "page_size": 20,
+        "max_pages": 10,
+        "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+      }
+    },
+    {
+      "tag": "primary-similar",
+      "adapter": "hh-main",
+      "profiles": [
+        "primary"
+      ],
+      "priority": 100,
+      "target_applications": 200,
+      "query": {
+        "source": "similar_resume",
+        "resume": "0123456789abcdef0123456789abcdef01234567",
+        "area": [
+          "1"
+        ],
+        "page_size": 20,
+        "max_pages": 10,
+        "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+      }
+    },
+    {
+      "tag": "global-go",
+      "adapter": "hh-main",
+      "profiles": [
+        "primary",
+        "secondary"
+      ],
+      "priority": 100,
+      "target_applications": 100,
+      "query": {
+        "source": "global",
+        "text": "(Golang OR Golang-разработчик OR Go-разработчик OR Backend-разработчик) AND (PostgreSQL OR Kafka OR Kubernetes OR микросервисы OR Docker)",
+        "professional_role": [
+          "96"
+        ],
+        "area": [
+          "1"
+        ],
+        "experience": [
+          "between1And3",
+          "between3And6"
+        ],
+        "employment": [
+          "full"
+        ],
+        "order_by": "publication_time",
+        "page_size": 20,
+        "max_pages": 10
+      }
+    }
+  ],
+  "jobs": [
+    {
+      "tag": "refresh-secondary-session",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "15 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "profile.session_refresh",
+        "profile": "secondary"
+      }
+    },
+    {
+      "tag": "touch-secondary-resume",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "5m"
+          }
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "resume.touch",
+        "profile": "secondary"
+      }
+    },
+    {
+      "tag": "touch-primary-resume",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "resume.touch",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "refresh-primary-session",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "15 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "profile.session_refresh",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "sync-primary-conversations",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/10 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "action": {
+        "type": "conversation.sync",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "observe-primary-activity",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/30 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "action": {
+        "type": "profile.activity.observe",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "sync-secondary-conversations",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/10 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "action": {
+        "type": "conversation.sync",
+        "profile": "secondary"
+      }
+    },
+    {
+      "tag": "observe-secondary-activity",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "*/30 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once"
+        }
+      ],
+      "action": {
+        "type": "profile.activity.observe",
+        "profile": "secondary"
+      }
+    },
+    {
+      "tag": "periodic-primary-applications",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "action": {
+        "type": "application.campaign",
+        "profiles": [
+          "primary"
+        ],
+        "routes": [
+          "global-go",
+          "primary-similar"
+        ],
+        "target_successful": 10000,
+        "max_in_flight": 2
+      }
+    },
+    {
+      "tag": "periodic-secondary-applications",
+      "enabled": true,
+      "concurrency": "forbid",
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "0 */4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "action": {
+        "type": "application.campaign",
+        "profiles": [
+          "secondary"
+        ],
+        "routes": [
+          "global-go",
+          "secondary-similar"
+        ],
+        "target_successful": 10000,
+        "max_in_flight": 2
+      }
+    }
+  ],
+  "answer_sets": [
+    "answers/conversation/invitation.json",
+    "answers/conversation/use-answers.json"
+  ]
+}
