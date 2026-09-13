@@ -767,7 +767,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               }
             }
           ],
-          "concurrency": "forbid_per_profile",
+          "concurrency": "forbid",
           "action": {
             "type": "application.state.sync",
             "profile": "primary"
@@ -788,7 +788,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               }
             }
           ],
-          "concurrency": "forbid_per_profile",
+          "concurrency": "forbid",
           "action": {
             "type": "application.state.sync",
             "profile": "secondary"
