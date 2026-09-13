@@ -251,7 +251,11 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	}
 	for _, message := range result.Messages {
 		if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, result.ObservedAt); err != nil {
-			return err
+			// Message edits or parser changes must not fail the whole sync; the
+			// existing stored copy stays as the dedup identity.
+			if !errors.Is(err, storage.ErrConversationMessageConflict) {
+				return err
+			}
 		}
 	}
 	return handlers.answerKnownQuestion(ctx, conversation, result.Messages)
@@ -297,7 +301,10 @@ func (handlers *ConversationHandlers) sendMessage(ctx context.Context, task core
 		return core.ConversationMessage{}, errors.New("conversation transport returned invalid outgoing message identity or state")
 	}
 	if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, handlers.clock.Now()); err != nil {
-		return core.ConversationMessage{}, err
+		// Already stored under the same identity: dedup wins over an error.
+		if !errors.Is(err, storage.ErrConversationMessageConflict) {
+			return core.ConversationMessage{}, err
+		}
 	}
 	if err := recordProfileActivity(ctx, handlers.activity, conversation.Platform, conversation.ProfileID, "",
 		core.ProfileActivityConversationMessageSent, string(message.ID), message.OccurredAt); err != nil {

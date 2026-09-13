@@ -134,7 +134,7 @@ func (repository *Repository) AppendConversationMessage(ctx context.Context, mes
 				continue
 			}
 			if !sameMessagePayload(stored, message) {
-				return core.Conversation{}, false, errors.New("message external id conflicts with different content")
+				return core.Conversation{}, false, storage.ErrConversationMessageConflict
 			}
 			return cloneConversation(conversation), false, nil
 		}

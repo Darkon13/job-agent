@@ -75,7 +75,11 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 				return result, err
 			}
 			if _, messageCreated, err := workflow.repository.AppendConversationMessage(ctx, message, observedAt); err != nil {
-				return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
+				// The platform may edit a message or re-parse it differently; the
+				// sync must not fail because one identity changed its content.
+				if !errors.Is(err, storage.ErrConversationMessageConflict) {
+					return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
+				}
 			} else if messageCreated {
 				result.MessagesCreated++
 				needsSync = true
