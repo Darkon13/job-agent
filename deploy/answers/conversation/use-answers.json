@@ -1,0 +1,17 @@
+{
+  "tag": "example-conversation-use-answers",
+  "name": "Использовать сохранённые ответы",
+  "kind": "conversation",
+  "platform": "hh",
+  "match": {
+    "topic": "Используем эти ответы?"
+  },
+  "answers": [
+    {
+      "question": "Используем эти ответы?",
+      "selected_options": [
+        "Да. Используем те же ответы"
+      ]
+    }
+  ]
+}
