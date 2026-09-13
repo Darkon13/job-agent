@@ -163,6 +163,7 @@ type ApplicationBudgetRepository interface {
 	ReserveApplicationBudget(ctx context.Context, params core.ReserveApplicationBudgetParams) (core.ApplicationBudgetReservation, error)
 	CommitApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
 	ReleaseApplicationBudget(ctx context.Context, applicationID core.ApplicationID, now time.Time) error
+	ApplicationBudgetUsage(ctx context.Context, profileID core.ProfileID, platform core.Platform, windowStart time.Time) (core.ApplicationBudgetUsage, error)
 }
 
 type ApplicationPaceRepository interface {

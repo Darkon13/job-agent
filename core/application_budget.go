@@ -42,6 +42,25 @@ type ApplicationBudgetReservation struct {
 	UpdatedAt     time.Time
 }
 
+// ApplicationBudgetUsage reports how much of the profile's daily budget the
+// current window has reserved. Found is false when the window has no bucket
+// yet, which means nothing was planned today.
+type ApplicationBudgetUsage struct {
+	ProfileID   ProfileID
+	Platform    Platform
+	WindowStart time.Time
+	WindowEnd   time.Time
+	Limit       int
+	Used        int
+	Found       bool
+}
+
+// Exhausted reports that the window already reserved its whole limit. An
+// unconfigured limit (zero) is never exhausted.
+func (usage ApplicationBudgetUsage) Exhausted() bool {
+	return usage.Found && usage.Limit > 0 && usage.Used >= usage.Limit
+}
+
 type ReserveApplicationBudgetParams struct {
 	ApplicationID ApplicationID
 	ProfileID     ProfileID
