@@ -185,11 +185,12 @@ func (processor *ModelResumeTailoringProcessor) planFromDecisions(input ResumeTa
 	for _, skill := range current {
 		currentIndex[normalizeResumeSkill(skill)] = struct{}{}
 	}
-	allowed := make(map[string]struct{}, len(current)+len(vacancyAttributeStrings(input.Vacancy, "key_skills")))
+	vacancySkills := vacancyAttributeStrings(input.Vacancy, "key_skills")
+	allowed := make(map[string]struct{}, len(current))
 	for key := range currentIndex {
 		allowed[key] = struct{}{}
 	}
-	for _, skill := range vacancyAttributeStrings(input.Vacancy, "key_skills") {
+	for _, skill := range vacancySkills {
 		allowed[normalizeResumeSkill(skill)] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(decisions))
