@@ -821,7 +821,7 @@ handler. Dashboard показывает этот список и ставит в
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и
 resume/profile schema. REST и automation-контракт чатов описан в
-`docs/conversation-api.md`. Главная архитектурная спецификация — `AGENTS.md`.
+`docs/conversation-api.md`. Главная архитектурная спецификация — [AGENTS.md](https://github.com/Darkon13/job-agent/blob/main/AGENTS.md).
 
 ## Questionnaire mock
 

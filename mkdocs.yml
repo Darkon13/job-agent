@@ -1,3 +1,4 @@
+strict: true
 site_name: Job Agent
 site_description: Локальный сервис автоматизации поиска работы
 site_url: https://darkon13.github.io/job-agent/
