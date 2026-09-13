@@ -20,7 +20,7 @@ const taskTypeLabels = {
   "questionnaire.answer": "Ответить на анкету", "test.complete": "Пройти тест", "test.capture": "Сохранить вопросы теста", "review.answer": "Сохранить проверенный ответ",
   "conversation.reply": "Ответить в чате", "conversation.send": "Отправить сообщение", "conversation.follow_up": "Отправить напоминание", "conversation.follow_up.select": "Выбрать чат для напоминания",
   "conversation.discover": "Обновить список чатов", "conversation.mark_read": "Пометить чат прочитанным", "conversation.sync": "Загрузить сообщения чата", "vacancy.inspect": "Открыть и изучить вакансию",
-  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить активность резюме",
+  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить метрики резюме",
   "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
   "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
 };
@@ -355,19 +355,17 @@ function renderActivityObservations(items = []) {
     if (seen.has(key)) continue;
     seen.add(key); latest.push(item);
   }
-  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Показатели ещё не снимались. Запустите job «Обновить активность резюме».", "empty panel")); return; }
+  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Метрики ещё не снимались. Запустите job «Обновить метрики резюме».", "empty panel")); return; }
   elements.activityObservations.replaceChildren(...latest.map((item) => {
     const card = document.createElement("article"); card.className = "panel activity-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
     const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", profileDisplayName(item.profile_id)), resume);
     heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
     const metrics = document.createElement("div"); metrics.className = "activity-metrics";
-    const score = item.score === null || item.score === undefined ? "—" : `${item.score}%`;
-    [["Активность", score, ""], ["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
+    [["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
       const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
     });
-    const scoreState = item.score === null || item.score === undefined ? " · точный процент не найден в ответе HH" : "";
-    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}${item.score_hidden ? " · шкала скрыта экспериментом HH" : scoreState}`, "muted")); return card;
+    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}`, "muted")); return card;
   }));
 }
 function visibleConversations(items = []) {
@@ -1015,6 +1013,7 @@ function renderAuthProfileOptions(profiles = []) {
     waiting_captcha: { step: "Введите символы с картинки. Регистр обычно не важен; если не читается — перезагрузите картинку.", caption: "Символы с картинки", type: "text", autocomplete: "off" },
   };
   const statusLabels = { created: "сессия создана", exchanging: "обмен данными с HH", storing: "сохранение сессии", completed: "вход выполнен", expired: "сессия истекла", cancelled: "сессия отменена", failed: "ошибка входа" };
+  const idleStep = "Выберите профиль и нажмите «Начать вход» — сервис запросит e-mail или телефон, затем код, пароль или captcha.";
   const terminal = ["completed", "expired", "cancelled", "failed"];
   let sessionId = "";
   let stream = null;
@@ -1026,10 +1025,10 @@ function renderAuthProfileOptions(profiles = []) {
     sessionId = session.id;
     const step = steps[session.status];
     setState(`${statusLabels[session.status] || session.status} · профиль ${profileDisplayName(session.profile_id)}`);
-    stepLabel.hidden = !step;
-    if (step) {
-      stepLabel.textContent = session.challenge?.prompt ? `${step.step} Платформа: ${session.challenge.prompt}` : step.step;
-    }
+    stepLabel.hidden = false;
+    stepLabel.textContent = step
+      ? (session.challenge?.prompt ? `${step.step} Платформа: ${session.challenge.prompt}` : step.step)
+      : idleStep;
     valueRow.hidden = !step;
     valueCaption.textContent = step ? step.caption : "Значение";
     valueInput.type = step ? step.type : "text";
