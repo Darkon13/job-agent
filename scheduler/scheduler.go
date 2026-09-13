@@ -46,11 +46,25 @@ type IDGenerator interface {
 	NewID(prefix string) (string, error)
 }
 
+// Gate decides whether a due schedule may create its task. A denied entry is
+// skipped for this occurrence while the schedule still advances: the next cron
+// time gets a fresh decision.
+type Gate interface {
+	Allow(ctx context.Context, definition Definition) (bool, error)
+}
+
 type Scheduler struct {
 	store Store
 	queue broker.TaskQueue
 	clock Clock
 	ids   IDGenerator
+	gate  Gate
+}
+
+// SetGate attaches an optional gate that can pause scheduled task creation,
+// for example when a profile has already spent its daily application budget.
+func (scheduler *Scheduler) SetGate(gate Gate) {
+	scheduler.gate = gate
 }
 
 func New(store Store, queue broker.TaskQueue, clock Clock, ids IDGenerator) (*Scheduler, error) {
@@ -94,8 +108,17 @@ func (scheduler *Scheduler) ReconcileDue(ctx context.Context) (int, error) {
 			return advanced, err
 		}
 		if !active {
-			if err := scheduler.enqueue(ctx, entry, now); err != nil {
-				return advanced, err
+			allow := true
+			if scheduler.gate != nil {
+				allow, err = scheduler.gate.Allow(ctx, entry.Definition)
+				if err != nil {
+					return advanced, err
+				}
+			}
+			if allow {
+				if err := scheduler.enqueue(ctx, entry, now); err != nil {
+					return advanced, err
+				}
 			}
 		}
 		changed, err := scheduler.store.AdvanceSchedule(ctx, entry.JobTag, entry.TriggerIndex, entry.NextRunAt, next, now)

@@ -94,3 +94,26 @@ func (repository *Repository) ApplicationBudget(applicationID core.ApplicationID
 	reservation, exists := repository.applicationBudgets[applicationID]
 	return reservation, exists
 }
+
+func (repository *Repository) ApplicationBudgetUsage(ctx context.Context, profileID core.ProfileID, platform core.Platform, windowStart time.Time) (core.ApplicationBudgetUsage, error) {
+	if err := ctx.Err(); err != nil {
+		return core.ApplicationBudgetUsage{}, err
+	}
+	if profileID == "" || platform == "" || windowStart.IsZero() {
+		return core.ApplicationBudgetUsage{}, errors.New("application budget usage requires profile, platform and window")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	usage := core.ApplicationBudgetUsage{ProfileID: profileID, Platform: platform, WindowStart: windowStart}
+	for _, reservation := range repository.applicationBudgets {
+		if reservation.ProfileID != profileID || reservation.Platform != platform ||
+			!reservation.WindowStart.Equal(windowStart) || reservation.State == core.ApplicationBudgetReleased {
+			continue
+		}
+		usage.Used++
+		usage.Found = true
+		usage.Limit = reservation.Limit
+		usage.WindowEnd = reservation.WindowEnd
+	}
+	return usage, nil
+}

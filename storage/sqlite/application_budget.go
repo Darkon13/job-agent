@@ -164,3 +164,24 @@ func applicationBudgetInTx(ctx context.Context, tx *sql.Tx, applicationID core.A
 	reservation.UpdatedAt = time.Unix(0, updatedAt).UTC()
 	return reservation, true, nil
 }
+
+func (store *Store) ApplicationBudgetUsage(ctx context.Context, profileID core.ProfileID, platform core.Platform, windowStart time.Time) (core.ApplicationBudgetUsage, error) {
+	if profileID == "" || platform == "" || windowStart.IsZero() {
+		return core.ApplicationBudgetUsage{}, errors.New("application budget usage requires profile, platform and window")
+	}
+	var limit, used int
+	var windowEnd int64
+	err := store.db.QueryRowContext(ctx, `SELECT limit_value, used, window_end FROM application_budget_buckets
+		WHERE profile_id = ? AND platform = ? AND window_start = ?`,
+		profileID, platform, windowStart.UnixNano()).Scan(&limit, &used, &windowEnd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.ApplicationBudgetUsage{ProfileID: profileID, Platform: platform, WindowStart: windowStart}, nil
+	}
+	if err != nil {
+		return core.ApplicationBudgetUsage{}, fmt.Errorf("read application budget usage: %w", err)
+	}
+	return core.ApplicationBudgetUsage{
+		ProfileID: profileID, Platform: platform, WindowStart: windowStart,
+		WindowEnd: time.Unix(0, windowEnd).UTC(), Limit: limit, Used: used, Found: true,
+	}, nil
+}

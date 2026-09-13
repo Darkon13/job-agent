@@ -88,3 +88,61 @@ func TestSchedulerPersistsNextRunAppliesJitterAndCollapsesMisfires(t *testing.T)
 		t.Fatalf("disabled reconcile: count=%d err=%v", count, err)
 	}
 }
+
+type fixedGate struct {
+	allow bool
+	err   error
+}
+
+func (gate fixedGate) Allow(context.Context, scheduler.Definition) (bool, error) {
+	return gate.allow, gate.err
+}
+
+func TestSchedulerGateSkipsOccurrenceWithoutCreatingTask(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	clock := &mutableClock{now: time.Date(2026, 9, 13, 10, 30, 0, 0, time.UTC)}
+	service, err := scheduler.New(store, store, clock, &sequenceIDs{})
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	payload, _ := json.Marshal(map[string]string{"profile_id": "primary"})
+	definition := scheduler.Definition{
+		JobTag: "hourly-campaign", TriggerIndex: 0, Expression: "0 * * * *", Timezone: "UTC",
+		ActionType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary", Payload: payload,
+	}
+	if err := service.Sync(ctx, []scheduler.Definition{definition}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	service.SetGate(fixedGate{allow: false})
+
+	clock.now = time.Date(2026, 9, 13, 11, 0, 0, 0, time.UTC)
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
+		t.Fatalf("denied reconcile: count=%d err=%v", count, err)
+	}
+	stats, err := store.Stats(ctx)
+	if err != nil || stats.Tasks != 0 {
+		t.Fatalf("denied occurrence created tasks: stats=%#v err=%v", stats, err)
+	}
+	if due, err := store.DueSchedules(ctx, clock.now, 10); err != nil || len(due) != 0 {
+		t.Fatalf("denied occurrence did not advance: due=%#v err=%v", due, err)
+	}
+
+	clock.now = time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	service.SetGate(fixedGate{allow: true})
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
+		t.Fatalf("allowed reconcile: count=%d err=%v", count, err)
+	}
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "campaign-worker", TaskType: core.TaskApplicationCampaign, Now: clock.now.Add(time.Hour), LeaseDuration: time.Minute})
+	if err != nil || !found || lease.Task.Type != core.TaskApplicationCampaign {
+		t.Fatalf("allowed occurrence was not enqueued: lease=%#v found=%t err=%v", lease, found, err)
+	}
+}

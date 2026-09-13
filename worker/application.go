@@ -845,6 +845,12 @@ func (handler *ApplicationHandler) reserveBudget(ctx context.Context, applicatio
 	return normalizeBudgetError("applications.budget.reserve", application.Key.Vacancy.Platform, err)
 }
 
+// ApplicationBudgetWindow returns the UTC bounds of the daily application
+// budget window for the profile timezone at the given time.
+func ApplicationBudgetWindow(timezone string, now time.Time) (time.Time, time.Time, error) {
+	return applicationBudgetWindow(ApplicationPlan{Timezone: timezone}, now)
+}
+
 func applicationBudgetWindow(plan ApplicationPlan, now time.Time) (time.Time, time.Time, error) {
 	location, err := time.LoadLocation(plan.Timezone)
 	if err != nil {
