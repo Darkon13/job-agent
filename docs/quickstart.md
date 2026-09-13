@@ -151,7 +151,10 @@ mkdir -p data
    рассылка берёт следующие вакансии;
 4. когда выдача поиска исчерпана, она переходит к следующему маршруту
    `routes`; когда набрано `target_successful` подтверждённых откликов —
-   останавливается.
+   останавливается;
+5. расписание запускает конвейер снова (в примере — каждый час): уже
+   отработанные вакансии отсеивает дедуп, а если дневной лимит профиля
+   исчерпан, срабатывание пропускается и ждёт следующего дня.
 
 `max_in_flight: 1` — строго последовательная отправка. Даже при большем
 значении параллельность ограничивают `submit_jitter`, per-profile lock
@@ -318,11 +321,12 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
   очередь, а возвращаются кнопкой «Повторить» после заполнения;
 - поиски: `global` с query-синтаксисом и серверными фильтрами плюс
   `similar_resume` по каждому резюме;
-- рассылки откликов каждые 4 часа с `target_successful: 200` — это дневной лимит
+- рассылки откликов каждый час с `target_successful: 200` — это дневной лимит
   площадки на профиль: run останавливается после 200 успешных отправок, а
-  поиск и очередь продолжают пополняться, недосланное дожидается сброса окна;
+  запуски при исчерпанном лимите пропускаются и ждут следующего дня;
 - обслуживающие jobs: поднятие резюме и session refresh раз в 4 часа,
-  синхронизация чатов каждые 10 минут, снимок метрик резюме каждые 30 минут;
+  синхронизация чатов каждые 10 минут, снимок метрик резюме каждые 30 минут,
+  синхронизация состояний откликов раз в час;
 - готовые ответы для чатов в `answer_sets` и провайдер модели.
 
 Файл целиком: [`deploy/config.full.example.json`](https://github.com/Darkon13/job-agent/blob/main/deploy/config.full.example.json)
@@ -485,8 +489,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "1"
             ],
             "page_size": 20,
-            "max_pages": 10,
-            "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+            "max_pages": 10
           }
         },
         {
@@ -504,8 +507,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "1"
             ],
             "page_size": 20,
-            "max_pages": 10,
-            "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+            "max_pages": 10
           }
         },
         {
@@ -519,7 +521,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "target_applications": 100,
           "query": {
             "source": "global",
-            "text": "(Golang OR Golang-разработчик OR Go-разработчик OR Backend-разработчик) AND (PostgreSQL OR Kafka OR Kubernetes OR микросервисы OR Docker)",
+            "text": "(Go OR Golang OR Golang-разработчик) AND (NOT Frontend NOT Fullstack NOT Rust)",
             "professional_role": [
               "96"
             ],
@@ -699,7 +701,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "triggers": [
             {
               "type": "cron",
-              "expression": "0 */4 * * *",
+              "expression": "0 * * * *",
               "timezone": "Europe/Moscow",
               "misfire": "run_once",
               "jitter": {
@@ -717,7 +719,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "global-go",
               "primary-similar"
             ],
-            "target_successful": 10000,
+            "target_successful": 200,
             "max_in_flight": 2
           }
         },
@@ -728,7 +730,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "triggers": [
             {
               "type": "cron",
-              "expression": "0 */4 * * *",
+              "expression": "0 * * * *",
               "timezone": "Europe/Moscow",
               "misfire": "run_once",
               "jitter": {
@@ -746,8 +748,50 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "global-go",
               "secondary-similar"
             ],
-            "target_successful": 10000,
+            "target_successful": 200,
             "max_in_flight": 2
+          }
+        },
+        {
+          "tag": "sync-primary-application-states",
+          "enabled": true,
+          "triggers": [
+            {
+              "type": "cron",
+              "expression": "20 * * * *",
+              "timezone": "Europe/Moscow",
+              "misfire": "run_once",
+              "jitter": {
+                "min": "1m",
+                "max": "5m"
+              }
+            }
+          ],
+          "concurrency": "forbid_per_profile",
+          "action": {
+            "type": "application.state.sync",
+            "profile": "primary"
+          }
+        },
+        {
+          "tag": "sync-secondary-application-states",
+          "enabled": true,
+          "triggers": [
+            {
+              "type": "cron",
+              "expression": "20 * * * *",
+              "timezone": "Europe/Moscow",
+              "misfire": "run_once",
+              "jitter": {
+                "min": "1m",
+                "max": "5m"
+              }
+            }
+          ],
+          "concurrency": "forbid_per_profile",
+          "action": {
+            "type": "application.state.sync",
+            "profile": "secondary"
           }
         }
       ],

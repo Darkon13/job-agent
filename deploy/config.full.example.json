@@ -154,8 +154,7 @@
           "1"
         ],
         "page_size": 20,
-        "max_pages": 10,
-        "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+        "max_pages": 10
       }
     },
     {
@@ -173,8 +172,7 @@
           "1"
         ],
         "page_size": 20,
-        "max_pages": 10,
-        "text": "Golang AND (Kafka OR PostgreSQL OR Kubernetes)"
+        "max_pages": 10
       }
     },
     {
@@ -188,7 +186,7 @@
       "target_applications": 100,
       "query": {
         "source": "global",
-        "text": "(Golang OR Golang-разработчик OR Go-разработчик OR Backend-разработчик) AND (PostgreSQL OR Kafka OR Kubernetes OR микросервисы OR Docker)",
+        "text": "(Go OR Golang OR Golang-разработчик) AND (NOT Frontend NOT Fullstack NOT Rust)",
         "professional_role": [
           "96"
         ],
@@ -368,7 +366,7 @@
       "triggers": [
         {
           "type": "cron",
-          "expression": "0 */4 * * *",
+          "expression": "0 * * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
           "jitter": {
@@ -397,7 +395,7 @@
       "triggers": [
         {
           "type": "cron",
-          "expression": "0 */4 * * *",
+          "expression": "0 * * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
           "jitter": {
@@ -417,6 +415,48 @@
         ],
         "target_successful": 200,
         "max_in_flight": 2
+      }
+    },
+    {
+      "tag": "sync-primary-application-states",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "20 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "5m"
+          }
+        }
+      ],
+      "concurrency": "forbid_per_profile",
+      "action": {
+        "type": "application.state.sync",
+        "profile": "primary"
+      }
+    },
+    {
+      "tag": "sync-secondary-application-states",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "20 * * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "5m"
+          }
+        }
+      ],
+      "concurrency": "forbid_per_profile",
+      "action": {
+        "type": "application.state.sync",
+        "profile": "secondary"
       }
     }
   ],

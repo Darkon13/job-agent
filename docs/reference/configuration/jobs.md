@@ -73,6 +73,7 @@
 | `conversation.follow_up.select` | `profile`, `follow_up` | Выбирает один диалог и планирует durable follow-up таймер. |
 | `application.campaign` | `profiles`, `routes`, `target_successful`, `max_in_flight` | Розыгрыш откликов по routes до цели. |
 | `application.retention` | `profile`, `retention` | Локальная очистка старых откликов. |
+| `application.state.sync` | `profile` | Read-only чтение состояний откликов (браузерная сессия) и обновление карточек в dashboard. |
 
 ### `conversation.follow_up.select`
 
@@ -98,6 +99,15 @@
 
 Выбор никогда не превращает входящее сообщение, ожидающее ответа соискателя,
 в автоматическое напоминание.
+
+### `application.state.sync`
+
+Периодическое read-only чтение списка откликов из кабинета HH по браузерной
+сессии профиля. Обновляет `application_platform_states` (состояние, приглашение,
+отказ, скрытие и признак просмотра), по которым dashboard показывает группы
+откликов. Ничего не отправляет и не удаляет: чистка остаётся отдельной политикой
+`application.retention`. Пропущенные профили без браузерной сессии просто
+остаются без наблюдений.
 
 ### `application.retention`
 
