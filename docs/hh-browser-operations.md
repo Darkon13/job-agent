@@ -55,6 +55,29 @@ type ApplicationRequirements struct {
 валидация. Финальный authority — response popup/form непосредственно перед
 submit.
 
+## Состояния откликов (read-only)
+
+Страница `GET /applicant/negotiations?status=all&page=N` рендерит список
+откликов той же браузерной сессией, что и остальные web-операции. Данные лежат
+в `HH-Lux-InitialState`: `applicantNegotiations.topicList[]` (20 на страницу) и
+`applicantNegotiations.pageCount`. Полезные поля топика:
+
+| Поле | Смысл |
+| --- | --- |
+| `id` | negotiation/topic ID |
+| `vacancyId` | ID вакансии |
+| `lastState` | `RESPONSE`, `INVITATION`, `INTERVIEW`, `DISCARD`, `HIDDEN` |
+| `viewedByOpponent` | работодатель открыл отклик |
+| `lastModified` | время последнего изменения (RFC3339) |
+
+Observer переводит `lastState` в core disposition: `RESPONSE` → `pending`,
+`INVITATION`/`INTERVIEW` → `invited`, `DISCARD` → `rejected`, `HIDDEN` →
+`hidden`, неизвестное значение → `unknown`. `INTERVIEW` защищается от
+автоматической очистки так же, как приглашение.
+
+Страница только читается: `application.state.sync` обновляет локальные карточки,
+но не отвечает, не скрывает и не удаляет отклики.
+
 ## Обычный web-отклик
 
 Для вакансии без теста наблюдалась последовательность:
