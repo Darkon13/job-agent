@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/core"
@@ -29,12 +30,26 @@ type JobRunDefinition struct {
 	Priority  core.TaskPriority
 }
 
+// JobSchedule describes one configured trigger of a runnable job. NextRunAt is
+// the cron time before jitter; the actual enqueue happens within the jitter
+// window that follows.
+type JobSchedule struct {
+	TriggerIndex int       `json:"trigger_index"`
+	Expression   string    `json:"expression"`
+	Timezone     string    `json:"timezone"`
+	NextRunAt    time.Time `json:"next_run_at"`
+	JitterMin    string    `json:"jitter_min,omitempty"`
+	JitterMax    string    `json:"jitter_max,omitempty"`
+}
+
 type JobRunDescriptor struct {
 	Tag       string            `json:"tag"`
 	TaskType  core.TaskType     `json:"task_type"`
 	Platform  core.Platform     `json:"platform"`
 	ProfileID core.ProfileID    `json:"profile_id"`
 	Priority  core.TaskPriority `json:"priority"`
+	Payload   json.RawMessage   `json:"payload,omitempty"`
+	Schedules []JobSchedule     `json:"schedules,omitempty"`
 }
 
 type JobRunWorkflow struct {
@@ -68,6 +83,7 @@ func NewJobRunWorkflow(tasks broker.TaskStore, clock Clock, ids IDGenerator, def
 		workflow.descriptors = append(workflow.descriptors, JobRunDescriptor{
 			Tag: definition.Tag, TaskType: definition.TaskType, Platform: definition.Platform,
 			ProfileID: definition.ProfileID, Priority: definition.Priority,
+			Payload: append(json.RawMessage(nil), definition.Payload...),
 		})
 	}
 	sort.Slice(workflow.descriptors, func(i, j int) bool { return workflow.descriptors[i].Tag < workflow.descriptors[j].Tag })

@@ -1,22 +1,32 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/Darkon13/job-agent/scheduler"
 	"github.com/Darkon13/job-agent/workflow"
 )
 
-type JobAPI struct {
-	workflow *workflow.JobRunWorkflow
+// ScheduleReader lists the enabled schedules persisted by the scheduler so the
+// jobs endpoint can show the next enqueue time. It is optional: without it the
+// API still lists runnable jobs.
+type ScheduleReader interface {
+	Schedules(ctx context.Context) ([]scheduler.Entry, error)
 }
 
-func NewJobAPI(jobWorkflow *workflow.JobRunWorkflow) (*JobAPI, error) {
+type JobAPI struct {
+	workflow  *workflow.JobRunWorkflow
+	schedules ScheduleReader
+}
+
+func NewJobAPI(jobWorkflow *workflow.JobRunWorkflow, schedules ScheduleReader) (*JobAPI, error) {
 	if jobWorkflow == nil {
 		return nil, errors.New("job API requires workflow")
 	}
-	return &JobAPI{workflow: jobWorkflow}, nil
+	return &JobAPI{workflow: jobWorkflow, schedules: schedules}, nil
 }
 
 func (api *JobAPI) Handler(next http.Handler) http.Handler {
@@ -30,9 +40,32 @@ func (api *JobAPI) Handler(next http.Handler) http.Handler {
 	return mux
 }
 
-func (api *JobAPI) list(response http.ResponseWriter, _ *http.Request) {
+func (api *JobAPI) list(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusOK, listResponse[workflow.JobRunDescriptor]{Items: api.workflow.Definitions()})
+	items := api.workflow.Definitions()
+	if api.schedules != nil {
+		entries, err := api.schedules.Schedules(request.Context())
+		if err != nil {
+			writeError(response, err)
+			return
+		}
+		byTag := make(map[string][]workflow.JobSchedule)
+		for _, entry := range entries {
+			schedule := workflow.JobSchedule{
+				TriggerIndex: entry.TriggerIndex, Expression: entry.Expression,
+				Timezone: entry.Timezone, NextRunAt: entry.NextRunAt,
+			}
+			if entry.JitterMin > 0 || entry.JitterMax > 0 {
+				schedule.JitterMin = entry.JitterMin.String()
+				schedule.JitterMax = entry.JitterMax.String()
+			}
+			byTag[entry.JobTag] = append(byTag[entry.JobTag], schedule)
+		}
+		for index := range items {
+			items[index].Schedules = byTag[items[index].Tag]
+		}
+	}
+	writeJSON(response, http.StatusOK, listResponse[workflow.JobRunDescriptor]{Items: items})
 }
 
 func (api *JobAPI) run(response http.ResponseWriter, request *http.Request) {

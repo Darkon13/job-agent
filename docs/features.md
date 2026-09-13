@@ -808,9 +808,11 @@ Idempotency-Key: <client request id>
 ```
 
 В списке присутствуют только jobs, для которых при старте реально собраны
-transport, авторизация и capability. Ручной запуск создаёт обычную durable task
-с теми же payload и priority, что cron, и не выполняет platform action в HTTP
-handler. Dashboard показывает этот список и ставит выбранную job в очередь.
+transport, авторизация и capability. Для каждого job отдаются `payload`
+(параметры действия) и `schedules` — cron-выражение, таймзона, `next_run_at` и
+jitter; dashboard показывает обратный отсчёт до постановки задачи в очередь.
+Ручной запуск создаёт обычную durable task с теми же payload и priority, что
+cron, и не выполняет platform action в HTTP handler.
 
 `job-agent-approve` выпускает один уже подготовленный `waiting_approval`
 отклик. Команда работает только после явного переключения профиля в `submit`,

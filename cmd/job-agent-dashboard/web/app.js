@@ -220,18 +220,93 @@ function renderTasks(items = []) {
     const row = document.createElement("tr"); row.append(text("td", taskTypeLabel(item.type)), statusCell(taskStatusLabel(item.status), `task-${item.status}`), text("td", String(item.priority)), text("td", String(item.count))); return row;
   }));
 }
+function durationParts(value) {
+  const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(value || "");
+  if (!match) return null;
+  return { hours: Number(match[1] || 0), minutes: Number(match[2] || 0), seconds: Math.round(Number(match[3] || 0)) };
+}
+function formatDuration(value) {
+  const parts = durationParts(value);
+  if (!parts) return value || "";
+  const segments = [];
+  if (parts.hours) segments.push(`${parts.hours} ч`);
+  if (parts.minutes) segments.push(`${parts.minutes} мин`);
+  if (!parts.hours && !parts.minutes && parts.seconds) segments.push(`${parts.seconds} с`);
+  return segments.join(" ") || "0 с";
+}
+function countdownLabel(value) {
+  const target = new Date(value).getTime();
+  if (Number.isNaN(target)) return "—";
+  const diff = target - Date.now();
+  if (diff <= 0) return "вот-вот";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "меньше минуты";
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const rest = minutes % 60;
+  if (days) return `через ${days} д ${hours} ч`;
+  if (hours) return `через ${hours} ч ${rest} мин`;
+  return `через ${rest} мин`;
+}
+function updateCountdowns() {
+  for (const element of document.querySelectorAll("[data-next-run]")) {
+    element.textContent = countdownLabel(element.dataset.nextRun);
+    element.title = formatDate(element.dataset.nextRun);
+  }
+}
+setInterval(updateCountdowns, 1000);
+function jobParameterSummary(item) {
+  const payload = item.payload || {};
+  const parts = [];
+  if (Array.isArray(payload.profiles) && payload.profiles.length) parts.push(`профили: ${payload.profiles.join(", ")}`);
+  if (Array.isArray(payload.routes) && payload.routes.length) parts.push(`маршруты: ${payload.routes.join(", ")}`);
+  if (payload.target_successful) parts.push(`цель: ${payload.target_successful}`);
+  if (payload.max_in_flight) parts.push(`в работе: ${payload.max_in_flight}`);
+  if (payload.resume_id || payload.resume) parts.push(`резюме: ${payload.resume_id || payload.resume}`);
+  return parts.join(" · ");
+}
+function jobScheduleLines(item) {
+  return (item.schedules || []).map((schedule) => {
+    const parts = [`${schedule.expression} · ${schedule.timezone}`];
+    if (schedule.jitter_min || schedule.jitter_max) {
+      const min = schedule.jitter_min ? formatDuration(schedule.jitter_min) : "0 с";
+      const max = schedule.jitter_max ? formatDuration(schedule.jitter_max) : min;
+      parts.push(`jitter ${min}–${max}`);
+    }
+    return parts.join(" · ");
+  });
+}
+function jobNextRunCell(item) {
+  const cell = document.createElement("td");
+  const runs = (item.schedules || []).map((schedule) => schedule.next_run_at).filter(Boolean).sort();
+  if (!runs.length) { cell.append(text("span", "вручную", "muted")); return cell; }
+  const value = text("span", "", "countdown");
+  value.dataset.nextRun = runs[0];
+  cell.append(value);
+  const first = (item.schedules || []).find((schedule) => schedule.next_run_at === runs[0]);
+  if (first && (first.jitter_min || first.jitter_max)) cell.append(text("span", " + jitter", "muted"));
+  return cell;
+}
 function renderJobs(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell); elements.jobs.replaceChildren(row); return; }
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
   elements.jobs.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    const flow = item.task_type === "application.campaign" ? "Поиск → очередь откликов → отправка → результат" : item.task_type === "application.retention" ? "Синхронизация → отбор по сроку/отказу → повторная проверка → локальная очистка" : `Очередь → ${taskTypeLabel(item.task_type)} → результат`;
     const action = document.createElement("td");
-    const run = text("button", "Запустить", "secondary compact"); run.type = "button"; run.disabled = state.jobBusy.has(item.tag);
-    run.addEventListener("click", () => runJob(item)); action.append(run);
-    row.append(text("td", item.tag), text("td", taskTypeLabel(item.task_type)), text("td", item.platform), text("td", profileDisplayName(item.profile_id)), text("td", String(item.priority)), text("td", flow), action);
+    action.append(text("div", taskTypeLabel(item.task_type)));
+    const summary = jobParameterSummary(item);
+    if (summary) action.append(text("div", summary, "muted"));
+    const schedule = document.createElement("td");
+    const lines = jobScheduleLines(item);
+    if (lines.length) schedule.append(...lines.map((line) => text("div", line)));
+    else schedule.append(text("span", "вручную", "muted"));
+    const run = document.createElement("td");
+    const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
+    button.addEventListener("click", () => runJob(item)); run.append(button);
+    row.append(text("td", item.tag), action, text("td", item.profile_id ? profileDisplayName(item.profile_id) : "—"), schedule, jobNextRunCell(item), run);
     return row;
   }));
+  updateCountdowns();
 }
 function renderFailedTasks(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;

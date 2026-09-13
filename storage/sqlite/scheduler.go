@@ -3,6 +3,7 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -68,6 +69,24 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 		return nil, fmt.Errorf("query due schedules: %w", err)
 	}
 	defer rows.Close()
+	return scanScheduledEntries(rows)
+}
+
+// Schedules lists every enabled schedule with its next run, regardless of
+// whether the run is due. The dashboard joins it with the runnable jobs from
+// the configuration to show the countdown before enqueue.
+func (store *Store) Schedules(ctx context.Context) ([]scheduler.Entry, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone,
+		action_type, platform, profile_id, payload, priority, jitter_min_ns, jitter_max_ns, next_run_at
+		FROM scheduled_jobs WHERE enabled = 1 ORDER BY job_tag, trigger_index`)
+	if err != nil {
+		return nil, fmt.Errorf("query schedules: %w", err)
+	}
+	defer rows.Close()
+	return scanScheduledEntries(rows)
+}
+
+func scanScheduledEntries(rows *sql.Rows) ([]scheduler.Entry, error) {
 	entries := make([]scheduler.Entry, 0)
 	for rows.Next() {
 		var entry scheduler.Entry
@@ -76,7 +95,7 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 		if err := rows.Scan(&entry.JobTag, &entry.TriggerIndex, &entry.Expression, &entry.Timezone,
 			&entry.ActionType, &entry.Platform, &entry.ProfileID, &payload, &entry.Priority,
 			&jitterMin, &jitterMax, &nextRunAt); err != nil {
-			return nil, fmt.Errorf("scan due schedule: %w", err)
+			return nil, fmt.Errorf("scan scheduled entry: %w", err)
 		}
 		entry.Payload = bytes.Clone(payload)
 		entry.JitterMin = time.Duration(jitterMin)

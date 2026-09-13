@@ -26,7 +26,7 @@ func TestDashboardServesAssetsAndProxiesAPI(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") || !strings.Contains(response.Body.String(), "Что видит HH") || !strings.Contains(response.Body.String(), "Автоматизация из конфигурации") || !strings.Contains(response.Body.String(), "Очередь выполнения") || !strings.Contains(response.Body.String(), "Последние кампании откликов") || !strings.Contains(response.Body.String(), "Неразрешённые ошибки задач") || !strings.Contains(response.Body.String(), "application-items") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Job Agent") || !strings.Contains(response.Body.String(), "Профиль и резюме") || !strings.Contains(response.Body.String(), "Что видит HH") || !strings.Contains(response.Body.String(), "Автоматизация из конфигурации") || !strings.Contains(response.Body.String(), "Очередь выполнения") || !strings.Contains(response.Body.String(), "Последние рассылки откликов") || !strings.Contains(response.Body.String(), "Неразрешённые ошибки задач") || !strings.Contains(response.Body.String(), "application-items") {
 		t.Fatalf("index response: %d %s", response.Code, response.Body.String())
 	}
 	if response.Header().Get("Content-Security-Policy") == "" {

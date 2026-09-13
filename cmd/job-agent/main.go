@@ -884,7 +884,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job run workflow: %v", err)
 	}
-	jobAPI, err := httpapi.NewJobAPI(jobRunWorkflow)
+	jobAPI, err := httpapi.NewJobAPI(jobRunWorkflow, store)
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
