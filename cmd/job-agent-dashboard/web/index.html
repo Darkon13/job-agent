@@ -27,15 +27,21 @@
       </div>
       <article class="panel">
         <div class="auth-controls">
-          <label>Профиль <input id="auth-profile" type="text" value="primary" autocomplete="off"></label>
+          <label>Профиль <select id="auth-profile"></select></label>
           <button id="auth-start" type="button">Начать вход</button>
+          <button id="auth-refresh" class="secondary compact" type="button" hidden>Обновить статус</button>
           <button id="auth-cancel" type="button" hidden>Отменить</button>
         </div>
+        <p id="auth-step" class="auth-step muted" hidden></p>
         <div id="auth-value-row" class="auth-controls" hidden>
-          <input id="auth-value" type="text" placeholder="E-mail, код, пароль или captcha" autocomplete="off" disabled>
+          <label for="auth-value"><span id="auth-value-caption">Значение</span> <input id="auth-value" type="text" autocomplete="off" disabled></label>
           <button id="auth-submit" type="button" disabled>Отправить</button>
         </div>
-        <img id="auth-captcha" alt="Captcha" hidden>
+        <div id="auth-captcha-row" class="auth-controls" hidden>
+          <img id="auth-captcha" alt="Captcha">
+          <button id="auth-captcha-refresh" class="secondary compact" type="button">Перезагрузить картинку</button>
+        </div>
+        <p id="auth-result" class="auth-result" hidden></p>
       </article>
     </section>
     <section aria-labelledby="overview-title">
