@@ -49,6 +49,7 @@
 |---|---|---|---|
 | `type` | string | **да** | Тип действия (см. таблицу ниже). |
 | `profile` | string | зависит от типа | `tag` профиля. |
+| `profiles` | array | зависит от типа | Массив `tag` профилей с общим расписанием; взаимоисключающе с `profile`. Job раскрывается в одно срабатывание на профиль. |
 | `resume` | string | нет | Резюме (ID или alias); по умолчанию — `profiles[].resume`. |
 | `resource` | string | для `resume.update`, `profile_state.reconcile` | `tag` из `resources[]`. |
 | `publish` | bool | нет | Опубликовать результат `resume.update` после apply. |

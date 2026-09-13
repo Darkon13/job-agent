@@ -180,6 +180,19 @@ type JobAction struct {
 	Retention        *ApplicationRetentionConfig          `json:"retention,omitempty"`
 }
 
+// TargetProfiles returns the profile tags a job action applies to. A job either
+// names one profile or lists several with the same schedule; list jobs expand
+// into one scheduler entry per profile.
+func (action JobAction) TargetProfiles() []string {
+	if len(action.Profiles) > 0 {
+		return append([]string(nil), action.Profiles...)
+	}
+	if action.Profile != "" {
+		return []string{action.Profile}
+	}
+	return nil
+}
+
 type ApplicationRetentionConfig struct {
 	StaleAfter     core.Duration `json:"stale_after"`
 	RemoveRejected *bool         `json:"remove_rejected,omitempty"`
@@ -1489,30 +1502,36 @@ func (c Config) Validate() error {
 				return fmt.Errorf("job %q trigger %d: %w", job.Tag, index, err)
 			}
 		}
+		if job.Action.Profile != "" && len(job.Action.Profiles) > 0 {
+			return fmt.Errorf("job %q action cannot set both profile and profiles", job.Tag)
+		}
+		if len(job.Action.Profiles) > 0 && (job.Action.Type == JobActionResumeUpdate || job.Action.Type == JobActionProfileStateReconcile) {
+			return fmt.Errorf("job %q action %s does not accept profiles", job.Tag, job.Action.Type)
+		}
 		switch job.Action.Type {
 		case JobActionProfileSessionRefresh:
-			profile, exists := profileConfigs[job.Action.Profile]
-			if !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			targets, err := jobActionTargets(job, profiles)
+			if err != nil {
+				return err
 			}
-			if strings.TrimSpace(profile.StateFile) == "" {
-				return fmt.Errorf("job %q profile.session_refresh requires a profile state_file", job.Tag)
-			}
-		case JobActionResumeTouch, JobActionResumePublish, JobActionProfileActivityObserve:
-			if _, exists := profiles[job.Action.Profile]; !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
-			}
-			resume := job.Action.Resume
-			if resume == "" {
-				for _, profile := range c.Profiles {
-					if profile.Tag == job.Action.Profile {
-						resume = profile.Resume
-						break
-					}
+			for _, target := range targets {
+				if strings.TrimSpace(profileConfigs[target].StateFile) == "" {
+					return fmt.Errorf("job %q profile.session_refresh requires a profile state_file", job.Tag)
 				}
 			}
-			if resume == "" {
-				return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+		case JobActionResumeTouch, JobActionResumePublish, JobActionProfileActivityObserve:
+			targets, err := jobActionTargets(job, profiles)
+			if err != nil {
+				return err
+			}
+			for _, target := range targets {
+				resume := job.Action.Resume
+				if resume == "" {
+					resume = profileConfigs[target].Resume
+				}
+				if resume == "" {
+					return fmt.Errorf("job %q %s requires resume", job.Tag, job.Action.Type)
+				}
 			}
 		case JobActionResumeUpdate:
 			if _, exists := profiles[job.Action.Profile]; !exists {
@@ -1539,35 +1558,41 @@ func (c Config) Validate() error {
 				}
 			}
 		case JobActionConversationSync:
-			if _, exists := profiles[job.Action.Profile]; !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			if _, err := jobActionTargets(job, profiles); err != nil {
+				return err
 			}
 		case JobActionConversationFollowUpSelect:
-			if _, exists := profiles[job.Action.Profile]; !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
-			}
-			if !profileConfigs[job.Action.Profile].Conversations.AllowSend {
-				return fmt.Errorf("job %q requires conversations.allow_send for profile %q", job.Tag, job.Action.Profile)
+			targets, err := jobActionTargets(job, profiles)
+			if err != nil {
+				return err
 			}
 			if job.Action.FollowUp == nil {
 				return fmt.Errorf("job %q requires follow_up selection settings", job.Tag)
 			}
-			if err := job.Action.FollowUp.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
-				return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
+			for _, target := range targets {
+				if !profileConfigs[target].Conversations.AllowSend {
+					return fmt.Errorf("job %q requires conversations.allow_send for profile %q", job.Tag, target)
+				}
+				if err := job.Action.FollowUp.Payload(core.ProfileID(target)).Validate(); err != nil {
+					return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
+				}
 			}
 		case JobActionApplicationStateSync:
-			if _, exists := profiles[job.Action.Profile]; !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			if _, err := jobActionTargets(job, profiles); err != nil {
+				return err
 			}
 		case JobActionApplicationRetention:
-			if _, exists := profiles[job.Action.Profile]; !exists {
-				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
+			targets, err := jobActionTargets(job, profiles)
+			if err != nil {
+				return err
 			}
 			if job.Action.Retention == nil {
 				return fmt.Errorf("job %q requires application retention settings", job.Tag)
 			}
-			if err := job.Action.Retention.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
-				return fmt.Errorf("job %q retention: %w", job.Tag, err)
+			for _, target := range targets {
+				if err := job.Action.Retention.Payload(core.ProfileID(target)).Validate(); err != nil {
+					return fmt.Errorf("job %q retention: %w", job.Tag, err)
+				}
 			}
 		case JobActionApplicationCampaign:
 			if err := validateApplicationCampaignAction(job, profiles, searches); err != nil {
@@ -1614,6 +1639,19 @@ func (c Config) BuildProfileStateResources() ([]core.ProfileStateResource, error
 		resources = append(resources, resource)
 	}
 	return resources, nil
+}
+
+func jobActionTargets(job Job, profiles map[string]struct{}) ([]string, error) {
+	targets := job.Action.TargetProfiles()
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("job %q action requires profile or profiles", job.Tag)
+	}
+	for _, target := range targets {
+		if _, exists := profiles[target]; !exists {
+			return nil, fmt.Errorf("job %q references unknown profile %q", job.Tag, target)
+		}
+	}
+	return targets, nil
 }
 
 func validateApplicationCampaignAction(job Job, profiles map[string]struct{}, searches map[string]Search) error {

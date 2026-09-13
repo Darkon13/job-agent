@@ -283,6 +283,9 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
 Правила:
 
 - `tag` профиля выбираете вы — это просто имя объекта для ссылок;
+- одинаковые расписания можно не дублировать: профильные действия принимают
+  массив `action.profiles`, и job раскрывается по одному срабатыванию на
+  профиль;
 - у каждого профиля собственные `resume`, `state_file`, `daily_limit` и
   `submit_jitter`; один аккаунт может быть в `submit`, другой в `dry_run`;
 - `searches[].profiles` и `job.action.profiles` перечисляют, какие профили
@@ -543,7 +546,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
       ],
       "jobs": [
         {
-          "tag": "refresh-secondary-session",
+          "tag": "refresh-sessions",
           "enabled": true,
           "triggers": [
             {
@@ -560,32 +563,14 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "concurrency": "forbid",
           "action": {
             "type": "profile.session_refresh",
-            "profile": "secondary"
+            "profiles": [
+              "primary",
+              "secondary"
+            ]
           }
         },
         {
-          "tag": "touch-secondary-resume",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "0 */4 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "5m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "resume.touch",
-            "profile": "secondary"
-          }
-        },
-        {
-          "tag": "touch-primary-resume",
+          "tag": "touch-resumes",
           "enabled": true,
           "triggers": [
             {
@@ -602,34 +587,15 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "concurrency": "forbid",
           "action": {
             "type": "resume.touch",
-            "profile": "primary"
+            "profiles": [
+              "primary",
+              "secondary"
+            ]
           }
         },
         {
-          "tag": "refresh-primary-session",
+          "tag": "sync-conversations",
           "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "15 */4 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "profile.session_refresh",
-            "profile": "primary"
-          }
-        },
-        {
-          "tag": "sync-primary-conversations",
-          "enabled": true,
-          "concurrency": "forbid",
           "triggers": [
             {
               "type": "cron",
@@ -638,15 +604,18 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "misfire": "run_once"
             }
           ],
+          "concurrency": "forbid",
           "action": {
             "type": "conversation.sync",
-            "profile": "primary"
+            "profiles": [
+              "primary",
+              "secondary"
+            ]
           }
         },
         {
-          "tag": "observe-primary-activity",
+          "tag": "observe-activity",
           "enabled": true,
-          "concurrency": "forbid",
           "triggers": [
             {
               "type": "cron",
@@ -655,43 +624,13 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "misfire": "run_once"
             }
           ],
+          "concurrency": "forbid",
           "action": {
             "type": "profile.activity.observe",
-            "profile": "primary"
-          }
-        },
-        {
-          "tag": "sync-secondary-conversations",
-          "enabled": true,
-          "concurrency": "forbid",
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "*/10 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once"
-            }
-          ],
-          "action": {
-            "type": "conversation.sync",
-            "profile": "secondary"
-          }
-        },
-        {
-          "tag": "observe-secondary-activity",
-          "enabled": true,
-          "concurrency": "forbid",
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "*/30 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once"
-            }
-          ],
-          "action": {
-            "type": "profile.activity.observe",
-            "profile": "secondary"
+            "profiles": [
+              "primary",
+              "secondary"
+            ]
           }
         },
         {
@@ -753,7 +692,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           }
         },
         {
-          "tag": "sync-primary-application-states",
+          "tag": "sync-application-states",
           "enabled": true,
           "triggers": [
             {
@@ -770,28 +709,10 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "concurrency": "forbid",
           "action": {
             "type": "application.state.sync",
-            "profile": "primary"
-          }
-        },
-        {
-          "tag": "sync-secondary-application-states",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "20 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "5m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "application.state.sync",
-            "profile": "secondary"
+            "profiles": [
+              "primary",
+              "secondary"
+            ]
           }
         }
       ],

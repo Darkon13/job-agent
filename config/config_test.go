@@ -948,3 +948,35 @@ func TestProfileAnswerModelPolicyValidation(t *testing.T) {
 		t.Fatal("expected missing prompt version to fail")
 	}
 }
+
+func TestJobProfileArrayExpandsTargets(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{
+			{Tag: "primary", Adapter: "hh-main", Resume: "resume-1", Enabled: true},
+			{Tag: "secondary", Adapter: "hh-main", Resume: "resume-2", Enabled: true},
+		},
+		Jobs: []Job{{
+			Tag: "sync-conversations", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "*/10 * * * *", Timezone: "UTC", Misfire: "run_once"}},
+			Action:   JobAction{Type: JobActionConversationSync, Profiles: []string{"primary", "secondary"}},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid profiles array job: %v", err)
+	}
+	targets := config.Jobs[0].Action.TargetProfiles()
+	if len(targets) != 2 || targets[0] != "primary" || targets[1] != "secondary" {
+		t.Fatalf("target profiles = %#v", targets)
+	}
+	config.Jobs[0].Action.Profile = "primary"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected profile and profiles together to fail")
+	}
+	config.Jobs[0].Action.Profile = ""
+	config.Jobs[0].Action.Profiles = []string{"primary", "missing"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected an unknown profile in the array to fail")
+	}
+}

@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,16 +18,24 @@ import (
 
 var ErrJobRunNotFound = errors.New("runnable job not found")
 
-// JobRunDefinition is the transport-neutral command behind one configured job.
-// Trigger timing is deliberately absent: a manual API run becomes available
-// immediately while retaining the same typed payload and priority as cron.
-type JobRunDefinition struct {
-	Tag       string
+// JobRunCommand is one durable task behind a configured job. A job that names
+// several profiles with the same schedule keeps one tag but carries one command
+// per profile, so a manual run triggers all of them.
+type JobRunCommand struct {
 	TaskType  core.TaskType
 	Platform  core.Platform
 	ProfileID core.ProfileID
 	Payload   json.RawMessage
 	Priority  core.TaskPriority
+}
+
+// JobRunDefinition is the transport-neutral command set behind one configured
+// job. Trigger timing is deliberately absent: a manual API run becomes
+// available immediately while retaining the same typed payloads and priorities
+// as cron.
+type JobRunDefinition struct {
+	Tag      string
+	Commands []JobRunCommand
 }
 
 // JobSchedule describes one configured trigger of a runnable job. NextRunAt is
@@ -47,6 +55,7 @@ type JobRunDescriptor struct {
 	TaskType  core.TaskType     `json:"task_type"`
 	Platform  core.Platform     `json:"platform"`
 	ProfileID core.ProfileID    `json:"profile_id"`
+	Profiles  []core.ProfileID  `json:"profiles,omitempty"`
 	Priority  core.TaskPriority `json:"priority"`
 	Payload   json.RawMessage   `json:"payload,omitempty"`
 	Schedules []JobSchedule     `json:"schedules,omitempty"`
@@ -72,19 +81,9 @@ func NewJobRunWorkflow(tasks broker.TaskStore, clock Clock, ids IDGenerator, def
 		if err := definition.validate(); err != nil {
 			return nil, err
 		}
-		if existing, exists := workflow.definitions[definition.Tag]; exists {
-			if !sameJobRunDefinition(existing, definition) {
-				return nil, fmt.Errorf("job %q has conflicting runnable commands", definition.Tag)
-			}
-			continue
-		}
-		definition.Payload = append(json.RawMessage(nil), definition.Payload...)
-		workflow.definitions[definition.Tag] = definition
-		workflow.descriptors = append(workflow.descriptors, JobRunDescriptor{
-			Tag: definition.Tag, TaskType: definition.TaskType, Platform: definition.Platform,
-			ProfileID: definition.ProfileID, Priority: definition.Priority,
-			Payload: append(json.RawMessage(nil), definition.Payload...),
-		})
+		copied := JobRunDefinition{Tag: definition.Tag, Commands: cloneJobRunCommands(definition.Commands)}
+		workflow.definitions[copied.Tag] = copied
+		workflow.descriptors = append(workflow.descriptors, copied.descriptor())
 	}
 	sort.Slice(workflow.descriptors, func(i, j int) bool { return workflow.descriptors[i].Tag < workflow.descriptors[j].Tag })
 	return workflow, nil
@@ -110,51 +109,101 @@ func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string)
 	if !exists {
 		return core.Task{}, false, fmt.Errorf("%w: %s", ErrJobRunNotFound, tag)
 	}
-	taskID, err := workflow.ids.NewID("task")
-	if err != nil {
-		return core.Task{}, false, err
+	var first core.Task
+	anyCreated := false
+	for index, command := range definition.Commands {
+		taskID, err := workflow.ids.NewID("task")
+		if err != nil {
+			return core.Task{}, false, err
+		}
+		correlationID, err := workflow.ids.NewID("correlation")
+		if err != nil {
+			return core.Task{}, false, err
+		}
+		idempotencyKey := jobRunIdempotencyKey(tag, requestKey, index)
+		task, err := core.NewTask(core.NewTaskParams{
+			ID: core.TaskID(taskID), Type: command.TaskType, IdempotencyKey: idempotencyKey,
+			Source: "job-api:" + tag, Platform: command.Platform, ProfileID: command.ProfileID,
+			CorrelationID: core.CorrelationID(correlationID), Payload: command.Payload,
+			Priority: command.Priority,
+		}, workflow.clock.Now())
+		if err != nil {
+			return core.Task{}, false, err
+		}
+		created, err := workflow.tasks.Enqueue(ctx, task)
+		if err != nil {
+			return core.Task{}, false, fmt.Errorf("enqueue job %s command %d: %w", tag, index, err)
+		}
+		if !created {
+			task, err = workflow.tasks.TaskByIdempotencyKey(ctx, idempotencyKey)
+			if err != nil {
+				return core.Task{}, false, fmt.Errorf("load idempotent job run: %w", err)
+			}
+		}
+		if index == 0 {
+			first = task
+		}
+		anyCreated = anyCreated || created
 	}
-	correlationID, err := workflow.ids.NewID("correlation")
-	if err != nil {
-		return core.Task{}, false, err
+	return first, anyCreated, nil
+}
+
+func (definition JobRunDefinition) descriptor() JobRunDescriptor {
+	first := definition.Commands[0]
+	profiles := make([]core.ProfileID, 0, len(definition.Commands))
+	seen := make(map[core.ProfileID]struct{}, len(definition.Commands))
+	for _, command := range definition.Commands {
+		if _, exists := seen[command.ProfileID]; exists {
+			continue
+		}
+		seen[command.ProfileID] = struct{}{}
+		profiles = append(profiles, command.ProfileID)
 	}
-	idempotencyKey := jobRunIdempotencyKey(tag, requestKey)
-	task, err := core.NewTask(core.NewTaskParams{
-		ID: core.TaskID(taskID), Type: definition.TaskType, IdempotencyKey: idempotencyKey,
-		Source: "job-api:" + tag, Platform: definition.Platform, ProfileID: definition.ProfileID,
-		CorrelationID: core.CorrelationID(correlationID), Payload: definition.Payload,
-		Priority: definition.Priority,
-	}, workflow.clock.Now())
-	if err != nil {
-		return core.Task{}, false, err
+	descriptor := JobRunDescriptor{
+		Tag: definition.Tag, TaskType: first.TaskType, Platform: first.Platform,
+		ProfileID: first.ProfileID, Priority: first.Priority,
+		Payload: append(json.RawMessage(nil), first.Payload...),
 	}
-	created, err := workflow.tasks.Enqueue(ctx, task)
-	if err != nil || created {
-		return task, created, err
+	if len(profiles) > 1 {
+		descriptor.Profiles = profiles
 	}
-	existing, err := workflow.tasks.TaskByIdempotencyKey(ctx, idempotencyKey)
-	if err != nil {
-		return core.Task{}, false, fmt.Errorf("load idempotent job run: %w", err)
-	}
-	return existing, false, nil
+	return descriptor
 }
 
 func (definition JobRunDefinition) validate() error {
-	if strings.TrimSpace(definition.Tag) == "" || definition.TaskType == "" || definition.Platform == "" || definition.ProfileID == "" || len(definition.Payload) == 0 || !json.Valid(definition.Payload) {
+	if strings.TrimSpace(definition.Tag) == "" || len(definition.Commands) == 0 {
 		return fmt.Errorf("runnable job %q is incomplete", definition.Tag)
 	}
-	if err := definition.Priority.Validate(); err != nil {
-		return fmt.Errorf("runnable job %q: %w", definition.Tag, err)
+	taskType := definition.Commands[0].TaskType
+	for index, command := range definition.Commands {
+		if command.TaskType == "" || command.Platform == "" || command.ProfileID == "" ||
+			len(command.Payload) == 0 || !json.Valid(command.Payload) {
+			return fmt.Errorf("runnable job %q command %d is incomplete", definition.Tag, index)
+		}
+		if command.TaskType != taskType {
+			return fmt.Errorf("runnable job %q mixes command types", definition.Tag)
+		}
+		if err := command.Priority.Validate(); err != nil {
+			return fmt.Errorf("runnable job %q command %d: %w", definition.Tag, index, err)
+		}
 	}
 	return nil
 }
 
-func sameJobRunDefinition(left, right JobRunDefinition) bool {
-	return left.Tag == right.Tag && left.TaskType == right.TaskType && left.Platform == right.Platform &&
-		left.ProfileID == right.ProfileID && left.Priority == right.Priority && bytes.Equal(left.Payload, right.Payload)
+func (command JobRunCommand) copy() JobRunCommand {
+	command.Payload = append(json.RawMessage(nil), command.Payload...)
+	return command
 }
 
-func jobRunIdempotencyKey(tag, requestKey string) string {
-	digest := sha256.Sum256([]byte(tag + "\x00" + requestKey))
+func cloneJobRunCommands(commands []JobRunCommand) []JobRunCommand {
+	cloned := make([]JobRunCommand, 0, len(commands))
+	for _, command := range commands {
+		cloned = append(cloned, command.copy())
+	}
+	return cloned
+}
+
+func jobRunIdempotencyKey(tag, requestKey string, commandIndex int) string {
+	digest := sha256.Sum256([]byte(tag + "\x00" + requestKey + "\x00" + strconv.Itoa(commandIndex)))
 	return "job.run:" + hex.EncodeToString(digest[:])
 }

@@ -35,8 +35,11 @@ func (ids *jobIDs) NewID(prefix string) (string, error) {
 func TestJobAPIListsAndQueuesRuns(t *testing.T) {
 	queue := brokermemory.NewQueue()
 	jobWorkflow, err := workflow.NewJobRunWorkflow(queue, jobClock{now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}, &jobIDs{}, []workflow.JobRunDefinition{{
-		Tag: "daily-applications", TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
-		Payload: json.RawMessage(`{"job_tag":"daily-applications"}`), Priority: 100,
+		Tag: "daily-applications",
+		Commands: []workflow.JobRunCommand{{
+			TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
+			Payload: json.RawMessage(`{"job_tag":"daily-applications"}`), Priority: 100,
+		}},
 	}})
 	if err != nil {
 		t.Fatalf("new workflow: %v", err)
@@ -91,8 +94,11 @@ func TestJobAPIRequiresKeyAndRunnableJob(t *testing.T) {
 func TestJobAPIEnrichesRunnableJobsWithSchedules(t *testing.T) {
 	queue := brokermemory.NewQueue()
 	jobWorkflow, err := workflow.NewJobRunWorkflow(queue, jobClock{now: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)}, &jobIDs{}, []workflow.JobRunDefinition{{
-		Tag: "periodic-applications", TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
-		Payload: json.RawMessage(`{"target_successful":200}`), Priority: 100,
+		Tag: "periodic-applications",
+		Commands: []workflow.JobRunCommand{{
+			TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
+			Payload: json.RawMessage(`{"target_successful":200}`), Priority: 100,
+		}},
 	}})
 	if err != nil {
 		t.Fatalf("new workflow: %v", err)

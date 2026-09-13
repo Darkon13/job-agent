@@ -204,12 +204,17 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		enabledJobs++
 		switch job.Action.Type {
 		case appconfig.JobActionResumeTouch:
-			profile := configuredProfiles[job.Action.Profile]
-			if !readiness[job.Action.Profile].browserReady {
-				blocked = append(blocked, "job "+job.Tag+" has no valid browser state")
-				continue
-			}
-			if instances[profile.Adapter].Name() == hh.Name {
+			runnable := false
+			for _, target := range job.Action.TargetProfiles() {
+				profile := configuredProfiles[target]
+				if !readiness[target].browserReady {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no valid browser state")
+					continue
+				}
+				runnable = true
+				if instances[profile.Adapter].Name() != hh.Name {
+					continue
+				}
 				resumeID := job.Action.Resume
 				if resumeID == "" {
 					resumeID = profile.Resume
@@ -222,78 +227,111 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 				probe, err := transport.ProbeResume(probeCtx, resumeID)
 				cancel()
 				if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
-					fmt.Fprintf(output, "WARN job=%s browser_session=auth_required\n", job.Tag)
-					blocked = append(blocked, "job "+job.Tag+" browser session requires authentication")
+					fmt.Fprintf(output, "WARN job=%s profile=%s browser_session=auth_required\n", job.Tag, target)
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" browser session requires authentication")
 					continue
 				}
 				if err != nil {
 					return fmt.Errorf("job %q browser probe: %w", job.Tag, err)
 				}
-				fmt.Fprintf(output, "OK job=%s resume=found can_touch=%t\n", job.Tag, probe.CanTouch)
+				fmt.Fprintf(output, "OK job=%s profile=%s resume=found can_touch=%t\n", job.Tag, target, probe.CanTouch)
 			}
-			runnableJobs++
+			if runnable {
+				runnableJobs++
+			}
 		case appconfig.JobActionProfileActivityObserve:
-			profile := configuredProfiles[job.Action.Profile]
-			if !readiness[job.Action.Profile].browserReady {
-				blocked = append(blocked, "job "+job.Tag+" has no valid browser state")
-				continue
+			runnable := false
+			for _, target := range job.Action.TargetProfiles() {
+				profile := configuredProfiles[target]
+				if !readiness[target].browserReady {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no valid browser state")
+					continue
+				}
+				if instances[profile.Adapter].Name() != hh.Name {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no profile activity observer")
+					continue
+				}
+				resumeID := job.Action.Resume
+				if resumeID == "" {
+					resumeID = profile.Resume
+				}
+				observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
+				if err != nil {
+					return fmt.Errorf("job %q browser observer: %w", job.Tag, err)
+				}
+				observeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				observation, err := observer.ObserveProfileActivity(observeCtx, core.ProfileID(profile.Tag), resumeID)
+				cancel()
+				if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
+					fmt.Fprintf(output, "WARN job=%s profile=%s browser_session=auth_required\n", job.Tag, target)
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" browser session requires authentication")
+					continue
+				}
+				if err != nil {
+					return fmt.Errorf("job %q activity probe: %w", job.Tag, err)
+				}
+				runnable = true
+				fmt.Fprintf(output, "OK job=%s profile=%s score_hidden=%t period_days=%s search_shows=%s views=%s invitations=%s response_streak=%s/%s\n",
+					job.Tag, target, observation.ScoreHidden, optionalInt(observation.PeriodDays), optionalInt(observation.SearchShows),
+					optionalInt(observation.Views), optionalInt(observation.Invitations), optionalInt(observation.ResponseStreak), optionalInt(observation.ResponsesRequired))
 			}
-			if instances[profile.Adapter].Name() != hh.Name {
-				blocked = append(blocked, "job "+job.Tag+" has no profile activity observer")
-				continue
+			if runnable {
+				runnableJobs++
 			}
-			resumeID := job.Action.Resume
-			if resumeID == "" {
-				resumeID = profile.Resume
-			}
-			observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
-			if err != nil {
-				return fmt.Errorf("job %q browser observer: %w", job.Tag, err)
-			}
-			observeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			observation, err := observer.ObserveProfileActivity(observeCtx, core.ProfileID(profile.Tag), resumeID)
-			cancel()
-			if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
-				fmt.Fprintf(output, "WARN job=%s browser_session=auth_required\n", job.Tag)
-				blocked = append(blocked, "job "+job.Tag+" browser session requires authentication")
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("job %q activity probe: %w", job.Tag, err)
-			}
-			fmt.Fprintf(output, "OK job=%s score_hidden=%t period_days=%s search_shows=%s views=%s invitations=%s response_streak=%s/%s\n",
-				job.Tag, observation.ScoreHidden, optionalInt(observation.PeriodDays), optionalInt(observation.SearchShows),
-				optionalInt(observation.Views), optionalInt(observation.Invitations), optionalInt(observation.ResponseStreak), optionalInt(observation.ResponsesRequired))
-			runnableJobs++
 		case appconfig.JobActionConversationSync:
-			profile := configuredProfiles[job.Action.Profile]
-			if !readiness[job.Action.Profile].browserReady {
-				blocked = append(blocked, "job "+job.Tag+" has no valid browser state")
-				continue
+			runnable := false
+			for _, target := range job.Action.TargetProfiles() {
+				profile := configuredProfiles[target]
+				if !readiness[target].browserReady {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no valid browser state")
+					continue
+				}
+				if _, supported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder); !supported {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" adapter has no browser conversation discovery")
+					continue
+				}
+				runnable = true
+				fmt.Fprintf(output, "OK job=%s profile=%s conversation_sync=ready\n", job.Tag, target)
 			}
-			if _, supported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder); !supported {
-				blocked = append(blocked, "job "+job.Tag+" adapter has no browser conversation discovery")
-				continue
+			if runnable {
+				runnableJobs++
 			}
-			fmt.Fprintf(output, "OK job=%s conversation_sync=ready\n", job.Tag)
-			runnableJobs++
 		case appconfig.JobActionConversationFollowUpSelect:
-			profile := configuredProfiles[job.Action.Profile]
-			capabilities, err := core.NewCapabilitySet(instances[profile.Adapter].Capabilities()...)
-			if err != nil {
-				return fmt.Errorf("job %q adapter capabilities: %w", job.Tag, err)
+			runnable := false
+			for _, target := range job.Action.TargetProfiles() {
+				profile := configuredProfiles[target]
+				capabilities, err := core.NewCapabilitySet(instances[profile.Adapter].Capabilities()...)
+				if err != nil {
+					return fmt.Errorf("job %q adapter capabilities: %w", job.Tag, err)
+				}
+				if !capabilities.Supports(core.CapabilityConversationWrite) {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" adapter has no conversation write capability")
+					continue
+				}
+				_, browserSupported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder)
+				if !readiness[target].apiReady && !(readiness[target].browserReady && browserSupported) {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no writable conversation transport")
+					continue
+				}
+				runnable = true
+				fmt.Fprintf(output, "OK job=%s profile=%s follow_up_strategy=%s\n", job.Tag, target, job.Action.FollowUp.Strategy)
 			}
-			if !capabilities.Supports(core.CapabilityConversationWrite) {
-				blocked = append(blocked, "job "+job.Tag+" adapter has no conversation write capability")
-				continue
+			if runnable {
+				runnableJobs++
 			}
-			_, browserSupported := instances[profile.Adapter].(adapter.BrowserConversationSessionBinder)
-			if !readiness[job.Action.Profile].apiReady && !(readiness[job.Action.Profile].browserReady && browserSupported) {
-				blocked = append(blocked, "job "+job.Tag+" has no writable conversation transport")
-				continue
+		case appconfig.JobActionApplicationStateSync:
+			runnable := false
+			for _, target := range job.Action.TargetProfiles() {
+				if !readiness[target].browserReady && !readiness[target].apiReady {
+					blocked = append(blocked, "job "+job.Tag+" profile "+target+" has no application state observer")
+					continue
+				}
+				runnable = true
+				fmt.Fprintf(output, "OK job=%s profile=%s application_state_sync=ready\n", job.Tag, target)
 			}
-			fmt.Fprintf(output, "OK job=%s follow_up_strategy=%s\n", job.Tag, job.Action.FollowUp.Strategy)
-			runnableJobs++
+			if runnable {
+				runnableJobs++
+			}
 		case appconfig.JobActionApplicationCampaign:
 			runnable := true
 			for _, profile := range job.Action.Profiles {
