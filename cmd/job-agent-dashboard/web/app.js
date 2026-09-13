@@ -313,7 +313,11 @@ function renderJobs(items = []) {
     const run = document.createElement("td");
     const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
     button.addEventListener("click", () => runJob(item)); run.append(button);
-    row.append(text("td", item.tag), action, text("td", jobProfiles(item).map(profileDisplayName).join(", ") || "—"), schedule, jobNextRunCell(item), run);
+    const profileCell = document.createElement("td");
+    const names = jobProfiles(item).map(profileDisplayName);
+    if (names.length) profileCell.append(...names.map((name) => text("div", name)));
+    else profileCell.append(text("span", "—", "muted"));
+    row.append(text("td", item.tag), action, profileCell, schedule, jobNextRunCell(item), run);
     return row;
   }));
   updateCountdowns();
