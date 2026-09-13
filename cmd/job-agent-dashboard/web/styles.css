@@ -190,3 +190,5 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 
 .auth-step { margin: 0 0 0.75rem; }
 .auth-result { margin: 0.75rem 0 0; }
+
+[hidden] { display: none !important; }

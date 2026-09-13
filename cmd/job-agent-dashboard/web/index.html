@@ -26,13 +26,14 @@
         <span id="auth-state" class="muted">сессия не запущена</span>
       </div>
       <article class="panel">
+        <p class="panel-description">Интерактивный вход нужен при первой авторизации или когда сессия профиля истекла: выберите профиль, начните вход и отвечайте на шаги платформы. Поля активируются по мере шагов.</p>
         <div class="auth-controls">
           <label>Профиль <select id="auth-profile"></select></label>
           <button id="auth-start" type="button">Начать вход</button>
           <button id="auth-refresh" class="secondary compact" type="button" hidden>Обновить статус</button>
           <button id="auth-cancel" type="button" hidden>Отменить</button>
         </div>
-        <p id="auth-step" class="auth-step muted" hidden></p>
+        <p id="auth-step" class="auth-step muted">Выберите профиль и нажмите «Начать вход» — сервис запросит e-mail или телефон, затем код, пароль или captcha.</p>
         <div id="auth-value-row" class="auth-controls" hidden>
           <label for="auth-value"><span id="auth-value-caption">Значение</span> <input id="auth-value" type="text" autocomplete="off" disabled></label>
           <button id="auth-submit" type="button" disabled>Отправить</button>
@@ -53,8 +54,8 @@
     </section>
     <section aria-labelledby="activity-title">
       <div class="section-title">
-        <div><p class="eyebrow">АКТИВНОСТЬ РЕЗЮМЕ</p><h2 id="activity-title">Что видит HH</h2></div>
-        <span class="muted">Последний снимок и подтверждённые действия</span>
+        <div><p class="eyebrow">МЕТРИКИ РЕЗЮМЕ</p><h2 id="activity-title">Что HH показывает по профилю</h2></div>
+        <span class="muted">Последний снимок метрик и подтверждённые действия сервиса</span>
       </div>
       <div id="activity-observations" class="activity-grid"></div>
       <article class="panel activity-events">
