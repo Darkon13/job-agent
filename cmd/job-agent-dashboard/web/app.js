@@ -877,6 +877,7 @@ async function refreshSummary() {
     state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
     renderAccountSwitcher(summary.profiles || []);
+    renderAuthProfileOptions(summary.profiles || []);
     renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
@@ -974,74 +975,111 @@ elements.accountSwitcher.addEventListener("change", () => {
 elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
+function renderAuthProfileOptions(profiles = []) {
+  const select = document.getElementById("auth-profile");
+  if (!select) return;
+  const items = profiles.filter((item) => item && item.id);
+  if (!items.length || select.dataset.ready === "1") return;
+  select.replaceChildren(...items.map((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.display_name ? `${item.display_name} (${item.id})` : item.id;
+    return option;
+  }));
+  select.dataset.ready = "1";
+  if (items.some((item) => item.id === state.account)) select.value = state.account;
+}
+
 (() => {
   const startButton = document.getElementById("auth-start");
   if (!startButton) {
     return;
   }
-  const profileInput = document.getElementById("auth-profile");
+  const profileSelect = document.getElementById("auth-profile");
   const valueInput = document.getElementById("auth-value");
+  const valueCaption = document.getElementById("auth-value-caption");
   const submitButton = document.getElementById("auth-submit");
   const cancelButton = document.getElementById("auth-cancel");
-  const state = document.getElementById("auth-state");
+  const refreshButton = document.getElementById("auth-refresh");
+  const stateLabel = document.getElementById("auth-state");
+  const stepLabel = document.getElementById("auth-step");
+  const resultLabel = document.getElementById("auth-result");
+  const valueRow = document.getElementById("auth-value-row");
+  const captchaRow = document.getElementById("auth-captcha-row");
   const captcha = document.getElementById("auth-captcha");
-  const kindByStatus = {
-    waiting_identifier: "identifier",
-    waiting_otp: "otp",
-    waiting_password: "password",
-    waiting_captcha: "captcha",
+  const captchaRefresh = document.getElementById("auth-captcha-refresh");
+  const steps = {
+    waiting_identifier: { step: "Введите e-mail или телефон аккаунта HH — платформа отправит код подтверждения.", caption: "E-mail или телефон", type: "text", autocomplete: "username" },
+    waiting_otp: { step: "Введите код подтверждения, который прислала платформа.", caption: "Код подтверждения", type: "text", autocomplete: "one-time-code" },
+    waiting_password: { step: "Введите пароль от аккаунта HH.", caption: "Пароль", type: "password", autocomplete: "current-password" },
+    waiting_captcha: { step: "Введите символы с картинки. Регистр обычно не важен; если не читается — перезагрузите картинку.", caption: "Символы с картинки", type: "text", autocomplete: "off" },
   };
+  const statusLabels = { created: "сессия создана", exchanging: "обмен данными с HH", storing: "сохранение сессии", completed: "вход выполнен", expired: "сессия истекла", cancelled: "сессия отменена", failed: "ошибка входа" };
   const terminal = ["completed", "expired", "cancelled", "failed"];
   let sessionId = "";
   let stream = null;
 
-  const setState = (text) => { state.textContent = text; };
-  const valueRow = document.getElementById("auth-value-row");
+  const setState = (value) => { stateLabel.textContent = value; };
+  const setCaptcha = (id) => { captcha.src = `/api/v1/auth/sessions/${encodeURIComponent(id)}/challenge?ts=${Date.now()}`; };
 
   const renderSession = (session) => {
     sessionId = session.id;
-    let summary = `сессия ${session.id}: ${session.status} (rev ${session.revision})`;
-    if (session.failure_message) {
-      summary += ` — ${session.failure_message}`;
+    const step = steps[session.status];
+    setState(`${statusLabels[session.status] || session.status} · профиль ${profileDisplayName(session.profile_id)}`);
+    stepLabel.hidden = !step;
+    if (step) {
+      stepLabel.textContent = session.challenge?.prompt ? `${step.step} Платформа: ${session.challenge.prompt}` : step.step;
     }
-    setState(summary);
-    if (session.status === "waiting_captcha") {
-      captcha.hidden = false;
-      captcha.src = `/api/v1/auth/sessions/${encodeURIComponent(session.id)}/challenge?ts=${Date.now()}`;
-    } else {
-      captcha.hidden = true;
-      captcha.removeAttribute("src");
-    }
-    const active = kindByStatus[session.status] !== undefined;
+    valueRow.hidden = !step;
+    valueCaption.textContent = step ? step.caption : "Значение";
+    valueInput.type = step ? step.type : "text";
+    valueInput.autocomplete = step ? step.autocomplete : "off";
+    valueInput.disabled = !step;
+    submitButton.disabled = !step;
+    captchaRow.hidden = session.status !== "waiting_captcha";
+    if (session.status === "waiting_captcha") setCaptcha(session.id);
     const finished = terminal.includes(session.status);
-    valueRow.hidden = !active;
-    submitButton.disabled = !active;
-    valueInput.disabled = !active;
-    cancelButton.hidden = finished || !active && !sessionId;
-    profileInput.disabled = !finished && Boolean(sessionId);
-    if (finished) sessionId = "";
+    cancelButton.hidden = finished;
+    refreshButton.hidden = finished;
+    startButton.disabled = !finished && Boolean(sessionId);
+    profileSelect.disabled = !finished && Boolean(sessionId);
+    resultLabel.hidden = !finished;
+    if (session.status === "completed") {
+      const target = session.browser_state_reference || session.credential_reference || "";
+      resultLabel.textContent = target
+        ? `Вход выполнен. Сессия сохранена: ${target}. Профиль готов к работе.`
+        : "Вход выполнен. Сессия профиля сохранена.";
+      refreshSummary();
+      refreshProfileResources();
+    } else if (session.status === "failed") {
+      resultLabel.textContent = `Вход не выполнен${session.failure_message ? `: ${session.failure_message}` : ""}. Можно начать заново.`;
+    } else if (session.status === "expired") {
+      resultLabel.textContent = "Сессия истекла. Начните вход заново.";
+    } else if (session.status === "cancelled") {
+      resultLabel.textContent = "Вход отменён.";
+    }
+    if (finished) {
+      sessionId = "";
+      if (stream) { stream.close(); stream = null; }
+      profileSelect.disabled = false;
+    }
   };
 
   const subscribe = (id) => {
-    if (stream) {
-      stream.close();
-    }
+    if (stream) stream.close();
     stream = new EventSource(`/api/v1/auth/sessions/${encodeURIComponent(id)}/events`);
     stream.addEventListener("session", (message) => {
       const session = JSON.parse(message.data);
       renderSession(session);
-      if (terminal.includes(session.status)) {
-        stream.close();
-        stream = null;
-      }
+      if (terminal.includes(session.status) && stream) { stream.close(); stream = null; }
     });
-    stream.addEventListener("error", () => setState("поток прерван, обновите статус"));
+    stream.addEventListener("error", () => setState("поток прерван, нажмите «Обновить статус»"));
   };
 
   startButton.addEventListener("click", async () => {
-    const profile = profileInput.value.trim();
+    const profile = profileSelect.value;
     if (!profile) {
-      setState("укажите профиль");
+      setState("нет доступных профилей — проверьте конфигурацию");
       return;
     }
     setState("создание сессии…");
@@ -1059,6 +1097,20 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
     subscribe(session.id);
   });
 
+  refreshButton.addEventListener("click", async () => {
+    if (!sessionId) return;
+    const response = await fetch(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}`);
+    if (!response.ok) {
+      setState(`ошибка статуса: ${response.status}`);
+      return;
+    }
+    renderSession(await response.json());
+  });
+
+  captchaRefresh.addEventListener("click", () => {
+    if (sessionId) setCaptcha(sessionId);
+  });
+
   submitButton.addEventListener("click", async () => {
     if (!sessionId) {
       setState("сначала начните вход");
@@ -1074,9 +1126,9 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
       return;
     }
     const current = await response.json();
-    const kind = kindByStatus[current.status];
+    const kind = steps[current.status] ? current.status.replace("waiting_", "") : "";
     if (!kind) {
-      setState(`сессия не ждёт ввода: ${current.status}`);
+      setState(`сессия не ждёт ввода: ${statusLabels[current.status] || current.status}`);
       return;
     }
     const submitted = await fetch(`/api/v1/auth/sessions/${encodeURIComponent(sessionId)}/inputs`, {
@@ -1090,9 +1142,7 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
     }
     valueInput.value = "";
     renderSession(await submitted.json());
-    if (!stream) {
-      subscribe(sessionId);
-    }
+    if (!stream) subscribe(sessionId);
   });
 
   cancelButton.addEventListener("click", async () => {
