@@ -432,7 +432,7 @@
           }
         }
       ],
-      "concurrency": "forbid_per_profile",
+      "concurrency": "forbid",
       "action": {
         "type": "application.state.sync",
         "profile": "primary"
@@ -453,7 +453,7 @@
           }
         }
       ],
-      "concurrency": "forbid_per_profile",
+      "concurrency": "forbid",
       "action": {
         "type": "application.state.sync",
         "profile": "secondary"
