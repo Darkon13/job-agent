@@ -5,8 +5,8 @@
 platform-specific типов: они работают с capability-интерфейсами из пакета
 `adapter`.
 
-Прочитайте сначала [AGENTS.md](https://github.com/Darkon13/job-agent/blob/main/AGENTS.md) (архитектурная спецификация: границы слоёв,
-ошибки, задачи, browser worker), затем этот файл как практический чек-лист.
+Этот файл — практический чек-лист: границы слоёв, нормализованные ошибки,
+задачи и browser worker описаны здесь же, ниже.
 
 ## Границы
 
@@ -106,5 +106,5 @@ browser-worker/         опциональный TypeScript/Playwright RPC дл�
       секретами в сообщениях
 - [ ] есть unit-тесты на success и failure-ветки
 - [ ] живые контракты зафиксированы в `docs/`
-- [ ] обновлены `docs/changelog.md` и, если меняется поведение, [AGENTS.md](https://github.com/Darkon13/job-agent/blob/main/AGENTS.md)
+- [ ] обновлены `docs/changelog.md` и затронутые страницы вики
 - [ ] описано, что осталось непроверенным живьём

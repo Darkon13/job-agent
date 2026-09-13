@@ -49,11 +49,11 @@ JOB_AGENT_CONFIG_NAME=config.local.json \
   docker compose up -d --build
 ```
 
-Dashboard по умолчанию доступен только на `127.0.0.1:8081`. Для доступа через
-WireGuard укажите точный адрес tunnel-интерфейса хоста, например:
+Dashboard по умолчанию доступен только на `127.0.0.1:8081`. Для доступа из
+частной сети укажите точный адрес интерфейса хоста, например:
 
 ```sh
-JOB_AGENT_DASHBOARD_BIND_IP=10.66.66.1 \
+JOB_AGENT_DASHBOARD_BIND_IP=10.0.0.1 \
   docker compose up -d --build
 ```
 
@@ -821,7 +821,7 @@ handler. Dashboard показывает этот список и ставит в
 Исследованные контракты первого HH-адаптера находятся в `docs/`: public API,
 авторизация, global/similar search, chatik, applicant browser operations и
 resume/profile schema. REST и automation-контракт чатов описан в
-`docs/conversation-api.md`. Главная архитектурная спецификация — [AGENTS.md](https://github.com/Darkon13/job-agent/blob/main/AGENTS.md).
+`docs/conversation-api.md`.
 
 ## Questionnaire mock
 
