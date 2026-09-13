@@ -122,7 +122,7 @@ func hhApplicationDisposition(state string) core.ApplicationDisposition {
 	switch state {
 	case "response":
 		return core.ApplicationDispositionPending
-	case "invitation":
+	case "invitation", "interview":
 		return core.ApplicationDispositionInvited
 	case "discard":
 		return core.ApplicationDispositionRejected
