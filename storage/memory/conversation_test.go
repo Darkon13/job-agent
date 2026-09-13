@@ -10,6 +10,32 @@ import (
 	"github.com/Darkon13/job-agent/storage"
 )
 
+func TestAppendConversationMessageReportsIdentityConflict(t *testing.T) {
+	repository := NewRepository()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	conversation, err := core.NewConversation("conversation-1", "hh", "primary", "external-chat-1", now)
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	if _, _, err := repository.CreateConversation(context.Background(), conversation); err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	message := core.ConversationMessage{
+		ID: "message-1", ConversationID: conversation.ID, ExternalID: "external-1",
+		Direction: core.MessageIncoming, Kind: core.MessageText, Status: core.MessageObserved,
+		Text: "original", OccurredAt: now,
+	}
+	if _, created, err := repository.AppendConversationMessage(context.Background(), message, now); err != nil || !created {
+		t.Fatalf("append message: created=%t err=%v", created, err)
+	}
+	edited := message
+	edited.ID = "message-copy"
+	edited.Text = "edited later"
+	if _, _, err := repository.AppendConversationMessage(context.Background(), edited, now); !errors.Is(err, storage.ErrConversationMessageConflict) {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
 func TestConversationAndFollowUpPersistence(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)

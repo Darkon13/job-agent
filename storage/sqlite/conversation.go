@@ -167,7 +167,7 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 			return core.Conversation{}, false, loadErr
 		}
 		if !sameStoredMessage(stored, message) {
-			return core.Conversation{}, false, errors.New("message identity conflicts with different content")
+			return core.Conversation{}, false, storage.ErrConversationMessageConflict
 		}
 		return conversation, false, nil
 	}

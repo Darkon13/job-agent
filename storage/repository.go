@@ -113,6 +113,11 @@ type ProfileActivitySnapshotRepository interface {
 	ListProfileActivitySnapshots(ctx context.Context, filter ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 }
 
+// ErrConversationMessageConflict reports that a platform message with the
+// same identity is already stored with different content. Sync callers skip
+// such messages instead of failing the whole conversation sync.
+var ErrConversationMessageConflict = errors.New("conversation message identity conflicts with different content")
+
 type SearchRunRepository interface {
 	CreateSearchRun(ctx context.Context, candidate core.SearchRun) (stored core.SearchRun, created bool, err error)
 	SearchRun(ctx context.Context, searchID core.SearchID) (core.SearchRun, error)
