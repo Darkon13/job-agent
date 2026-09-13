@@ -185,3 +185,5 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   background: #fff;
   border-radius: 4px;
 }
+
+.countdown { font-variant-numeric: tabular-nums; }
