@@ -96,6 +96,19 @@ func (payload ApplicationRetentionPayload) Validate() error {
 	return nil
 }
 
+// ApplicationStateSyncPayload refreshes stored platform states for a profile
+// without changing applications, budgets or retention decisions.
+type ApplicationStateSyncPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+}
+
+func (payload ApplicationStateSyncPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("application state sync requires profile")
+	}
+	return nil
+}
+
 type ResumePublishPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`

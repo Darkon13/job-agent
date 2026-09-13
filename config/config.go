@@ -123,6 +123,7 @@ const (
 	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
 	JobActionApplicationRetention       = "application.retention"
+	JobActionApplicationStateSync       = "application.state.sync"
 	JobConcurrencyForbid                = "forbid"
 	ApplicationValidationReview         = "review"
 	ApplicationValidationSkip           = "skip"
@@ -1553,6 +1554,10 @@ func (c Config) Validate() error {
 			}
 			if err := job.Action.FollowUp.Payload(core.ProfileID(job.Action.Profile)).Validate(); err != nil {
 				return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
+			}
+		case JobActionApplicationStateSync:
+			if _, exists := profiles[job.Action.Profile]; !exists {
+				return fmt.Errorf("job %q references unknown profile %q", job.Tag, job.Action.Profile)
 			}
 		case JobActionApplicationRetention:
 			if _, exists := profiles[job.Action.Profile]; !exists {
