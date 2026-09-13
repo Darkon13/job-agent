@@ -270,15 +270,21 @@ function jobParameterSummary(item) {
   return parts.join(" · ");
 }
 function jobScheduleLines(item) {
-  return (item.schedules || []).map((schedule) => {
+  const seen = new Set();
+  const lines = [];
+  for (const schedule of item.schedules || []) {
     const parts = [`${schedule.expression} · ${schedule.timezone}`];
     if (schedule.jitter_min || schedule.jitter_max) {
       const min = schedule.jitter_min ? formatDuration(schedule.jitter_min) : "0 с";
       const max = schedule.jitter_max ? formatDuration(schedule.jitter_max) : min;
       parts.push(`jitter ${min}–${max}`);
     }
-    return parts.join(" · ");
-  });
+    const line = parts.join(" · ");
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
 }
 function jobNextRunCell(item) {
   const cell = document.createElement("td");
