@@ -102,7 +102,7 @@ POST /api/v1/profile-state/proposals/{proposal_id}/dismiss
 ## Формат
 
 Полный пример находится в
-[`deploy/profile-bootstrap.example.json`](../deploy/profile-bootstrap.example.json).
+[`deploy/profile-bootstrap.example.json`](https://github.com/Darkon13/job-agent/blob/main/deploy/profile-bootstrap.example.json).
 Control envelope имеет фиксированные `api_version: job-agent/v1`,
 `kind: ProfileBootstrap`, уникальное `metadata.name` и `spec.profile_id` из
 runtime config. `ownership` пока допускает только `declared_fields`: Job Agent

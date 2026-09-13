@@ -52,9 +52,9 @@
 | `resume` | string | нет | Резюме (ID или alias); по умолчанию — `profiles[].resume`. |
 | `resource` | string | для `resume.update`, `profile_state.reconcile` | `tag` из `resources[]`. |
 | `publish` | bool | нет | Опубликовать результат `resume.update` после apply. |
-| `profiles` | array | для `application.campaign` | Профили кампании. |
+| `profiles` | array | для `application.campaign` | Профили рассылки. |
 | `routes` | array | для `application.campaign` | `tag` поисков (routes), по порядку. |
-| `target_successful` | number | для `application.campaign` | Сколько успешных откликов нужно кампании. |
+| `target_successful` | number | для `application.campaign` | Сколько успешных откликов нужно рассылке. |
 | `max_in_flight` | number | для `application.campaign` | Сколько откликов одновременно «в работе» (рекомендуется 1–3). |
 | `follow_up` | object | для `conversation.follow_up.select` | Параметры выбора диалога. |
 | `retention` | object | для `application.retention` | Параметры очистки. |
