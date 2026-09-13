@@ -434,6 +434,13 @@ func main() {
 		} else if runtime.BrowserReader == nil {
 			logf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 		}
+		if !applicationStateObservers.Has(profileID) {
+			if observer, ok := runtime.BrowserReader.(adapter.ApplicationStateObserver); ok {
+				if err := applicationStateObservers.Register(profileID, observer); err != nil {
+					log.Fatalf("register browser application state observer for profile %q: %v", profile.Tag, err)
+				}
+			}
+		}
 		applicationReady := apiReady || browserApplicationsReady || runtime.BrowserReader != nil && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun
 		if applicationReady {
 			if !apiReady && !browserApplicationsReady {
@@ -649,6 +656,19 @@ func main() {
 		log.Fatalf("create application retention worker: %v", err)
 	}
 	workers = append(workers, applicationRetentionWorker)
+	applicationStateSyncHandler, err := taskworker.NewApplicationStateSyncHandler(
+		store, applicationStateObservers, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create application state sync handler: %v", err)
+	}
+	applicationStateSyncWorker, err := newTaskWorker(
+		store, core.TaskApplicationStateSync, applicationStateSyncHandler.Handle,
+	)
+	if err != nil {
+		log.Fatalf("create application state sync worker: %v", err)
+	}
+	workers = append(workers, applicationStateSyncWorker)
 	if resumeTouchers.Count() > 0 {
 		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -856,6 +876,11 @@ func main() {
 		log.Fatalf("build application retention scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, retentionDefinitions...)
+	stateSyncDefinitions, err := applicationStateSyncDefinitions(cfg, instances, applicationStateObservers)
+	if err != nil {
+		log.Fatalf("build application state sync scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, stateSyncDefinitions...)
 	profileStateDefinitions, err := profileStateReconcileDefinitions(
 		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 	)
@@ -875,6 +900,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create scheduler: %v", err)
 	}
+	scheduler.SetGate(newApplicationBudgetGate(cfg, instances, store))
 	if err := scheduler.Sync(context.Background(), definitions); err != nil {
 		log.Fatalf("sync scheduled jobs: %v", err)
 	}
@@ -1011,6 +1037,68 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	}
 	authAPI.ConfigureLogout(&auth.LogoutService{}, logoutTargets)
 	return authAPI, nil
+}
+
+type profileBudgetLimit struct {
+	limit    int
+	timezone string
+}
+
+// applicationBudgetGate pauses scheduled campaigns when every profile they
+// target has spent its daily application budget. Profiles without a submit
+// mode or without a configured limit never block the run; skipped occurrences
+// simply wait for the next cron time, when the budget window may have reset.
+type applicationBudgetGate struct {
+	budgets *storesqlite.Store
+	limits  map[core.ProfileID]profileBudgetLimit
+	clock   workflow.Clock
+}
+
+func newApplicationBudgetGate(cfg appconfig.Config, instances map[string]adapter.Adapter, budgets *storesqlite.Store) applicationBudgetGate {
+	limits := make(map[core.ProfileID]profileBudgetLimit)
+	for _, profile := range cfg.Profiles {
+		if !profile.Enabled || profile.Applications.ExecutionMode() != appconfig.ApplicationModeSubmit {
+			continue
+		}
+		instance := instances[profile.Adapter]
+		limits[core.ProfileID(profile.Tag)] = profileBudgetLimit{
+			limit:    profile.Applications.EffectiveDailyLimit(instance.Name()),
+			timezone: profile.Applications.LocationName(),
+		}
+	}
+	return applicationBudgetGate{budgets: budgets, limits: limits, clock: workflow.SystemClock{}}
+}
+
+func (gate applicationBudgetGate) Allow(ctx context.Context, definition jobscheduler.Definition) (bool, error) {
+	if definition.ActionType != core.TaskApplicationCampaign {
+		return true, nil
+	}
+	var payload core.ApplicationCampaignPayload
+	if err := json.Unmarshal(definition.Payload, &payload); err != nil {
+		return false, fmt.Errorf("decode campaign payload for budget gate: %w", err)
+	}
+	if len(payload.Profiles) == 0 {
+		return true, nil
+	}
+	now := gate.clock.Now()
+	for _, profileID := range payload.Profiles {
+		budget, configured := gate.limits[profileID]
+		if !configured || budget.limit <= 0 {
+			return true, nil
+		}
+		windowStart, _, err := taskworker.ApplicationBudgetWindow(budget.timezone, now)
+		if err != nil {
+			return false, fmt.Errorf("resolve budget window for profile %s: %w", profileID, err)
+		}
+		usage, err := gate.budgets.ApplicationBudgetUsage(ctx, profileID, definition.Platform, windowStart)
+		if err != nil {
+			return false, fmt.Errorf("read budget usage for profile %s: %w", profileID, err)
+		}
+		if !usage.Exhausted() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func jobRunDefinitions(definitions []jobscheduler.Definition) []workflow.JobRunDefinition {
@@ -2118,6 +2206,46 @@ func applicationRetentionDefinitions(cfg appconfig.Config, instances map[string]
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
 				ActionType: core.TaskApplicationRetention, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+			})
+		}
+	}
+	return definitions, nil
+}
+
+func applicationStateSyncDefinitions(
+	cfg appconfig.Config,
+	instances map[string]adapter.Adapter,
+	observers *taskworker.ApplicationStateObserverRegistry,
+) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationStateSync {
+			continue
+		}
+		profile := profiles[job.Action.Profile]
+		profileID := core.ProfileID(profile.Tag)
+		if !profile.Enabled {
+			continue
+		}
+		if !observers.Has(profileID) {
+			logf("application state sync %q is disabled until profile %q has a state observer", job.Tag, profile.Tag)
+			continue
+		}
+		payload, err := json.Marshal(core.ApplicationStateSyncPayload{ProfileID: profileID})
+		if err != nil {
+			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+		}
+		instance := instances[profile.Adapter]
+		for index, trigger := range job.Triggers {
+			minimum, maximum := trigger.Jitter.Durations()
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
+				ActionType: core.TaskApplicationStateSync, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 			})
 		}

@@ -15,6 +15,7 @@ const (
 	TaskApplicationSubmit          TaskType = "application.submit"
 	TaskApplicationRemove          TaskType = "application.remove"
 	TaskApplicationRetention       TaskType = "application.retention"
+	TaskApplicationStateSync       TaskType = "application.state.sync"
 	TaskQuestionnaireAnswer        TaskType = "questionnaire.answer"
 	TaskTestComplete               TaskType = "test.complete"
 	TaskTestCapture                TaskType = "test.capture"
