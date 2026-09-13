@@ -1,6 +1,6 @@
 # Изменения
 
-## Unreleased
+## 1.3.0
 
 - Фильтры квалификации получили `include_all` и `exclude_all` рядом с
   `include_any`/`exclude_any`: можно требовать все термины сразу (AND) и
