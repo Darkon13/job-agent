@@ -212,8 +212,7 @@ job-agent ./deploy/config.json
 
 Для локального запуска токен не нужен: уберите `api_token_env` из конфига и не
 задавайте `JOB_AGENT_API_TOKEN` — backend будет слушать только loopback
-(`127.0.0.1:8080`). Токен обязателен при доступе по сети (WireGuard/туннель)
-и рекомендован в Compose.
+(`127.0.0.1:8080`). Токен обязателен, если доступ открыт не только через loopback, и рекомендован в Compose.
 
 Dashboard (опционально) — `./dist/job-agent-dashboard`. Для browser-операций
 запустите worker: `cd browser-worker && npm ci && npm run build && npm start`.
