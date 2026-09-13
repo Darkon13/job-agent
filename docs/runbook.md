@@ -152,9 +152,9 @@ cursor`. Участие оператора не требуется, дедупл
 ```bash
 # на рабочей машине
 make build
-docker build -t job-agent:1.0.1 -f Dockerfile.binary \
-  --build-arg VERSION=1.0.1 --build-arg COMMIT=$(git rev-parse --short=12 HEAD) .
-docker save job-agent:1.0.1 | gzip -1 | ssh server 'gunzip | docker load'
+docker build -t job-agent:1.1.0 -f Dockerfile.binary \
+  --build-arg VERSION=1.1.0 --build-arg COMMIT=$(git rev-parse --short=12 HEAD) .
+docker save job-agent:1.1.0 | gzip -1 | ssh server 'gunzip | docker load'
 
 # на сервере
 docker build -f browser-worker/Dockerfile.slim -t job-agent-browser-worker:slim .
