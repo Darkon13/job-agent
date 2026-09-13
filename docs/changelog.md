@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Профильные jobs можно объединять: `action.profiles` принимает массив
+  профилей с общим расписанием, одно срабатывание создаётся на каждый профиль.
+  Одинаковые задачи (`resume.touch`, `profile.session_refresh`,
+  `conversation.sync`, `profile.activity.observe`, `application.state.sync`)
+  больше не дублируются: пример конфига и quickstart сжаты с 12 jobs до 7.
+  Активная cron-задача проверяется per tag+profile, поэтому профили одного job
+  не блокируют друг друга.
+
 - Появился read-only job `application.state.sync`: состояния откликов читаются
   через браузерную сессию профиля (страница откликов HH), обновляют карточки
   dashboard и больше не остаются «не синхронизированными». Планировщик умеет

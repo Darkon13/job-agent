@@ -255,6 +255,10 @@ function updateCountdowns() {
   }
 }
 setInterval(updateCountdowns, 1000);
+function jobProfiles(item) {
+  const profiles = Array.isArray(item.profiles) && item.profiles.length ? item.profiles : [item.profile_id];
+  return profiles.filter(Boolean);
+}
 function jobParameterSummary(item) {
   const payload = item.payload || {};
   const parts = [];
@@ -288,7 +292,7 @@ function jobNextRunCell(item) {
   return cell;
 }
 function renderJobs(items = []) {
-  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
+  items = state.account ? items.filter((item) => jobProfiles(item).includes(state.account)) : items;
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
   elements.jobs.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -303,7 +307,7 @@ function renderJobs(items = []) {
     const run = document.createElement("td");
     const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
     button.addEventListener("click", () => runJob(item)); run.append(button);
-    row.append(text("td", item.tag), action, text("td", item.profile_id ? profileDisplayName(item.profile_id) : "—"), schedule, jobNextRunCell(item), run);
+    row.append(text("td", item.tag), action, text("td", jobProfiles(item).map(profileDisplayName).join(", ") || "—"), schedule, jobNextRunCell(item), run);
     return row;
   }));
   updateCountdowns();

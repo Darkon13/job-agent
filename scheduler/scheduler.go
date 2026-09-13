@@ -37,7 +37,7 @@ type Entry struct {
 type Store interface {
 	SyncSchedules(ctx context.Context, entries []Entry, now time.Time) error
 	DueSchedules(ctx context.Context, now time.Time, limit int) ([]Entry, error)
-	HasActiveScheduledTask(ctx context.Context, jobTag string) (bool, error)
+	HasActiveScheduledTask(ctx context.Context, jobTag string, profileID core.ProfileID) (bool, error)
 	AdvanceSchedule(ctx context.Context, jobTag string, triggerIndex int, expected, next, now time.Time) (bool, error)
 }
 
@@ -103,7 +103,7 @@ func (scheduler *Scheduler) ReconcileDue(ctx context.Context) (int, error) {
 			return advanced, err
 		}
 		next := schedule.Next(now)
-		active, err := scheduler.store.HasActiveScheduledTask(ctx, entry.JobTag)
+		active, err := scheduler.store.HasActiveScheduledTask(ctx, entry.JobTag, entry.ProfileID)
 		if err != nil {
 			return advanced, err
 		}

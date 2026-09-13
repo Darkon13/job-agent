@@ -74,119 +74,184 @@ func run(ctx context.Context, args []string, output io.Writer, now time.Time) er
 		platforms[configured.Tag] = core.Platform(instance.Name())
 	}
 
-	taskType, profileID, payload, err := commandForJob(cfg, *job)
+	commands, err := commandsForJob(cfg, *job)
 	if err != nil {
 		return err
+	}
+	type pendingTask struct {
+		task core.Task
+		key  string
 	}
 	ids := workflow.RandomIDGenerator{}
-	taskID, err := ids.NewID("task")
-	if err != nil {
-		return err
-	}
-	correlationID, err := ids.NewID("correlation")
-	if err != nil {
-		return err
-	}
-	adapterTag, err := adapterForJob(cfg, *job)
-	if err != nil {
-		return err
-	}
-	platform := platforms[adapterTag]
-	task, err := core.NewTask(core.NewTaskParams{
-		ID: core.TaskID(taskID), Type: taskType, IdempotencyKey: *idempotencyKey,
-		Source: "manual:" + job.Tag, Platform: platform, ProfileID: profileID,
-		CorrelationID: core.CorrelationID(correlationID), Payload: payload, Priority: job.Priority,
-	}, now)
-	if err != nil {
-		return err
+	pending := make([]pendingTask, 0, len(commands))
+	for index, command := range commands {
+		key := *idempotencyKey
+		if len(commands) > 1 {
+			key = fmt.Sprintf("%s:%d", key, index)
+		}
+		taskID, err := ids.NewID("task")
+		if err != nil {
+			return err
+		}
+		correlationID, err := ids.NewID("correlation")
+		if err != nil {
+			return err
+		}
+		adapterTag, err := adapterForCommand(cfg, *job, command)
+		if err != nil {
+			return err
+		}
+		platform := platforms[adapterTag]
+		task, err := core.NewTask(core.NewTaskParams{
+			ID: core.TaskID(taskID), Type: command.taskType, IdempotencyKey: key,
+			Source: "manual:" + job.Tag, Platform: platform, ProfileID: command.profileID,
+			CorrelationID: core.CorrelationID(correlationID), Payload: command.payload, Priority: job.Priority,
+		}, now)
+		if err != nil {
+			return err
+		}
+		pending = append(pending, pendingTask{task: task, key: key})
 	}
 	store, err := storesqlite.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
 	}
 	defer store.Close()
-	created, err := store.Enqueue(ctx, task)
-	if err != nil {
-		return fmt.Errorf("enqueue job %q: %w", job.Tag, err)
+	for _, item := range pending {
+		created, err := store.Enqueue(ctx, item.task)
+		if err != nil {
+			return fmt.Errorf("enqueue job %q: %w", job.Tag, err)
+		}
+		stored, err := store.TaskByIdempotencyKey(ctx, item.key)
+		if err != nil {
+			return fmt.Errorf("load triggered job %q: %w", job.Tag, err)
+		}
+		fmt.Fprintf(output, "OK job=%s profile=%s task_type=%s task_id=%s created=%t status=%s\n",
+			job.Tag, stored.ProfileID, stored.Type, stored.ID, created, stored.Status)
 	}
-	stored, err := store.TaskByIdempotencyKey(ctx, *idempotencyKey)
-	if err != nil {
-		return fmt.Errorf("load triggered job %q: %w", job.Tag, err)
-	}
-	fmt.Fprintf(output, "OK job=%s task_type=%s task_id=%s created=%t status=%s\n",
-		job.Tag, stored.Type, stored.ID, created, stored.Status)
 	return nil
 }
 
-func commandForJob(cfg appconfig.Config, job appconfig.Job) (core.TaskType, core.ProfileID, json.RawMessage, error) {
+type jobCommand struct {
+	taskType  core.TaskType
+	profileID core.ProfileID
+	payload   json.RawMessage
+}
+
+func commandsForJob(cfg appconfig.Config, job appconfig.Job) ([]jobCommand, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	profileCommand := func(taskType core.TaskType, build func(appconfig.Profile) (json.RawMessage, error)) ([]jobCommand, error) {
+		targets := job.Action.TargetProfiles()
+		if len(targets) == 0 {
+			return nil, fmt.Errorf("job %q action requires profile or profiles", job.Tag)
+		}
+		commands := make([]jobCommand, 0, len(targets))
+		for _, target := range targets {
+			profile, exists := profiles[target]
+			if !exists {
+				return nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+			}
+			payload, err := build(profile)
+			if err != nil {
+				return nil, err
+			}
+			commands = append(commands, jobCommand{taskType: taskType, profileID: core.ProfileID(profile.Tag), payload: payload})
+		}
+		return commands, nil
+	}
 	switch job.Action.Type {
 	case appconfig.JobActionResumeTouch, appconfig.JobActionProfileActivityObserve:
-		profile, ok := configuredProfile(cfg, job.Action.Profile)
-		if !ok {
-			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+		taskType := core.TaskResumeTouch
+		if job.Action.Type == appconfig.JobActionProfileActivityObserve {
+			taskType = core.TaskProfileActivityObserve
 		}
-		resumeID := job.Action.Resume
-		if resumeID == "" {
-			resumeID = profile.Resume
-		}
-		if job.Action.Type == appconfig.JobActionResumeTouch {
-			payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
-			return core.TaskResumeTouch, core.ProfileID(profile.Tag), payload, err
-		}
-		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
-		return core.TaskProfileActivityObserve, core.ProfileID(profile.Tag), payload, err
+		return profileCommand(taskType, func(profile appconfig.Profile) (json.RawMessage, error) {
+			resumeID := job.Action.Resume
+			if resumeID == "" {
+				resumeID = profile.Resume
+			}
+			if job.Action.Type == appconfig.JobActionResumeTouch {
+				return json.Marshal(core.ResumeTouchPayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
+			}
+			return json.Marshal(core.ProfileActivityObservePayload{ProfileID: core.ProfileID(profile.Tag), ResumeID: resumeID})
+		})
 	case appconfig.JobActionProfileSessionRefresh:
-		profile, ok := configuredProfile(cfg, job.Action.Profile)
-		if !ok {
-			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
-		}
-		payload, err := json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: core.ProfileID(profile.Tag)})
-		return core.TaskProfileSessionRefresh, core.ProfileID(profile.Tag), payload, err
+		return profileCommand(core.TaskProfileSessionRefresh, func(profile appconfig.Profile) (json.RawMessage, error) {
+			return json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: core.ProfileID(profile.Tag)})
+		})
 	case appconfig.JobActionConversationSync:
-		profile, ok := configuredProfile(cfg, job.Action.Profile)
-		if !ok {
-			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
+		return profileCommand(core.TaskConversationDiscover, func(profile appconfig.Profile) (json.RawMessage, error) {
+			return json.Marshal(core.ConversationDiscoverPayload{ProfileID: core.ProfileID(profile.Tag)})
+		})
+	case appconfig.JobActionApplicationStateSync:
+		return profileCommand(core.TaskApplicationStateSync, func(profile appconfig.Profile) (json.RawMessage, error) {
+			return json.Marshal(core.ApplicationStateSyncPayload{ProfileID: core.ProfileID(profile.Tag)})
+		})
+	case appconfig.JobActionApplicationRetention:
+		if job.Action.Retention == nil {
+			return nil, fmt.Errorf("job %q has no retention settings", job.Tag)
 		}
-		payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: core.ProfileID(profile.Tag)})
-		return core.TaskConversationDiscover, core.ProfileID(profile.Tag), payload, err
+		return profileCommand(core.TaskApplicationRetention, func(profile appconfig.Profile) (json.RawMessage, error) {
+			return json.Marshal(job.Action.Retention.Payload(core.ProfileID(profile.Tag)))
+		})
 	case appconfig.JobActionApplicationCampaign:
-		profiles := make([]core.ProfileID, 0, len(job.Action.Profiles))
+		profileIDs := make([]core.ProfileID, 0, len(job.Action.Profiles))
 		for _, value := range job.Action.Profiles {
-			profiles = append(profiles, core.ProfileID(value))
+			profileIDs = append(profileIDs, core.ProfileID(value))
+		}
+		if len(profileIDs) == 0 {
+			return nil, fmt.Errorf("job %q has no campaign profiles", job.Tag)
 		}
 		routes := make([]core.SearchID, 0, len(job.Action.Routes))
 		for _, value := range job.Action.Routes {
 			routes = append(routes, core.SearchID(value))
 		}
 		payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
-			job.Tag, profiles, routes, job.Action.TargetSuccessful, job.Action.MaxInFlight,
+			job.Tag, profileIDs, routes, job.Action.TargetSuccessful, job.Action.MaxInFlight,
 		))
-		return core.TaskApplicationCampaign, profiles[0], payload, err
+		if err != nil {
+			return nil, err
+		}
+		return []jobCommand{{taskType: core.TaskApplicationCampaign, profileID: profileIDs[0], payload: payload}}, nil
 	case appconfig.JobActionConversationFollowUpSelect:
-		profile, ok := configuredProfile(cfg, job.Action.Profile)
-		if !ok {
-			return "", "", nil, fmt.Errorf("job %q references an unknown profile", job.Tag)
-		}
 		if job.Action.FollowUp == nil {
-			return "", "", nil, fmt.Errorf("job %q has no follow-up selection settings", job.Tag)
+			return nil, fmt.Errorf("job %q has no follow-up selection settings", job.Tag)
 		}
-		payload, err := json.Marshal(job.Action.FollowUp.Payload(core.ProfileID(profile.Tag)))
-		return core.TaskConversationFollowUpSelect, core.ProfileID(profile.Tag), payload, err
+		return profileCommand(core.TaskConversationFollowUpSelect, func(profile appconfig.Profile) (json.RawMessage, error) {
+			return json.Marshal(job.Action.FollowUp.Payload(core.ProfileID(profile.Tag)))
+		})
 	case appconfig.JobActionProfileStateReconcile:
 		resources, err := cfg.BuildProfileStateResources()
 		if err != nil {
-			return "", "", nil, err
+			return nil, err
 		}
 		for _, resource := range resources {
 			if resource.Tag == job.Action.Resource {
 				payload, err := json.Marshal(core.ProfileStateReconcilePayload{ResourceTag: resource.Tag})
-				return core.TaskProfileStateReconcile, resource.ProfileID, payload, err
+				if err != nil {
+					return nil, err
+				}
+				return []jobCommand{{taskType: core.TaskProfileStateReconcile, profileID: resource.ProfileID, payload: payload}}, nil
 			}
 		}
-		return "", "", nil, fmt.Errorf("job %q references an unknown profile state resource", job.Tag)
+		return nil, fmt.Errorf("job %q references an unknown profile state resource", job.Tag)
 	default:
-		return "", "", nil, fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
+		return nil, fmt.Errorf("job %q has unsupported action %q", job.Tag, job.Action.Type)
 	}
+}
+
+func adapterForCommand(cfg appconfig.Config, job appconfig.Job, command jobCommand) (string, error) {
+	if job.Action.Type == appconfig.JobActionApplicationCampaign || job.Action.Type == appconfig.JobActionProfileStateReconcile {
+		return adapterForJob(cfg, job)
+	}
+	profile, ok := configuredProfile(cfg, string(command.profileID))
+	if !ok {
+		return "", fmt.Errorf("job %q references an unknown profile", job.Tag)
+	}
+	return profile.Adapter, nil
 }
 
 func adapterForJob(cfg appconfig.Config, job appconfig.Job) (string, error) {

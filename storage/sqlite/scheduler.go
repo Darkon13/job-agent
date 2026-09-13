@@ -106,10 +106,10 @@ func scanScheduledEntries(rows *sql.Rows) ([]scheduler.Entry, error) {
 	return entries, rows.Err()
 }
 
-func (store *Store) HasActiveScheduledTask(ctx context.Context, jobTag string) (bool, error) {
+func (store *Store) HasActiveScheduledTask(ctx context.Context, jobTag string, profileID core.ProfileID) (bool, error) {
 	var active bool
 	err := store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks
-		WHERE source = ? AND status IN (?, ?, ?, ?))`, "cron:"+jobTag,
+		WHERE source = ? AND profile_id = ? AND status IN (?, ?, ?, ?))`, "cron:"+jobTag, profileID,
 		core.TaskNew, core.TaskProcessing, core.TaskWaitingConfirmation, core.TaskRetryScheduled).Scan(&active)
 	if err != nil {
 		return false, fmt.Errorf("check active scheduled task %s: %w", jobTag, err)

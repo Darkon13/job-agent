@@ -1101,11 +1101,31 @@ func (gate applicationBudgetGate) Allow(ctx context.Context, definition jobsched
 	return false, nil
 }
 
+// triggerIndexForProfile keeps scheduler rows unique when one job expands
+// into several profiles: the profile index is folded into the trigger index.
+func triggerIndexForProfile(triggerIndex, profileIndex, triggerCount int) int {
+	return profileIndex*triggerCount + triggerIndex
+}
+
 func jobRunDefinitions(definitions []jobscheduler.Definition) []workflow.JobRunDefinition {
+	positions := make(map[string]int, len(definitions))
 	result := make([]workflow.JobRunDefinition, 0, len(definitions))
+	seenCommands := make(map[string]map[string]struct{}, len(definitions))
 	for _, definition := range definitions {
-		result = append(result, workflow.JobRunDefinition{
-			Tag: definition.JobTag, TaskType: definition.ActionType, Platform: definition.Platform,
+		position, exists := positions[definition.JobTag]
+		if !exists {
+			position = len(result)
+			positions[definition.JobTag] = position
+			result = append(result, workflow.JobRunDefinition{Tag: definition.JobTag})
+			seenCommands[definition.JobTag] = make(map[string]struct{})
+		}
+		commandKey := string(definition.ProfileID) + "\x00" + string(definition.Payload)
+		if _, duplicate := seenCommands[definition.JobTag][commandKey]; duplicate {
+			continue
+		}
+		seenCommands[definition.JobTag][commandKey] = struct{}{}
+		result[position].Commands = append(result[position].Commands, workflow.JobRunCommand{
+			TaskType: definition.ActionType, Platform: definition.Platform,
 			ProfileID: definition.ProfileID, Payload: definition.Payload, Priority: definition.Priority,
 		})
 	}
@@ -1908,27 +1928,30 @@ func resumeTouchDefinitions(cfg appconfig.Config, instances map[string]adapter.A
 		if !job.Enabled || job.Action.Type != appconfig.JobActionResumeTouch {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !touchers.Has(profileID) {
-			continue
-		}
-		resumeID := job.Action.Resume
-		if resumeID == "" {
-			resumeID = profile.Resume
-		}
-		payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled || !touchers.Has(profileID) {
+				continue
+			}
+			resumeID := job.Action.Resume
+			if resumeID == "" {
+				resumeID = profile.Resume
+			}
+			payload, err := json.Marshal(core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskResumeTouch, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -1944,22 +1967,25 @@ func sessionRefreshDefinitions(cfg appconfig.Config, refreshers *taskworker.Sess
 		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileSessionRefresh {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !refreshers.Has(profileID) {
-			continue
-		}
-		payload, err := json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: profileID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskProfileSessionRefresh, Platform: core.Platform(hh.Name), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled || !refreshers.Has(profileID) {
+				continue
+			}
+			payload, err := json.Marshal(core.ProfileSessionRefreshPayload{ProfileID: profileID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskProfileSessionRefresh, Platform: core.Platform(hh.Name), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -1984,27 +2010,30 @@ func resumePublishDefinitions(cfg appconfig.Config, instances map[string]adapter
 		if !job.Enabled || job.Action.Type != appconfig.JobActionResumePublish {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !publishers.Has(profileID) {
-			continue
-		}
-		resumeID := job.Action.Resume
-		if resumeID == "" {
-			resumeID = profile.Resume
-		}
-		payload, err := json.Marshal(core.ResumePublishPayload{ProfileID: profileID, ResumeID: resumeID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled || !publishers.Has(profileID) {
+				continue
+			}
+			resumeID := job.Action.Resume
+			if resumeID == "" {
+				resumeID = profile.Resume
+			}
+			payload, err := json.Marshal(core.ResumePublishPayload{ProfileID: profileID, ResumeID: resumeID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskResumePublish, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -2078,27 +2107,30 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileActivityObserve {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !observers.Has(profileID) {
-			continue
-		}
-		resumeID := job.Action.Resume
-		if resumeID == "" {
-			resumeID = profile.Resume
-		}
-		payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskProfileActivityObserve, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled || !observers.Has(profileID) {
+				continue
+			}
+			resumeID := job.Action.Resume
+			if resumeID == "" {
+				resumeID = profile.Resume
+			}
+			payload, err := json.Marshal(core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskProfileActivityObserve, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -2114,23 +2146,26 @@ func conversationDiscoveryDefinitions(cfg appconfig.Config, instances map[string
 		if !job.Enabled || job.Action.Type != appconfig.JobActionConversationSync {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled || !transports.CanDiscover(profileID) {
-			continue
-		}
-		payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: profileID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskConversationDiscover, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled || !transports.CanDiscover(profileID) {
+				continue
+			}
+			payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: profileID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskConversationDiscover, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -2146,33 +2181,36 @@ func conversationFollowUpSelectionDefinitions(cfg appconfig.Config, instances ma
 		if !job.Enabled || job.Action.Type != appconfig.JobActionConversationFollowUpSelect {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		if !profile.Enabled || job.Action.FollowUp == nil || !profile.Conversations.AllowSend {
-			continue
-		}
-		profileID := core.ProfileID(profile.Tag)
-		if !transports.Has(profileID) {
-			continue
-		}
-		instance := instances[profile.Adapter]
-		capabilities, err := core.NewCapabilitySet(instance.Capabilities()...)
-		if err != nil {
-			return nil, fmt.Errorf("adapter %q capabilities: %w", profile.Adapter, err)
-		}
-		if !capabilities.Supports(core.CapabilityConversationWrite) {
-			continue
-		}
-		payload, err := json.Marshal(job.Action.FollowUp.Payload(profileID))
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskConversationFollowUpSelect, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			if !profile.Enabled || job.Action.FollowUp == nil || !profile.Conversations.AllowSend {
+				continue
+			}
+			profileID := core.ProfileID(profile.Tag)
+			if !transports.Has(profileID) {
+				continue
+			}
+			instance := instances[profile.Adapter]
+			capabilities, err := core.NewCapabilitySet(instance.Capabilities()...)
+			if err != nil {
+				return nil, fmt.Errorf("adapter %q capabilities: %w", profile.Adapter, err)
+			}
+			if !capabilities.Supports(core.CapabilityConversationWrite) {
+				continue
+			}
+			payload, err := json.Marshal(job.Action.FollowUp.Payload(profileID))
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskConversationFollowUpSelect, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -2188,26 +2226,29 @@ func applicationRetentionDefinitions(cfg appconfig.Config, instances map[string]
 		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationRetention || job.Action.Retention == nil {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled {
-			continue
-		}
-		if !observers.Has(profileID) {
-			return nil, fmt.Errorf("job %q: application retention requires an authorized application state observer; HH currently needs OAuth/API credentials", job.Tag)
-		}
-		payload, err := json.Marshal(job.Action.Retention.Payload(profileID))
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskApplicationRetention, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled {
+				continue
+			}
+			if !observers.Has(profileID) {
+				return nil, fmt.Errorf("job %q: application retention requires an authorized application state observer; HH currently needs OAuth/API credentials", job.Tag)
+			}
+			payload, err := json.Marshal(job.Action.Retention.Payload(profileID))
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationRetention, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
@@ -2227,27 +2268,30 @@ func applicationStateSyncDefinitions(
 		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationStateSync {
 			continue
 		}
-		profile := profiles[job.Action.Profile]
-		profileID := core.ProfileID(profile.Tag)
-		if !profile.Enabled {
-			continue
-		}
-		if !observers.Has(profileID) {
-			logf("application state sync %q is disabled until profile %q has a state observer", job.Tag, profile.Tag)
-			continue
-		}
-		payload, err := json.Marshal(core.ApplicationStateSyncPayload{ProfileID: profileID})
-		if err != nil {
-			return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
-		}
-		instance := instances[profile.Adapter]
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskApplicationStateSync, Platform: core.Platform(instance.Name()), ProfileID: profileID,
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled {
+				continue
+			}
+			if !observers.Has(profileID) {
+				logf("application state sync %q is disabled until profile %q has a state observer", job.Tag, profile.Tag)
+				continue
+			}
+			payload, err := json.Marshal(core.ApplicationStateSyncPayload{ProfileID: profileID})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationStateSync, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 	}
 	return definitions, nil
