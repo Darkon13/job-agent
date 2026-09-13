@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// ErrConversationObservationStale reports an observation whose time precedes
+// the stored conversation state. A polling workflow may skip such an
+// observation when a concurrent sync has already advanced the conversation.
+var ErrConversationObservationStale = errors.New("conversation observation is older than the stored state")
+
 type ConversationStatus string
 
 const (
@@ -225,8 +230,11 @@ func (conversation *Conversation) ObserveCatalogState(status ConversationStatus,
 	if unreadCount < 0 {
 		return false, errors.New("conversation unread count must not be negative")
 	}
-	if now.IsZero() || now.Before(conversation.UpdatedAt) {
-		return false, errors.New("conversation catalog observation time must not move backwards")
+	if now.IsZero() {
+		return false, errors.New("conversation catalog observation requires current time")
+	}
+	if now.Before(conversation.UpdatedAt) {
+		return false, fmt.Errorf("conversation catalog observation: %w", ErrConversationObservationStale)
 	}
 	if conversation.Status == status && conversation.UnreadCount == unreadCount {
 		return false, nil
@@ -283,8 +291,11 @@ func (conversation *Conversation) Observe(message ConversationMessage, now time.
 	if message.ConversationID != conversation.ID {
 		return false, errors.New("message belongs to another conversation")
 	}
-	if now.IsZero() || now.Before(conversation.UpdatedAt) {
-		return false, errors.New("conversation observation time must not move backwards")
+	if now.IsZero() {
+		return false, errors.New("conversation observation requires current time")
+	}
+	if now.Before(conversation.UpdatedAt) {
+		return false, fmt.Errorf("conversation observation: %w", ErrConversationObservationStale)
 	}
 	if conversation.LastMessageID == message.ID {
 		return false, nil

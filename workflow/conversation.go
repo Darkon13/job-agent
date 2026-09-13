@@ -58,7 +58,13 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		needsSync := created
 		if !created {
 			changed, err := workflow.updateConversation(ctx, stored.ID, func(conversation *core.Conversation) (bool, error) {
-				return conversation.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
+				changed, observeErr := conversation.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
+				if errors.Is(observeErr, core.ErrConversationObservationStale) {
+					// A concurrent sync advanced the conversation after the catalog
+					// snapshot; its state is newer and must not be overwritten.
+					return false, nil
+				}
+				return changed, observeErr
 			})
 			if err != nil {
 				return result, fmt.Errorf("observe conversation %s: %w", observation.ExternalID, err)
@@ -74,15 +80,21 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 			if err != nil {
 				return result, err
 			}
-			if _, messageCreated, err := workflow.repository.AppendConversationMessage(ctx, message, observedAt); err != nil {
-				// The platform may edit a message or re-parse it differently; the
-				// sync must not fail because one identity changed its content.
-				if !errors.Is(err, storage.ErrConversationMessageConflict) {
-					return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, err)
-				}
-			} else if messageCreated {
+			_, messageCreated, appendErr := workflow.repository.AppendConversationMessage(ctx, message, observedAt)
+			switch {
+			case appendErr == nil && messageCreated:
 				result.MessagesCreated++
 				needsSync = true
+			case appendErr == nil:
+			case errors.Is(appendErr, storage.ErrConversationMessageConflict):
+				// The platform may edit a message or re-parse it differently; the
+				// sync must not fail because one identity changed its content.
+			case errors.Is(appendErr, core.ErrConversationObservationStale):
+				// A concurrent sync advanced the conversation past the catalog
+				// snapshot; the full sync will settle the last message.
+				needsSync = true
+			default:
+				return result, fmt.Errorf("store observed conversation message %s: %w", observation.LastMessage.ExternalID, appendErr)
 			}
 		}
 		if needsSync {

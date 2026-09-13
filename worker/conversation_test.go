@@ -310,3 +310,53 @@ func TestConversationDiscoverHandlerSkipsUnchangedConversations(t *testing.T) {
 		t.Fatalf("unchanged discovery created sync tasks: %#v", queue.Tasks())
 	}
 }
+
+func TestConversationDiscoverHandlerToleratesStaleObservationTime(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, repository, queue, transport, clock := newConversationHandlersFixture(t)
+
+	// A concurrent sync advances the stored conversation past the catalog
+	// snapshot discovery captured before it started.
+	advanced := core.ConversationMessage{
+		ID: "message-advanced", ConversationID: "conversation-1", ExternalID: "external-advanced",
+		Direction: core.MessageIncoming, Kind: core.MessageText, Status: core.MessageObserved,
+		Text: "later", OccurredAt: clock.now,
+	}
+	if _, _, err := repository.AppendConversationMessage(ctx, advanced, clock.now.Add(time.Minute)); err != nil {
+		t.Fatalf("advance conversation: %v", err)
+	}
+
+	transport.discovery = adapter.ConversationDiscoveryResult{
+		ObservedAt: clock.now,
+		Conversations: []core.ConversationObservation{
+			{
+				ExternalID: "external-chat-1", Status: core.ConversationActive, UnreadCount: 5,
+				LastMessage: &core.ConversationMessageObservation{
+					ExternalID: "external-catalog-message", Direction: core.MessageIncoming,
+					Kind: core.MessageText, Text: "из каталога", OccurredAt: clock.now,
+				},
+			},
+		},
+	}
+	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "discover-stale", Type: core.TaskConversationDiscover, IdempotencyKey: "discover-stale",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-stale", Payload: payload,
+	}, clock.now)
+	if err != nil {
+		t.Fatalf("new discovery task: %v", err)
+	}
+	if err := handlers.Discover(ctx, task); err != nil {
+		t.Fatalf("discover with stale observation: %v", err)
+	}
+	conversation, err := repository.Conversation(ctx, "conversation-1")
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	if conversation.UnreadCount != 0 {
+		t.Fatalf("stale catalog unread was applied: %#v", conversation)
+	}
+	if len(queue.Tasks()) != 1 || queue.Tasks()[0].Type != core.TaskConversationSync {
+		t.Fatalf("sync tasks=%#v", queue.Tasks())
+	}
+}
