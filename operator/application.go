@@ -70,7 +70,9 @@ type ApplicationPreparer interface {
 
 type RuleTemplateConfig struct {
 	IncludeAny      []string
+	IncludeAll      []string
 	ExcludeAny      []string
+	ExcludeAll      []string
 	StaticMessage   string
 	MessageTemplate string
 	MessagePool     *MessagePoolConfig
@@ -118,7 +120,9 @@ type compiledMessageTemplate struct {
 
 type RuleTemplatePreparer struct {
 	includeAny    []string
+	includeAll    []string
 	excludeAny    []string
+	excludeAll    []string
 	staticMessage string
 	template      *template.Template
 	messagePool   *compiledMessagePool
@@ -228,7 +232,15 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if err != nil {
 		return nil, err
 	}
+	includeAll, err := normalizeTerms("include_all", config.IncludeAll)
+	if err != nil {
+		return nil, err
+	}
 	excludeAny, err := normalizeTerms("exclude_any", config.ExcludeAny)
+	if err != nil {
+		return nil, err
+	}
+	excludeAll, err := normalizeTerms("exclude_all", config.ExcludeAll)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +290,7 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 		return nil, err
 	}
 	preparer := &RuleTemplatePreparer{
-		includeAny: includeAny, excludeAny: excludeAny,
+		includeAny: includeAny, includeAll: includeAll, excludeAny: excludeAny, excludeAll: excludeAll,
 		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model,
 		resume: resume, profile: config.Profile,
 		employerMatch: config.EmployerMatcher, employerRules: employerRules,
@@ -309,6 +321,21 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			}, nil
 		}
 	}
+	if len(preparer.excludeAll) != 0 {
+		allPresent := true
+		for _, term := range preparer.excludeAll {
+			if !containsTerm(searchable, term) {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			return ApplicationPreparation{
+				Outcome: ApplicationSkip, Code: "excluded_term",
+				Reason: "vacancy contains every excluded term",
+			}, nil
+		}
+	}
 	if len(preparer.includeAny) != 0 {
 		matched := false
 		for _, term := range preparer.includeAny {
@@ -321,6 +348,14 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			return ApplicationPreparation{
 				Outcome: ApplicationSkip, Code: "include_term_missing",
 				Reason: "vacancy contains none of the required terms",
+			}, nil
+		}
+	}
+	for _, term := range preparer.includeAll {
+		if !containsTerm(searchable, term) {
+			return ApplicationPreparation{
+				Outcome: ApplicationSkip, Code: "include_term_missing",
+				Reason: fmt.Sprintf("vacancy lacks required term %q", term),
 			}, nil
 		}
 	}

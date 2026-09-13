@@ -424,7 +424,9 @@ type ApplicationMessagePool struct {
 
 type ApplicationQualification struct {
 	IncludeAny []string `json:"include_any,omitempty"`
+	IncludeAll []string `json:"include_all,omitempty"`
 	ExcludeAny []string `json:"exclude_any,omitempty"`
+	ExcludeAll []string `json:"exclude_all,omitempty"`
 }
 
 type ApplicationTailoringPolicy struct {
@@ -1420,7 +1422,9 @@ func (c Config) Validate() error {
 		}
 		for field, terms := range map[string][]string{
 			"include_any": profile.Applications.Qualification.IncludeAny,
+			"include_all": profile.Applications.Qualification.IncludeAll,
 			"exclude_any": profile.Applications.Qualification.ExcludeAny,
+			"exclude_all": profile.Applications.Qualification.ExcludeAll,
 		} {
 			seen := make(map[string]struct{}, len(terms))
 			for _, value := range terms {

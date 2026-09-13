@@ -1461,7 +1461,9 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 	}
 	preparer, err := applicationoperator.NewRuleTemplatePreparer(applicationoperator.RuleTemplateConfig{
 		IncludeAny:      profile.Applications.Qualification.IncludeAny,
+		IncludeAll:      profile.Applications.Qualification.IncludeAll,
 		ExcludeAny:      profile.Applications.Qualification.ExcludeAny,
+		ExcludeAll:      profile.Applications.Qualification.ExcludeAll,
 		StaticMessage:   profile.Applications.Message,
 		MessageTemplate: messageTemplate,
 		MessagePool:     messagePool,

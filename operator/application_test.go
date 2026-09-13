@@ -365,3 +365,42 @@ func TestRuleTemplatePreparerValidatesEmployerRules(t *testing.T) {
 		})
 	}
 }
+
+func TestRuleTemplatePreparerSupportsAllTermFilters(t *testing.T) {
+	application, vacancy := operatorFixture()
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{IncludeAll: []string{"Go", "SQL"}, StaticMessage: "ok"})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Outcome != ApplicationApply || result.Code != "qualified" {
+		t.Fatalf("all include terms present: preparation=%#v err=%v", result, err)
+	}
+
+	preparer, err = NewRuleTemplatePreparer(RuleTemplateConfig{IncludeAll: []string{"Go", "Kafka"}, StaticMessage: "ok"})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Outcome != ApplicationSkip || result.Code != "include_term_missing" {
+		t.Fatalf("missing one include-all term must skip: preparation=%#v err=%v", result, err)
+	}
+
+	preparer, err = NewRuleTemplatePreparer(RuleTemplateConfig{ExcludeAll: []string{"Go", "SQL"}, StaticMessage: "ok"})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Outcome != ApplicationSkip || result.Code != "excluded_term" {
+		t.Fatalf("all exclude terms present must skip: preparation=%#v err=%v", result, err)
+	}
+
+	preparer, err = NewRuleTemplatePreparer(RuleTemplateConfig{ExcludeAll: []string{"Go", "Rust"}, StaticMessage: "ok"})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Outcome != ApplicationApply {
+		t.Fatalf("exclude-all must not skip when only some terms match: preparation=%#v err=%v", result, err)
+	}
+}
