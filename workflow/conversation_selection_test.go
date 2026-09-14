@@ -106,3 +106,23 @@ func followUpSelectionRequest(strategy core.FollowUpSelectionStrategy, key strin
 		IdempotencyKey: key,
 	}
 }
+
+func TestSelectAndScheduleFollowUpPrefersLongestSilence(t *testing.T) {
+	service, repository, _, clock := newConversationWorkflowFixture(t)
+	replied := clock.now.Add(-120 * time.Hour)
+	appendAwaitingEmployer(t, repository, "stale-reply", clock.now.Add(-200*time.Hour), &replied)
+	appendAwaitingEmployer(t, repository, "still-waiting", clock.now.Add(-100*time.Hour), nil)
+	recentReply := clock.now.Add(-5 * time.Hour)
+	appendAwaitingEmployer(t, repository, "fresh-reply", clock.now.Add(-6*time.Hour), &recentReply)
+
+	result, err := service.SelectAndScheduleFollowUp(context.Background(), followUpSelectionRequest(core.FollowUpSelectLongestSilence, "selection-silence-1"))
+	if err != nil || !result.Selected || result.Conversation.ID != "stale-reply" {
+		t.Fatalf("silence selection=%#v err=%v", result, err)
+	}
+	if anchor := result.FollowUp.RunAt.Sub(clock.now); anchor <= 0 {
+		t.Fatalf("unexpected run time: %#v", result.FollowUp)
+	}
+	if result.FollowUp.AnchorMessageID != result.Conversation.LastMessageID {
+		t.Fatalf("anchor mismatch: %#v", result.FollowUp)
+	}
+}

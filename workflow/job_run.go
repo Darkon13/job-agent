@@ -58,14 +58,14 @@ type JobRunCommandDescriptor struct {
 }
 
 type JobRunDescriptor struct {
-	Tag       string            `json:"tag"`
-	TaskType  core.TaskType     `json:"task_type"`
-	Platform  core.Platform     `json:"platform"`
-	ProfileID core.ProfileID    `json:"profile_id"`
-	Profiles  []core.ProfileID  `json:"profiles,omitempty"`
-	Priority  core.TaskPriority `json:"priority"`
-	Payload   json.RawMessage   `json:"payload,omitempty"`
-	Schedules []JobSchedule     `json:"schedules,omitempty"`
+	Tag       string                    `json:"tag"`
+	TaskType  core.TaskType             `json:"task_type"`
+	Platform  core.Platform             `json:"platform"`
+	ProfileID core.ProfileID            `json:"profile_id"`
+	Profiles  []core.ProfileID          `json:"profiles,omitempty"`
+	Priority  core.TaskPriority         `json:"priority"`
+	Payload   json.RawMessage           `json:"payload,omitempty"`
+	Schedules []JobSchedule             `json:"schedules,omitempty"`
 	Commands  []JobRunCommandDescriptor `json:"commands,omitempty"`
 }
 
