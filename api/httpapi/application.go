@@ -213,3 +213,32 @@ func (api *ApplicationAPI) remove(response http.ResponseWriter, request *http.Re
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusAccepted, result)
 }
+
+// captureQuestionnaire enqueues the read-only capture of the vacancy
+// questionnaire behind an application. The review section answers it in the
+// dashboard; nothing is submitted by this request.
+func (api *RuntimeAPI) captureQuestionnaire(response http.ResponseWriter, request *http.Request) {
+	if _, ok := requireIdempotencyKey(response, request); !ok {
+		return
+	}
+	if api.questionnaires == nil {
+		writeProblem(response, http.StatusServiceUnavailable, "questionnaire capture is not configured")
+		return
+	}
+	applicationID := core.ApplicationID(strings.TrimSpace(request.PathValue("application_id")))
+	application, err := api.repository.ApplicationByID(request.Context(), applicationID)
+	if err != nil {
+		writeProblem(response, http.StatusNotFound, "application not found")
+		return
+	}
+	created, err := api.questionnaires.EnqueueCapture(
+		request.Context(), application.Key.ProfileID, application.Key.Vacancy.Platform,
+		application.Key.Vacancy.ExternalID, "dashboard-questionnaire",
+	)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusAccepted, map[string]bool{"created": created})
+}
