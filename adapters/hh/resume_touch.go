@@ -27,6 +27,8 @@ const (
 
 var initialStatePattern = regexp.MustCompile(`(?s)<template[^>]*ResumeProfileFront-InitialState[^>]*>(.*?)</template>`)
 
+var luxInitialStatePattern = regexp.MustCompile(`(?s)<template[^>]*HH-Lux-InitialState[^>]*>(.*?)</template>`)
+
 type ResumeTouchTransport struct {
 	stateFile  string
 	profileURL string

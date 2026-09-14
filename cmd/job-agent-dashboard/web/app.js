@@ -406,7 +406,10 @@ function renderActivityObservations(items = []) {
     const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", profileDisplayName(item.profile_id)), resume);
     heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
     const metrics = document.createElement("div"); metrics.className = "activity-metrics";
-    [["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]].forEach(([label, value, delta]) => {
+    const cards = [];
+    if (typeof item.score === "number") cards.push(["Активность", `${item.score}%`, ""]);
+    cards.push(["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]);
+    cards.forEach(([label, value, delta]) => {
       const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
     });
     card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}`, "muted")); return card;
