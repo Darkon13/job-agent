@@ -1016,11 +1016,27 @@ elements.replyForm.addEventListener("submit", async (event) => {
     // Optimistic bubble: the durable task confirms it, and the next message
     // refresh (SSE or interval) replaces the pending copy with the stored one.
     if (state.selectedConversation?.id === conversationID) {
+      const pendingID = `pending-${result.task_id}`;
       state.selectedMessages = [...state.selectedMessages, {
-        id: `pending-${result.task_id}`, direction: "outgoing", kind: "text", status: "pending",
+        id: pendingID, direction: "outgoing", kind: "text", status: "pending",
         text: value, occurred_at: new Date().toISOString(),
       }];
       renderMessages(state.selectedMessages);
+      let attempts = 0;
+      const confirm = async () => {
+        if (state.selectedConversation?.id !== conversationID) return;
+        try {
+          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`);
+          if (state.selectedConversation?.id !== conversationID) return;
+          const items = fresh.items || [];
+          state.selectedMessages = items;
+          renderMessages(items);
+          const stored = items.some((item) => item.direction === "outgoing" && item.text === value);
+          if (stored) return;
+        } catch (_) {}
+        if (++attempts < 10) globalThis.setTimeout(confirm, 1500);
+      };
+      globalThis.setTimeout(confirm, 1200);
     }
     elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`;
     if (state.selectedConversation?.id === conversationID) {
@@ -1081,10 +1097,12 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
 (() => {
   const stream = new EventSource("/api/v1/events");
   let refreshTimer = 0;
-  stream.addEventListener("conversations", () => {
+  stream.addEventListener("dashboard", () => {
     globalThis.clearTimeout(refreshTimer);
     refreshTimer = globalThis.setTimeout(async () => {
       await refreshSummary();
+      refreshProfileResources();
+      refreshReviewSessions();
       if (state.selectedConversation) {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);

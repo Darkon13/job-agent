@@ -194,7 +194,7 @@ func (api *RuntimeAPI) events(response http.ResponseWriter, request *http.Reques
 			}
 			last = fingerprint
 			generation++
-			fmt.Fprintf(response, "event: conversations\ndata: {\"generation\":%d}\n\n", generation)
+			fmt.Fprintf(response, "event: dashboard\ndata: {\"generation\":%d}\n\n", generation)
 			flusher.Flush()
 		}
 	}
@@ -208,6 +208,13 @@ func (api *RuntimeAPI) conversationFingerprint(ctx context.Context) (string, err
 	digest := sha256.New()
 	for _, conversation := range conversations {
 		fmt.Fprintf(digest, "%s\x00%d\x00%s\x00%d\n", conversation.ID, conversation.Revision, conversation.LastMessageID, conversation.UpdatedAt.UnixNano())
+	}
+	counts, err := api.repository.TaskCounts(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, count := range counts {
+		fmt.Fprintf(digest, "%s\x00%s\x00%d\n", count.Type, count.Status, count.Count)
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
