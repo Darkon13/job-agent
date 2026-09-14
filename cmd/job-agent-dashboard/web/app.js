@@ -975,6 +975,20 @@ async function selectConversation(conversation) {
     if (state.selectedConversation?.id !== conversation.id) return;
     state.selectedMessages = result.items || []; renderMessages(state.selectedMessages);
   } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
+  try {
+    const sync = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/sync`);
+    if (sync.created) {
+      globalThis.setTimeout(async () => {
+        if (state.selectedConversation?.id !== conversation.id) return;
+        try {
+          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
+          if (state.selectedConversation?.id !== conversation.id) return;
+          state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages);
+          refreshSummary();
+        } catch (_) {}
+      }, 4000);
+    }
+  } catch (_) {}
   if (conversation.unread_count && !state.conversationReadBusy.has(conversation.id)) {
     state.conversationReadBusy.add(conversation.id); elements.actionState.textContent = "Помечаю открытый диалог прочитанным…";
     try {
