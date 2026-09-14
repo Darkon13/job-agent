@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -172,7 +173,7 @@ func (api *RuntimeAPI) events(response http.ResponseWriter, request *http.Reques
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Connection", "keep-alive")
 	generation := 0
-	last := ""
+	last := map[string]string{}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(15 * time.Second)
@@ -185,38 +186,71 @@ func (api *RuntimeAPI) events(response http.ResponseWriter, request *http.Reques
 			_, _ = io.WriteString(response, ": ping\n\n")
 			flusher.Flush()
 		case <-ticker.C:
-			fingerprint, err := api.conversationFingerprint(request.Context())
+			sections, err := api.changedSections(request.Context(), last)
 			if err != nil {
 				return
 			}
-			if fingerprint == last {
+			if len(sections) == 0 {
 				continue
 			}
-			last = fingerprint
 			generation++
-			fmt.Fprintf(response, "event: dashboard\ndata: {\"generation\":%d}\n\n", generation)
+			payload, err := json.Marshal(struct {
+				Generation int      `json:"generation"`
+				Sections   []string `json:"sections"`
+			}{Generation: generation, Sections: sections})
+			if err != nil {
+				return
+			}
+			fmt.Fprintf(response, "event: dashboard\ndata: %s\n\n", payload)
 			flusher.Flush()
 		}
 	}
 }
 
-func (api *RuntimeAPI) conversationFingerprint(ctx context.Context) (string, error) {
+// changedSections compares per-section fingerprints and returns the sections
+// that actually changed, so the dashboard refreshes only what moved instead of
+// rebuilding every panel on each event.
+func (api *RuntimeAPI) changedSections(ctx context.Context, last map[string]string) ([]string, error) {
+	current := make(map[string]string, 3)
 	conversations, err := api.repository.ListConversations(ctx, storage.ConversationFilter{})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	digest := sha256.New()
+	conversationDigest := sha256.New()
 	for _, conversation := range conversations {
-		fmt.Fprintf(digest, "%s\x00%d\x00%s\x00%d\n", conversation.ID, conversation.Revision, conversation.LastMessageID, conversation.UpdatedAt.UnixNano())
+		fmt.Fprintf(conversationDigest, "%s\x00%d\x00%s\x00%d\n", conversation.ID, conversation.Revision, conversation.LastMessageID, conversation.UpdatedAt.UnixNano())
 	}
-	counts, err := api.repository.TaskCounts(ctx)
+	current["conversations"] = hex.EncodeToString(conversationDigest.Sum(nil))
+
+	taskCounts, err := api.repository.TaskCounts(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	for _, count := range counts {
-		fmt.Fprintf(digest, "%s\x00%s\x00%d\n", count.Type, count.Status, count.Count)
+	taskDigest := sha256.New()
+	for _, count := range taskCounts {
+		fmt.Fprintf(taskDigest, "%s\x00%s\x00%d\n", count.Type, count.Status, count.Count)
 	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	current["tasks"] = hex.EncodeToString(taskDigest.Sum(nil))
+
+	applicationCounts, err := api.repository.ApplicationCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	applicationDigest := sha256.New()
+	for _, count := range applicationCounts {
+		fmt.Fprintf(applicationDigest, "%s\x00%s\x00%d\n", count.Status, count.DecisionCode, count.Count)
+	}
+	current["applications"] = hex.EncodeToString(applicationDigest.Sum(nil))
+
+	sections := make([]string, 0, 3)
+	for _, name := range []string{"conversations", "tasks", "applications"} {
+		if last[name] == current[name] {
+			continue
+		}
+		last[name] = current[name]
+		sections = append(sections, name)
+	}
+	return sections, nil
 }
 
 func (api *RuntimeAPI) version(response http.ResponseWriter, _ *http.Request) {
