@@ -506,15 +506,23 @@ async function sendQuestionnaireOption(message, option) {
   elements.actionState.textContent = `Отправляю «${option.text}»…`;
   renderMessages(state.selectedMessages);
   try {
-    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`, {
+    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`, {
       content: { text: option.text },
     }, key);
-    elements.actionState.textContent = result.created ? `Задача ${result.task_id} поставлена в очередь` : `Ответ уже поставлен ранее (${result.task_id})`;
-    if (state.selectedConversation?.id === conversation.id) {
-      state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: option.text, occurred_at: new Date().toISOString() }];
-      renderMessages(state.selectedMessages);
+    if (result.closed) {
+      elements.actionState.textContent = "Работодатель закрыл чат — опросник завершён";
+      await refreshSummary();
+    } else {
+      elements.actionState.textContent = result.sent ? "Ответ отправлен" : `Задача ${result.task_id} поставлена в очередь`;
+      try {
+        const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
+        if (state.selectedConversation?.id === conversation.id) {
+          state.selectedMessages = fresh.items || [];
+          renderMessages(state.selectedMessages);
+        }
+      } catch (_) {}
+      await refreshSummary();
     }
-    await refreshSummary();
   } catch (error) {
     elements.actionState.textContent = error.message;
   }
