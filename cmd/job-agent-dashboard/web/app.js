@@ -492,7 +492,8 @@ function renderMessages(items = []) {
       article.append(options);
     }
     const meta = document.createElement("div"); meta.className = "message-meta";
-    meta.append(text("span", item.direction === "outgoing" ? "Вы" : "Собеседник"), text("span", item.status === "queued" ? "В очереди" : formatDate(item.occurred_at)));
+    const statusLabel = item.status === "pending" ? "Отправляется…" : item.status === "queued" ? "В очереди" : formatDate(item.occurred_at);
+    meta.append(text("span", item.direction === "outgoing" ? "Вы" : "Собеседник"), text("span", statusLabel));
     article.append(meta); return article;
   })); elements.messages.scrollTop = elements.messages.scrollHeight;
 }
@@ -1011,7 +1012,17 @@ elements.replyForm.addEventListener("submit", async (event) => {
   event.preventDefault(); const value = elements.reply.value.trim(); if (!state.selectedConversation || !value) return; const conversationID = state.selectedConversation.id; elements.send.disabled = true; elements.actionState.textContent = "Создаю задачу…";
   try {
     const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`, { content: { text: value } });
-    elements.reply.value = ""; elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`;
+    elements.reply.value = "";
+    // Optimistic bubble: the durable task confirms it, and the next message
+    // refresh (SSE or interval) replaces the pending copy with the stored one.
+    if (state.selectedConversation?.id === conversationID) {
+      state.selectedMessages = [...state.selectedMessages, {
+        id: `pending-${result.task_id}`, direction: "outgoing", kind: "text", status: "pending",
+        text: value, occurred_at: new Date().toISOString(),
+      }];
+      renderMessages(state.selectedMessages);
+    }
+    elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`;
     if (state.selectedConversation?.id === conversationID) {
       state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: value, occurred_at: new Date().toISOString() }];
       renderMessages(state.selectedMessages);
