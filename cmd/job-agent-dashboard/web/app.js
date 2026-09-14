@@ -1011,7 +1011,7 @@ async function enqueue(path, body, idempotencyKey = newIdempotencyKey()) { const
 elements.replyForm.addEventListener("submit", async (event) => {
   event.preventDefault(); const value = elements.reply.value.trim(); if (!state.selectedConversation || !value) return; const conversationID = state.selectedConversation.id; elements.send.disabled = true; elements.actionState.textContent = "Создаю задачу…";
   try {
-    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`, { content: { text: value } });
+    const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages?live=1`, { content: { text: value } });
     elements.reply.value = "";
     // Optimistic bubble: the durable task confirms it, and the next message
     // refresh (SSE or interval) replaces the pending copy with the stored one.
@@ -1038,7 +1038,7 @@ elements.replyForm.addEventListener("submit", async (event) => {
       };
       globalThis.setTimeout(confirm, 1200);
     }
-    elements.actionState.textContent = `Задача ${result.task_id} поставлена в очередь`;
+    elements.actionState.textContent = result.sent ? "Сообщение отправлено" : `Задача ${result.task_id} поставлена в очередь`;
     if (state.selectedConversation?.id === conversationID) {
       state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: value, occurred_at: new Date().toISOString() }];
       renderMessages(state.selectedMessages);
