@@ -1758,8 +1758,23 @@ func configureApplicationCampaigns(
 				runnable = false
 			}
 		}
-		var platform core.Platform
+		expandedRoutes := make([]string, 0, len(job.Action.Routes))
+		seenRoutes := make(map[string]struct{}, len(job.Action.Routes))
 		for _, value := range job.Action.Routes {
+			chain, err := cfg.ResolveSearchChain(value)
+			if err != nil {
+				return nil, nil, nil, configuredJobs, fmt.Errorf("job %q: %w", job.Tag, err)
+			}
+			for _, chainTag := range chain {
+				if _, exists := seenRoutes[chainTag]; exists {
+					continue
+				}
+				seenRoutes[chainTag] = struct{}{}
+				expandedRoutes = append(expandedRoutes, chainTag)
+			}
+		}
+		var platform core.Platform
+		for _, value := range expandedRoutes {
 			search := searches[value]
 			searchID := core.SearchID(search.Tag)
 			instance := instances[search.Adapter]
@@ -1798,8 +1813,8 @@ func configureApplicationCampaigns(
 		for _, value := range job.Action.Profiles {
 			profileIDs = append(profileIDs, core.ProfileID(value))
 		}
-		routeIDs := make([]core.SearchID, 0, len(job.Action.Routes))
-		for _, value := range job.Action.Routes {
+		routeIDs := make([]core.SearchID, 0, len(expandedRoutes))
+		for _, value := range expandedRoutes {
 			routeID := core.SearchID(value)
 			routeIDs = append(routeIDs, routeID)
 			ownedRoutes[routeID] = struct{}{}

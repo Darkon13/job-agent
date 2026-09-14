@@ -980,3 +980,30 @@ func TestJobProfileArrayExpandsTargets(t *testing.T) {
 		t.Fatal("expected an unknown profile in the array to fail")
 	}
 }
+
+func TestSearchFallbackChainResolvesAndRejectsCycles(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		Searches: []Search{
+			{Tag: "global", Adapter: "hh-main", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`), Fallback: "similar"},
+			{Tag: "similar", Adapter: "hh-main", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`)},
+		},
+	}
+	chain, err := config.ResolveSearchChain("global")
+	if err != nil || len(chain) != 2 || chain[0] != "global" || chain[1] != "similar" {
+		t.Fatalf("chain=%#v err=%v", chain, err)
+	}
+	config.Searches[1].Fallback = "global"
+	if _, err := config.ResolveSearchChain("global"); err == nil {
+		t.Fatal("expected a cycle to be rejected")
+	}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected config validation to reject the fallback cycle")
+	}
+	config.Searches[1].Fallback = "missing"
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected unknown fallback to be rejected")
+	}
+}

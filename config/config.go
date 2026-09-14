@@ -1474,10 +1474,8 @@ func (c Config) Validate() error {
 		searches[search.Tag] = search
 	}
 	for _, search := range c.Searches {
-		if search.Fallback != "" {
-			if _, exists := searches[search.Fallback]; !exists {
-				return fmt.Errorf("search %q references unknown fallback %q", search.Tag, search.Fallback)
-			}
+		if _, err := c.ResolveSearchChain(search.Tag); err != nil {
+			return err
 		}
 	}
 	jobs := make(map[string]struct{}, len(c.Jobs))
@@ -1611,6 +1609,32 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ResolveSearchChain expands an explicit fallback chain: the search itself,
+// then its fallback, and so on. The order is the order a campaign follows when
+// a route is exhausted. Cycles and unknown references are rejected.
+func (c Config) ResolveSearchChain(tag string) ([]string, error) {
+	byTag := make(map[string]Search, len(c.Searches))
+	for _, search := range c.Searches {
+		byTag[search.Tag] = search
+	}
+	chain := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	current := strings.TrimSpace(tag)
+	for current != "" {
+		if _, duplicate := seen[current]; duplicate {
+			return nil, fmt.Errorf("search fallback chain %q contains a cycle", tag)
+		}
+		search, exists := byTag[current]
+		if !exists {
+			return nil, fmt.Errorf("search %q references unknown fallback %q", tag, current)
+		}
+		seen[current] = struct{}{}
+		chain = append(chain, current)
+		current = strings.TrimSpace(search.Fallback)
+	}
+	return chain, nil
 }
 
 func (c Config) BuildProfileStateResources() ([]core.ProfileStateResource, error) {
