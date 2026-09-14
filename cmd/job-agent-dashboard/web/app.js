@@ -126,6 +126,25 @@ function renderApplicationFilters(items = []) {
 function visibleApplicationObjects() { return state.applicationObjects; }
 function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed"].includes(item.status); }
 
+async function captureQuestionnaire(item, button) {
+  button.disabled = true;
+  state.applicationActionMessage = "Запрашиваю анкету у HH…";
+  updateApplicationSelection(state.applicationObjects);
+  try {
+    const key = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `questionnaire-${Date.now()}`;
+    const response = await fetch(`/api/v1/applications/${encodeURIComponent(item.id)}/questionnaire`, {
+      method: "POST", headers: { "Idempotency-Key": key },
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    elements.reviewState.textContent = "Анкета захвачена — ответьте ниже и отправьте.";
+    refreshReviewSessions();
+    document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    state.applicationActionMessage = `Не удалось запросить анкету: ${error.message}`;
+  }
+  button.disabled = false;
+  updateApplicationSelection(state.applicationObjects);
+}
 async function retryApplication(item, button) {
   state.applicationActionBusy = true; button.disabled = true; state.applicationActionMessage = "Ставлю повторную подготовку…"; renderApplicationObjects();
   try {
@@ -186,10 +205,10 @@ function renderApplicationObjects() {
     const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
     const needsInput = validationSkipped || item.status === "waiting_validation";
     const vacancyID = (url || "").match(/\/vacancy\/(\d+)/)?.[1];
-    if (needsInput && item.platform === "hh" && vacancyID) {
-      const questionnaire = text("a", "Открыть анкету", "table-link");
-      questionnaire.href = `https://hh.ru/applicant/vacancy_response?vacancyId=${encodeURIComponent(vacancyID)}`;
-      questionnaire.target = "_blank"; questionnaire.rel = "noopener noreferrer";
+    if (needsInput && item.platform === "hh") {
+      const questionnaire = text("button", "Открыть анкету", "secondary compact"); questionnaire.type = "button";
+      questionnaire.disabled = state.applicationActionBusy;
+      questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
       action.append(questionnaire);
     }
     if (url) {

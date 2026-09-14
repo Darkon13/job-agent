@@ -914,6 +914,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
+	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)

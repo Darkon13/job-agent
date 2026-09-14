@@ -35,10 +35,23 @@ type ProfileSummary struct {
 	DisplayName string         `json:"display_name,omitempty"`
 }
 
+// QuestionnaireCapturer enqueues the read-only capture of a vacancy
+// questionnaire so the dashboard can answer it through review sessions.
+type QuestionnaireCapturer interface {
+	EnqueueCapture(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, source string) (bool, error)
+}
+
 type RuntimeAPI struct {
-	repository RuntimeReadRepository
-	profiles   []ProfileSummary
-	now        func() time.Time
+	repository     RuntimeReadRepository
+	profiles       []ProfileSummary
+	now            func() time.Time
+	questionnaires QuestionnaireCapturer
+}
+
+// ConfigureQuestionnaireCapture attaches the capture enqueue. Without it the
+// questionnaire endpoint reports that capture is unavailable.
+func (api *RuntimeAPI) ConfigureQuestionnaireCapture(capturer QuestionnaireCapturer) {
+	api.questionnaires = capturer
 }
 
 type DashboardSummary struct {
@@ -136,6 +149,7 @@ func (api *RuntimeAPI) Handler(productAPI http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/version", api.version)
 	mux.HandleFunc("GET /api/v1/dashboard/summary", api.summary)
 	mux.HandleFunc("GET /api/v1/applications", api.listApplications)
+	mux.HandleFunc("POST /api/v1/applications/{application_id}/questionnaire", api.captureQuestionnaire)
 	mux.Handle("/", productAPI)
 	return mux
 }

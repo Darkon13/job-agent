@@ -234,3 +234,61 @@ func TestApplicationListToleratesMissingVacancy(t *testing.T) {
 		t.Fatalf("list response = %#v", payload)
 	}
 }
+
+type questionnaireCaptureRecorder struct {
+	profileID core.ProfileID
+	vacancyID string
+	calls     int
+}
+
+func (recorder *questionnaireCaptureRecorder) EnqueueCapture(_ context.Context, profileID core.ProfileID, _ core.Platform, externalID string, _ string) (bool, error) {
+	recorder.calls++
+	recorder.profileID = profileID
+	recorder.vacancyID = externalID
+	return true, nil
+}
+
+func TestApplicationAPIEnqueuesQuestionnaireCapture(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repository, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	application, err := core.NewApplication(
+		"application-1",
+		core.ApplicationKey{ProfileID: "primary", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"}},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if _, err := repository.UpsertVacancy(context.Background(), core.Vacancy{
+		Platform: "hh", ExternalID: "42", Title: "Go developer", Employer: "Example",
+		State: core.VacancyStateOpen, ObservedAt: now,
+	}); err != nil {
+		t.Fatalf("store vacancy: %v", err)
+	}
+	if _, _, err := repository.CreateApplication(context.Background(), application); err != nil {
+		t.Fatalf("store application: %v", err)
+	}
+	api, err := NewRuntimeAPI(repository, nil)
+	if err != nil {
+		t.Fatalf("new runtime API: %v", err)
+	}
+	recorder := &questionnaireCaptureRecorder{}
+	api.ConfigureQuestionnaireCapture(recorder)
+
+	response := performRequest(t, api.Handler(nil), http.MethodPost, "/api/v1/applications/application-1/questionnaire", "questionnaire-1", "", nil)
+	if response.Code != http.StatusAccepted || recorder.calls != 1 || recorder.profileID != "primary" || recorder.vacancyID != "42" {
+		t.Fatalf("capture response=%d recorder=%#v body=%s", response.Code, recorder, response.Body.String())
+	}
+	response = performRequest(t, api.Handler(nil), http.MethodPost, "/api/v1/applications/missing/questionnaire", "questionnaire-2", "", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing application status=%d body=%s", response.Code, response.Body.String())
+	}
+}
