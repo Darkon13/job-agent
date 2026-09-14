@@ -381,11 +381,14 @@ const (
 	FollowUpSelectOldestUnanswered FollowUpSelectionStrategy = "oldest_unanswered"
 	FollowUpSelectNewestUnanswered FollowUpSelectionStrategy = "newest_unanswered"
 	FollowUpSelectRandom           FollowUpSelectionStrategy = "random"
+	// FollowUpSelectLongestSilence ignores who wrote last: it picks the active
+	// conversation with the longest silence since any last message.
+	FollowUpSelectLongestSilence FollowUpSelectionStrategy = "longest_silence"
 )
 
 func (strategy FollowUpSelectionStrategy) Validate() error {
 	switch strategy {
-	case FollowUpSelectOldestUnanswered, FollowUpSelectNewestUnanswered, FollowUpSelectRandom:
+	case FollowUpSelectOldestUnanswered, FollowUpSelectNewestUnanswered, FollowUpSelectRandom, FollowUpSelectLongestSilence:
 		return nil
 	default:
 		return fmt.Errorf("invalid follow-up selection strategy %q", strategy)

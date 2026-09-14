@@ -766,7 +766,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "secondary"
             ],
             "follow_up": {
-              "strategy": "oldest_unanswered",
+              "strategy": "longest_silence",
               "minimum_silence": "72h",
               "run_after": "1m",
               "deadline_after": "24h",

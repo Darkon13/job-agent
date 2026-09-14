@@ -91,7 +91,7 @@ func (workflow *ConversationWorkflow) SelectAndScheduleFollowUp(ctx context.Cont
 		deadline = &value
 	}
 	followUp, created, err := workflow.ScheduleFollowUp(ctx, ScheduleFollowUpRequest{
-		ConversationID: selected.ID, AnchorMessageID: selected.LastMessageID, AnchorAt: *selected.LastOutgoingAt,
+		ConversationID: selected.ID, AnchorMessageID: selected.LastMessageID, AnchorAt: followUpAnchor(selected, request.Strategy),
 		RunAt: runAt, Deadline: deadline, Content: request.Content, Policy: request.Policy,
 		IdempotencyKey: request.IdempotencyKey,
 	})
@@ -117,34 +117,61 @@ func eligibleFollowUpConversations(conversations []core.Conversation, followUps 
 		}
 		states[followUp.ConversationID] = state
 	}
+	silenceStrategy := request.Strategy == core.FollowUpSelectLongestSilence
 	result := make([]core.Conversation, 0, len(conversations))
 	for _, conversation := range conversations {
-		if conversation.Status != core.ConversationActive || conversation.LastOutgoingAt == nil || conversation.LastMessageAt == nil ||
-			conversation.LastMessageID == "" || !conversation.LastMessageAt.Equal(*conversation.LastOutgoingAt) {
+		if conversation.Status != core.ConversationActive || conversation.LastMessageAt == nil || conversation.LastMessageID == "" {
 			continue
 		}
-		if conversation.LastIncomingAt != nil && !conversation.LastOutgoingAt.After(*conversation.LastIncomingAt) {
-			continue
+		var anchor time.Time
+		if silenceStrategy {
+			anchor = *conversation.LastMessageAt
+		} else {
+			if conversation.LastOutgoingAt == nil || !conversation.LastMessageAt.Equal(*conversation.LastOutgoingAt) {
+				continue
+			}
+			if conversation.LastIncomingAt != nil && !conversation.LastOutgoingAt.After(*conversation.LastIncomingAt) {
+				continue
+			}
+			anchor = *conversation.LastOutgoingAt
 		}
-		if now.Before(conversation.LastOutgoingAt.Add(request.MinimumSilence)) {
+		if now.Before(anchor.Add(request.MinimumSilence)) {
 			continue
 		}
 		state := states[conversation.ID]
 		if state.pending > 0 || state.sent >= request.Policy.MaxFollowUps {
 			continue
 		}
-		if request.Policy.Cooldown > 0 && now.Before(conversation.LastOutgoingAt.Add(request.Policy.Cooldown.Value())) {
+		if request.Policy.Cooldown > 0 && now.Before(anchor.Add(request.Policy.Cooldown.Value())) {
 			continue
 		}
 		result = append(result, conversation)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if !result[i].LastOutgoingAt.Equal(*result[j].LastOutgoingAt) {
-			return result[i].LastOutgoingAt.Before(*result[j].LastOutgoingAt)
+		left := followUpAnchor(result[i], request.Strategy)
+		right := followUpAnchor(result[j], request.Strategy)
+		if !left.Equal(right) {
+			return left.Before(right)
 		}
 		return result[i].ID < result[j].ID
 	})
 	return result
+}
+
+// followUpAnchor is the moment the silence is measured from. The
+// longest_silence strategy uses any last message; the reply-waiting strategies
+// only consider outgoing ones.
+func followUpAnchor(conversation core.Conversation, strategy core.FollowUpSelectionStrategy) time.Time {
+	if strategy == core.FollowUpSelectLongestSilence && conversation.LastMessageAt != nil {
+		return *conversation.LastMessageAt
+	}
+	if conversation.LastOutgoingAt != nil {
+		return *conversation.LastOutgoingAt
+	}
+	if conversation.LastMessageAt != nil {
+		return *conversation.LastMessageAt
+	}
+	return time.Time{}
 }
 
 func selectFollowUpConversation(candidates []core.Conversation, strategy core.FollowUpSelectionStrategy, profileID core.ProfileID, requestKey string) core.Conversation {
