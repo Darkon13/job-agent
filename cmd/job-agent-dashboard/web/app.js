@@ -501,7 +501,6 @@ function renderMessages(items = []) {
 async function sendQuestionnaireOption(message, option) {
   const conversation = state.selectedConversation;
   if (!conversation || !option?.text) return;
-  if (!globalThis.confirm(`Отправить вариант «${option.text}»?`)) return;
   const key = `dashboard-answer:${conversation.id}:${message.id}:${option.id}`;
   state.conversationAnswerBusy = `${message.id}:${option.id}`;
   elements.actionState.textContent = `Отправляю «${option.text}»…`;
