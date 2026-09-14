@@ -18,8 +18,15 @@ type ScheduleReader interface {
 }
 
 type JobAPI struct {
-	workflow  *workflow.JobRunWorkflow
-	schedules ScheduleReader
+	workflow     *workflow.JobRunWorkflow
+	schedules    ScheduleReader
+	descriptions map[string]string
+}
+
+// SetDescriptions attaches optional per-job descriptions from the config so the
+// dashboard can show the operator's own wording instead of the task type.
+func (api *JobAPI) SetDescriptions(descriptions map[string]string) {
+	api.descriptions = descriptions
 }
 
 func NewJobAPI(jobWorkflow *workflow.JobRunWorkflow, schedules ScheduleReader) (*JobAPI, error) {
@@ -63,6 +70,11 @@ func (api *JobAPI) list(response http.ResponseWriter, request *http.Request) {
 		}
 		for index := range items {
 			items[index].Schedules = byTag[items[index].Tag]
+		}
+	}
+	for index := range items {
+		if description := strings.TrimSpace(api.descriptions[items[index].Tag]); description != "" {
+			items[index].Description = description
 		}
 	}
 	writeJSON(response, http.StatusOK, listResponse[workflow.JobRunDescriptor]{Items: items})

@@ -914,6 +914,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
+	jobDescriptions := make(map[string]string, len(cfg.Jobs))
+	for _, job := range cfg.Jobs {
+		if description := strings.TrimSpace(job.Description); description != "" {
+			jobDescriptions[job.Tag] = description
+		}
+	}
+	jobAPI.SetDescriptions(jobDescriptions)
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
 	if err != nil {

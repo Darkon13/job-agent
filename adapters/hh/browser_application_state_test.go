@@ -2,6 +2,7 @@ package hh
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -90,5 +91,19 @@ func TestBrowserObservationFailsWithoutInitialState(t *testing.T) {
 	}))
 	if _, err := client.ObserveApplicationStates(context.Background(), "primary"); err == nil {
 		t.Fatal("expected observation to fail without the initial state")
+	}
+}
+
+func TestBrowserVacancyReadReportsClosedVacancy(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`<html><body><h1>Вакансия закрыта</h1><p>Эта вакансия больше не доступна.</p></body></html>`))
+	}))
+	_, err := client.ReadVacancy(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
+	if err == nil {
+		t.Fatal("expected a closed vacancy to be reported")
+	}
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) || operationError.Category != core.ErrorValidationRequired || operationError.Metadata["code"] != "vacancy_closed" {
+		t.Fatalf("unexpected error: %#v", err)
 	}
 }

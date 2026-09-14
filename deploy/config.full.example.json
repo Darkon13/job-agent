@@ -229,7 +229,8 @@
           "primary",
           "secondary"
         ]
-      }
+      },
+      "description": "Обновление сессий HH каждые 4 часа"
     },
     {
       "tag": "touch-resumes",
@@ -253,7 +254,8 @@
           "primary",
           "secondary"
         ]
-      }
+      },
+      "description": "Поднятие резюме каждые 4 часа"
     },
     {
       "tag": "sync-conversations",
@@ -273,7 +275,8 @@
           "primary",
           "secondary"
         ]
-      }
+      },
+      "description": "Синхронизация чатов каждые 10 минут"
     },
     {
       "tag": "observe-activity",
@@ -293,7 +296,8 @@
           "primary",
           "secondary"
         ]
-      }
+      },
+      "description": "Снимок метрик резюме каждые 30 минут"
     },
     {
       "tag": "periodic-primary-applications",
@@ -322,7 +326,8 @@
         ],
         "target_successful": 200,
         "max_in_flight": 2
-      }
+      },
+      "description": "Рассылка откликов (Антон Шумаков) каждый час"
     },
     {
       "tag": "periodic-secondary-applications",
@@ -351,7 +356,8 @@
         ],
         "target_successful": 200,
         "max_in_flight": 2
-      }
+      },
+      "description": "Рассылка откликов (Антон Иванов) каждый час"
     },
     {
       "tag": "sync-application-states",
@@ -375,7 +381,8 @@
           "primary",
           "secondary"
         ]
-      }
+      },
+      "description": "Синхронизация состояний откликов раз в час"
     },
     {
       "tag": "cleanup-rejected-applications",
@@ -403,7 +410,8 @@
           "stale_after": "720h",
           "remove_rejected": true
         }
-      }
+      },
+      "description": "Ежедневная очистка отказов и устаревших откликов"
     },
     {
       "tag": "follow-up-unanswered",
@@ -442,7 +450,8 @@
             "cooldown": "168h"
           }
         }
-      }
+      },
+      "description": "Напоминание в самом тихом чате"
     }
   ],
   "answer_sets": [

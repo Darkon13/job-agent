@@ -567,7 +567,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "primary",
               "secondary"
             ]
-          }
+          },
+          "description": "Обновление сессий HH каждые 4 часа"
         },
         {
           "tag": "touch-resumes",
@@ -591,7 +592,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "primary",
               "secondary"
             ]
-          }
+          },
+          "description": "Поднятие резюме каждые 4 часа"
         },
         {
           "tag": "sync-conversations",
@@ -611,7 +613,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "primary",
               "secondary"
             ]
-          }
+          },
+          "description": "Синхронизация чатов каждые 10 минут"
         },
         {
           "tag": "observe-activity",
@@ -631,7 +634,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "primary",
               "secondary"
             ]
-          }
+          },
+          "description": "Снимок метрик резюме каждые 30 минут"
         },
         {
           "tag": "periodic-primary-applications",
@@ -660,7 +664,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             ],
             "target_successful": 200,
             "max_in_flight": 2
-          }
+          },
+          "description": "Рассылка откликов (Антон Шумаков) каждый час"
         },
         {
           "tag": "periodic-secondary-applications",
@@ -689,7 +694,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             ],
             "target_successful": 200,
             "max_in_flight": 2
-          }
+          },
+          "description": "Рассылка откликов (Антон Иванов) каждый час"
         },
         {
           "tag": "sync-application-states",
@@ -713,7 +719,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "primary",
               "secondary"
             ]
-          }
+          },
+          "description": "Синхронизация состояний откликов раз в час"
         },
         {
           "tag": "cleanup-rejected-applications",
@@ -741,7 +748,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "stale_after": "720h",
               "remove_rejected": true
             }
-          }
+          },
+          "description": "Ежедневная очистка отказов и устаревших откликов"
         },
         {
           "tag": "follow-up-unanswered",
@@ -780,7 +788,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
                 "cooldown": "168h"
               }
             }
-          }
+          },
+          "description": "Напоминание в самом тихом чате"
         }
       ],
       "answer_sets": [

@@ -139,7 +139,9 @@ const (
 )
 
 type Job struct {
-	Tag         string            `json:"tag"`
+	Tag string `json:"tag"`
+	// Description is an optional human-readable note shown in the dashboard.
+	Description string            `json:"description,omitempty"`
 	Enabled     bool              `json:"enabled"`
 	Priority    core.TaskPriority `json:"priority,omitempty"`
 	Triggers    []JobTrigger      `json:"triggers"`
