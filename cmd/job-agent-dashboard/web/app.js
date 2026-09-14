@@ -1099,20 +1099,23 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
 (() => {
   const stream = new EventSource("/api/v1/events");
   let refreshTimer = 0;
-  stream.addEventListener("dashboard", () => {
+  stream.addEventListener("dashboard", (event) => {
+    if (document.hidden) return;
+    let sections = [];
+    try { sections = (JSON.parse(event.data || "{}").sections) || []; } catch (_) {}
     globalThis.clearTimeout(refreshTimer);
     refreshTimer = globalThis.setTimeout(async () => {
       await refreshSummary();
-      refreshProfileResources();
-      refreshReviewSessions();
-      if (state.selectedConversation) {
+      if (sections.includes("applications")) await refreshApplications();
+      if (sections.includes("conversations") && state.selectedConversation) {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);
           if (state.selectedConversation) { state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages); }
         } catch (_) {}
       }
-    }, 800);
+    }, 1200);
   });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshSummary(); });
   stream.addEventListener("error", () => { /* EventSource reconnects on its own */ });
 })();
 
