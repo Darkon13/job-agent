@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"time"
@@ -149,9 +153,63 @@ func (api *RuntimeAPI) Handler(productAPI http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/version", api.version)
 	mux.HandleFunc("GET /api/v1/dashboard/summary", api.summary)
 	mux.HandleFunc("GET /api/v1/applications", api.listApplications)
+	mux.HandleFunc("GET /api/v1/events", api.events)
 	mux.HandleFunc("POST /api/v1/applications/{application_id}/questionnaire", api.captureQuestionnaire)
 	mux.Handle("/", productAPI)
 	return mux
+}
+
+// events streams lightweight change notifications so the dashboard does not
+// depend on the 30 second poll. The conversation revision replaces the full
+// payload: a new event simply tells the client to refresh.
+func (api *RuntimeAPI) events(response http.ResponseWriter, request *http.Request) {
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		writeProblem(response, http.StatusInternalServerError, "streaming is not supported")
+		return
+	}
+	response.Header().Set("Content-Type", "text/event-stream")
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Connection", "keep-alive")
+	generation := 0
+	last := ""
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-request.Context().Done():
+			return
+		case <-heartbeat.C:
+			_, _ = io.WriteString(response, ": ping\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			fingerprint, err := api.conversationFingerprint(request.Context())
+			if err != nil {
+				return
+			}
+			if fingerprint == last {
+				continue
+			}
+			last = fingerprint
+			generation++
+			fmt.Fprintf(response, "event: conversations\ndata: {\"generation\":%d}\n\n", generation)
+			flusher.Flush()
+		}
+	}
+}
+
+func (api *RuntimeAPI) conversationFingerprint(ctx context.Context) (string, error) {
+	conversations, err := api.repository.ListConversations(ctx, storage.ConversationFilter{})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	for _, conversation := range conversations {
+		fmt.Fprintf(digest, "%s\x00%d\x00%s\x00%d\n", conversation.ID, conversation.Revision, conversation.LastMessageID, conversation.UpdatedAt.UnixNano())
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (api *RuntimeAPI) version(response http.ResponseWriter, _ *http.Request) {

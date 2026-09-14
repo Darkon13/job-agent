@@ -1065,6 +1065,26 @@ elements.accountSwitcher.addEventListener("change", () => {
 elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
 refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
+// Server-sent change notifications replace most of the polling latency; the
+// interval above stays as a safety net.
+(() => {
+  const stream = new EventSource("/api/v1/events");
+  let refreshTimer = 0;
+  stream.addEventListener("conversations", () => {
+    globalThis.clearTimeout(refreshTimer);
+    refreshTimer = globalThis.setTimeout(async () => {
+      await refreshSummary();
+      if (state.selectedConversation) {
+        try {
+          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);
+          if (state.selectedConversation) { state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages); }
+        } catch (_) {}
+      }
+    }, 800);
+  });
+  stream.addEventListener("error", () => { /* EventSource reconnects on its own */ });
+})();
+
 function renderAuthProfileOptions(profiles = []) {
   const select = document.getElementById("auth-profile");
   if (!select) return;
