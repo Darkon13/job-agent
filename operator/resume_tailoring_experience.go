@@ -37,12 +37,15 @@ type ResumeTailoringExperienceRequest struct {
 	ResumeContext map[string]any                   `json:"resume_context,omitempty"`
 	Entries       []ResumeTailoringExperienceEntry `json:"entries"`
 	MaximumRunes  int                              `json:"maximum_runes"`
+	AllowReorder  bool                             `json:"allow_reorder,omitempty"`
 }
 
 type ResumeTailoringExperienceResponse struct {
-	Entries    []ResumeTailoringExperienceEntry `json:"entries"`
-	Model      string                           `json:"model,omitempty"`
-	ResponseID string                           `json:"response_id,omitempty"`
+	Entries []ResumeTailoringExperienceEntry `json:"entries"`
+	// Order optionally reorders every observed block by id.
+	Order      []string `json:"order,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	ResponseID string   `json:"response_id,omitempty"`
 }
 
 type ResumeTailoringExperienceModel interface {
@@ -56,6 +59,26 @@ type ModelResumeTailoringExperienceConfig struct {
 	MaximumRunes  int
 	Timeout       time.Duration
 	Model         ResumeTailoringExperienceModel
+	// Targets lists the experience blocks the model may rewrite. Empty means
+	// every observed block. Legacy single-group form; Groups takes precedence.
+	Targets []ResumeTailoringObjectReference
+	// ContextObjects lists extra resume objects passed to the model as context.
+	ContextObjects []ResumeTailoringObjectReference
+	// AllowReorder lets the model return a new block order.
+	AllowReorder bool
+	// Groups splits the blocks into independent model requests, each with its
+	// own instruction. All groups still produce one plan and one saga step.
+	Groups []ResumeTailoringExperienceGroupConfig
+}
+
+// ResumeTailoringExperienceGroupConfig is one request inside the experience
+// tailoring step: a set of blocks, an instruction and optional context.
+type ResumeTailoringExperienceGroupConfig struct {
+	Instruction    string
+	Targets        []ResumeTailoringObjectReference
+	ContextObjects []ResumeTailoringObjectReference
+	AllowReorder   bool
+	MaximumRunes   int
 }
 
 // ModelResumeTailoringExperienceProcessor rewrites work experience
@@ -64,10 +87,18 @@ type ModelResumeTailoringExperienceConfig struct {
 type ModelResumeTailoringExperienceProcessor struct {
 	tag           string
 	promptVersion string
-	instruction   string
 	maximumRunes  int
 	timeout       time.Duration
 	model         ResumeTailoringExperienceModel
+	groups        []resumeTailoringExperienceGroup
+}
+
+type resumeTailoringExperienceGroup struct {
+	instruction    string
+	targets        []ResumeTailoringObjectReference
+	contextObjects []ResumeTailoringObjectReference
+	allowReorder   bool
+	maximumRunes   int
 }
 
 const (
@@ -78,20 +109,63 @@ const (
 func NewModelResumeTailoringExperienceProcessor(config ModelResumeTailoringExperienceConfig) (*ModelResumeTailoringExperienceProcessor, error) {
 	tag := strings.TrimSpace(config.Tag)
 	version := strings.TrimSpace(config.PromptVersion)
-	instruction := strings.TrimSpace(config.Instruction)
-	if tag == "" || version == "" || instruction == "" || config.Model == nil || config.Timeout <= 0 {
-		return nil, errors.New("model experience tailoring requires tag, prompt version, instruction, timeout and model")
+	if tag == "" || version == "" || config.Model == nil || config.Timeout <= 0 {
+		return nil, errors.New("model experience tailoring requires tag, prompt version, timeout and model")
 	}
-	maximum := config.MaximumRunes
-	if maximum == 0 {
-		maximum = defaultResumeTailoringExperienceMaximumRunes
+	defaultMaximum := config.MaximumRunes
+	if defaultMaximum == 0 {
+		defaultMaximum = defaultResumeTailoringExperienceMaximumRunes
 	}
-	if maximum < 1 || maximum > maximumResumeTailoringExperienceRunes {
+	if defaultMaximum < 1 || defaultMaximum > maximumResumeTailoringExperienceRunes {
 		return nil, fmt.Errorf("model experience tailoring maximum runes must be between 1 and %d", maximumResumeTailoringExperienceRunes)
 	}
+	groups := make([]resumeTailoringExperienceGroup, 0, len(config.Groups))
+	for _, configured := range config.Groups {
+		instruction := strings.TrimSpace(configured.Instruction)
+		if instruction == "" {
+			return nil, errors.New("experience tailoring group requires an instruction")
+		}
+		maximum := configured.MaximumRunes
+		if maximum == 0 {
+			maximum = defaultMaximum
+		}
+		if maximum < 1 || maximum > maximumResumeTailoringExperienceRunes {
+			return nil, fmt.Errorf("experience tailoring group maximum runes must be between 1 and %d", maximumResumeTailoringExperienceRunes)
+		}
+		groups = append(groups, resumeTailoringExperienceGroup{
+			instruction:    instruction,
+			targets:        append([]ResumeTailoringObjectReference(nil), configured.Targets...),
+			contextObjects: append([]ResumeTailoringObjectReference(nil), configured.ContextObjects...),
+			allowReorder:   configured.AllowReorder,
+			maximumRunes:   maximum,
+		})
+	}
+	if len(groups) == 0 {
+		instruction := strings.TrimSpace(config.Instruction)
+		if instruction == "" {
+			return nil, errors.New("model experience tailoring requires an instruction")
+		}
+		groups = append(groups, resumeTailoringExperienceGroup{
+			instruction:    instruction,
+			targets:        append([]ResumeTailoringObjectReference(nil), config.Targets...),
+			contextObjects: append([]ResumeTailoringObjectReference(nil), config.ContextObjects...),
+			allowReorder:   config.AllowReorder,
+			maximumRunes:   defaultMaximum,
+		})
+	}
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, ref := range group.targets {
+			key := ref.String()
+			if _, duplicate := seen[key]; duplicate {
+				return nil, fmt.Errorf("experience tailoring targets block %q twice", key)
+			}
+			seen[key] = struct{}{}
+		}
+	}
 	return &ModelResumeTailoringExperienceProcessor{
-		tag: tag, promptVersion: version, instruction: instruction,
-		maximumRunes: maximum, timeout: config.Timeout, model: config.Model,
+		tag: tag, promptVersion: version, maximumRunes: defaultMaximum,
+		timeout: config.Timeout, model: config.Model, groups: groups,
 	}, nil
 }
 
@@ -128,21 +202,49 @@ func (processor *ModelResumeTailoringExperienceProcessor) Plan(ctx context.Conte
 	if len(entries) == 0 {
 		return keep, nil
 	}
-	request := ResumeTailoringExperienceRequest{
-		Instruction: processor.instruction, PromptVersion: processor.promptVersion,
-		VacancyTitle: input.Vacancy.Title, VacancySkills: vacancyAttributeStrings(input.Vacancy, "key_skills"),
-		Entries: resumeTailoringExperienceEntries(entries), MaximumRunes: processor.maximumRunes,
+	current := entries
+	changed := false
+	order := []string(nil)
+	orderAllowed := false
+	for _, group := range processor.groups {
+		targets := group.targetEntries(current, processor.maximumRunes)
+		if len(targets) == 0 {
+			continue
+		}
+		request := ResumeTailoringExperienceRequest{
+			Instruction: group.instruction, PromptVersion: processor.promptVersion,
+			VacancyTitle: input.Vacancy.Title, VacancySkills: vacancyAttributeStrings(input.Vacancy, "key_skills"),
+			Entries: resumeTailoringExperienceEntries(targets), MaximumRunes: group.maximumRunes,
+			AllowReorder: group.allowReorder, ResumeContext: resumeTailoringExperienceContext(input, group.contextObjects),
+		}
+		modelCtx, cancel := context.WithTimeout(ctx, processor.timeout)
+		response, err := processor.model.RewriteExperience(modelCtx, request)
+		cancel()
+		if err != nil {
+			continue
+		}
+		updated, groupChanged, err := applyResumeExperienceRewrite(input, current, targets, response, group.maximumRunes)
+		if err != nil {
+			continue
+		}
+		if groupChanged {
+			current = updated
+			changed = true
+		}
+		if group.allowReorder && len(response.Order) != 0 {
+			order = response.Order
+			orderAllowed = true
+		}
 	}
-	modelCtx, cancel := context.WithTimeout(ctx, processor.timeout)
-	response, err := processor.model.RewriteExperience(modelCtx, request)
-	cancel()
-	if err != nil {
+	if !changed && !orderAllowed {
 		return keep, nil
 	}
-	updated, changed, err := applyResumeExperienceRewrite(input, entries, response, processor.maximumRunes)
-	if err != nil || !changed {
+	ordered, orderChanged := reorderResumeExperience(current, order, orderAllowed, changed)
+	current = ordered
+	if !changed && !orderChanged {
 		return keep, nil
 	}
+	updated := current
 	encoded, err := json.Marshal(updated)
 	if err != nil {
 		return ResumeTailoringPlan{}, fmt.Errorf("encode tailored resume experience: %w", err)
@@ -153,6 +255,123 @@ func (processor *ModelResumeTailoringExperienceProcessor) Plan(ctx context.Conte
 		return ResumeTailoringPlan{}, err
 	}
 	return plan, nil
+}
+
+// targetEntries keeps only the blocks declared by one group. An empty target
+// list means the group works on every observed block.
+func (group resumeTailoringExperienceGroup) targetEntries(entries []map[string]any, maximumRunes int) []map[string]any {
+	if len(group.targets) == 0 {
+		return entries
+	}
+	selected := make([]map[string]any, 0, len(entries))
+	for index, entry := range entries {
+		id := experienceBlockID(entry, index)
+		for _, ref := range group.targets {
+			if ResumeTailoringObjectMatchesEntry(ref, id, index) {
+				selected = append(selected, entry)
+				break
+			}
+		}
+	}
+	return selected
+}
+
+// resumeTailoringExperienceContext reads the declared read-only objects and
+// passes them to the model. A concrete experience block is sent as one block,
+// not as the whole array.
+func resumeTailoringExperienceContext(input ResumeTailoringInput, refs []ResumeTailoringObjectReference) map[string]any {
+	if len(refs) == 0 {
+		return nil
+	}
+	context := make(map[string]any, len(refs))
+	for _, ref := range refs {
+		path := ResumeTailoringObjectPath(input.ResumeID, ref)
+		raw, exists, err := input.CurrentState.ValueAt(path)
+		if err != nil || !exists || len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		if ref.Name == "experience" && (ref.EntryID != "" || ref.HasIndex) {
+			blocks, _ := value.([]any)
+			for index, block := range blocks {
+				asMap, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				if ResumeTailoringObjectMatchesEntry(ref, experienceBlockID(asMap, index), index) {
+					context[ref.String()] = asMap
+					break
+				}
+			}
+			continue
+		}
+		context[ref.String()] = value
+	}
+	if len(context) == 0 {
+		return nil
+	}
+	return context
+}
+
+// reorderResumeExperience applies the model order when reordering was declared
+// by any group. The order must be a permutation of every observed block;
+// anything else keeps the current sequence.
+func reorderResumeExperience(entries []map[string]any, order []string, allowed, changed bool) ([]map[string]any, bool) {
+	if !allowed || len(order) == 0 {
+		return entries, changed
+	}
+	ids := make([]string, 0, len(entries))
+	byID := make(map[string]map[string]any, len(entries))
+	for index, entry := range entries {
+		id := experienceBlockID(entry, index)
+		if _, duplicate := byID[id]; duplicate {
+			return entries, changed
+		}
+		ids = append(ids, id)
+		byID[id] = entry
+	}
+	if len(order) != len(ids) {
+		return entries, changed
+	}
+	seen := make(map[string]struct{}, len(order))
+	reordered := make([]map[string]any, 0, len(order))
+	for _, id := range order {
+		entry, exists := byID[id]
+		if !exists {
+			return entries, changed
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return entries, changed
+		}
+		seen[id] = struct{}{}
+		reordered = append(reordered, entry)
+	}
+	if len(reordered) != len(entries) {
+		return entries, changed
+	}
+	same := true
+	for index := range reordered {
+		if reordered[index] == nil {
+			return entries, changed
+		}
+		if experienceBlockID(reordered[index], index) != ids[index] {
+			same = false
+		}
+	}
+	if same {
+		return entries, changed
+	}
+	return reordered, true
+}
+
+func experienceBlockID(entry map[string]any, index int) string {
+	if id := experienceString(entry, "id"); id != "" {
+		return id
+	}
+	return fmt.Sprintf("entry-%d", index)
 }
 
 func observedResumeExperience(observation core.ProfileStateObservation, path string) ([]map[string]any, error) {
@@ -203,12 +422,12 @@ func experienceString(entry map[string]any, key string) string {
 // validates every replacement against its own entry text and the vacancy.
 // Unknown or duplicate ids, empty or ungrounded text are rejected, and the
 // caller then keeps the current resume.
-func applyResumeExperienceRewrite(input ResumeTailoringInput, entries []map[string]any, response ResumeTailoringExperienceResponse, maximumRunes int) ([]map[string]any, bool, error) {
+func applyResumeExperienceRewrite(input ResumeTailoringInput, entries, targets []map[string]any, response ResumeTailoringExperienceResponse, maximumRunes int) ([]map[string]any, bool, error) {
 	if len(response.Entries) == 0 {
 		return nil, false, errors.New("model returned no experience entries")
 	}
-	originalByID := make(map[string]ResumeTailoringExperienceEntry, len(entries))
-	for _, entry := range resumeTailoringExperienceEntries(entries) {
+	originalByID := make(map[string]ResumeTailoringExperienceEntry, len(targets))
+	for _, entry := range resumeTailoringExperienceEntries(targets) {
 		originalByID[entry.ID] = entry
 	}
 	rewritten := make(map[string]string, len(response.Entries))

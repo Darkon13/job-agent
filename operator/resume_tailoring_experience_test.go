@@ -125,3 +125,57 @@ func TestModelResumeTailoringExperienceKeepsCurrentOnInvalidOutput(t *testing.T)
 		})
 	}
 }
+
+func TestModelResumeTailoringExperienceHonoursDeclaredTargetsAndOrder(t *testing.T) {
+	model := &fakeResumeTailoringExperienceModel{response: ResumeTailoringExperienceResponse{
+		Entries: []ResumeTailoringExperienceEntry{
+			{ID: "job-1", Description: "Развивал сервисы на Go и PostgreSQL, 3 года"},
+		},
+		Order: []string{"job-2", "job-1"},
+	}}
+	processor, err := NewModelResumeTailoringExperienceProcessor(ModelResumeTailoringExperienceConfig{
+		Tag: "deepseek-test", PromptVersion: "v1", Instruction: "Emphasize Go", MaximumRunes: 600,
+		Timeout: 5 * time.Second, Model: model, AllowReorder: true,
+		Targets:        []ResumeTailoringObjectReference{{Name: "experience", EntryID: "job-1", Field: "description"}},
+		ContextObjects: []ResumeTailoringObjectReference{{Name: "experience", EntryID: "job-2"}},
+	})
+	if err != nil {
+		t.Fatalf("new processor: %v", err)
+	}
+	input := resumeTailoringExperienceFixture(t)
+	plan, err := processor.Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(model.request.Entries) != 1 || model.request.Entries[0].ID != "job-1" {
+		t.Fatalf("targets did not restrict the model entries: %#v", model.request.Entries)
+	}
+	if _, exists := model.request.ResumeContext["experience.job-2"]; !exists {
+		t.Fatalf("declared context object was not sent: %#v", model.request.ResumeContext)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(plan.Overrides[0].Value, &entries); err != nil {
+		t.Fatalf("decode experience: %v", err)
+	}
+	if len(entries) != 2 || entries[0]["id"] != "job-2" || entries[1]["id"] != "job-1" {
+		t.Fatalf("reordered entries=%#v", entries)
+	}
+	if entries[1]["description"] != "Развивал сервисы на Go и PostgreSQL, 3 года" {
+		t.Fatalf("description was not rewritten after reorder: %#v", entries[1])
+	}
+}
+
+func TestModelResumeTailoringExperienceIgnoresOrderWhenNotDeclared(t *testing.T) {
+	model := &fakeResumeTailoringExperienceModel{response: ResumeTailoringExperienceResponse{
+		Order: []string{"job-2", "job-1"},
+	}}
+	processor := experienceTailoringProcessor(t, model)
+	input := resumeTailoringExperienceFixture(t)
+	plan, err := processor.Plan(context.Background(), input)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Overrides) != 0 {
+		t.Fatalf("order was applied without permission: %#v", plan.Overrides)
+	}
+}

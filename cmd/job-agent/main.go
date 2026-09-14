@@ -1563,11 +1563,60 @@ func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applic
 	return pool
 }
 
+func tailoringReadObjects(processor string, readonly []string) ([]applicationoperator.ResumeTailoringObjectReference, error) {
+	_, reads, err := resumeTailoringObjectRefs(processor, nil, readonly)
+	return reads, err
+}
+
+func resumeTailoringObjectRefs(processor string, write, readonly []string) ([]applicationoperator.ResumeTailoringObjectReference, []applicationoperator.ResumeTailoringObjectReference, error) {
+	writes := make([]applicationoperator.ResumeTailoringObjectReference, 0, len(write))
+	for _, value := range write {
+		ref, err := applicationoperator.ParseResumeTailoringObject(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := applicationoperator.ValidateResumeTailoringWriteObject(processor, ref); err != nil {
+			return nil, nil, err
+		}
+		writes = append(writes, ref)
+	}
+	reads := make([]applicationoperator.ResumeTailoringObjectReference, 0, len(readonly))
+	for _, value := range readonly {
+		ref, err := applicationoperator.ParseResumeTailoringObject(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := applicationoperator.ValidateResumeTailoringReadObject(ref); err != nil {
+			return nil, nil, err
+		}
+		reads = append(reads, ref)
+	}
+	return writes, reads, nil
+}
+
+func appendTailoringObjectPaths(paths []string, resumeID string, refs ...applicationoperator.ResumeTailoringObjectReference) []string {
+	for _, ref := range refs {
+		path := applicationoperator.ResumeTailoringObjectPath(resumeID, ref)
+		if !slices.Contains(paths, path) {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
 func applicationTailoringProcessor(profile appconfig.Profile, models map[string]applicationoperator.ApplicationMessageModel, contacts applicationoperator.ApplicationProfileContext) (applicationoperator.ResumeTailoringProcessor, []string, error) {
 	processors := make([]applicationoperator.ResumeTailoringProcessor, 0, 2)
 	allowedPaths := make([]string, 0, 2)
 	skills, skillsEnabled := profile.Applications.TailoringSkills()
 	if skillsEnabled {
+		skillsWrite, skillsRead, err := resumeTailoringObjectRefs("skills", skills.Write, skills.Readonly)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(skillsWrite) == 0 {
+			skillsWrite = []applicationoperator.ResumeTailoringObjectReference{{Name: "keySkills"}}
+		}
+		_ = skillsRead
 		deterministic, err := applicationoperator.NewAddVacancySkillsProcessor("skills-from-vacancy", "v1", skills.Maximum)
 		if err != nil {
 			return nil, nil, err
@@ -1598,6 +1647,8 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		}
 		processors = append(processors, skillProcessor)
 		allowedPaths = append(allowedPaths, applicationoperator.ResumeSkillsPath(profile.Resume))
+		allowedPaths = appendTailoringObjectPaths(allowedPaths, profile.Resume, skillsWrite...)
+		allowedPaths = appendTailoringObjectPaths(allowedPaths, profile.Resume, skillsRead...)
 	}
 	if about, enabled := profile.Applications.TailoringAbout(); enabled {
 		var resumeFacts *applicationoperator.ApplicationResumeContext
@@ -1619,10 +1670,14 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 		if err != nil || timeout <= 0 {
 			return nil, nil, fmt.Errorf("application tailoring about provider %q has invalid timeout %q", provider, about.Model.Timeout)
 		}
+		aboutRead, readErr := tailoringReadObjects("about", about.Readonly)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
 		aboutProcessor, err := applicationoperator.NewModelResumeTailoringAboutProcessor(applicationoperator.ModelResumeTailoringAboutConfig{
 			Tag: provider, PromptVersion: about.Model.PromptVersion, Instruction: about.Model.Instruction,
 			MaximumRunes: about.MaximumRunes, Timeout: timeout, Model: aboutModel, Facts: resumeFacts,
-			Contacts: contacts,
+			Contacts: contacts, ContextObjects: aboutRead,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -1633,24 +1688,96 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 				allowedPaths = append(allowedPaths, path)
 			}
 		}
+		allowedPaths = appendTailoringObjectPaths(allowedPaths, profile.Resume, aboutRead...)
 	}
 	if experience, enabled := profile.Applications.TailoringExperience(); enabled {
-		provider := strings.TrimSpace(experience.Model.Provider)
-		candidate := models[provider]
-		if candidate == nil {
-			return nil, nil, fmt.Errorf("application tailoring experience references unavailable provider %q", provider)
+		configuredGroups := experience.Groups
+		type groupModelOutcome struct {
+			model applicationoperator.ResumeTailoringExperienceModel
 		}
-		experienceModel, ok := candidate.(applicationoperator.ResumeTailoringExperienceModel)
-		if !ok {
-			return nil, nil, fmt.Errorf("application tailoring model provider %q does not support experience rewrite", provider)
+		_ = groupModelOutcome{}
+		buildGroup := func(modelPolicy *appconfig.ApplicationModelPolicy, write, readonly []string, maximumRunes int) (applicationoperator.ResumeTailoringExperienceGroupConfig, []applicationoperator.ResumeTailoringObjectReference, []applicationoperator.ResumeTailoringObjectReference, error) {
+			provider := strings.TrimSpace(modelPolicy.Provider)
+			candidate := models[provider]
+			if candidate == nil {
+				return applicationoperator.ResumeTailoringExperienceGroupConfig{}, nil, nil, fmt.Errorf("application tailoring experience references unavailable provider %q", provider)
+			}
+			if _, ok := candidate.(applicationoperator.ResumeTailoringExperienceModel); !ok {
+				return applicationoperator.ResumeTailoringExperienceGroupConfig{}, nil, nil, fmt.Errorf("application tailoring model provider %q does not support experience rewrite", provider)
+			}
+			timeout, err := time.ParseDuration(modelPolicy.Timeout)
+			if err != nil || timeout <= 0 {
+				return applicationoperator.ResumeTailoringExperienceGroupConfig{}, nil, nil, fmt.Errorf("application tailoring experience provider %q has invalid timeout %q", provider, modelPolicy.Timeout)
+			}
+			_ = timeout
+			writeRefs, _, err := resumeTailoringObjectRefs("experience", write, readonly)
+			if err != nil {
+				return applicationoperator.ResumeTailoringExperienceGroupConfig{}, nil, nil, err
+			}
+			allowReorder := false
+			targets := make([]applicationoperator.ResumeTailoringObjectReference, 0, len(writeRefs))
+			for _, ref := range writeRefs {
+				if ref.Field == "order" {
+					allowReorder = true
+					continue
+				}
+				targets = append(targets, ref)
+			}
+			contextRefs, err := tailoringReadObjects("experience", readonly)
+			if err != nil {
+				return applicationoperator.ResumeTailoringExperienceGroupConfig{}, nil, nil, err
+			}
+			return applicationoperator.ResumeTailoringExperienceGroupConfig{
+				Instruction: modelPolicy.Instruction, Targets: targets, ContextObjects: contextRefs,
+				AllowReorder: allowReorder, MaximumRunes: maximumRunes,
+			}, writeRefs, contextRefs, nil
 		}
-		timeout, err := time.ParseDuration(experience.Model.Timeout)
-		if err != nil || timeout <= 0 {
-			return nil, nil, fmt.Errorf("application tailoring experience provider %q has invalid timeout %q", provider, experience.Model.Timeout)
+		groupConfigs := make([]applicationoperator.ResumeTailoringExperienceGroupConfig, 0, len(configuredGroups))
+		allWriteRefs := make([]applicationoperator.ResumeTailoringObjectReference, 0)
+		allContextRefs := make([]applicationoperator.ResumeTailoringObjectReference, 0)
+		if len(configuredGroups) > 0 {
+			for _, group := range configuredGroups {
+				groupConfig, writeRefs, contextRefs, err := buildGroup(group.Model, group.Write, group.Readonly, group.MaximumRunes)
+				if err != nil {
+					return nil, nil, err
+				}
+				groupConfigs = append(groupConfigs, groupConfig)
+				allWriteRefs = append(allWriteRefs, writeRefs...)
+				allContextRefs = append(allContextRefs, contextRefs...)
+			}
+		} else {
+			groupConfig, writeRefs, contextRefs, err := buildGroup(experience.Model, experience.Write, experience.Readonly, experience.MaximumRunes)
+			if err != nil {
+				return nil, nil, err
+			}
+			groupConfigs = append(groupConfigs, groupConfig)
+			allWriteRefs = append(allWriteRefs, writeRefs...)
+			allContextRefs = append(allContextRefs, contextRefs...)
+		}
+		first := configuredGroups[0]
+		_ = first
+		providerModel := func() applicationoperator.ResumeTailoringExperienceModel {
+			policy := experience.Model
+			if len(configuredGroups) > 0 {
+				policy = configuredGroups[0].Model
+			}
+			candidate := models[strings.TrimSpace(policy.Provider)]
+			model, _ := candidate.(applicationoperator.ResumeTailoringExperienceModel)
+			return model
+		}()
+		timeout := 60 * time.Second
+		{
+			policy := experience.Model
+			if len(configuredGroups) > 0 {
+				policy = configuredGroups[0].Model
+			}
+			if parsed, err := time.ParseDuration(policy.Timeout); err == nil && parsed > 0 {
+				timeout = parsed
+			}
 		}
 		experienceProcessor, err := applicationoperator.NewModelResumeTailoringExperienceProcessor(applicationoperator.ModelResumeTailoringExperienceConfig{
-			Tag: provider, PromptVersion: experience.Model.PromptVersion, Instruction: experience.Model.Instruction,
-			MaximumRunes: experience.MaximumRunes, Timeout: timeout, Model: experienceModel,
+			Tag: "experience-tailoring", PromptVersion: "v1", MaximumRunes: experience.MaximumRunes,
+			Timeout: timeout, Model: providerModel, Groups: groupConfigs,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -1662,6 +1789,8 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 				allowedPaths = append(allowedPaths, path)
 			}
 		}
+		allowedPaths = appendTailoringObjectPaths(allowedPaths, profile.Resume, allWriteRefs...)
+		allowedPaths = appendTailoringObjectPaths(allowedPaths, profile.Resume, allContextRefs...)
 	}
 	switch len(processors) {
 	case 0:
