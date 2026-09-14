@@ -71,6 +71,13 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 			}
 			needsSync = needsSync || changed
 		}
+		if observation.Status != core.ConversationActive {
+			// The platform closed the chat, which is how answered questionnaires
+			// end; pending reminders are not meaningful any more.
+			if err := workflow.cancelPendingFollowUps(ctx, stored.ID); err != nil {
+				return result, fmt.Errorf("cancel follow-ups for %s: %w", observation.ExternalID, err)
+			}
+		}
 		if observation.LastMessage != nil {
 			messageID, err := workflow.ids.NewID("message")
 			if err != nil {
@@ -102,6 +109,24 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		}
 	}
 	return result, nil
+}
+
+// cancelPendingFollowUps removes scheduled reminders of a chat the platform
+// closed. A later observation of an active conversation may schedule new ones.
+func (workflow *ConversationWorkflow) cancelPendingFollowUps(ctx context.Context, conversationID core.ConversationID) error {
+	followUps, err := workflow.repository.ListFollowUps(ctx, storage.FollowUpFilter{ConversationID: conversationID})
+	if err != nil {
+		return err
+	}
+	for _, followUp := range followUps {
+		if followUp.Status != core.FollowUpScheduled && followUp.Status != core.FollowUpQueued {
+			continue
+		}
+		if _, err := workflow.CancelFollowUp(ctx, followUp.ID, core.FollowUpConversationInactive); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Context, conversationID core.ConversationID, requestKey string, priority core.TaskPriority) (bool, error) {
