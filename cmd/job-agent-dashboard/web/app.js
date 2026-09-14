@@ -183,8 +183,19 @@ function renderApplicationObjects() {
     checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
-    if (url) { const link = text("a", "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link); }
     const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
+    const needsInput = validationSkipped || item.status === "waiting_validation";
+    const vacancyID = (url || "").match(/\/vacancy\/(\d+)/)?.[1];
+    if (needsInput && item.platform === "hh" && vacancyID) {
+      const questionnaire = text("a", "Открыть анкету", "table-link");
+      questionnaire.href = `https://hh.ru/applicant/vacancy_response?vacancyId=${encodeURIComponent(vacancyID)}`;
+      questionnaire.target = "_blank"; questionnaire.rel = "noopener noreferrer";
+      action.append(questionnaire);
+    }
+    if (url) {
+      if (action.childNodes.length) action.append(document.createTextNode(" "));
+      const link = text("a", needsInput ? "Вакансия ↗" : "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link);
+    }
     if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
