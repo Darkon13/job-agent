@@ -1037,12 +1037,15 @@ elements.replyForm.addEventListener("submit", async (event) => {
       };
       globalThis.setTimeout(confirm, 1200);
     }
-    elements.actionState.textContent = result.sent ? "Сообщение отправлено" : `Задача ${result.task_id} поставлена в очередь`;
-    if (state.selectedConversation?.id === conversationID) {
-      state.selectedMessages = [...state.selectedMessages, { id: `queued:${result.task_id}`, direction: "outgoing", kind: "text", status: "queued", text: value, occurred_at: new Date().toISOString() }];
+    if (result.closed) {
+      elements.actionState.textContent = "Работодатель закрыл чат — отклик больше не требует ответа";
+      state.selectedMessages = state.selectedMessages.filter((item) => !String(item.id).startsWith("pending-"));
       renderMessages(state.selectedMessages);
+      await refreshSummary();
+    } else {
+      elements.actionState.textContent = result.sent ? "Сообщение отправлено" : `Задача ${result.task_id} поставлена в очередь`;
+      await refreshSummary();
     }
-    await refreshSummary();
   } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
 });
 elements.markAllRead.addEventListener("click", async () => {
