@@ -109,6 +109,39 @@ func (sync liveConversationSync) SyncConversationNow(ctx context.Context, conver
 	return nil
 }
 
+// liveConversationSend runs the durable conversation.send handler inline for
+// the dashboard. The synthetic task reuses the same idempotency key as the
+// queue would, so a fallback enqueue cannot duplicate the platform message.
+type liveConversationSend struct {
+	repository *storesqlite.Store
+	handlers   *taskworker.ConversationHandlers
+}
+
+func (sender liveConversationSend) SendConversationNow(ctx context.Context, conversationID core.ConversationID, content core.MessageContent, replyToID core.MessageID, requestKey string) error {
+	conversation, err := sender.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	key, err := core.ConversationSendIdempotencyKey(conversationID, string(core.TaskConversationSend)+"\x00"+requestKey)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(core.ConversationSendPayload{ConversationID: conversationID, ReplyToID: replyToID, Content: content})
+	if err != nil {
+		return err
+	}
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: core.TaskID("task-live-" + requestKey), Type: core.TaskConversationSend, IdempotencyKey: key,
+		Source: "dashboard-live", Platform: conversation.Platform, ProfileID: conversation.ProfileID,
+		CorrelationID: core.CorrelationID("dashboard-live-" + requestKey), Payload: payload,
+		AvailableAt: time.Now().UTC(),
+	}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return sender.handlers.Send(ctx, task)
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if buildinfo.Requested(os.Args[1:]) {
@@ -595,6 +628,7 @@ func main() {
 	conversationAPI.ConfigureLiveReader(liveConversationSync{
 		repository: store, transports: conversationTransports, workflow: conversationWorkflow,
 	})
+	conversationAPI.ConfigureLiveSender(liveConversationSend{repository: store, handlers: conversationHandlers})
 	if answerRegistry != nil && len(knownConversationAnswers) > 0 {
 		conversationHandlers.ConfigureKnownAnswers(answerRegistry, func(profileID core.ProfileID) bool {
 			return knownConversationAnswers[profileID]

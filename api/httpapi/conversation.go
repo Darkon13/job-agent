@@ -27,12 +27,24 @@ type ConversationAPI struct {
 	repository storage.ConversationRepository
 	workflow   *workflow.ConversationWorkflow
 	live       ConversationLiveReader
+	liveSender ConversationLiveSender
 }
 
 // ConfigureLiveReader attaches the interactive read path. Without it the
 // messages endpoint only serves stored history.
 func (api *ConversationAPI) ConfigureLiveReader(reader ConversationLiveReader) {
 	api.live = reader
+}
+
+// ConversationLiveSender sends a dashboard message synchronously instead of
+// waiting for the durable queue. The durable enqueue stays the fallback.
+type ConversationLiveSender interface {
+	SendConversationNow(ctx context.Context, conversationID core.ConversationID, content core.MessageContent, replyToID core.MessageID, requestKey string) error
+}
+
+// ConfigureLiveSender attaches the interactive send path.
+func (api *ConversationAPI) ConfigureLiveSender(sender ConversationLiveSender) {
+	api.liveSender = sender
 }
 
 func NewConversationAPI(repository storage.ConversationRepository, conversationWorkflow *workflow.ConversationWorkflow) (*ConversationAPI, error) {
@@ -112,8 +124,17 @@ func (api *ConversationAPI) sendMessage(response http.ResponseWriter, request *h
 	if !decodeJSON(response, request, &body) {
 		return
 	}
-	task, created, err := api.workflow.EnqueueMessage(request.Context(),
-		core.ConversationID(request.PathValue("conversation_id")), body.Content, body.ReplyToID, key)
+	conversationID := core.ConversationID(request.PathValue("conversation_id"))
+	if api.liveSender != nil && request.URL.Query().Get("live") == "1" {
+		liveCtx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+		err := api.liveSender.SendConversationNow(liveCtx, conversationID, body.Content, body.ReplyToID, key)
+		cancel()
+		if err == nil {
+			writeJSON(response, http.StatusOK, map[string]bool{"sent": true})
+			return
+		}
+	}
+	task, created, err := api.workflow.EnqueueMessage(request.Context(), conversationID, body.Content, body.ReplyToID, key)
 	if err != nil {
 		writeError(response, err)
 		return
