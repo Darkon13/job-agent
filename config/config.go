@@ -217,6 +217,8 @@ type ConversationFollowUpSelectionConfig struct {
 	DeadlineAfter  core.Duration                  `json:"deadline_after,omitempty"`
 	Content        core.MessageContent            `json:"content"`
 	Policy         core.FollowUpPolicy            `json:"policy"`
+	Limit          int                            `json:"limit,omitempty"`
+	All            bool                           `json:"all,omitempty"`
 }
 
 func (configured ConversationFollowUpSelectionConfig) Payload(profileID core.ProfileID) core.ConversationFollowUpSelectPayload {
@@ -224,6 +226,7 @@ func (configured ConversationFollowUpSelectionConfig) Payload(profileID core.Pro
 		ProfileID: profileID, Strategy: configured.Strategy, MinimumSilence: configured.MinimumSilence,
 		RunAfter: configured.RunAfter, DeadlineAfter: configured.DeadlineAfter,
 		Content: configured.Content, Policy: configured.Policy,
+		Limit: configured.Limit, All: configured.All,
 	}
 }
 

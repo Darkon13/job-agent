@@ -35,11 +35,29 @@ func (handler *ConversationFollowUpSelectionHandler) Handle(ctx context.Context,
 	if task.ProfileID != payload.ProfileID {
 		return errors.New("conversation follow-up selection task identity mismatch")
 	}
-	_, err := handler.workflow.SelectAndScheduleFollowUp(ctx, workflow.SelectFollowUpRequest{
-		ProfileID: payload.ProfileID, Strategy: payload.Strategy,
-		MinimumSilence: payload.MinimumSilence.Value(), RunAfter: payload.RunAfter.Value(),
-		DeadlineAfter: payload.DeadlineAfter.Value(), Content: payload.Content, Policy: payload.Policy,
-		IdempotencyKey: task.IdempotencyKey,
-	})
-	return err
+	limit := payload.Limit
+	if payload.All {
+		limit = maximumFollowUpSelectionBatch
+	}
+	if limit == 0 {
+		limit = 1
+	}
+	for index := 0; index < limit; index++ {
+		result, err := handler.workflow.SelectAndScheduleFollowUp(ctx, workflow.SelectFollowUpRequest{
+			ProfileID: payload.ProfileID, Strategy: payload.Strategy,
+			MinimumSilence: payload.MinimumSilence.Value(), RunAfter: payload.RunAfter.Value(),
+			DeadlineAfter: payload.DeadlineAfter.Value(), Content: payload.Content, Policy: payload.Policy,
+			IdempotencyKey: fmt.Sprintf("%s#%d", task.IdempotencyKey, index),
+		})
+		if err != nil {
+			return err
+		}
+		if !result.Selected {
+			break
+		}
+	}
+	return nil
 }
+
+// maximumFollowUpSelectionBatch bounds one all-matching run.
+const maximumFollowUpSelectionBatch = 50

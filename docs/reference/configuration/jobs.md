@@ -81,6 +81,7 @@
 ```json
 "follow_up": {
   "strategy": "oldest_unanswered",
+  "all": true,
   "minimum_silence": "24h",
   "run_after": "72h",
   "deadline_after": "168h",

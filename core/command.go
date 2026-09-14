@@ -510,6 +510,10 @@ type ConversationFollowUpSelectPayload struct {
 	DeadlineAfter  Duration                  `json:"deadline_after,omitempty"`
 	Content        MessageContent            `json:"content"`
 	Policy         FollowUpPolicy            `json:"policy"`
+	// Limit caps how many conversations one run selects. All ignores Limit and
+	// selects every eligible conversation (bounded internally).
+	Limit int  `json:"limit,omitempty"`
+	All   bool `json:"all,omitempty"`
 }
 
 func (payload ConversationFollowUpPayload) Validate() error {
@@ -522,6 +526,9 @@ func (payload ConversationFollowUpPayload) Validate() error {
 func (payload ConversationFollowUpSelectPayload) Validate() error {
 	if payload.ProfileID == "" {
 		return errors.New("conversation follow-up selection requires profile")
+	}
+	if payload.Limit < 0 {
+		return errors.New("conversation follow-up selection limit must not be negative")
 	}
 	if err := payload.Strategy.Validate(); err != nil {
 		return err

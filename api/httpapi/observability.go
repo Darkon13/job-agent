@@ -67,6 +67,19 @@ type statusRecorder struct {
 	status int
 }
 
+// Flush keeps streaming responses (Server-Sent Events) flushing through the
+// access-log recorder instead of buffering in the wrapped writer.
+func (recorder *statusRecorder) Flush() {
+	if flusher, ok := recorder.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer to http.ResponseController.
+func (recorder *statusRecorder) Unwrap() http.ResponseWriter {
+	return recorder.ResponseWriter
+}
+
 func (recorder *statusRecorder) WriteHeader(status int) {
 	recorder.status = status
 	recorder.ResponseWriter.WriteHeader(status)

@@ -775,7 +775,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             ],
             "follow_up": {
               "strategy": "longest_silence",
-              "minimum_silence": "72h",
+              "minimum_silence": "120h",
               "run_after": "1m",
               "deadline_after": "24h",
               "content": {
@@ -786,10 +786,11 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
                 "require_active_conversation": true,
                 "max_follow_ups": 1,
                 "cooldown": "168h"
-              }
+              },
+              "all": true
             }
           },
-          "description": "Напоминание в самом тихом чате"
+          "description": "Напоминания во всех чатах, молчащих 5 дней"
         }
       ],
       "answer_sets": [
