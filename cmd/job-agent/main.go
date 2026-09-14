@@ -1634,6 +1634,35 @@ func applicationTailoringProcessor(profile appconfig.Profile, models map[string]
 			}
 		}
 	}
+	if experience, enabled := profile.Applications.TailoringExperience(); enabled {
+		provider := strings.TrimSpace(experience.Model.Provider)
+		candidate := models[provider]
+		if candidate == nil {
+			return nil, nil, fmt.Errorf("application tailoring experience references unavailable provider %q", provider)
+		}
+		experienceModel, ok := candidate.(applicationoperator.ResumeTailoringExperienceModel)
+		if !ok {
+			return nil, nil, fmt.Errorf("application tailoring model provider %q does not support experience rewrite", provider)
+		}
+		timeout, err := time.ParseDuration(experience.Model.Timeout)
+		if err != nil || timeout <= 0 {
+			return nil, nil, fmt.Errorf("application tailoring experience provider %q has invalid timeout %q", provider, experience.Model.Timeout)
+		}
+		experienceProcessor, err := applicationoperator.NewModelResumeTailoringExperienceProcessor(applicationoperator.ModelResumeTailoringExperienceConfig{
+			Tag: provider, PromptVersion: experience.Model.PromptVersion, Instruction: experience.Model.Instruction,
+			MaximumRunes: experience.MaximumRunes, Timeout: timeout, Model: experienceModel,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		processors = append(processors, experienceProcessor)
+		allowedPaths = append(allowedPaths, applicationoperator.ResumeExperiencePath(profile.Resume))
+		for _, path := range applicationoperator.ResumeTailoringExperienceReadPaths(profile.Resume) {
+			if !slices.Contains(allowedPaths, path) {
+				allowedPaths = append(allowedPaths, path)
+			}
+		}
+	}
 	switch len(processors) {
 	case 0:
 		return nil, nil, nil

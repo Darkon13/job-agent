@@ -255,6 +255,45 @@ func (client *Client) RewriteAbout(ctx context.Context, request applicationopera
 	}, nil
 }
 
+// RewriteExperience asks the model to rewrite work experience descriptions.
+// The operator validates and grounds the result locally before applying it.
+func (client *Client) RewriteExperience(ctx context.Context, request applicationoperator.ResumeTailoringExperienceRequest) (applicationoperator.ResumeTailoringExperienceResponse, error) {
+	if client == nil || client.httpClient == nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, errors.New("chat completions client is nil")
+	}
+	if strings.TrimSpace(request.Instruction) == "" || strings.TrimSpace(request.PromptVersion) == "" {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "chat.completions", Message: "instruction and prompt version are required",
+		}
+	}
+	contextJSON, err := json.Marshal(request)
+	if err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "chat.completions", Message: "encode resume tailoring experience context", Cause: err,
+		}
+	}
+	if len(contextJSON) > maximumRequestBytes {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "chat.completions", Message: "resume tailoring experience context is too large",
+		}
+	}
+	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction,
+		"Rewrite the resume experience descriptions from this structured context JSON:\n"+string(contextJSON),
+		`{"entries": [{"id": string, "description": string}]}`)
+	if err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, err
+	}
+	var result struct {
+		Entries []applicationoperator.ResumeTailoringExperienceEntry `json:"entries"`
+	}
+	if err := decodeStructured(content, &result); err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, err
+	}
+	return applicationoperator.ResumeTailoringExperienceResponse{
+		Entries: result.Entries, Model: meta.model, ResponseID: meta.responseID,
+	}, nil
+}
+
 type completionMeta struct {
 	model      string
 	responseID string

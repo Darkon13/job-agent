@@ -144,6 +144,70 @@ func (client *Client) Select(ctx context.Context, request applicationoperator.Re
 	}, nil
 }
 
+// RewriteExperience asks the model to rewrite work experience descriptions.
+// The caller validates the result locally against each entry and the vacancy.
+func (client *Client) RewriteExperience(ctx context.Context, request applicationoperator.ResumeTailoringExperienceRequest) (applicationoperator.ResumeTailoringExperienceResponse, error) {
+	if client == nil || client.httpClient == nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, errors.New("OpenAI Responses client is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, err
+	}
+	if strings.TrimSpace(request.Instruction) == "" || strings.TrimSpace(request.PromptVersion) == "" {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "instruction and prompt version are required",
+		}
+	}
+	contextJSON, err := json.Marshal(request)
+	if err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "encode resume tailoring experience context", Cause: err,
+		}
+	}
+	if len(contextJSON) > maximumRequestBytes {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailurePermanent, Operation: "responses.create", Message: "resume tailoring experience context is too large",
+		}
+	}
+	decoded, err := client.createResponse(ctx, "responses.create", request.Instruction,
+		"Rewrite the resume experience descriptions from this structured context JSON:\n"+string(contextJSON), resumeTailoringExperienceTextConfig())
+	if err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, err
+	}
+	structuredOutput := strings.TrimSpace(decoded.OutputText)
+	if structuredOutput == "" {
+		parts := make([]string, 0)
+		for _, output := range decoded.Output {
+			for _, content := range output.Content {
+				if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+					parts = append(parts, content.Text)
+				}
+			}
+		}
+		structuredOutput = strings.TrimSpace(strings.Join(parts, ""))
+	}
+	var result struct {
+		Entries []applicationoperator.ResumeTailoringExperienceEntry `json:"entries"`
+	}
+	outputDecoder := json.NewDecoder(strings.NewReader(structuredOutput))
+	outputDecoder.DisallowUnknownFields()
+	if err := outputDecoder.Decode(&result); err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create",
+			Message: "decode structured output", Cause: err,
+		}
+	}
+	if err := ensureJSONEOF(outputDecoder); err != nil {
+		return applicationoperator.ResumeTailoringExperienceResponse{}, &applicationoperator.ModelError{
+			Kind: applicationoperator.ModelFailureInvalidOutput, Operation: "responses.create",
+			Message: "decode structured output", Cause: err,
+		}
+	}
+	return applicationoperator.ResumeTailoringExperienceResponse{
+		Entries: result.Entries, Model: decoded.Model, ResponseID: decoded.ID,
+	}, nil
+}
+
 // RewriteAbout asks the model to rewrite the resume "About" section. The
 // caller anonymizes the context before the call and validates the result
 // locally against resume facts and the vacancy.
@@ -207,6 +271,31 @@ func (client *Client) RewriteAbout(ctx context.Context, request applicationopera
 	return applicationoperator.ResumeTailoringAboutResponse{
 		About: result.About, Model: decoded.Model, ResponseID: decoded.ID,
 	}, nil
+}
+
+func resumeTailoringExperienceTextConfig() responsesTextConfig {
+	return responsesTextConfig{Format: responsesTextFormat{
+		Type: "json_schema", Name: "resume_tailoring_experience", Strict: true,
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"entries": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":          map[string]any{"type": "string", "description": "Entry id from the request"},
+							"description": map[string]any{"type": "string", "description": "Rewritten experience description"},
+						},
+						"required":             []string{"id", "description"},
+						"additionalProperties": false,
+					},
+				},
+			},
+			"required":             []string{"entries"},
+			"additionalProperties": false,
+		},
+	}}
 }
 
 func resumeTailoringAboutTextConfig() responsesTextConfig {
