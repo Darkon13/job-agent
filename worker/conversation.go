@@ -154,6 +154,12 @@ func (handlers *ConversationHandlers) FollowUp(ctx context.Context, task core.Ta
 	}
 	message, err := handlers.sendMessage(ctx, task, conversation, followUp.AnchorMessageID, text)
 	if err != nil {
+		if conversationUnwritable(err) {
+			if _, cancelErr := handlers.workflow.CancelFollowUp(ctx, followUp.ID, core.FollowUpConversationInactive); cancelErr != nil {
+				return cancelErr
+			}
+			return handlers.workflow.CloseConversationDueToPlatform(ctx, conversation.ID)
+		}
 		return err
 	}
 	_, err = handlers.workflow.MarkFollowUpSent(ctx, followUp.ID, message.ID)
@@ -281,7 +287,21 @@ func (handlers *ConversationHandlers) answerKnownQuestion(ctx context.Context, c
 
 func (handlers *ConversationHandlers) send(ctx context.Context, task core.Task, conversation core.Conversation, replyToID core.MessageID, text string) error {
 	_, err := handlers.sendMessage(ctx, task, conversation, replyToID, text)
+	if err != nil && conversationUnwritable(err) {
+		return handlers.workflow.CloseConversationDueToPlatform(ctx, conversation.ID)
+	}
 	return err
+}
+
+// conversationUnwritable reports that the platform permanently disabled
+// writing in the chat; such a conversation is closed locally until a catalog
+// sync shows it writable again.
+func conversationUnwritable(err error) bool {
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) {
+		return false
+	}
+	return operationError.Category == core.ErrorPermanentFailure && strings.Contains(operationError.Message, "not writable")
 }
 
 func (handlers *ConversationHandlers) sendMessage(ctx context.Context, task core.Task, conversation core.Conversation, replyToID core.MessageID, text string) (core.ConversationMessage, error) {

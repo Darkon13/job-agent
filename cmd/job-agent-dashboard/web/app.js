@@ -436,6 +436,7 @@ function visibleConversations(items = []) {
   const query = state.conversationQuery.trim().toLocaleLowerCase("ru");
   const filtered = items.filter((item) => {
     if (state.account && item.profile_id !== state.account) return false;
+    if (!state.conversationFilter && ["closed", "rejected", "archived"].includes(String(item.status || ""))) return false;
     if (state.conversationFilter === "unread" && !item.unread_count) return false;
     if (state.conversationFilter === "questionnaire" && !item.questionnaire_open) return false;
     if (state.conversationFilter && !["unread", "questionnaire"].includes(state.conversationFilter) && item.status !== state.conversationFilter) return false;
