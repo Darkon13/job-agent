@@ -30,13 +30,13 @@ const applicationGroupLabels = {
   imported: "Импортировано (appltool)",
 };
 const queuedApplicationStatuses = new Set(["new", "preparing", "ready", "submitting", "pending_reconciliation"]);
-const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
+const inputDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required", "unsupported_response_flow"]);
 const taskStatusLabels = { new: "Ожидает", processing: "Выполняется", waiting_confirmation: "Нужно решение", retry_scheduled: "Повтор запланирован", completed: "Завершена", failed: "Ошибка", dismissed: "Закрыта" };
 const campaignStatusLabels = { running: "Выполняется", target_reached: "Цель достигнута", exhausted: "Вакансии закончились", paused_budget: "Пауза: лимит", paused_rate_limit: "Пауза: rate limit", failed: "Ошибка" };
 const conversationStatusLabels = { active: "Активный", closed: "Закрыт", rejected: "Отказ", archived: "Архив" };
 const reviewStatusLabels = { pending: "Подготовка", waiting_answer: "Ждёт ответа", answer_recorded: "Ответ записан", completed: "Завершена", cancelled: "Отменена", unsupported: "Не поддерживается", expired: "Истекла" };
 const activityKindLabels = { "vacancy.inspected": "Просмотрена вакансия", "application.submitted": "Отправлен отклик", "conversation.message_sent": "Отправлено сообщение", "resume.touched": "Поднято резюме" };
-const decisionLabels = { qualified: "Проверки пройдены", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
+const decisionLabels = { qualified: "Проверки пройдены", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", unsupported_response_flow: "Платформа вернула неподдерживаемый сценарий отклика", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
