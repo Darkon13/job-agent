@@ -29,6 +29,7 @@ import (
 	"github.com/Darkon13/job-agent/operator/openaichat"
 	"github.com/Darkon13/job-agent/operator/openairesponses"
 	jobscheduler "github.com/Darkon13/job-agent/scheduler"
+	"github.com/Darkon13/job-agent/storage"
 	storesqlite "github.com/Darkon13/job-agent/storage/sqlite"
 	taskworker "github.com/Darkon13/job-agent/worker"
 	"github.com/Darkon13/job-agent/workflow"
@@ -67,6 +68,45 @@ func dashboardProfiles(cfg appconfig.Config, contacts map[core.ProfileID]applica
 		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName})
 	}
 	return profiles
+}
+
+// liveConversationSync mirrors the durable conversation.sync worker for the
+// interactive dashboard path: read through the profile transport, store the
+// presentation and messages, and let the background task chain handle
+// auto-answers.
+type liveConversationSync struct {
+	repository *storesqlite.Store
+	transports *taskworker.ConversationTransportRegistry
+	workflow   *workflow.ConversationWorkflow
+}
+
+func (sync liveConversationSync) SyncConversationNow(ctx context.Context, conversationID core.ConversationID) error {
+	conversation, err := sync.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	transport, err := sync.transports.Resolve(conversation.ProfileID)
+	if err != nil {
+		return err
+	}
+	result, err := transport.SyncConversation(ctx, conversation.ProfileID, conversation.ID, conversation.ExternalID)
+	if err != nil {
+		return err
+	}
+	if result.ObservedAt.IsZero() {
+		return errors.New("conversation sync returned zero observation time")
+	}
+	if err := sync.workflow.ObserveConversationPresentation(ctx, conversation.ID, result.Presentation, result.ObservedAt); err != nil {
+		return err
+	}
+	for _, message := range result.Messages {
+		if _, _, err := sync.repository.AppendConversationMessage(ctx, message, result.ObservedAt); err != nil {
+			if !errors.Is(err, storage.ErrConversationMessageConflict) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func main() {
@@ -552,6 +592,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("create conversation handlers: %v", err)
 	}
+	conversationAPI.ConfigureLiveReader(liveConversationSync{
+		repository: store, transports: conversationTransports, workflow: conversationWorkflow,
+	})
 	if answerRegistry != nil && len(knownConversationAnswers) > 0 {
 		conversationHandlers.ConfigureKnownAnswers(answerRegistry, func(profileID core.ProfileID) bool {
 			return knownConversationAnswers[profileID]

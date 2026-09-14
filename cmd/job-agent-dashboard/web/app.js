@@ -972,7 +972,7 @@ async function selectConversation(conversation) {
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
-    const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
+    const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`);
     if (state.selectedConversation?.id !== conversation.id) return;
     state.selectedMessages = result.items || []; renderMessages(state.selectedMessages);
   } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }

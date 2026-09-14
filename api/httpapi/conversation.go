@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,9 +17,22 @@ import (
 	"github.com/Darkon13/job-agent/workflow"
 )
 
+// ConversationLiveReader performs a synchronous, interactive chat read for
+// the dashboard. The durable task chain stays the background path.
+type ConversationLiveReader interface {
+	SyncConversationNow(ctx context.Context, conversationID core.ConversationID) error
+}
+
 type ConversationAPI struct {
 	repository storage.ConversationRepository
 	workflow   *workflow.ConversationWorkflow
+	live       ConversationLiveReader
+}
+
+// ConfigureLiveReader attaches the interactive read path. Without it the
+// messages endpoint only serves stored history.
+func (api *ConversationAPI) ConfigureLiveReader(reader ConversationLiveReader) {
+	api.live = reader
 }
 
 func NewConversationAPI(repository storage.ConversationRepository, conversationWorkflow *workflow.ConversationWorkflow) (*ConversationAPI, error) {
@@ -67,7 +81,16 @@ func (api *ConversationAPI) getConversation(response http.ResponseWriter, reques
 }
 
 func (api *ConversationAPI) listMessages(response http.ResponseWriter, request *http.Request) {
-	messages, err := api.repository.ConversationMessages(request.Context(), core.ConversationID(request.PathValue("conversation_id")))
+	conversationID := core.ConversationID(request.PathValue("conversation_id"))
+	if api.live != nil && request.URL.Query().Get("live") == "1" {
+		// Interactive reads are best effort: the durable sync remains the
+		// reliable path, so a slow or failed live read still answers with the
+		// stored history.
+		liveCtx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
+		_ = api.live.SyncConversationNow(liveCtx, conversationID)
+		cancel()
+	}
+	messages, err := api.repository.ConversationMessages(request.Context(), conversationID)
 	if err != nil {
 		writeError(response, err)
 		return
