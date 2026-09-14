@@ -376,6 +376,34 @@
           "secondary"
         ]
       }
+    },
+    {
+      "tag": "cleanup-rejected-applications",
+      "enabled": true,
+      "triggers": [
+        {
+          "type": "cron",
+          "expression": "30 4 * * *",
+          "timezone": "Europe/Moscow",
+          "misfire": "run_once",
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
+        }
+      ],
+      "concurrency": "forbid",
+      "action": {
+        "type": "application.retention",
+        "profiles": [
+          "primary",
+          "secondary"
+        ],
+        "retention": {
+          "stale_after": "720h",
+          "remove_rejected": true
+        }
+      }
     }
   ],
   "answer_sets": [
