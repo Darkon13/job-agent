@@ -197,6 +197,18 @@ type ApplicationStateObservationResult struct {
 // ApplicationStateObserver reads the applicant-visible state of all current
 // response objects. Retention must use a complete fresh result, never infer an
 // invitation or rejection from chat text.
+// ApplicationWithdrawalResult reports how the platform removal was performed:
+// "decline" cancels a pending response, "trash" hides a closed negotiation.
+type ApplicationWithdrawalResult struct {
+	Action string `json:"action"`
+}
+
+// ApplicationWithdrawer removes or cancels an application on the platform. The
+// caller removes the local record only after this call succeeds.
+type ApplicationWithdrawer interface {
+	WithdrawApplication(ctx context.Context, profileID core.ProfileID, state core.ApplicationPlatformState) (ApplicationWithdrawalResult, error)
+}
+
 type ApplicationStateObserver interface {
 	ObserveApplicationStates(ctx context.Context, profileID core.ProfileID) (ApplicationStateObservationResult, error)
 }
