@@ -192,3 +192,8 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .auth-result { margin: 0.75rem 0 0; }
 
 [hidden] { display: none !important; }
+
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 1080px; }
+.task-actions { white-space: nowrap; }
+.task-actions > * + * { margin-left: .35rem; }

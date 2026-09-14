@@ -50,6 +50,13 @@ type JobSchedule struct {
 	JitterMax    string    `json:"jitter_max,omitempty"`
 }
 
+// JobRunCommandDescriptor exposes one command of a runnable job so clients can
+// show per-profile parameters instead of the first profile only.
+type JobRunCommandDescriptor struct {
+	ProfileID core.ProfileID  `json:"profile_id"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
 type JobRunDescriptor struct {
 	Tag       string            `json:"tag"`
 	TaskType  core.TaskType     `json:"task_type"`
@@ -59,6 +66,7 @@ type JobRunDescriptor struct {
 	Priority  core.TaskPriority `json:"priority"`
 	Payload   json.RawMessage   `json:"payload,omitempty"`
 	Schedules []JobSchedule     `json:"schedules,omitempty"`
+	Commands  []JobRunCommandDescriptor `json:"commands,omitempty"`
 }
 
 type JobRunWorkflow struct {
@@ -163,6 +171,11 @@ func (definition JobRunDefinition) descriptor() JobRunDescriptor {
 		Tag: definition.Tag, TaskType: first.TaskType, Platform: first.Platform,
 		ProfileID: first.ProfileID, Priority: first.Priority,
 		Payload: append(json.RawMessage(nil), first.Payload...),
+	}
+	for _, command := range definition.Commands {
+		descriptor.Commands = append(descriptor.Commands, JobRunCommandDescriptor{
+			ProfileID: command.ProfileID, Payload: append(json.RawMessage(nil), command.Payload...),
+		})
 	}
 	if len(profiles) > 1 {
 		descriptor.Profiles = profiles

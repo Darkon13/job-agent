@@ -16,11 +16,11 @@ const elements = Object.fromEntries([
   "review-state", "review-filter", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
-  "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистить устаревшие отклики",
+  "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
   "questionnaire.answer": "Ответить на анкету", "test.complete": "Пройти тест", "test.capture": "Сохранить вопросы теста", "review.answer": "Сохранить проверенный ответ",
   "conversation.reply": "Ответить в чате", "conversation.send": "Отправить сообщение", "conversation.follow_up": "Отправить напоминание", "conversation.follow_up.select": "Выбрать чат для напоминания",
   "conversation.discover": "Обновить список чатов", "conversation.mark_read": "Пометить чат прочитанным", "conversation.sync": "Загрузить сообщения чата", "vacancy.inspect": "Открыть и изучить вакансию",
-  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить метрики резюме", "application.state.sync": "Синхронизировать состояния откликов",
+  "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить метрики резюме", "profile.session_refresh": "Обновить сессию профиля", "application.state.sync": "Синхронизировать состояния откликов",
   "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
   "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
 };
@@ -201,12 +201,12 @@ function renderApplicationObjects() {
     const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy || state.applicationLoading; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
     checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
-    const action = document.createElement("td"); const url = safeExternalURL(item.vacancy_url);
+    const action = document.createElement("td"); action.className = "task-actions"; const url = safeExternalURL(item.vacancy_url);
     const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
     const needsInput = validationSkipped || item.status === "waiting_validation";
     const vacancyID = (url || "").match(/\/vacancy\/(\d+)/)?.[1];
     if (needsInput && item.platform === "hh") {
-      const questionnaire = text("button", "Открыть анкету", "secondary compact"); questionnaire.type = "button";
+      const questionnaire = text("button", "Анкета", "secondary compact"); questionnaire.type = "button";
       questionnaire.disabled = state.applicationActionBusy;
       questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
       action.append(questionnaire);
@@ -289,6 +289,17 @@ function jobProfiles(item) {
   const profiles = Array.isArray(item.profiles) && item.profiles.length ? item.profiles : [item.profile_id];
   return profiles.filter(Boolean);
 }
+function jobParameterLines(item) {
+  const commands = Array.isArray(item.commands) ? item.commands : [];
+  if (commands.length > 1) {
+    return commands.map((command) => {
+      const summary = jobParameterSummary({ payload: command.payload });
+      return summary ? `${profileDisplayName(command.profile_id)}: ${summary}` : "";
+    }).filter(Boolean);
+  }
+  const summary = jobParameterSummary(item);
+  return summary ? [summary] : [];
+}
 function jobParameterSummary(item) {
   const payload = item.payload || {};
   const parts = [];
@@ -334,8 +345,7 @@ function renderJobs(items = []) {
     const row = document.createElement("tr");
     const action = document.createElement("td");
     action.append(text("div", taskTypeLabel(item.task_type)));
-    const summary = jobParameterSummary(item);
-    if (summary) action.append(text("div", summary, "muted"));
+    for (const line of jobParameterLines(item)) action.append(text("div", line, "muted"));
     const schedule = document.createElement("td");
     const lines = jobScheduleLines(item);
     if (lines.length) schedule.append(...lines.map((line) => text("div", line)));
