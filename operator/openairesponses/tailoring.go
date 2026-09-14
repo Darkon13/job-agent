@@ -291,6 +291,10 @@ func resumeTailoringExperienceTextConfig() responsesTextConfig {
 						"additionalProperties": false,
 					},
 				},
+				"order": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
 			},
 			"required":             []string{"entries"},
 			"additionalProperties": false,

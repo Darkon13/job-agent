@@ -440,6 +440,8 @@ type ApplicationTailoringSkillsPolicy struct {
 	Maximum       int                     `json:"maximum,omitempty"`
 	AllowRemovals bool                    `json:"allow_removals,omitempty"`
 	Model         *ApplicationModelPolicy `json:"model,omitempty"`
+	Write         []string                `json:"write,omitempty"`
+	Readonly      []string                `json:"readonly,omitempty"`
 }
 
 // SkipValidation reports whether questionnaire and test vacancies should be
@@ -461,6 +463,8 @@ type ApplicationTailoringAboutPolicy struct {
 	Enabled      bool                    `json:"enabled,omitempty"`
 	MaximumRunes int                     `json:"maximum_runes,omitempty"`
 	Model        *ApplicationModelPolicy `json:"model,omitempty"`
+	Write        []string                `json:"write,omitempty"`
+	Readonly     []string                `json:"readonly,omitempty"`
 }
 
 func (policy ApplicationPolicy) TailoringAbout() (ApplicationTailoringAboutPolicy, bool) {
@@ -473,7 +477,19 @@ func (policy ApplicationPolicy) TailoringAbout() (ApplicationTailoringAboutPolic
 // ApplicationTailoringExperiencePolicy rewrites work experience descriptions
 // for the current vacancy. It requires a model.
 type ApplicationTailoringExperiencePolicy struct {
-	Enabled      bool                    `json:"enabled,omitempty"`
+	Enabled      bool                                  `json:"enabled,omitempty"`
+	MaximumRunes int                                   `json:"maximum_runes,omitempty"`
+	Model        *ApplicationModelPolicy               `json:"model,omitempty"`
+	Write        []string                              `json:"write,omitempty"`
+	Readonly     []string                              `json:"readonly,omitempty"`
+	Groups       []ApplicationTailoringExperienceGroup `json:"groups,omitempty"`
+}
+
+// ApplicationTailoringExperienceGroup is one model request inside the
+// experience step: its own blocks, instruction and optional context.
+type ApplicationTailoringExperienceGroup struct {
+	Write        []string                `json:"write,omitempty"`
+	Readonly     []string                `json:"readonly,omitempty"`
 	MaximumRunes int                     `json:"maximum_runes,omitempty"`
 	Model        *ApplicationModelPolicy `json:"model,omitempty"`
 }
@@ -1139,6 +1155,28 @@ func validateModelProvider(config ModelProviderConfig) error {
 	return nil
 }
 
+func validateResumeTailoringObjects(processor string, write, readonly []string) error {
+	for _, value := range write {
+		ref, err := applicationoperator.ParseResumeTailoringObject(value)
+		if err != nil {
+			return err
+		}
+		if err := applicationoperator.ValidateResumeTailoringWriteObject(processor, ref); err != nil {
+			return err
+		}
+	}
+	for _, value := range readonly {
+		ref, err := applicationoperator.ParseResumeTailoringObject(value)
+		if err != nil {
+			return err
+		}
+		if err := applicationoperator.ValidateResumeTailoringReadObject(ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateApplicationModelPolicy(label string, policy *ApplicationModelPolicy, providers map[string]struct{}) error {
 	if policy == nil {
 		return nil
@@ -1339,6 +1377,9 @@ func (c Config) Validate() error {
 			if skills.Maximum < 1 {
 				return fmt.Errorf("profile %q application tailoring skills require a positive maximum", profile.Tag)
 			}
+			if err := validateResumeTailoringObjects("skills", skills.Write, skills.Readonly); err != nil {
+				return fmt.Errorf("profile %q application tailoring skills: %w", profile.Tag, err)
+			}
 			if skills.Model != nil {
 				if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), skills.Model, modelProviders); err != nil {
 					return err
@@ -1358,16 +1399,55 @@ func (c Config) Validate() error {
 			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), about.Model, modelProviders); err != nil {
 				return err
 			}
+			if err := validateResumeTailoringObjects("about", about.Write, about.Readonly); err != nil {
+				return fmt.Errorf("profile %q application tailoring about: %w", profile.Tag, err)
+			}
 		}
 		if experienceEnabled {
-			if experience.Model == nil {
-				return fmt.Errorf("profile %q application tailoring experience requires a model", profile.Tag)
-			}
-			if experience.MaximumRunes < 1 {
-				return fmt.Errorf("profile %q application tailoring experience requires a positive maximum_runes", profile.Tag)
-			}
-			if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), experience.Model, modelProviders); err != nil {
-				return err
+			if len(experience.Groups) > 0 {
+				if experience.Model != nil || len(experience.Write) > 0 || len(experience.Readonly) > 0 {
+					return fmt.Errorf("profile %q application tailoring experience cannot mix groups with model/write/readonly", profile.Tag)
+				}
+				targets := make(map[string]struct{})
+				for index, group := range experience.Groups {
+					label := fmt.Sprintf("profile %q application tailoring experience group %d", profile.Tag, index)
+					if group.Model == nil {
+						return fmt.Errorf("%s requires a model", label)
+					}
+					if group.MaximumRunes < 0 {
+						return fmt.Errorf("%s has a negative maximum_runes", label)
+					}
+					if err := validateApplicationModelPolicy(label, group.Model, modelProviders); err != nil {
+						return err
+					}
+					if err := validateResumeTailoringObjects("experience", group.Write, group.Readonly); err != nil {
+						return fmt.Errorf("%s: %w", label, err)
+					}
+					if len(group.Write) == 0 {
+						return fmt.Errorf("%s requires at least one write object", label)
+					}
+					for _, value := range group.Write {
+						ref, _ := applicationoperator.ParseResumeTailoringObject(value)
+						key := ref.String()
+						if _, duplicate := targets[key]; duplicate {
+							return fmt.Errorf("%s targets %q which another group also writes", label, key)
+						}
+						targets[key] = struct{}{}
+					}
+				}
+			} else {
+				if experience.Model == nil {
+					return fmt.Errorf("profile %q application tailoring experience requires a model", profile.Tag)
+				}
+				if experience.MaximumRunes < 1 {
+					return fmt.Errorf("profile %q application tailoring experience requires a positive maximum_runes", profile.Tag)
+				}
+				if err := validateApplicationModelPolicy(fmt.Sprintf("profile %q application tailoring", profile.Tag), experience.Model, modelProviders); err != nil {
+					return err
+				}
+				if err := validateResumeTailoringObjects("experience", experience.Write, experience.Readonly); err != nil {
+					return fmt.Errorf("profile %q application tailoring experience: %w", profile.Tag, err)
+				}
 			}
 		}
 		messageSources := 0

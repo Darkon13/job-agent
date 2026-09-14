@@ -53,6 +53,8 @@ type ModelResumeTailoringAboutConfig struct {
 	Facts         *ApplicationResumeContext
 	Contacts      ApplicationProfileContext
 	Model         ResumeTailoringAboutModel
+	// ContextObjects lists extra resume objects passed to the model as context.
+	ContextObjects []ResumeTailoringObjectReference
 }
 
 // ModelResumeTailoringAboutProcessor rewrites the declared "About" path with a
@@ -60,14 +62,15 @@ type ModelResumeTailoringAboutConfig struct {
 // invalid output, so skills tailoring can still proceed. Resume facts are
 // optional: without them the model works from the observed resume context.
 type ModelResumeTailoringAboutProcessor struct {
-	tag           string
-	promptVersion string
-	instruction   string
-	maximumRunes  int
-	timeout       time.Duration
-	facts         *ApplicationResumeContext
-	contacts      ApplicationProfileContext
-	model         ResumeTailoringAboutModel
+	contextObjects []ResumeTailoringObjectReference
+	tag            string
+	promptVersion  string
+	instruction    string
+	maximumRunes   int
+	timeout        time.Duration
+	facts          *ApplicationResumeContext
+	contacts       ApplicationProfileContext
+	model          ResumeTailoringAboutModel
 }
 
 func NewModelResumeTailoringAboutProcessor(config ModelResumeTailoringAboutConfig) (*ModelResumeTailoringAboutProcessor, error) {
@@ -128,6 +131,7 @@ func (processor *ModelResumeTailoringAboutProcessor) planWithModel(ctx context.C
 	if err != nil {
 		return ResumeTailoringPlan{}, err
 	}
+	mergeResumeTailoringContextObjects(input, processor.contextObjects, resumeContext)
 	anonymousContext, anonymousFacts, anonymousAbout, placeholders, err := processor.anonymize(input, resumeContext, current)
 	if err != nil {
 		return ResumeTailoringPlan{}, err
@@ -361,6 +365,41 @@ func resumeTailoringAboutContext(observation core.ProfileStateObservation, resum
 		return nil, nil
 	}
 	return context, nil
+}
+
+// mergeResumeTailoringContextObjects adds declared read-only objects to the
+// model context. Experience references contribute one block, other objects the
+// whole observed value.
+func mergeResumeTailoringContextObjects(input ResumeTailoringInput, refs []ResumeTailoringObjectReference, context map[string]any) {
+	if len(refs) == 0 || context == nil {
+		return
+	}
+	for _, ref := range refs {
+		path := ResumeTailoringObjectPath(input.ResumeID, ref)
+		raw, exists, err := input.CurrentState.ValueAt(path)
+		if err != nil || !exists || len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		if ref.Name == "experience" && (ref.EntryID != "" || ref.HasIndex) {
+			blocks, _ := value.([]any)
+			for index, block := range blocks {
+				asMap, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				if ResumeTailoringObjectMatchesEntry(ref, experienceBlockID(asMap, index), index) {
+					context[ref.String()] = asMap
+					break
+				}
+			}
+			continue
+		}
+		context[ref.String()] = value
+	}
 }
 
 func ResumeAboutPath(resumeID string) string {

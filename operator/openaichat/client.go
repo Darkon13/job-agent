@@ -279,18 +279,19 @@ func (client *Client) RewriteExperience(ctx context.Context, request application
 	}
 	content, meta, err := client.createCompletion(ctx, "chat.completions", request.Instruction,
 		"Rewrite the resume experience descriptions from this structured context JSON:\n"+string(contextJSON),
-		`{"entries": [{"id": string, "description": string}]}`)
+		`{"entries": [{"id": string, "description": string}], "order": [id]}`)
 	if err != nil {
 		return applicationoperator.ResumeTailoringExperienceResponse{}, err
 	}
 	var result struct {
 		Entries []applicationoperator.ResumeTailoringExperienceEntry `json:"entries"`
+		Order   []string                                             `json:"order,omitempty"`
 	}
 	if err := decodeStructured(content, &result); err != nil {
 		return applicationoperator.ResumeTailoringExperienceResponse{}, err
 	}
 	return applicationoperator.ResumeTailoringExperienceResponse{
-		Entries: result.Entries, Model: meta.model, ResponseID: meta.responseID,
+		Entries: result.Entries, Order: result.Order, Model: meta.model, ResponseID: meta.responseID,
 	}, nil
 }
 
