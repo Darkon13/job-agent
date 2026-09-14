@@ -194,6 +194,7 @@ type reviewAnswerRequest struct {
 	Text             string                     `json:"text,omitempty"`
 	Source           string                     `json:"source"`
 	Answers          []reviewBatchAnswerRequest `json:"answers,omitempty"`
+	Bank             *bool                      `json:"bank,omitempty"`
 }
 
 type reviewBatchAnswerRequest struct {
@@ -218,7 +219,7 @@ func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request
 	}
 	payload := core.ReviewAnswerPayload{
 		SessionID: session.ID, PromptID: body.PromptID, ExpectedRevision: body.ExpectedRevision,
-		SelectedOptions: body.SelectedOptions, Text: body.Text, Source: body.Source,
+		SelectedOptions: body.SelectedOptions, Text: body.Text, Source: body.Source, Bank: body.Bank,
 	}
 	for _, answer := range body.Answers {
 		payload.Answers = append(payload.Answers, core.ReviewAnswerEntry{
