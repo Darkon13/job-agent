@@ -1,5 +1,11 @@
 # Изменения
 
+## Unreleased
+
+- Runbook: описано ручное снятие протухшего runtime-lease
+  (`delete from runtime_instances`) после серии быстрых пересозданий
+  контейнера, когда guard не освободился сам за 90 секунд.
+
 ## 1.6.0
 
 - Отклики с решением `unsupported_response_flow` больше не попадают в «Не
