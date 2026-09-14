@@ -139,7 +139,17 @@ func (sender liveConversationSend) SendConversationNow(ctx context.Context, conv
 	if err != nil {
 		return err
 	}
-	return sender.handlers.Send(ctx, task)
+	if err := sender.handlers.Send(ctx, task); err != nil {
+		return err
+	}
+	current, err := sender.repository.Conversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if current.Status != core.ConversationActive {
+		return httpapi.ErrConversationClosed
+	}
+	return nil
 }
 
 func main() {

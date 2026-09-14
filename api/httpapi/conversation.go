@@ -36,6 +36,10 @@ func (api *ConversationAPI) ConfigureLiveReader(reader ConversationLiveReader) {
 	api.live = reader
 }
 
+// ErrConversationClosed reports that the platform refused the write and the
+// chat was closed locally; the dashboard should drop it instead of retrying.
+var ErrConversationClosed = errors.New("conversation is closed by the platform")
+
 // ConversationLiveSender sends a dashboard message synchronously instead of
 // waiting for the durable queue. The durable enqueue stays the fallback.
 type ConversationLiveSender interface {
@@ -131,6 +135,10 @@ func (api *ConversationAPI) sendMessage(response http.ResponseWriter, request *h
 		cancel()
 		if err == nil {
 			writeJSON(response, http.StatusOK, map[string]bool{"sent": true})
+			return
+		}
+		if errors.Is(err, ErrConversationClosed) {
+			writeJSON(response, http.StatusOK, map[string]bool{"closed": true})
 			return
 		}
 	}
