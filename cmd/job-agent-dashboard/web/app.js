@@ -357,7 +357,14 @@ function renderJobs(items = []) {
     const names = jobProfiles(item).map(profileDisplayName);
     if (names.length) profileCell.append(...names.map((name) => text("div", name)));
     else profileCell.append(text("span", "—", "muted"));
-    row.append(text("td", item.tag), action, profileCell, schedule, jobNextRunCell(item), run);
+    const jobCell = document.createElement("td");
+    if (item.description) {
+      jobCell.append(text("div", item.description));
+      jobCell.append(text("small", item.tag, "muted"));
+    } else {
+      jobCell.append(text("div", item.tag));
+    }
+    row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), run);
     return row;
   }));
   updateCountdowns();

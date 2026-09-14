@@ -168,6 +168,14 @@ func (client *BrowserReadClient) ReadVacancy(ctx context.Context, profileID core
 	}
 	title := htmlText(findHTMLByQA(document, "vacancy-title"))
 	if title == "" {
+		if browserVacancyPageLooksClosed(document) {
+			closed := &core.OperationError{
+				Category: core.ErrorValidationRequired, Operation: "vacancies.read.browser", Platform: Name,
+				Message:  "HH vacancy is closed or unavailable",
+				Metadata: map[string]string{"code": "vacancy_closed"},
+			}
+			return core.Vacancy{}, closed
+		}
 		return core.Vacancy{}, operationError(core.ErrorPermanentFailure, "vacancies.read.browser", "HH vacancy page has no vacancy title", nil)
 	}
 	employer := htmlText(findHTMLByQA(document, "vacancy-company-name"))
@@ -446,6 +454,30 @@ func htmlAttribute(node *html.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// browserVacancyPageLooksClosed recognises the archived or unavailable vacancy
+// page, which has no title but explains the closure in its body.
+func browserVacancyPageLooksClosed(document *html.Node) bool {
+	rendered, err := renderHTMLNodeForText(document)
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(rendered)
+	for _, marker := range []string{"вакансия закрыта", "вакансия не найдена", "вакансия удалена", "архив"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderHTMLNodeForText(node *html.Node) (string, error) {
+	var builder strings.Builder
+	if err := html.Render(&builder, node); err != nil {
+		return "", err
+	}
+	return builder.String(), nil
 }
 
 func htmlText(node *html.Node) string {

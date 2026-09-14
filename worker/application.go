@@ -706,6 +706,20 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		operationError.RetryAfter = &resetAt
 	}
+	if operationError.Metadata["code"] == "vacancy_closed" {
+		application.DecisionCode = "vacancy_closed"
+		application.DecisionReason = "HH сообщил, что вакансия закрыта или недоступна"
+		if err := application.Transition(core.ApplicationSkipped, now); err != nil {
+			return err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		if err := handler.releaseBudget(ctx, application, now); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
+	}
 	switch operationError.Category {
 	case core.ErrorAmbiguousResult:
 		if err := application.Transition(core.ApplicationPendingReconcile, now); err != nil {
