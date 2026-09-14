@@ -168,6 +168,26 @@ const conversationUpdateAttempts = 5
 // and per-chat syncs can revise the same conversation concurrently, so a
 // revision conflict is retried against the fresh revision instead of failing
 // the whole catalog observation.
+// CloseConversationDueToPlatform marks the chat closed after the platform
+// refused a write. A later catalog sync reopens it if the platform shows the
+// conversation active again.
+func (workflow *ConversationWorkflow) CloseConversationDueToPlatform(ctx context.Context, conversationID core.ConversationID) error {
+	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
+		if conversation.Status == core.ConversationClosed {
+			return false, nil
+		}
+		now := workflow.clock.Now()
+		if now.Before(conversation.UpdatedAt) {
+			now = conversation.UpdatedAt
+		}
+		if err := conversation.SetStatus(core.ConversationClosed, now); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
+	return err
+}
+
 func (workflow *ConversationWorkflow) updateConversation(ctx context.Context, conversationID core.ConversationID, mutate func(*core.Conversation) (bool, error)) (bool, error) {
 	for attempt := 0; attempt < conversationUpdateAttempts; attempt++ {
 		conversation, err := workflow.repository.Conversation(ctx, conversationID)
