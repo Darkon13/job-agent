@@ -1,6 +1,6 @@
 # Изменения
 
-## Unreleased
+## 1.4.0
 
 - Tailoring умеет переписывать опыт: `tailoring.experience` задаёт
   `write`/`readonly` **объектами** резюме (`title`, `keySkills`, `about`,
