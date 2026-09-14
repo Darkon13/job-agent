@@ -250,6 +250,9 @@ type ReviewAnswerPayload struct {
 	Text             string              `json:"text,omitempty"`
 	Source           string              `json:"source"`
 	Answers          []ReviewAnswerEntry `json:"answers,omitempty"`
+	// Bank marks the answer for the reusable answer block. Nil keeps the
+	// historical default (save); false keeps the answer session-local.
+	Bank *bool `json:"bank,omitempty"`
 }
 
 func (payload ReviewAnswerPayload) Validate() error {

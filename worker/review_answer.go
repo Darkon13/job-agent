@@ -83,7 +83,9 @@ func (handler *ReviewAnswerHandler) Handle(ctx context.Context, task core.Task) 
 		return err
 	}
 	if handler.revisions != nil {
-		if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
+		if payload.Bank != nil && !*payload.Bank {
+			// The operator kept this answer session-local.
+		} else if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
 			return err
 		}
 	}
@@ -153,7 +155,9 @@ func (handler *ReviewAnswerHandler) handleBatch(ctx context.Context, session cor
 			return err
 		}
 		if handler.revisions != nil {
-			if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
+			if payload.Bank != nil && !*payload.Bank {
+				// The operator kept this batch out of the reusable bank.
+			} else if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
 				return err
 			}
 		}

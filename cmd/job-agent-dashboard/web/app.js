@@ -762,6 +762,13 @@ function renderReviewPrompt() {
   }
   const form = document.createElement("form"); form.className = "review-form";
   form.append(text("p", prompt.question.text, "review-question"));
+  const kindLabels = { single: "один вариант", multiple: "несколько вариантов", text: "текстовый ответ" };
+  const remaining = Array.isArray(detail.questions) ? detail.questions.length : 0;
+  form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · в банке ответа ещё нет${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
+  const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
+  const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
+  bankLabel.append(bankControl, text("span", "Сохранить ответ в банк — пригодится в других анкетах"));
+  form.append(bankLabel);
   let input;
   if (kind === "text") {
     input = document.createElement("textarea"); input.rows = 5; input.placeholder = "Ответ"; input.required = true;
@@ -813,6 +820,10 @@ function renderReviewBatch(detail) {
     block.append(input); form.append(block);
     fields.push({ question, input });
   }
+  const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
+  const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
+  bankLabel.append(bankControl, text("span", "Сохранить ответы в банк — пригодятся в других анкетах"));
+  form.append(bankLabel);
   const footer = document.createElement("div"); footer.className = "review-actions";
   const submit = text("button", "Сохранить все ответы"); submit.type = "submit";
   submit.disabled = state.reviewBusy || unsupported;
@@ -844,6 +855,7 @@ async function submitReviewBatch(detail, fields) {
   try {
     await enqueue(`/api/v1/review-sessions/${encodeURIComponent(detail.id)}/answers`, {
       expected_revision: detail.revision, source: "dashboard", answers,
+      bank: document.querySelector("#review-bank")?.checked !== false,
     });
     state.reviewMessage = "Ответы записаны, задача на отправку поставлена в очередь";
     await refreshSummary();
@@ -874,6 +886,7 @@ async function submitReviewAnswer(prompt, form, input, kind) {
     await enqueue(`/api/v1/review-sessions/${encodeURIComponent(state.reviewDetail.id)}/answers`, {
       prompt_id: prompt.id, expected_revision: prompt.revision,
       selected_options: selected, text: answerText, source: "dashboard",
+      bank: form.querySelector("#review-bank")?.checked !== false,
     });
     state.reviewMessage = "Ответ записан, задача поставлена в очередь";
     await refreshSummary();
