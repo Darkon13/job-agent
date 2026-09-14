@@ -742,6 +742,45 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "remove_rejected": true
             }
           }
+        },
+        {
+          "tag": "follow-up-unanswered",
+          "enabled": true,
+          "triggers": [
+            {
+              "type": "cron",
+              "expression": "0 11 * * *",
+              "timezone": "Europe/Moscow",
+              "misfire": "run_once",
+              "jitter": {
+                "min": "1m",
+                "max": "15m"
+              }
+            }
+          ],
+          "concurrency": "forbid",
+          "action": {
+            "type": "conversation.follow_up.select",
+            "profiles": [
+              "primary",
+              "secondary"
+            ],
+            "follow_up": {
+              "strategy": "oldest_unanswered",
+              "minimum_silence": "72h",
+              "run_after": "1m",
+              "deadline_after": "24h",
+              "content": {
+                "text": "Добрый день! Подскажите, пожалуйста, актуальна ли ещё вакансия?"
+              },
+              "policy": {
+                "cancel_on_incoming": true,
+                "require_active_conversation": true,
+                "max_follow_ups": 1,
+                "cooldown": "168h"
+              }
+            }
+          }
         }
       ],
       "answer_sets": [

@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -125,7 +126,58 @@ func (transport *ResumeTouchTransport) ObserveProfileActivity(ctx context.Contex
 		result.Invitations = statistics.Statistics.Invitations.Count
 		result.NewInvitations = statistics.Statistics.Invitations.CountNew
 	}
+	if score, hidden, ok := transport.observeRootActivityScore(ctx, client); ok {
+		result.Score = score
+		result.ScoreHidden = hidden
+	}
 	return result, nil
+}
+
+// observeRootActivityScore reads the applicant activity widget from the HH
+// root page. The root value is authoritative when present: the resumes page
+// only exposes a fuzzy percentage and an experiment flag.
+func (transport *ResumeTouchTransport) observeRootActivityScore(ctx context.Context, client *http.Client) (*int, bool, bool) {
+	endpoint := strings.TrimRight(transport.profileURL, "/")
+	if parsed, err := url.Parse(endpoint); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		endpoint = parsed.Scheme + "://" + parsed.Host + "/"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, false, false
+	}
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	request.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+	request.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, false, false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, false, false
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return nil, false, false
+	}
+	match := luxInitialStatePattern.FindSubmatch(data)
+	if len(match) != 2 {
+		return nil, false, false
+	}
+	var state struct {
+		ApplicantActivity struct {
+			UserActivityScore *int  `json:"userActivityScore"`
+			ShowActivity      *bool `json:"showActivity"`
+		} `json:"applicantActivity"`
+	}
+	if err := json.Unmarshal([]byte(html.UnescapeString(string(match[1]))), &state); err != nil {
+		return nil, false, false
+	}
+	if state.ApplicantActivity.UserActivityScore == nil {
+		return nil, false, false
+	}
+	hidden := state.ApplicantActivity.ShowActivity != nil && !*state.ApplicantActivity.ShowActivity
+	return state.ApplicantActivity.UserActivityScore, hidden, true
 }
 
 func experimentEnabled(value any) bool {
