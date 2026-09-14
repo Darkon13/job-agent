@@ -85,6 +85,8 @@ func newDashboardHandler(upstreamValue, apiToken string) (http.Handler, error) {
 		return nil, errors.New("API upstream must be an http(s) origin without credentials, path, query or fragment")
 	}
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	// Stream Server-Sent Events immediately instead of buffering them.
+	proxy.FlushInterval = -1
 	proxy.ErrorHandler = func(response http.ResponseWriter, _ *http.Request, proxyErr error) {
 		log.Printf("dashboard API proxy: %v", proxyErr)
 		response.Header().Set("Content-Type", "application/json")
