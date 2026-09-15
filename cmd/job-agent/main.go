@@ -757,7 +757,7 @@ func main() {
 	}
 	workers = append(workers, applicationStateSyncWorker)
 	activityMaintainHandler, err := taskworker.NewActivityMaintainHandler(
-		store, store, applicationTransports, store, taskworker.SystemClock{},
+		store, store, applicationTransports, store, store, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create activity maintain handler: %v", err)
@@ -2560,8 +2560,23 @@ func profileActivityMaintainDefinitions(cfg appconfig.Config, instances map[stri
 				logf("profile activity maintain %q is disabled until profile %q has a browser read session", job.Tag, profile.Tag)
 				continue
 			}
+			var query json.RawMessage
+			for _, search := range cfg.Searches {
+				var meta struct {
+					Source string `json:"source"`
+				}
+				_ = json.Unmarshal(search.Query, &meta)
+				if meta.Source != "global" || !slices.Contains(search.Profiles, target) {
+					continue
+				}
+				query = search.Query
+				break
+			}
+			if len(query) == 0 {
+				logf("profile activity maintain %q has no global search for profile %q; using the application queue", job.Tag, profile.Tag)
+			}
 			payload, err := json.Marshal(core.ProfileActivityMaintainPayload{
-				ProfileID: profileID, Count: job.Action.Count, Pause: job.Action.Pause,
+				ProfileID: profileID, Count: job.Action.Count, Pause: job.Action.Pause, Query: query,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)

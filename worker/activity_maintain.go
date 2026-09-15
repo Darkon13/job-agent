@@ -22,6 +22,7 @@ type ActivityMaintainHandler struct {
 	vacancies  storage.VacancyRepository
 	transports *ApplicationTransportRegistry
 	activity   storage.ProfileActivityRepository
+	snapshots  storage.ProfileActivitySnapshotRepository
 	clock      Clock
 }
 
@@ -32,12 +33,13 @@ func NewActivityMaintainHandler(
 	vacancies storage.VacancyRepository,
 	transports *ApplicationTransportRegistry,
 	activity storage.ProfileActivityRepository,
+	snapshots storage.ProfileActivitySnapshotRepository,
 	clock Clock,
 ) (*ActivityMaintainHandler, error) {
-	if applications == nil || vacancies == nil || transports == nil || activity == nil || clock == nil {
-		return nil, errors.New("activity maintain handler requires applications, vacancies, transports, activity and clock")
+	if applications == nil || vacancies == nil || transports == nil || activity == nil || snapshots == nil || clock == nil {
+		return nil, errors.New("activity maintain handler requires applications, vacancies, transports, activity, snapshots and clock")
 	}
-	return &ActivityMaintainHandler{applications: applications, vacancies: vacancies, transports: transports, activity: activity, clock: clock}, nil
+	return &ActivityMaintainHandler{applications: applications, vacancies: vacancies, transports: transports, activity: activity, snapshots: snapshots, clock: clock}, nil
 }
 
 func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Task) error {
@@ -51,40 +53,28 @@ func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Ta
 	if payload.ProfileID != task.ProfileID {
 		return errors.New("profile activity maintain task profile does not match payload")
 	}
-	reader, err := handler.transports.ResolveVacancyReader(payload.ProfileID)
-	if err != nil {
-		return err
+	if handler.activityAtMaximum(ctx, payload.ProfileID) {
+		// Nothing to top up: the score is already at the platform maximum.
+		return nil
 	}
-	applications, err := handler.applications.ListApplications(ctx, storage.ApplicationFilter{
-		ProfileID: payload.ProfileID, Limit: 200,
-	})
+	targets, err := handler.targets(ctx, payload)
 	if err != nil {
 		return err
 	}
 	viewed := 0
-	for _, application := range applications {
+	for _, target := range targets {
 		if viewed >= payload.Count {
 			break
 		}
-		switch application.Status {
-		case core.ApplicationNew, core.ApplicationPreparing, core.ApplicationReady:
-		default:
-			continue
-		}
-		vacancy, err := reader.ReadVacancy(ctx, application.Key.ProfileID, application.Key.Vacancy)
+		vacancy, err := target()
 		if err != nil {
-			// A closed or unavailable vacancy is not an activity failure; the
-			// submit flow will classify it.
-			continue
-		}
-		if vacancy.Key() != application.Key.Vacancy || vacancy.Validate() != nil {
 			continue
 		}
 		if _, err := handler.vacancies.UpsertVacancy(ctx, vacancy); err != nil {
 			continue
 		}
-		if err := recordProfileActivity(ctx, handler.activity, vacancy.Platform, application.Key.ProfileID, "",
-			core.ProfileActivityVacancyInspected, string(application.ID), handler.clock.Now()); err != nil {
+		if err := recordProfileActivity(ctx, handler.activity, vacancy.Platform, payload.ProfileID, "",
+			core.ProfileActivityVacancyInspected, vacancy.ExternalID, handler.clock.Now()); err != nil {
 			return err
 		}
 		viewed++
@@ -97,4 +87,63 @@ func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Ta
 		}
 	}
 	return nil
+}
+
+func (handler *ActivityMaintainHandler) activityAtMaximum(ctx context.Context, profileID core.ProfileID) bool {
+	snapshots, err := handler.snapshots.ListProfileActivitySnapshots(ctx, storage.ProfileActivitySnapshotFilter{
+		ProfileID: profileID, Limit: 1,
+	})
+	if err != nil || len(snapshots) == 0 {
+		return false
+	}
+	score := snapshots[0].Score
+	return score != nil && *score >= 100
+}
+
+// targets returns lazy vacancy views: either fresh global search results or
+// the profile application queue when no search query was configured.
+func (handler *ActivityMaintainHandler) targets(ctx context.Context, payload core.ProfileActivityMaintainPayload) ([]func() (core.Vacancy, error), error) {
+	reader, err := handler.transports.ResolveVacancyReader(payload.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]func() (core.Vacancy, error), 0, payload.Count)
+	if len(payload.Query) > 0 {
+		searcher, err := handler.transports.ResolveVacancySearcher(payload.ProfileID)
+		if err != nil {
+			return nil, err
+		}
+		page, err := searcher.Search(ctx, payload.ProfileID, payload.Query, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, vacancy := range page.Vacancies {
+			vacancy := vacancy
+			if vacancy.State != core.VacancyStateOpen {
+				continue
+			}
+			targets = append(targets, func() (core.Vacancy, error) {
+				return reader.ReadVacancy(ctx, payload.ProfileID, vacancy.Key())
+			})
+		}
+		return targets, nil
+	}
+	applications, err := handler.applications.ListApplications(ctx, storage.ApplicationFilter{
+		ProfileID: payload.ProfileID, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, application := range applications {
+		switch application.Status {
+		case core.ApplicationNew, core.ApplicationPreparing, core.ApplicationReady:
+		default:
+			continue
+		}
+		application := application
+		targets = append(targets, func() (core.Vacancy, error) {
+			return reader.ReadVacancy(ctx, application.Key.ProfileID, application.Key.Vacancy)
+		})
+	}
+	return targets, nil
 }

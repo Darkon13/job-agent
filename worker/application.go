@@ -157,6 +157,23 @@ func (registry *ApplicationTransportRegistry) ResolveVacancyReader(profileID cor
 	return reader, nil
 }
 
+// ResolveVacancySearcher returns the search-capable view of the profile reader
+// so the activity maintain job can pick fresh vacancies from the global search.
+func (registry *ApplicationTransportRegistry) ResolveVacancySearcher(profileID core.ProfileID) (adapter.VacancySearcher, error) {
+	reader, err := registry.ResolveVacancyReader(profileID)
+	if err != nil {
+		return nil, err
+	}
+	searcher, ok := reader.(adapter.VacancySearcher)
+	if !ok {
+		return nil, &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "profile.activity.maintain",
+			Message: "profile vacancy reader cannot search",
+		}
+	}
+	return searcher, nil
+}
+
 func (registry *ApplicationTransportRegistry) ResolveSuitableResumeReader(profileID core.ProfileID) (adapter.SuitableResumeReader, error) {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
