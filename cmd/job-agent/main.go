@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1042,7 +1043,9 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions)
+	reloadStatus := &configReloadStatus{}
+	runtimeAPI.ConfigureConfigStatus(reloadStatus.snapshot)
+	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions, reloadStatus)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -2169,7 +2172,32 @@ func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Prof
 // file is fully loaded and validated first, and only then the scheduler is
 // resynced. Campaign and search changes still require a restart because they
 // register routes in the campaign handler.
-func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error)) {
+type configReloadStatus struct {
+	mu     sync.Mutex
+	status httpapi.ConfigStatus
+}
+
+func (status *configReloadStatus) record(digest string, definitions int) {
+	status.mu.Lock()
+	defer status.mu.Unlock()
+	status.status = httpapi.ConfigStatus{
+		Digest: digest, AppliedAt: time.Now().UTC(), Definitions: definitions,
+	}
+}
+
+func (status *configReloadStatus) recordError(message string) {
+	status.mu.Lock()
+	defer status.mu.Unlock()
+	status.status.LastError = message
+}
+
+func (status *configReloadStatus) snapshot() httpapi.ConfigStatus {
+	status.mu.Lock()
+	defer status.mu.Unlock()
+	return status.status
+}
+
+func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error), status *configReloadStatus) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	defer signal.Stop(signals)
@@ -2183,6 +2211,7 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 			if message := err.Error(); message != lastError {
 				logf("config reload rejected: %v", err)
 				lastError = message
+				status.recordError(message)
 			}
 			return
 		}
@@ -2199,13 +2228,16 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 		definitions, err := build(fresh)
 		if err != nil {
 			logf("config reload rejected: %v", err)
+			status.recordError(err.Error())
 			return
 		}
 		if err := scheduler.Sync(ctx, definitions); err != nil {
 			logf("config reload failed: %v", err)
+			status.recordError(err.Error())
 			return
 		}
 		lastDigest = current
+		status.record(current, len(definitions))
 		logf("config reloaded: %d scheduled definitions applied; campaign and search changes still need a restart", len(definitions))
 	}
 	apply()

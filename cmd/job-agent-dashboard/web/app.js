@@ -687,6 +687,23 @@ function profileDisplayName(profileID) {
   return (entry && entry.display_name) || profileID;
 }
 
+function renderConfigState(status) {
+  const element = document.getElementById("config-state");
+  if (!element) return;
+  if (!status || !status.digest) { element.textContent = ""; element.title = ""; return; }
+  const digest = String(status.digest).slice(0, 8);
+  const applied = status.applied_at ? formatDate(status.applied_at) : "";
+  if (status.last_error) {
+    element.textContent = `конфиг: ошибка (${digest})`;
+    element.title = status.last_error;
+    element.className = "muted error";
+    return;
+  }
+  element.textContent = `конфиг: ${digest}${applied ? ` · ${applied}` : ""}`;
+  element.title = `Применено определений: ${status.definitions || 0}`;
+  element.className = "muted";
+}
+
 function renderAccountSwitcher(profiles = []) {
   const labels = new Map();
   for (const item of profiles) {
@@ -962,7 +979,7 @@ async function refreshSummary() {
     if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
-    renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }

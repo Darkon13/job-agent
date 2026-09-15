@@ -51,6 +51,12 @@ type RuntimeAPI struct {
 	profiles       []ProfileSummary
 	now            func() time.Time
 	questionnaires QuestionnaireCapturer
+	configStatus   func() ConfigStatus
+}
+
+// ConfigureConfigStatus attaches the live reload status shown in the summary.
+func (api *RuntimeAPI) ConfigureConfigStatus(provider func() ConfigStatus) {
+	api.configStatus = provider
 }
 
 // ConfigureQuestionnaireCapture attaches the capture enqueue. Without it the
@@ -59,7 +65,16 @@ func (api *RuntimeAPI) ConfigureQuestionnaireCapture(capturer QuestionnaireCaptu
 	api.questionnaires = capturer
 }
 
+// ConfigStatus reports the last applied configuration reload.
+type ConfigStatus struct {
+	Digest      string    `json:"digest,omitempty"`
+	AppliedAt   time.Time `json:"applied_at,omitempty"`
+	Definitions int       `json:"definitions,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
 type DashboardSummary struct {
+	Config            ConfigStatus                   `json:"config_status"`
 	GeneratedAt       time.Time                      `json:"generated_at"`
 	Profiles          []ProfileSummary               `json:"profiles,omitempty"`
 	Stats             storage.RuntimeStats           `json:"stats"`
@@ -352,7 +367,12 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		conversationSummaries = append(conversationSummaries, summary)
 	}
 	response.Header().Set("Cache-Control", "no-store")
+	configStatus := ConfigStatus{}
+	if api.configStatus != nil {
+		configStatus = api.configStatus()
+	}
 	writeJSON(response, http.StatusOK, DashboardSummary{
+		Config:            configStatus,
 		GeneratedAt:       api.now().UTC(),
 		Profiles:          api.profiles,
 		Stats:             stats,
