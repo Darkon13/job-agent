@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -115,6 +116,9 @@ type ProfileActivityMaintainPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	Count     int       `json:"count"`
 	Pause     Duration  `json:"pause,omitempty"`
+	// Query is the search used to pick vacancies to open. When empty the
+	// handler falls back to the profile application queue.
+	Query json.RawMessage `json:"query,omitempty"`
 }
 
 func (payload ProfileActivityMaintainPayload) Validate() error {
@@ -126,6 +130,9 @@ func (payload ProfileActivityMaintainPayload) Validate() error {
 	}
 	if payload.Pause.Value() < 0 {
 		return errors.New("profile activity maintain pause must not be negative")
+	}
+	if len(payload.Query) > 0 && !json.Valid(payload.Query) {
+		return errors.New("profile activity maintain query must be valid JSON")
 	}
 	return nil
 }
