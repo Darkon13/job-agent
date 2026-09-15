@@ -728,7 +728,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "triggers": [
             {
               "type": "cron",
-              "expression": "30 4 * * *",
+              "expression": "0 */3 * * *",
               "timezone": "Europe/Moscow",
               "misfire": "run_once",
               "jitter": {
@@ -749,7 +749,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
               "remove_rejected": true
             }
           },
-          "description": "Ежедневная очистка отказов и устаревших откликов"
+          "description": "Очистка отказов и устаревших откликов каждые 3 часа"
         },
         {
           "tag": "follow-up-unanswered",

@@ -390,7 +390,7 @@
       "triggers": [
         {
           "type": "cron",
-          "expression": "30 4 * * *",
+          "expression": "0 */3 * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
           "jitter": {
@@ -411,7 +411,7 @@
           "remove_rejected": true
         }
       },
-      "description": "Ежедневная очистка отказов и устаревших откликов"
+      "description": "Очистка отказов и устаревших откликов каждые 3 часа"
     },
     {
       "tag": "follow-up-unanswered",
