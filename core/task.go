@@ -32,6 +32,7 @@ const (
 	TaskResumeTouch                TaskType = "resume.touch"
 	TaskResumeUpdate               TaskType = "resume.update"
 	TaskProfileActivityObserve     TaskType = "profile.activity.observe"
+	TaskProfileActivityMaintain    TaskType = "profile.activity.maintain"
 	TaskProfileSessionRefresh      TaskType = "profile.session_refresh"
 	TaskProfileBootstrap           TaskType = "profile.bootstrap"
 	TaskProfileStateReconcile      TaskType = "profile_state.reconcile"

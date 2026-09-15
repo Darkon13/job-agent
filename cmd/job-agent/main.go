@@ -756,6 +756,17 @@ func main() {
 		log.Fatalf("create application state sync worker: %v", err)
 	}
 	workers = append(workers, applicationStateSyncWorker)
+	activityMaintainHandler, err := taskworker.NewActivityMaintainHandler(
+		store, store, applicationTransports, store, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create activity maintain handler: %v", err)
+	}
+	activityMaintainWorker, err := newTaskWorker(store, core.TaskProfileActivityMaintain, activityMaintainHandler.Handle)
+	if err != nil {
+		log.Fatalf("create activity maintain worker: %v", err)
+	}
+	workers = append(workers, activityMaintainWorker)
 	if resumeTouchers.Count() > 0 {
 		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -968,6 +979,11 @@ func main() {
 		log.Fatalf("build application state sync scheduled jobs: %v", err)
 	}
 	definitions = append(definitions, stateSyncDefinitions...)
+	activityMaintainDefinitions, err := profileActivityMaintainDefinitions(cfg, instances, applicationTransports)
+	if err != nil {
+		log.Fatalf("build profile activity maintain scheduled jobs: %v", err)
+	}
+	definitions = append(definitions, activityMaintainDefinitions...)
 	profileStateDefinitions, err := profileStateReconcileDefinitions(
 		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 	)
@@ -2516,6 +2532,47 @@ func applicationRetentionDefinitions(cfg appconfig.Config, instances map[string]
 					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
 					Expression: trigger.Expression, Timezone: trigger.Timezone,
 					ActionType: core.TaskApplicationRetention, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
+		}
+	}
+	return definitions, nil
+}
+
+func profileActivityMaintainDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, transports *taskworker.ApplicationTransportRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionProfileActivityMaintain {
+			continue
+		}
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled {
+				continue
+			}
+			if _, err := transports.ResolveVacancyReader(profileID); err != nil {
+				logf("profile activity maintain %q is disabled until profile %q has a browser read session", job.Tag, profile.Tag)
+				continue
+			}
+			payload, err := json.Marshal(core.ProfileActivityMaintainPayload{
+				ProfileID: profileID, Count: job.Action.Count, Pause: job.Action.Pause,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskProfileActivityMaintain, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 				})
 			}

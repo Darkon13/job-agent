@@ -791,6 +791,33 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             }
           },
           "description": "Напоминания во всех чатах, молчащих 5 дней"
+        },
+        {
+          "tag": "maintain-activity",
+          "description": "Просмотр вакансий-кандидатов для активности",
+          "enabled": true,
+          "triggers": [
+            {
+              "type": "cron",
+              "expression": "40 10-19 * * *",
+              "timezone": "Europe/Moscow",
+              "misfire": "run_once",
+              "jitter": {
+                "min": "1m",
+                "max": "15m"
+              }
+            }
+          ],
+          "concurrency": "forbid",
+          "action": {
+            "type": "profile.activity.maintain",
+            "profiles": [
+              "primary",
+              "secondary"
+            ],
+            "count": 5,
+            "pause": "20s"
+          }
         }
       ],
       "answer_sets": [

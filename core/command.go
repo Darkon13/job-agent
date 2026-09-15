@@ -109,6 +109,27 @@ func (payload ApplicationStateSyncPayload) Validate() error {
 	return nil
 }
 
+// ProfileActivityMaintainPayload views real candidate vacancies so the
+// applicant activity stays warm. It never applies to a vacancy.
+type ProfileActivityMaintainPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+	Count     int       `json:"count"`
+	Pause     Duration  `json:"pause,omitempty"`
+}
+
+func (payload ProfileActivityMaintainPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("profile activity maintain requires profile")
+	}
+	if payload.Count < 1 || payload.Count > 50 {
+		return errors.New("profile activity maintain count must be between 1 and 50")
+	}
+	if payload.Pause.Value() < 0 {
+		return errors.New("profile activity maintain pause must not be negative")
+	}
+	return nil
+}
+
 type ResumePublishPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	ResumeID  string    `json:"resume_id"`
