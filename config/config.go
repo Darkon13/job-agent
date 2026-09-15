@@ -199,8 +199,9 @@ func (action JobAction) TargetProfiles() []string {
 }
 
 type ApplicationRetentionConfig struct {
-	StaleAfter     core.Duration `json:"stale_after"`
-	RemoveRejected *bool         `json:"remove_rejected,omitempty"`
+	StaleAfter              core.Duration `json:"stale_after"`
+	RemoveRejected          *bool         `json:"remove_rejected,omitempty"`
+	RemoveWaitingValidation bool          `json:"remove_waiting_validation,omitempty"`
 }
 
 func (configured ApplicationRetentionConfig) Payload(profileID core.ProfileID) core.ApplicationRetentionPayload {
@@ -210,6 +211,7 @@ func (configured ApplicationRetentionConfig) Payload(profileID core.ProfileID) c
 	}
 	return core.ApplicationRetentionPayload{
 		ProfileID: profileID, StaleAfter: configured.StaleAfter, RemoveRejected: removeRejected,
+		RemoveWaitingValidation: configured.RemoveWaitingValidation,
 	}
 }
 

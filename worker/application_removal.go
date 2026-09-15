@@ -58,7 +58,7 @@ func (handler *ApplicationRemovalHandler) Handle(ctx context.Context, task core.
 	}
 	request := core.ApplicationRemoval{Reason: payload.Reason}
 	var observed *core.ApplicationPlatformState
-	if payload.Reason != core.ApplicationRemovalManual {
+	if payload.Reason != core.ApplicationRemovalManual && payload.Reason != core.ApplicationRemovalRetentionValidation {
 		// Retention saves fresh states right before enqueueing removals. Reuse
 		// them instead of re-reading the whole negotiation list per removal.
 		now := handler.clock.Now()

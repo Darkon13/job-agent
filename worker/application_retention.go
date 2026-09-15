@@ -125,5 +125,22 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 			return err
 		}
 	}
+	if !payload.RemoveWaitingValidation {
+		return nil
+	}
+	stale, err := handler.states.ListStaleValidationApplications(ctx, payload.ProfileID)
+	if err != nil {
+		return err
+	}
+	for _, application := range stale {
+		if application.Key.Vacancy.Platform != task.Platform || application.UpdatedAt.After(staleBefore) {
+			continue
+		}
+		if _, _, err := handler.removal.EnqueueRemoval(ctx, core.ApplicationRemovePayload{
+			ApplicationID: application.ID, Reason: core.ApplicationRemovalRetentionValidation, StaleAfter: payload.StaleAfter,
+		}, "retention:"+string(task.ID)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

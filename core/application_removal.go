@@ -12,6 +12,9 @@ const (
 	ApplicationRemovalManual            ApplicationRemovalReason = "manual"
 	ApplicationRemovalRetentionRejected ApplicationRemovalReason = "retention_rejected"
 	ApplicationRemovalRetentionStale    ApplicationRemovalReason = "retention_stale"
+	// ApplicationRemovalRetentionValidation removes a questionnaire or test
+	// application that was never submitted; no platform state exists for it.
+	ApplicationRemovalRetentionValidation ApplicationRemovalReason = "retention_validation"
 )
 
 type ApplicationTombstone struct {
@@ -34,6 +37,9 @@ func (request ApplicationRemoval) Eligible(application Application, state Applic
 	if request.Reason == ApplicationRemovalManual {
 		return true
 	}
+	if request.Reason == ApplicationRemovalRetentionValidation {
+		return application.Status == ApplicationWaitingValidation || application.Status == ApplicationSkipped
+	}
 	if application.Status != ApplicationSubmitted || state.ApplicationID != application.ID ||
 		!state.ObservedAt.Equal(request.ObservedAt) || !FreshApplicationObservation(state.ObservedAt, now) {
 		return false
@@ -54,7 +60,8 @@ func FreshApplicationObservation(observedAt, now time.Time) bool {
 
 func (reason ApplicationRemovalReason) Validate() error {
 	switch ApplicationRemovalReason(strings.TrimSpace(string(reason))) {
-	case ApplicationRemovalManual, ApplicationRemovalRetentionRejected, ApplicationRemovalRetentionStale:
+	case ApplicationRemovalManual, ApplicationRemovalRetentionRejected, ApplicationRemovalRetentionStale,
+		ApplicationRemovalRetentionValidation:
 		return nil
 	default:
 		return errors.New("application removal has invalid reason")
