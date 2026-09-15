@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Зафиксирован план горячей перезагрузки конфига
+  (`docs/next-config-reload.md`): SIGHUP и watcher, горячая часть
+  (расписания, поиски, пулы, модели, политики) применяется без рестарта,
+  железная часть (database, listen, adapters, state_file) — только рестартом.
+
+## Unreleased
+
 - Runbook: описано ручное снятие протухшего runtime-lease
   (`delete from runtime_instances`) после серии быстрых пересозданий
   контейнера, когда guard не освободился сам за 90 секунд.
