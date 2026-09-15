@@ -2267,7 +2267,7 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 		}
 		lastDigest = current
 		status.record(current, len(definitions))
-		logf("config reloaded: %d scheduled definitions applied; campaign and search changes still need a restart", len(definitions))
+		logf("config reloaded: %d scheduled definitions applied", len(definitions))
 	}
 	apply()
 	for {
