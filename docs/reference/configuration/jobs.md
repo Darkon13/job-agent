@@ -75,6 +75,7 @@
 | `application.campaign` | `profiles`, `routes`, `target_successful`, `max_in_flight` | Розыгрыш откликов по routes до цели. |
 | `application.retention` | `profile`, `retention` | Локальная очистка старых откликов. |
 | `application.state.sync` | `profile` | Read-only чтение состояний откликов (браузерная сессия) и обновление карточек в dashboard. |
+| `profile.activity.maintain` | `profiles`, `count`, `pause` | Просмотр реальных вакансий-кандидатов браузерной сессией для поддержания активности; ничего не отправляет. |
 
 ### `conversation.follow_up.select`
 

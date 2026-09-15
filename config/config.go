@@ -119,6 +119,7 @@ const (
 	JobActionApplicationCampaign        = "application.campaign"
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
+	JobActionProfileActivityMaintain    = "profile.activity.maintain"
 	JobActionProfileSessionRefresh      = "profile.session_refresh"
 	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
@@ -179,6 +180,8 @@ type JobAction struct {
 	TargetSuccessful int                                  `json:"target_successful,omitempty"`
 	MaxInFlight      int                                  `json:"max_in_flight,omitempty"`
 	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
+	Count            int                                  `json:"count,omitempty"`
+	Pause            core.Duration                        `json:"pause,omitempty"`
 	Retention        *ApplicationRetentionConfig          `json:"retention,omitempty"`
 }
 
@@ -1692,6 +1695,18 @@ func (c Config) Validate() error {
 					return fmt.Errorf("job %q follow_up: %w", job.Tag, err)
 				}
 			}
+		case JobActionProfileActivityMaintain:
+			targets, err := jobActionTargets(job, profiles)
+			if err != nil {
+				return err
+			}
+			if job.Action.Count < 1 || job.Action.Count > 50 {
+				return fmt.Errorf("job %q profile.activity.maintain count must be between 1 and 50", job.Tag)
+			}
+			if job.Action.Pause.Value() < 0 {
+				return fmt.Errorf("job %q profile.activity.maintain pause must not be negative", job.Tag)
+			}
+			_ = targets
 		case JobActionApplicationStateSync:
 			if _, err := jobActionTargets(job, profiles); err != nil {
 				return err
