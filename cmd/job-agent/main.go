@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -2171,26 +2173,50 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	defer signal.Stop(signals)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	lastDigest := ""
+	lastError := ""
+	apply := func() {
+		fresh, err := appconfig.Load(configPath)
+		if err != nil {
+			if message := err.Error(); message != lastError {
+				logf("config reload rejected: %v", err)
+				lastError = message
+			}
+			return
+		}
+		lastError = ""
+		encoded, err := json.Marshal(fresh)
+		if err != nil {
+			return
+		}
+		digest := sha256.Sum256(encoded)
+		current := hex.EncodeToString(digest[:])
+		if current == lastDigest {
+			return
+		}
+		definitions, err := build(fresh)
+		if err != nil {
+			logf("config reload rejected: %v", err)
+			return
+		}
+		if err := scheduler.Sync(ctx, definitions); err != nil {
+			logf("config reload failed: %v", err)
+			return
+		}
+		lastDigest = current
+		logf("config reloaded: %d scheduled definitions applied; campaign and search changes still need a restart", len(definitions))
+	}
+	apply()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-signals:
-			fresh, err := appconfig.Load(configPath)
-			if err != nil {
-				logf("config reload rejected: %v", err)
-				continue
-			}
-			definitions, err := build(fresh)
-			if err != nil {
-				logf("config reload rejected: %v", err)
-				continue
-			}
-			if err := scheduler.Sync(ctx, definitions); err != nil {
-				logf("config reload failed: %v", err)
-				continue
-			}
-			logf("config reloaded: %d scheduled definitions applied; campaign and search changes still need a restart", len(definitions))
+			apply()
+		case <-ticker.C:
+			apply()
 		}
 	}
 }
