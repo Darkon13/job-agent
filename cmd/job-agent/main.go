@@ -999,13 +999,15 @@ func main() {
 			return nil, fmt.Errorf("build resume update scheduled jobs: %w", err)
 		}
 		definitions = append(definitions, resumeUpdateDefinitions...)
+		// Campaign routes are registered once at startup; reuse the captured
+		// definitions so a reload never disables the campaign schedules.
+		definitions = append(definitions, campaignDefinitions...)
 		return definitions, nil
 	}
 	definitions, err := buildReloadableDefinitions(cfg)
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
-	definitions = append(definitions, campaignDefinitions...)
 	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
 		log.Fatalf("create scheduler: %v", err)
