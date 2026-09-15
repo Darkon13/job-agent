@@ -16,9 +16,6 @@ import (
 // apply decision still belongs to the application pipeline, and closed
 // vacancies fall through to the submit flow.
 type ActivityMaintainHandler struct {
-	applications interface {
-		ListApplications(ctx context.Context, filter storage.ApplicationFilter) ([]core.Application, error)
-	}
 	vacancies  storage.VacancyRepository
 	transports *ApplicationTransportRegistry
 	activity   storage.ProfileActivityRepository
@@ -27,19 +24,16 @@ type ActivityMaintainHandler struct {
 }
 
 func NewActivityMaintainHandler(
-	applications interface {
-		ListApplications(ctx context.Context, filter storage.ApplicationFilter) ([]core.Application, error)
-	},
 	vacancies storage.VacancyRepository,
 	transports *ApplicationTransportRegistry,
 	activity storage.ProfileActivityRepository,
 	snapshots storage.ProfileActivitySnapshotRepository,
 	clock Clock,
 ) (*ActivityMaintainHandler, error) {
-	if applications == nil || vacancies == nil || transports == nil || activity == nil || snapshots == nil || clock == nil {
-		return nil, errors.New("activity maintain handler requires applications, vacancies, transports, activity, snapshots and clock")
+	if vacancies == nil || transports == nil || activity == nil || snapshots == nil || clock == nil {
+		return nil, errors.New("activity maintain handler requires vacancies, transports, activity, snapshots and clock")
 	}
-	return &ActivityMaintainHandler{applications: applications, vacancies: vacancies, transports: transports, activity: activity, snapshots: snapshots, clock: clock}, nil
+	return &ActivityMaintainHandler{vacancies: vacancies, transports: transports, activity: activity, snapshots: snapshots, clock: clock}, nil
 }
 
 func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Task) error {
@@ -100,50 +94,57 @@ func (handler *ActivityMaintainHandler) activityAtMaximum(ctx context.Context, p
 	return score != nil && *score >= 100
 }
 
-// targets returns lazy vacancy views: either fresh global search results or
-// the profile application queue when no search query was configured.
+// targets returns lazy vacancy views from the configured global search. The
+// queue is intentionally not used: activity grows from opening vacancies the
+// profile has not inspected yet, so recently viewed cards are skipped.
 func (handler *ActivityMaintainHandler) targets(ctx context.Context, payload core.ProfileActivityMaintainPayload) ([]func() (core.Vacancy, error), error) {
+	if len(payload.Query) == 0 {
+		return nil, nil
+	}
 	reader, err := handler.transports.ResolveVacancyReader(payload.ProfileID)
 	if err != nil {
 		return nil, err
 	}
-	targets := make([]func() (core.Vacancy, error), 0, payload.Count)
-	if len(payload.Query) > 0 {
-		searcher, err := handler.transports.ResolveVacancySearcher(payload.ProfileID)
-		if err != nil {
-			return nil, err
-		}
-		page, err := searcher.Search(ctx, payload.ProfileID, payload.Query, "")
-		if err != nil {
-			return nil, err
-		}
-		for _, vacancy := range page.Vacancies {
-			vacancy := vacancy
-			if vacancy.State != core.VacancyStateOpen {
-				continue
-			}
-			targets = append(targets, func() (core.Vacancy, error) {
-				return reader.ReadVacancy(ctx, payload.ProfileID, vacancy.Key())
-			})
-		}
-		return targets, nil
+	searcher, err := handler.transports.ResolveVacancySearcher(payload.ProfileID)
+	if err != nil {
+		return nil, err
 	}
-	applications, err := handler.applications.ListApplications(ctx, storage.ApplicationFilter{
-		ProfileID: payload.ProfileID, Limit: 200,
+	inspected, err := handler.inspectedVacancies(ctx, payload.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	page, err := searcher.Search(ctx, payload.ProfileID, payload.Query, "")
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]func() (core.Vacancy, error), 0, payload.Count)
+	for _, vacancy := range page.Vacancies {
+		if vacancy.State != core.VacancyStateOpen {
+			continue
+		}
+		if _, seen := inspected[vacancy.ExternalID]; seen {
+			continue
+		}
+		vacancy := vacancy
+		targets = append(targets, func() (core.Vacancy, error) {
+			return reader.ReadVacancy(ctx, payload.ProfileID, vacancy.Key())
+		})
+	}
+	return targets, nil
+}
+
+// inspectedVacancies lists vacancy identities already opened by the maintain
+// job so repeated runs move to fresh cards instead of re-opening the same ones.
+func (handler *ActivityMaintainHandler) inspectedVacancies(ctx context.Context, profileID core.ProfileID) (map[string]struct{}, error) {
+	records, err := handler.activity.ListProfileActivity(ctx, storage.ProfileActivityFilter{
+		ProfileID: profileID, Kind: core.ProfileActivityVacancyInspected,
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, application := range applications {
-		switch application.Status {
-		case core.ApplicationNew, core.ApplicationPreparing, core.ApplicationReady:
-		default:
-			continue
-		}
-		application := application
-		targets = append(targets, func() (core.Vacancy, error) {
-			return reader.ReadVacancy(ctx, application.Key.ProfileID, application.Key.Vacancy)
-		})
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		seen[record.SourceID] = struct{}{}
 	}
-	return targets, nil
+	return seen, nil
 }

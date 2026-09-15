@@ -757,7 +757,7 @@ func main() {
 	}
 	workers = append(workers, applicationStateSyncWorker)
 	activityMaintainHandler, err := taskworker.NewActivityMaintainHandler(
-		store, store, applicationTransports, store, store, taskworker.SystemClock{},
+		store, applicationTransports, store, store, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create activity maintain handler: %v", err)
@@ -940,64 +940,71 @@ func main() {
 		}
 		workers = append(workers, searchWorker)
 	}
-	definitions, err := resumeTouchDefinitions(cfg, instances, resumeTouchers)
+	buildReloadableDefinitions := func(cfg appconfig.Config) ([]jobscheduler.Definition, error) {
+		definitions, err := resumeTouchDefinitions(cfg, instances, resumeTouchers)
+		if err != nil {
+			return nil, fmt.Errorf("build scheduled jobs: %w", err)
+		}
+		resumePublishDefinitions, err := resumePublishDefinitions(cfg, instances, resumePublishers)
+		if err != nil {
+			return nil, fmt.Errorf("build resume publish scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, resumePublishDefinitions...)
+		sessionRefreshScheduled, err := sessionRefreshDefinitions(cfg, sessionRefreshers)
+		if err != nil {
+			return nil, fmt.Errorf("build profile session refresh jobs: %w", err)
+		}
+		definitions = append(definitions, sessionRefreshScheduled...)
+		activityDefinitions, err := profileActivityDefinitions(cfg, instances, activityObservers)
+		if err != nil {
+			return nil, fmt.Errorf("build profile activity scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, activityDefinitions...)
+		conversationDefinitions, err := conversationDiscoveryDefinitions(cfg, instances, conversationTransports)
+		if err != nil {
+			return nil, fmt.Errorf("build conversation sync jobs: %w", err)
+		}
+		definitions = append(definitions, conversationDefinitions...)
+		followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
+		if err != nil {
+			return nil, fmt.Errorf("build conversation follow-up selection jobs: %w", err)
+		}
+		definitions = append(definitions, followUpSelectionDefinitions...)
+		retentionDefinitions, err := applicationRetentionDefinitions(cfg, instances, applicationStateObservers)
+		if err != nil {
+			return nil, fmt.Errorf("build application retention scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, retentionDefinitions...)
+		stateSyncDefinitions, err := applicationStateSyncDefinitions(cfg, instances, applicationStateObservers)
+		if err != nil {
+			return nil, fmt.Errorf("build application state sync scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, stateSyncDefinitions...)
+		activityMaintainDefinitions, err := profileActivityMaintainDefinitions(cfg, instances, applicationTransports)
+		if err != nil {
+			return nil, fmt.Errorf("build profile activity maintain scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, activityMaintainDefinitions...)
+		profileStateDefinitions, err := profileStateReconcileDefinitions(
+			cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("build profile state scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, profileStateDefinitions...)
+		resumeUpdateDefinitions, err := resumeUpdateDefinitions(
+			cfg, profileStateResources, profileStateReaders, profileStateWriters, resumePublishers, profileStatePlatforms,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("build resume update scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, resumeUpdateDefinitions...)
+		return definitions, nil
+	}
+	definitions, err := buildReloadableDefinitions(cfg)
 	if err != nil {
 		log.Fatalf("build scheduled jobs: %v", err)
 	}
-	resumePublishDefinitions, err := resumePublishDefinitions(cfg, instances, resumePublishers)
-	if err != nil {
-		log.Fatalf("build resume publish scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, resumePublishDefinitions...)
-	sessionRefreshScheduled, err := sessionRefreshDefinitions(cfg, sessionRefreshers)
-	if err != nil {
-		log.Fatalf("build profile session refresh jobs: %v", err)
-	}
-	definitions = append(definitions, sessionRefreshScheduled...)
-	activityDefinitions, err := profileActivityDefinitions(cfg, instances, activityObservers)
-	if err != nil {
-		log.Fatalf("build profile activity scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, activityDefinitions...)
-	conversationDefinitions, err := conversationDiscoveryDefinitions(cfg, instances, conversationTransports)
-	if err != nil {
-		log.Fatalf("build conversation sync jobs: %v", err)
-	}
-	definitions = append(definitions, conversationDefinitions...)
-	followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
-	if err != nil {
-		log.Fatalf("build conversation follow-up selection jobs: %v", err)
-	}
-	definitions = append(definitions, followUpSelectionDefinitions...)
-	retentionDefinitions, err := applicationRetentionDefinitions(cfg, instances, applicationStateObservers)
-	if err != nil {
-		log.Fatalf("build application retention scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, retentionDefinitions...)
-	stateSyncDefinitions, err := applicationStateSyncDefinitions(cfg, instances, applicationStateObservers)
-	if err != nil {
-		log.Fatalf("build application state sync scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, stateSyncDefinitions...)
-	activityMaintainDefinitions, err := profileActivityMaintainDefinitions(cfg, instances, applicationTransports)
-	if err != nil {
-		log.Fatalf("build profile activity maintain scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, activityMaintainDefinitions...)
-	profileStateDefinitions, err := profileStateReconcileDefinitions(
-		cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
-	)
-	if err != nil {
-		log.Fatalf("build profile state scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, profileStateDefinitions...)
-	resumeUpdateDefinitions, err := resumeUpdateDefinitions(
-		cfg, profileStateResources, profileStateReaders, profileStateWriters, resumePublishers, profileStatePlatforms,
-	)
-	if err != nil {
-		log.Fatalf("build resume update scheduled jobs: %v", err)
-	}
-	definitions = append(definitions, resumeUpdateDefinitions...)
 	definitions = append(definitions, campaignDefinitions...)
 	scheduler, err := jobscheduler.New(store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{})
 	if err != nil {
@@ -1031,6 +1038,7 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -2151,6 +2159,38 @@ func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Prof
 		profiles[profileID] = profileRuntime{Status: core.ProfileEnabled, ExternalAccountID: identity.ExternalAccountID, Reader: reader}
 	}
 	return profiles, nil
+}
+
+// watchConfigReload applies the hot part of a changed config on SIGHUP: the
+// file is fully loaded and validated first, and only then the scheduler is
+// resynced. Campaign and search changes still require a restart because they
+// register routes in the campaign handler.
+func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error)) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signals:
+			fresh, err := appconfig.Load(configPath)
+			if err != nil {
+				logf("config reload rejected: %v", err)
+				continue
+			}
+			definitions, err := build(fresh)
+			if err != nil {
+				logf("config reload rejected: %v", err)
+				continue
+			}
+			if err := scheduler.Sync(ctx, definitions); err != nil {
+				logf("config reload failed: %v", err)
+				continue
+			}
+			logf("config reloaded: %d scheduled definitions applied; campaign and search changes still need a restart", len(definitions))
+		}
+	}
 }
 
 func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conversationWorkflow *workflow.ConversationWorkflow, scheduler *jobscheduler.Scheduler, workers []*taskworker.Worker) error {
