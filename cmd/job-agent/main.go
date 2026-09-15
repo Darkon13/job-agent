@@ -1045,7 +1045,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	reloadStatus := &configReloadStatus{}
 	runtimeAPI.ConfigureConfigStatus(reloadStatus.snapshot)
-	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions, reloadStatus)
+	refreshCampaigns := func(fresh appconfig.Config) error {
+		routes, campaignDefinitionsFresh, _, _, err := campaignPlan(fresh, instances, profiles)
+		if err != nil {
+			return err
+		}
+		if err := campaignHandler.ReplaceRoutes(routes); err != nil {
+			return err
+		}
+		campaignDefinitions = campaignDefinitionsFresh
+		logf("campaign routes reloaded: %d definitions", len(campaignDefinitionsFresh))
+		return nil
+	}
+	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions, refreshCampaigns, reloadStatus)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -2015,16 +2027,30 @@ func configureApplicationCampaigns(
 	profiles map[core.ProfileID]profileRuntime,
 	store *storesqlite.Store,
 ) (*workflow.ApplicationCampaignHandler, []jobscheduler.Definition, map[core.SearchID]struct{}, int, error) {
-	clock := workflow.SystemClock{}
-	ids := workflow.RandomIDGenerator{}
-	handler, err := workflow.NewApplicationCampaignHandler(store, store, store, store, clock, ids, 5*time.Second)
+	handler, err := workflow.NewApplicationCampaignHandler(
+		store, store, store, store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, 5*time.Second,
+	)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
+	routes, definitions, ownedRoutes, configuredJobs, err := campaignPlan(cfg, instances, profiles)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	if err := handler.ReplaceRoutes(routes); err != nil {
+		return nil, nil, nil, 0, err
+	}
+	return handler, definitions, ownedRoutes, configuredJobs, nil
+}
+
+// campaignPlan builds the route set and cron definitions for the configured
+// campaign jobs. The same plan is reused by a configuration reload.
+func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, profiles map[core.ProfileID]profileRuntime) ([]workflow.ApplicationCampaignRoute, []jobscheduler.Definition, map[core.SearchID]struct{}, int, error) {
 	searches := make(map[string]appconfig.Search, len(cfg.Searches))
 	for _, search := range cfg.Searches {
 		searches[search.Tag] = search
 	}
+	routes := make([]workflow.ApplicationCampaignRoute, 0)
 	registered := make(map[core.SearchID]struct{})
 	ownedRoutes := make(map[core.SearchID]struct{})
 	definitions := make([]jobscheduler.Definition, 0)
@@ -2081,12 +2107,10 @@ func configureApplicationCampaigns(
 				runnable = false
 				continue
 			}
-			if err := handler.Register(workflow.ApplicationCampaignRoute{
+			routes = append(routes, workflow.ApplicationCampaignRoute{
 				SearchID: searchID, Platform: core.Platform(instance.Name()), SearchProfileID: searchProfileID,
 				Query: search.Query, Searcher: instance,
-			}); err != nil {
-				return nil, nil, nil, configuredJobs, err
-			}
+			})
 			registered[searchID] = struct{}{}
 		}
 		if !runnable {
@@ -2118,7 +2142,7 @@ func configureApplicationCampaigns(
 		}
 		configuredJobs++
 	}
-	return handler, definitions, ownedRoutes, configuredJobs, nil
+	return routes, definitions, ownedRoutes, configuredJobs, nil
 }
 
 type profileRuntime struct {
@@ -2197,7 +2221,7 @@ func (status *configReloadStatus) snapshot() httpapi.ConfigStatus {
 	return status.status
 }
 
-func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error), status *configReloadStatus) {
+func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error), refresh func(appconfig.Config) error, status *configReloadStatus) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	defer signal.Stop(signals)
@@ -2223,6 +2247,11 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 		digest := sha256.Sum256(encoded)
 		current := hex.EncodeToString(digest[:])
 		if current == lastDigest {
+			return
+		}
+		if err := refresh(fresh); err != nil {
+			logf("config reload rejected: %v", err)
+			status.recordError(err.Error())
 			return
 		}
 		definitions, err := build(fresh)

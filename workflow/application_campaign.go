@@ -84,6 +84,26 @@ func (handler *ApplicationCampaignHandler) Register(route ApplicationCampaignRou
 	return nil
 }
 
+// ReplaceRoutes swaps the whole route set atomically. Configuration reloads use
+// it to apply new or changed searches, and routes that disappeared from the
+// config are dropped.
+func (handler *ApplicationCampaignHandler) ReplaceRoutes(routes []ApplicationCampaignRoute) error {
+	replacement := make(map[core.SearchID]ApplicationCampaignRoute, len(routes))
+	for _, route := range routes {
+		if err := route.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := replacement[route.SearchID]; duplicate {
+			return fmt.Errorf("application campaign routes contain duplicate search %s", route.SearchID)
+		}
+		replacement[route.SearchID] = route
+	}
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	handler.routes = replacement
+	return nil
+}
+
 func (handler *ApplicationCampaignHandler) Handle(ctx context.Context, task core.Task) error {
 	if task.Type != core.TaskApplicationCampaign {
 		return fmt.Errorf("application campaign handler cannot process task type %q", task.Type)
