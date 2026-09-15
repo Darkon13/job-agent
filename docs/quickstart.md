@@ -746,7 +746,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             ],
             "retention": {
               "stale_after": "720h",
-              "remove_rejected": true
+              "remove_rejected": true,
+              "remove_waiting_validation": true
             }
           },
           "description": "Очистка отказов и устаревших откликов каждые 3 часа"

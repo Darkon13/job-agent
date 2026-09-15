@@ -71,6 +71,35 @@ func (store *Store) ListApplicationsForRetention(ctx context.Context, profileID 
 	return result, nil
 }
 
+// ListStaleValidationApplications lists questionnaires and tests that never
+// became responses, oldest first, so retention can clear them locally.
+func (store *Store) ListStaleValidationApplications(ctx context.Context, profileID core.ProfileID) ([]core.Application, error) {
+	if profileID == "" {
+		return nil, errors.New("application retention requires profile")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
+		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
+		preparation_provenance, created_at, updated_at, prepared_at, submitted_at
+		FROM applications WHERE profile_id = ? AND status IN (?, ?)
+		ORDER BY updated_at ASC, id ASC`, profileID, core.ApplicationWaitingValidation, core.ApplicationSkipped)
+	if err != nil {
+		return nil, fmt.Errorf("list stale validation applications: %w", err)
+	}
+	defer rows.Close()
+	result := make([]core.Application, 0)
+	for rows.Next() {
+		application, err := scanApplication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan stale validation application: %w", err)
+		}
+		result = append(result, application)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stale validation applications: %w", err)
+	}
+	return result, nil
+}
+
 func scanApplicationPlatformState(row rowScanner) (core.ApplicationPlatformState, error) {
 	var state core.ApplicationPlatformState
 	var viewed sql.NullBool

@@ -157,6 +157,7 @@ type ApplicationPlatformStateRepository interface {
 	SaveApplicationPlatformState(ctx context.Context, state core.ApplicationPlatformState) error
 	ApplicationPlatformState(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationPlatformState, error)
 	ListApplicationsForRetention(ctx context.Context, profileID core.ProfileID) ([]core.Application, error)
+	ListStaleValidationApplications(ctx context.Context, profileID core.ProfileID) ([]core.Application, error)
 }
 
 type ApplicationBudgetRepository interface {

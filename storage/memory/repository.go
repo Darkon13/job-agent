@@ -475,6 +475,34 @@ func (repository *Repository) ListApplicationsForRetention(ctx context.Context, 
 	return result, nil
 }
 
+func (repository *Repository) ListStaleValidationApplications(ctx context.Context, profileID core.ProfileID) ([]core.Application, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if profileID == "" {
+		return nil, errors.New("application retention requires profile")
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.Application, 0)
+	for _, application := range repository.applications {
+		if application.Key.ProfileID != profileID {
+			continue
+		}
+		if application.Status != core.ApplicationWaitingValidation && application.Status != core.ApplicationSkipped {
+			continue
+		}
+		result = append(result, application)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].UpdatedAt.Equal(result[j].UpdatedAt) {
+			return result[i].UpdatedAt.Before(result[j].UpdatedAt)
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
+}
+
 func (repository *Repository) Applications() []core.Application {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()

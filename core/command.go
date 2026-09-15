@@ -85,6 +85,9 @@ type ApplicationRetentionPayload struct {
 	ProfileID      ProfileID `json:"profile_id"`
 	StaleAfter     Duration  `json:"stale_after"`
 	RemoveRejected bool      `json:"remove_rejected"`
+	// RemoveWaitingValidation also clears questionnaires and tests that were
+	// never submitted and are older than stale_after.
+	RemoveWaitingValidation bool `json:"remove_waiting_validation,omitempty"`
 }
 
 func (payload ApplicationRetentionPayload) Validate() error {
