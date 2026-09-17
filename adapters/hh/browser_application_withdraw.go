@@ -27,6 +27,11 @@ var _ adapter.ApplicationWithdrawer = (*BrowserReadClient)(nil)
 // states) is moved to the archive with the trash action, which also hides the
 // negotiation chat. The caller removes the local record only after this
 // succeeds.
+//
+// The web form field is `topic`: HH answers `{}` when the action is applied
+// and a generic `<doc/>` document when the topic id is not recognised. A
+// wrong field name still returns 200, so only the JSON body distinguishes the
+// outcome and the caller must not treat `<doc/>` as success.
 func (client *BrowserReadClient) WithdrawApplication(ctx context.Context, profileID core.ProfileID, state core.ApplicationPlatformState) (adapter.ApplicationWithdrawalResult, error) {
 	if profileID == "" || profileID != client.profileID {
 		return adapter.ApplicationWithdrawalResult{}, errors.New("HH browser withdrawal profile does not match")
@@ -39,7 +44,7 @@ func (client *BrowserReadClient) WithdrawApplication(ctx context.Context, profil
 		}
 	}
 	action := "trash"
-	values := url.Values{"topic_id": {negotiationID}, "substate": {"HIDE"}}
+	values := url.Values{"topic": {negotiationID}, "substate": {"HIDE"}}
 	if state.Disposition == core.ApplicationDispositionPending {
 		action = "decline"
 		values.Del("substate")
@@ -69,7 +74,29 @@ func (client *BrowserReadClient) WithdrawApplication(ctx context.Context, profil
 			Message: fmt.Sprintf("HH returned status %d", status), Cause: errors.New(strings.TrimSpace(body)),
 		}
 	}
+	if !withdrawalApplied(body) {
+		return adapter.ApplicationWithdrawalResult{}, &core.OperationError{
+			Category: core.ErrorTemporaryFailure, Operation: "applications.withdraw", Platform: Name,
+			Message: "HH did not confirm the negotiation action",
+			Cause:   errors.New(strings.TrimSpace(body)),
+		}
+	}
 	return adapter.ApplicationWithdrawalResult{Action: action}, nil
+}
+
+// withdrawalApplied reports whether HH confirmed the negotiation action. The
+// web responds with an empty JSON document when the topic id was accepted; a
+// generic `<doc/>` body means the request reached the site but matched
+// nothing.
+func withdrawalApplied(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "<") {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "{")
 }
 
 func (client *BrowserReadClient) postNegotiationAction(ctx context.Context, endpoint string, values url.Values, operation string) (int, string, error) {

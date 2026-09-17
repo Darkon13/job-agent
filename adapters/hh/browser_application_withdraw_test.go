@@ -52,7 +52,7 @@ func TestBrowserWithdrawalDeclinesPendingAndTrashesClosedTopics(t *testing.T) {
 		}
 		paths = append(paths, request.URL.Path)
 		requests = append(requests, request.PostForm)
-		_, _ = response.Write([]byte(`<?xml version='1.0' encoding='utf-8'?><doc/>`))
+		_, _ = response.Write([]byte(`{}`))
 	}))
 
 	pending, err := client.WithdrawApplication(context.Background(), "primary", core.ApplicationPlatformState{
@@ -70,11 +70,26 @@ func TestBrowserWithdrawalDeclinesPendingAndTrashesClosedTopics(t *testing.T) {
 	if len(paths) != 2 || paths[0] != "/applicant/negotiations/decline" || paths[1] != "/applicant/negotiations/trash" {
 		t.Fatalf("paths = %#v", paths)
 	}
-	if requests[0].Get("topic_id") != "5566260191" || requests[0].Get("substate") != "" {
+	if requests[0].Get("topic") != "5566260191" || requests[0].Get("substate") != "" {
 		t.Fatalf("decline form = %#v", requests[0])
 	}
-	if requests[1].Get("topic_id") != "5565658117" || requests[1].Get("substate") != "HIDE" {
+	if requests[1].Get("topic") != "5565658117" || requests[1].Get("substate") != "HIDE" {
 		t.Fatalf("trash form = %#v", requests[1])
+	}
+}
+
+func TestBrowserWithdrawalRejectsUnappliedAction(t *testing.T) {
+	client := newWithdrawFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`<?xml version='1.0' encoding='utf-8'?><doc/>`))
+	}))
+	_, err := client.WithdrawApplication(context.Background(), "primary", core.ApplicationPlatformState{
+		ExternalNegotiationID: "5565658117", Disposition: core.ApplicationDispositionRejected,
+	})
+	if err == nil {
+		t.Fatal("a generic <doc/> answer must not count as an applied withdrawal")
+	}
+	if !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("unapplied action category = %v", err)
 	}
 }
 
