@@ -108,8 +108,8 @@ func TestApplicationGCProtectsAccountingHistoryAndConversations(t *testing.T) {
 			t.Fatal(err)
 		}
 		manual := core.ApplicationRemoval{Reason: core.ApplicationRemovalManual}
-		if _, _, err := repository.RemoveApplication(ctx, a.ID, manual, now); err == nil {
-			t.Fatal("deleted a running campaign item")
+		if _, _, err := repository.RemoveApplication(ctx, a.ID, manual, now); !errors.Is(err, core.ErrApplicationInRunningCampaign) {
+			t.Fatalf("running campaign item removal error = %v", err)
 		}
 		revision := campaign.Revision
 		if err := campaign.Stop(core.ApplicationCampaignTargetReached, "done", now); err != nil {

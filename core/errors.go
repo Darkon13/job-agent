@@ -94,3 +94,12 @@ func ErrorIsCategory(err error, category ErrorCategory) bool {
 func AllowsTransportFallback(err error) bool {
 	return ErrorIsCategory(err, ErrorUnsupported)
 }
+
+// Removal guards are temporary by nature: an application stays linked to a
+// running campaign or an unfinished tailoring saga only until that work ends.
+// Repositories return these sentinels so workers schedule a retry instead of
+// failing the removal permanently.
+var (
+	ErrApplicationInRunningCampaign   = errors.New("application belongs to a running campaign")
+	ErrApplicationActiveTailoringSaga = errors.New("application has an active resume tailoring saga")
+)

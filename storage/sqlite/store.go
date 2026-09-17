@@ -244,14 +244,14 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 		return core.ApplicationTombstone{}, false, fmt.Errorf("check application campaign: %w", err)
 	}
 	if active != 0 {
-		return core.ApplicationTombstone{}, false, errors.New("application belongs to a running campaign")
+		return core.ApplicationTombstone{}, false, core.ErrApplicationInRunningCampaign
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_tailorings
 		WHERE application_id = ? AND status <> 'restored'`, id).Scan(&active); err != nil {
 		return core.ApplicationTombstone{}, false, fmt.Errorf("check application tailoring: %w", err)
 	}
 	if active != 0 {
-		return core.ApplicationTombstone{}, false, errors.New("application has an active resume tailoring saga")
+		return core.ApplicationTombstone{}, false, core.ErrApplicationActiveTailoringSaga
 	}
 	if request.Reason != core.ApplicationRemovalManual {
 		state, err := scanApplicationPlatformState(tx.QueryRowContext(ctx, `SELECT application_id, external_negotiation_id, platform_state,
@@ -634,6 +634,11 @@ func dataSourceName(path string) (string, error) {
 	query.Add("_pragma", "busy_timeout(30000)")
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", "journal_mode(WAL)")
+	// Deferred transactions that read and then write must upgrade the lock,
+	// and SQLite answers that upgrade with an immediate SQLITE_BUSY that
+	// bypasses busy_timeout. Taking the write lock up front serializes writers
+	// through busy_timeout instead of failing tasks.
+	query.Add("_txlock", "immediate")
 	value.RawQuery = query.Encode()
 	return value.String(), nil
 }
