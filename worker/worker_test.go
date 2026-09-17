@@ -65,6 +65,18 @@ func TestNormalizeErrorRetriesSQLiteBusy(t *testing.T) {
 	}
 }
 
+func TestNormalizeErrorRetriesRemovalBlockedByOwner(t *testing.T) {
+	for _, err := range []error{core.ErrApplicationInRunningCampaign, core.ErrApplicationActiveTailoringSaga} {
+		blocked := normalizeError(err, core.TaskApplicationRemove)
+		if blocked.Category != core.ErrorTemporaryFailure {
+			t.Fatalf("guard %v category = %q", err, blocked.Category)
+		}
+		if !strings.Contains(blocked.Message, err.Error()) {
+			t.Fatalf("guard %v lost the cause: %q", err, blocked.Message)
+		}
+	}
+}
+
 func TestWorkerClaimsOnlyConfiguredTaskType(t *testing.T) {
 	now := time.Date(2026, 7, 19, 13, 0, 0, 0, time.UTC)
 	queue := brokermemory.NewQueue()

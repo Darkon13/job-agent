@@ -194,6 +194,15 @@ func normalizeError(err error, taskType core.TaskType) *core.OperationError {
 			Message: handlerFailureMessage(err), Cause: err,
 		}
 	}
+	if errors.Is(err, core.ErrApplicationInRunningCampaign) || errors.Is(err, core.ErrApplicationActiveTailoringSaga) {
+		// Removal stays blocked only until the campaign or tailoring saga that
+		// owns the application finishes, so schedule a retry instead of
+		// failing the task permanently.
+		return &core.OperationError{
+			Category: core.ErrorTemporaryFailure, Operation: string(taskType),
+			Message: handlerFailureMessage(err), Cause: err,
+		}
+	}
 	return &core.OperationError{
 		Category: core.ErrorPermanentFailure, Operation: string(taskType),
 		Message: handlerFailureMessage(err), Cause: err,

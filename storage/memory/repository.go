@@ -308,7 +308,7 @@ func (repository *Repository) RemoveApplication(ctx context.Context, id core.App
 			continue
 		}
 		if repository.applicationCampaigns[item.CampaignID].Status == core.ApplicationCampaignRunning {
-			return core.ApplicationTombstone{}, false, errors.New("application belongs to a running campaign")
+			return core.ApplicationTombstone{}, false, core.ErrApplicationInRunningCampaign
 		}
 	}
 	if !request.Eligible(application, repository.applicationStates[id], removedAt) {
@@ -317,7 +317,7 @@ func (repository *Repository) RemoveApplication(ctx context.Context, id core.App
 	if tailoringID, exists := repository.tailoringApplications[id]; exists {
 		tailoring := repository.applicationTailorings[tailoringID]
 		if tailoring.Status != core.ApplicationTailoringRestored {
-			return core.ApplicationTombstone{}, false, errors.New("application has an active resume tailoring saga")
+			return core.ApplicationTombstone{}, false, core.ErrApplicationActiveTailoringSaga
 		}
 		delete(repository.applicationTailorings, tailoringID)
 		delete(repository.tailoringApplications, id)
