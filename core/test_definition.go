@@ -191,8 +191,8 @@ func (definition *TestDefinition) CompleteObservedAttempt(questionFingerprints [
 		known[question.Fingerprint] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(questionFingerprints))
-	manifest := append([]string(nil), questionFingerprints...)
-	for _, fingerprint := range manifest {
+	manifest := make([]string, 0, len(questionFingerprints))
+	for _, fingerprint := range questionFingerprints {
 		if err := validateSHA256Fingerprint(fingerprint); err != nil {
 			return "", err
 		}
@@ -200,9 +200,13 @@ func (definition *TestDefinition) CompleteObservedAttempt(questionFingerprints [
 			return "", fmt.Errorf("attempt references unknown question fingerprint %s", fingerprint)
 		}
 		if _, exists := seen[fingerprint]; exists {
-			return "", fmt.Errorf("attempt contains duplicate question fingerprint %s", fingerprint)
+			// A platform can show the same question twice in one attempt; the
+			// manifest is the set of observed questions, so duplicates carry
+			// no additional information.
+			continue
 		}
 		seen[fingerprint] = struct{}{}
+		manifest = append(manifest, fingerprint)
 	}
 	sort.Strings(manifest)
 	sum := sha256.Sum256([]byte(strings.Join(manifest, "\x1d")))
