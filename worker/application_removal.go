@@ -76,7 +76,10 @@ func (handler *ApplicationRemovalHandler) Handle(ctx context.Context, task core.
 			if err != nil {
 				return err
 			}
-			if err := validateApplicationObservation(result, now); err != nil {
+			// The observer timestamps the read when it starts, which is later
+			// than the now captured before the call; validate against a fresh
+			// clock reading or every live read looks stale.
+			if err := validateApplicationObservation(result, handler.clock.Now()); err != nil {
 				return err
 			}
 			state, found := matchApplicationObservation(application, result)
