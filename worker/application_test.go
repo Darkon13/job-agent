@@ -615,6 +615,36 @@ func TestApplicationRegistryCanExposeReadOnlyVacancyReaderWithoutSubmitTransport
 	}
 }
 
+func TestApplicationRegistryResolvesDedicatedVacancySearcher(t *testing.T) {
+	registry := NewApplicationTransportRegistry()
+	reader := &fakeApplicationTransport{}
+	if err := registry.RegisterVacancyReader("profile-1", reader); err != nil {
+		t.Fatalf("register vacancy reader: %v", err)
+	}
+	if _, err := registry.ResolveVacancySearcher("profile-1"); err == nil {
+		t.Fatal("a reader without search unexpectedly resolved as a searcher")
+	}
+	searcher := fakeVacancySearcher{}
+	if err := registry.RegisterVacancySearcher("profile-1", searcher); err != nil {
+		t.Fatalf("register vacancy searcher: %v", err)
+	}
+	resolved, err := registry.ResolveVacancySearcher("profile-1")
+	if err != nil {
+		t.Fatalf("resolve vacancy searcher: %v", err)
+	}
+	if resolved != adapter.VacancySearcher(searcher) {
+		t.Fatalf("resolved searcher = %#v", resolved)
+	}
+}
+
+type fakeVacancySearcher struct{}
+
+func (fakeVacancySearcher) ValidateSearch(json.RawMessage) error { return nil }
+
+func (fakeVacancySearcher) Search(context.Context, core.ProfileID, json.RawMessage, string) (core.SearchPage, error) {
+	return core.SearchPage{}, nil
+}
+
 func TestApplicationHandlerEnforcesDailyBudgetBeforeTransport(t *testing.T) {
 	transport := &fakeApplicationTransport{}
 	plan := liveApplicationPlan("resume-1")

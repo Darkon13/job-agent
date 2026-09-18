@@ -91,6 +91,7 @@ type ApplicationTransportRegistry struct {
 	mu                    sync.RWMutex
 	transports            map[core.ProfileID]adapter.ApplicationTransport
 	vacancyReaders        map[core.ProfileID]adapter.VacancyReader
+	vacancySearchers      map[core.ProfileID]adapter.VacancySearcher
 	suitableResumeReaders map[core.ProfileID]adapter.SuitableResumeReader
 }
 
@@ -98,6 +99,7 @@ func NewApplicationTransportRegistry() *ApplicationTransportRegistry {
 	return &ApplicationTransportRegistry{
 		transports:            make(map[core.ProfileID]adapter.ApplicationTransport),
 		vacancyReaders:        make(map[core.ProfileID]adapter.VacancyReader),
+		vacancySearchers:      make(map[core.ProfileID]adapter.VacancySearcher),
 		suitableResumeReaders: make(map[core.ProfileID]adapter.SuitableResumeReader),
 	}
 }
@@ -157,21 +159,48 @@ func (registry *ApplicationTransportRegistry) ResolveVacancyReader(profileID cor
 	return reader, nil
 }
 
-// ResolveVacancySearcher returns the search-capable view of the profile reader
+// ResolveVacancySearcher returns the search-capable dependency of the profile
 // so the activity maintain job can pick fresh vacancies from the global search.
+// The adapter facade owns search; the full vacancy reader registered for the
+// profile is only used as a fallback for setups that implement both there.
 func (registry *ApplicationTransportRegistry) ResolveVacancySearcher(profileID core.ProfileID) (adapter.VacancySearcher, error) {
-	reader, err := registry.ResolveVacancyReader(profileID)
-	if err != nil {
-		return nil, err
+	registry.mu.RLock()
+	searcher := registry.vacancySearchers[profileID]
+	reader := registry.vacancyReaders[profileID]
+	registry.mu.RUnlock()
+	if searcher != nil {
+		return searcher, nil
 	}
-	searcher, ok := reader.(adapter.VacancySearcher)
+	if reader == nil {
+		return nil, &core.OperationError{
+			Category: core.ErrorUnsupported, Operation: "vacancies.read",
+			Message: "profile has no full vacancy reader",
+		}
+	}
+	fallback, ok := reader.(adapter.VacancySearcher)
 	if !ok {
 		return nil, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "profile.activity.maintain",
 			Message: "profile vacancy reader cannot search",
 		}
 	}
-	return searcher, nil
+	return fallback, nil
+}
+
+// RegisterVacancySearcher attaches the search implementation of a profile.
+// It is registered separately from the reader because the adapter facade and
+// the browser reader are different objects.
+func (registry *ApplicationTransportRegistry) RegisterVacancySearcher(profileID core.ProfileID, searcher adapter.VacancySearcher) error {
+	if profileID == "" || searcher == nil {
+		return errors.New("vacancy searcher registration requires profile and searcher")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.vacancySearchers[profileID]; exists {
+		return fmt.Errorf("vacancy searcher for profile %s is already registered", profileID)
+	}
+	registry.vacancySearchers[profileID] = searcher
+	return nil
 }
 
 func (registry *ApplicationTransportRegistry) ResolveSuitableResumeReader(profileID core.ProfileID) (adapter.SuitableResumeReader, error) {
