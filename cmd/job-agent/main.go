@@ -534,6 +534,11 @@ func main() {
 					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
 				}
 			}
+			if searcher, ok := instance.(adapter.VacancySearcher); ok {
+				if err := applicationTransports.RegisterVacancySearcher(profileID, searcher); err != nil {
+					log.Fatalf("register vacancy searcher for profile %q: %v", profile.Tag, err)
+				}
+			}
 			jitterMin, jitterMax, err := profile.Applications.SubmitJitterDurations(instance.Name())
 			if err != nil {
 				log.Fatalf("resolve application pacing for profile %q: %v", profile.Tag, err)
