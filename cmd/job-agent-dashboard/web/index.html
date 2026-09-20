@@ -139,11 +139,14 @@
         <div><p class="eyebrow">РЕВЬЮ</p><h2 id="review-title">Проверки и опросники</h2></div>
         <div class="section-actions">
           <span id="review-state" class="muted">Загрузка…</span>
+          <input id="review-search" type="search" placeholder="Вопрос, вакансия или определение">
           <select id="review-filter">
             <option value="">Все сессии</option>
             <option value="waiting_answer">Ожидают ответа</option>
             <option value="answer_recorded">Ответ записан</option>
+            <option value="cancelled">Скрытые</option>
           </select>
+          <button id="review-more" class="secondary compact" type="button" hidden>Показать ещё</button>
           <button id="review-refresh" class="secondary compact" type="button">Обновить</button>
         </div>
       </div>

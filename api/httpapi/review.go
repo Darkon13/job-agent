@@ -44,6 +44,7 @@ func (api *ReviewAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/review-sessions", api.listSessions)
 	mux.HandleFunc("GET /api/v1/review-sessions/{session_id}", api.getSession)
 	mux.HandleFunc("POST /api/v1/review-sessions/{session_id}/answers", api.answer)
+	mux.HandleFunc("POST /api/v1/review-sessions/{session_id}/cancel", api.cancel)
 	mux.Handle("/", next)
 	return mux
 }
@@ -115,6 +116,7 @@ func (api *ReviewAPI) listSessions(response http.ResponseWriter, request *http.R
 		Status:    core.ReviewSessionStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
 		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
 		Platform:  core.Platform(strings.TrimSpace(request.URL.Query().Get("platform"))),
+		Query:     strings.TrimSpace(request.URL.Query().Get("q")),
 		Limit:     reviewSessionDefaultLimit,
 	}
 	if filter.Status != "" && !validReviewSessionStatus(filter.Status) {
@@ -128,6 +130,14 @@ func (api *ReviewAPI) listSessions(response http.ResponseWriter, request *http.R
 			return
 		}
 		filter.Limit = limit
+	}
+	if raw := strings.TrimSpace(request.URL.Query().Get("offset")); raw != "" {
+		offset, err := strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			writeProblem(response, http.StatusBadRequest, "review session offset must not be negative")
+			return
+		}
+		filter.Offset = offset
 	}
 	sessions, err := api.reviews.ListReviewSessions(request.Context(), filter)
 	if err != nil {
@@ -150,6 +160,51 @@ func (api *ReviewAPI) listSessions(response http.ResponseWriter, request *http.R
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, listResponse[reviewSessionListItem]{Items: items})
+}
+
+// cancel hides one session from the operator pool without touching the
+// platform: the reviewed answer is not submitted and the session can only be
+// seen again through an explicit status filter.
+func (api *ReviewAPI) cancel(response http.ResponseWriter, request *http.Request) {
+	if _, ok := requireIdempotencyKey(response, request); !ok {
+		return
+	}
+	var body reviewCancelRequest
+	if !decodeJSON(response, request, &body) {
+		return
+	}
+	session, err := api.reviews.ReviewSession(request.Context(), core.ReviewSessionID(request.PathValue("session_id")))
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	if session.Revision != body.ExpectedRevision {
+		writeProblem(response, http.StatusConflict, "review session revision changed")
+		return
+	}
+	switch session.Status {
+	case core.ReviewPending, core.ReviewWaiting, core.ReviewAnswered:
+	default:
+		writeProblem(response, http.StatusConflict, "only an open review session can be cancelled")
+		return
+	}
+	session.Status = core.ReviewCancelled
+	session.Revision++
+	session.UpdatedAt = time.Now().UTC()
+	if err := api.reviews.CancelReviewSession(request.Context(), session, body.ExpectedRevision); err != nil {
+		writeError(response, err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, reviewSessionListItem{
+		ID: session.ID, TestDefinitionID: session.TestDefinitionID, Platform: session.Platform,
+		ProfileID: session.ProfileID, Status: session.Status, Revision: session.Revision,
+		CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
+	})
+}
+
+type reviewCancelRequest struct {
+	ExpectedRevision uint64 `json:"expected_revision"`
 }
 
 func validReviewSessionStatus(status core.ReviewSessionStatus) bool {

@@ -7,13 +7,14 @@ const state = {
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
+  reviewQuery: "", reviewHasMore: false,
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
-  "review-state", "review-filter", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
+  "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -727,19 +728,46 @@ function renderAccountSwitcher(profiles = []) {
 
 function reviewStatusLabel(value) { return reviewStatusLabels[value] || value || "—"; }
 
-async function refreshReviewSessions() {
+const reviewPageSize = 50;
+
+async function refreshReviewSessions(options = {}) {
+  const append = options.append === true;
+  if (!append) state.reviewSessions = [];
   try {
-    const parameters = new URLSearchParams({limit: "50"});
+    const parameters = new URLSearchParams({ limit: String(reviewPageSize), offset: String(append ? state.reviewSessions.length : 0) });
     if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
     if (state.account) parameters.set("profile_id", state.account);
-    const query = `?${parameters}`;
-    const result = await request(`/api/v1/review-sessions${query}`);
-    state.reviewSessions = result.items || [];
-    elements.reviewState.textContent = state.reviewSessions.length ? `Сессий: ${state.reviewSessions.length}` : "Нет сессий";
+    if (state.reviewQuery) parameters.set("q", state.reviewQuery);
+    const result = await request(`/api/v1/review-sessions?${parameters}`);
+    const items = result.items || [];
+    state.reviewSessions = append ? [...state.reviewSessions, ...items] : items;
+    state.reviewHasMore = items.length === reviewPageSize;
+    elements.reviewMore.hidden = !state.reviewHasMore;
+    elements.reviewState.textContent = state.reviewSessions.length
+      ? `Сессий: ${state.reviewSessions.length}${state.reviewHasMore ? "+" : ""}`
+      : "Нет сессий";
     renderReviewSessions();
   } catch (error) {
     elements.reviewState.textContent = error.message;
     elements.reviewSessions.replaceChildren(text("p", "Не удалось загрузить проверки.", "empty panel"));
+  }
+}
+
+async function cancelReviewSession(session) {
+  const title = session.vacancy?.title || session.question || `проверку ${compactID(session.id)}`;
+  if (!globalThis.confirm(`Убрать «${title}» из списка? Ответ не будет отправлен на платформу.`)) return;
+  state.reviewBusy = true;
+  renderReviewSessions();
+  try {
+    await enqueue(`/api/v1/review-sessions/${encodeURIComponent(session.id)}/cancel`, { expected_revision: session.revision });
+    if (state.reviewSelected?.id === session.id) state.reviewSelected = null;
+    state.reviewMessage = "Проверка убрана";
+    await refreshReviewSessions();
+  } catch (error) {
+    elements.reviewState.textContent = error.message;
+  } finally {
+    state.reviewBusy = false;
+    renderReviewSessions();
   }
 }
 
@@ -752,6 +780,8 @@ function renderReviewSessions() {
     return;
   }
   elements.reviewSessions.replaceChildren(...state.reviewSessions.map((session) => {
+    const row = document.createElement("div");
+    row.className = "review-session-row";
     const button = document.createElement("button"); button.type = "button";
     button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
     const vacancy = session.vacancy || {};
@@ -761,7 +791,12 @@ function renderReviewSessions() {
       : [reviewStatusLabel(session.status), session.platform, profileDisplayName(session.profile_id), formatDate(session.updated_at)];
     button.append(text("small", details.filter(Boolean).join(" · ")));
     button.addEventListener("click", () => selectReviewSession(session));
-    return button;
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.className = "secondary compact review-cancel";
+    cancel.textContent = "Убрать"; cancel.disabled = state.reviewBusy;
+    cancel.addEventListener("click", () => cancelReviewSession(session));
+    row.append(button, cancel);
+    return row;
   }));
 }
 
@@ -1117,6 +1152,16 @@ elements.accountSwitcher.addEventListener("change", () => {
   refreshSummary(); refreshReviewSessions();
 });
 elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
+let reviewSearchTimer;
+elements.reviewSearch.addEventListener("input", () => {
+  clearTimeout(reviewSearchTimer);
+  reviewSearchTimer = setTimeout(() => {
+    state.reviewQuery = elements.reviewSearch.value.trim();
+    state.reviewSelected = null;
+    refreshReviewSessions();
+  }, 250);
+});
+elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
 refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
 // Server-sent change notifications replace most of the polling latency; the
