@@ -256,6 +256,7 @@ type reviewBatchAnswerRequest struct {
 	QuestionID      string   `json:"question_id"`
 	SelectedOptions []string `json:"selected_options,omitempty"`
 	Text            string   `json:"text,omitempty"`
+	Bank            *bool    `json:"bank,omitempty"`
 }
 
 func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request) {
@@ -279,6 +280,7 @@ func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request
 	for _, answer := range body.Answers {
 		payload.Answers = append(payload.Answers, core.ReviewAnswerEntry{
 			QuestionID: answer.QuestionID, SelectedOptions: answer.SelectedOptions, Text: answer.Text,
+			Bank: answer.Bank,
 		})
 	}
 	task, created, err := api.workflow.EnqueueReviewAnswer(request.Context(), session, payload, key)

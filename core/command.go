@@ -113,6 +113,24 @@ func (payload ApplicationStateSyncPayload) Validate() error {
 	return nil
 }
 
+// ApplicationAnswerCoveredPayload resumes vacancy questionnaires whose every
+// observed question already has a reviewed answer in the platform bank. A
+// partially covered questionnaire stays in the review queue.
+type ApplicationAnswerCoveredPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+	Limit     int       `json:"limit,omitempty"`
+}
+
+func (payload ApplicationAnswerCoveredPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("application answer covered requires profile")
+	}
+	if payload.Limit < 0 {
+		return errors.New("application answer covered limit must not be negative")
+	}
+	return nil
+}
+
 // ProfileActivityMaintainPayload views real candidate vacancies so the
 // applicant activity stays warm. It never applies to a vacancy.
 type ProfileActivityMaintainPayload struct {
@@ -271,6 +289,8 @@ type ReviewAnswerEntry struct {
 	QuestionID      string   `json:"question_id"`
 	SelectedOptions []string `json:"selected_options,omitempty"`
 	Text            string   `json:"text,omitempty"`
+	// Bank overrides the batch flag for this question. Nil inherits it.
+	Bank *bool `json:"bank,omitempty"`
 }
 
 type ReviewAnswerPayload struct {

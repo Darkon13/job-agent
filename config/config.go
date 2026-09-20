@@ -125,6 +125,7 @@ const (
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
 	JobActionApplicationRetention       = "application.retention"
 	JobActionApplicationStateSync       = "application.state.sync"
+	JobActionApplicationAnswerCovered   = "application.answer_covered"
 	JobConcurrencyForbid                = "forbid"
 	ApplicationValidationReview         = "review"
 	ApplicationValidationSkip           = "skip"
@@ -1712,6 +1713,13 @@ func (c Config) Validate() error {
 		case JobActionApplicationStateSync:
 			if _, err := jobActionTargets(job, profiles); err != nil {
 				return err
+			}
+		case JobActionApplicationAnswerCovered:
+			if _, err := jobActionTargets(job, profiles); err != nil {
+				return err
+			}
+			if job.Action.Count < 0 || job.Action.Count > 200 {
+				return fmt.Errorf("job %q application.answer_covered count must be between 0 and 200", job.Tag)
 			}
 		case JobActionApplicationRetention:
 			targets, err := jobActionTargets(job, profiles)
