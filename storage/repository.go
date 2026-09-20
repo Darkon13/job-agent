@@ -227,13 +227,16 @@ type ReviewSessionFilter struct {
 	Status    core.ReviewSessionStatus
 	ProfileID core.ProfileID
 	Platform  core.Platform
+	Query     string
 	Limit     int
+	Offset    int
 }
 
 type ReviewRepository interface {
 	CreateReviewSession(ctx context.Context, session core.ReviewSession) (created bool, err error)
 	ReviewSession(ctx context.Context, id core.ReviewSessionID) (core.ReviewSession, error)
 	ListReviewSessions(ctx context.Context, filter ReviewSessionFilter) ([]core.ReviewSession, error)
+	CancelReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error
 	ReviewPrompt(ctx context.Context, id core.ReviewPromptID) (core.ReviewPrompt, error)
 	SaveReviewPrompt(ctx context.Context, session core.ReviewSession, prompt core.ReviewPrompt, expectedRevision uint64) error
 	AppendReviewSelection(ctx context.Context, session core.ReviewSession, selection core.ReviewSelection, expectedRevision uint64) error
@@ -294,4 +297,10 @@ type ConversationRepository interface {
 	FollowUp(ctx context.Context, id core.FollowUpID) (core.FollowUp, error)
 	SaveFollowUp(ctx context.Context, candidate core.FollowUp, expectedRevision uint64) error
 	ListFollowUps(ctx context.Context, filter FollowUpFilter) ([]core.FollowUp, error)
+	// ConversationsAwaitingQuestionnaire lists conversations of the profile
+	// whose inbound questionnaire prompt has no later outgoing reply. The
+	// scheduled discovery window does not enumerate the whole platform
+	// catalog, so the scheduler uses this to keep locally known pending
+	// prompts in sync instead of waiting for an operator to open the chat.
+	ConversationsAwaitingQuestionnaire(ctx context.Context, profileID core.ProfileID, since time.Time, limit int) ([]core.ConversationID, error)
 }

@@ -228,6 +228,36 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 	}
 }
 
+func TestConversationDiscoverSyncsPendingQuestionnaireOutsideTheWindow(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, repository, queue, transport, clock := newConversationHandlersFixture(t)
+	handlers.ConfigureKnownAnswers(knownConversationAnswerRegistry(t), func(profileID core.ProfileID) bool {
+		return profileID == "profile-1"
+	})
+	prompt := conversationQuestionnairePrompt(clock.now)
+	if _, _, err := repository.AppendConversationMessage(ctx, prompt, clock.now); err != nil {
+		t.Fatalf("append questionnaire prompt: %v", err)
+	}
+	// The observed window no longer contains the conversation, but its
+	// unanswered prompt still has a reviewed answer.
+	transport.discovery = adapter.ConversationDiscoveryResult{ObservedAt: clock.now}
+	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "discover-pending", Type: core.TaskConversationDiscover, IdempotencyKey: "discover-run-pending",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-pending", Payload: payload,
+	}, clock.now)
+	if err != nil {
+		t.Fatalf("new discovery task: %v", err)
+	}
+	if err := handlers.Discover(ctx, task); err != nil {
+		t.Fatalf("discover conversations: %v", err)
+	}
+	tasks := queue.Tasks()
+	if len(tasks) != 1 || tasks[0].Type != core.TaskConversationSync {
+		t.Fatalf("pending questionnaire was not scheduled for sync: %#v", tasks)
+	}
+}
+
 func TestConversationFollowUpHandlerCompletesLifecycle(t *testing.T) {
 	ctx := context.Background()
 	handlers, conversationWorkflow, repository, _, transport, clock := newConversationHandlersFixture(t)

@@ -85,3 +85,62 @@ func TestRepositoryKeepsProgressiveReviewStateIsolated(t *testing.T) {
 		t.Fatalf("limited sessions: %#v err=%v", limited, err)
 	}
 }
+
+func TestRepositoryFiltersAndCancelsReviewSessions(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	repository := NewRepository()
+	newSession := func(tag, questionText string, at time.Time) core.ReviewSession {
+		t.Helper()
+		definition, err := core.NewProgressiveTestDefinition("hh", "vacancy-"+tag, "Test "+tag, nil, at)
+		if err != nil {
+			t.Fatalf("new definition: %v", err)
+		}
+		question := core.Question{ID: "question-" + tag, Text: questionText, Kind: core.QuestionText}
+		if _, _, err := definition.ObserveQuestion(question, at); err != nil {
+			t.Fatalf("observe question: %v", err)
+		}
+		if _, err := repository.UpsertTestDefinition(ctx, definition); err != nil {
+			t.Fatalf("store definition: %v", err)
+		}
+		session, err := core.NewReviewSession(core.ReviewSessionID("review-"+tag), definition, "profile-1", core.CorrelationID("correlation-"+tag), at)
+		if err != nil {
+			t.Fatalf("new session: %v", err)
+		}
+		session.Questionnaire = core.Questionnaire{Title: definition.Title, Questions: []core.Question{question}}
+		if _, err := repository.CreateReviewSession(ctx, session); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+		return session
+	}
+	first := newSession("one", "Был ли у Вас опыт коммерческой разработки", now)
+	second := newSession("two", "Какой у Вас ожидаемый уровень зарплаты", now.Add(time.Minute))
+
+	found, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{Query: "коммерческой"})
+	if err != nil || len(found) != 1 || found[0].ID != first.ID {
+		t.Fatalf("query result=%#v err=%v", found, err)
+	}
+	page, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{Limit: 1, Offset: 1})
+	if err != nil || len(page) != 1 || page[0].ID != first.ID {
+		t.Fatalf("offset page=%#v err=%v", page, err)
+	}
+
+	cancelled := first
+	cancelled.Status = core.ReviewCancelled
+	cancelled.Revision = first.Revision + 1
+	cancelled.UpdatedAt = now.Add(2 * time.Minute)
+	if err := repository.CancelReviewSession(ctx, cancelled, first.Revision); err != nil {
+		t.Fatalf("cancel session: %v", err)
+	}
+	if err := repository.CancelReviewSession(ctx, cancelled, first.Revision); !errors.Is(err, storage.ErrRevisionConflict) {
+		t.Fatalf("repeat cancel error = %v", err)
+	}
+	visible, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{})
+	if err != nil || len(visible) != 1 || visible[0].ID != second.ID {
+		t.Fatalf("visible sessions=%#v err=%v", visible, err)
+	}
+	hidden, err := repository.ListReviewSessions(ctx, storage.ReviewSessionFilter{Status: core.ReviewCancelled})
+	if err != nil || len(hidden) != 1 || hidden[0].ID != first.ID {
+		t.Fatalf("cancelled sessions=%#v err=%v", hidden, err)
+	}
+}

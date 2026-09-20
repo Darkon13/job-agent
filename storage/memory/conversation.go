@@ -178,6 +178,62 @@ func (repository *Repository) OpenQuestionnaireConversationIDs(ctx context.Conte
 	return result, nil
 }
 
+func (repository *Repository) ConversationsAwaitingQuestionnaire(ctx context.Context, profileID core.ProfileID, since time.Time, limit int) ([]core.ConversationID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if profileID == "" {
+		return nil, errors.New("awaiting questionnaire requires a profile")
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	type pending struct {
+		id    core.ConversationID
+		after time.Time
+	}
+	items := make([]pending, 0)
+	for id, messages := range repository.messages {
+		conversation, exists := repository.conversations[id]
+		if !exists || conversation.ProfileID != profileID {
+			continue
+		}
+		lastOutgoing := time.Time{}
+		for _, message := range messages {
+			if message.Direction == core.MessageOutgoing && (message.Status == core.MessageSent || message.Status == core.MessageQueued) &&
+				message.OccurredAt.After(lastOutgoing) {
+				lastOutgoing = message.OccurredAt
+			}
+		}
+		latestIncoming := time.Time{}
+		for _, message := range messages {
+			if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
+				message.OccurredAt.After(lastOutgoing) && message.OccurredAt.After(latestIncoming) {
+				latestIncoming = message.OccurredAt
+			}
+		}
+		if !latestIncoming.IsZero() && !latestIncoming.Before(since) {
+			items = append(items, pending{id: id, after: latestIncoming})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].after.Equal(items[j].after) {
+			return items[i].after.After(items[j].after)
+		}
+		return items[i].id < items[j].id
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	result := make([]core.ConversationID, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.id)
+	}
+	return result, nil
+}
+
 func (repository *Repository) ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

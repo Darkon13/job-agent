@@ -225,6 +225,50 @@ func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]cor
 	return result, rows.Err()
 }
 
+// ConversationsAwaitingQuestionnaire lists conversations of one profile whose
+// latest text-button questionnaire prompt still has no outgoing answer after
+// it. Stale prompts outside the recency window are skipped so the scheduler
+// does not keep re-reading chats that can no longer be answered.
+func (store *Store) ConversationsAwaitingQuestionnaire(ctx context.Context, profileID core.ProfileID, since time.Time, limit int) ([]core.ConversationID, error) {
+	if profileID == "" {
+		return nil, errors.New("awaiting questionnaire requires a profile")
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT m.conversation_id
+		FROM conversation_messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.profile_id = ?
+		  AND m.direction = 'incoming' AND m.kind = 'questionnaire'
+		  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
+		  AND m.occurred_at >= ?
+		  AND m.occurred_at > COALESCE((
+			SELECT MAX(o.occurred_at) FROM conversation_messages o
+			WHERE o.conversation_id = m.conversation_id AND o.direction = 'outgoing'
+			  AND o.status IN ('sent', 'queued')), 0)
+		GROUP BY m.conversation_id
+		ORDER BY MAX(m.occurred_at) DESC
+		LIMIT ?`, profileID, since.UnixNano(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list conversations awaiting questionnaire: %w", err)
+	}
+	defer rows.Close()
+	result := make([]core.ConversationID, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, core.ConversationID(id))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversations awaiting questionnaire: %w", err)
+	}
+	return result, nil
+}
+
 func (store *Store) ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error) {
 	if id == "" {
 		return nil, errors.New("conversation id is required")
