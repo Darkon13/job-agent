@@ -113,6 +113,9 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .review-layout.empty { grid-template-columns: 1fr; }
 .review-layout.empty .review-panel { display: none; }
 .review-list { overflow: auto; padding: .45rem; max-height: min(72vh, 760px); }
+.review-session-row { display: flex; align-items: stretch; gap: .35rem; margin-bottom: .35rem; }
+.review-session-row .review-session { flex: 1 1 auto; width: auto; margin: 0; }
+.review-session-row .review-cancel { align-self: center; flex: 0 0 auto; }
 .review-session { width: 100%; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; }
 .review-session:hover, .review-session.active { border-color: var(--line); background: var(--surface-2); filter: none; }
 .review-session.active { border-color: var(--cyan); }
