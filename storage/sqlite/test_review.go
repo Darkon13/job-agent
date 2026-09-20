@@ -193,17 +193,50 @@ func (store *Store) ReviewSession(ctx context.Context, id core.ReviewSessionID) 
 		`SELECT `+reviewSessionColumns+` FROM review_sessions WHERE id = ?`, id))
 }
 
+func (store *Store) CancelReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error {
+	if err := session.Validate(); err != nil {
+		return err
+	}
+	if session.Status != core.ReviewCancelled || session.Revision != expectedRevision+1 {
+		return errors.New("cancelled review session does not match the expected revision")
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE review_sessions SET status = ?, revision = ?, updated_at = ?
+		WHERE id = ? AND revision = ? AND status IN (?, ?, ?)`,
+		session.Status, session.Revision, session.UpdatedAt.UnixNano(), session.ID, expectedRevision,
+		core.ReviewPending, core.ReviewWaiting, core.ReviewAnswered)
+	if err != nil {
+		return fmt.Errorf("cancel review session %s: %w", session.ID, err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return storage.ErrRevisionConflict
+	}
+	return nil
+}
+
 func (store *Store) ListReviewSessions(ctx context.Context, filter storage.ReviewSessionFilter) ([]core.ReviewSession, error) {
+	// Cancelled sessions leave the default pool but stay visible when the
+	// operator explicitly filters by that status.
 	query := `SELECT ` + reviewSessionColumns + `
 		FROM review_sessions
 		WHERE (? = '' OR status = ?)
 		  AND (? = '' OR profile_id = ?)
 		  AND (? = '' OR platform = ?)
-		ORDER BY updated_at DESC, id`
-	args := []any{filter.Status, filter.Status, filter.ProfileID, filter.ProfileID, filter.Platform, filter.Platform}
-	if filter.Limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, filter.Limit)
+		  AND (? <> '' OR status <> 'cancelled')
+		  AND (? = '' OR instr(lower(cast(questionnaire as text)), lower(?)) > 0
+		       OR test_definition_id IN (SELECT id FROM test_definitions WHERE instr(lower(title), lower(?)) > 0))
+		ORDER BY updated_at DESC, id
+		LIMIT ? OFFSET ?`
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = -1
+	}
+	args := []any{
+		filter.Status, filter.Status, filter.ProfileID, filter.ProfileID, filter.Platform, filter.Platform,
+		filter.Query, filter.Query, filter.Query, filter.Query, limit, filter.Offset,
 	}
 	rows, err := store.db.QueryContext(ctx, query, args...)
 	if err != nil {

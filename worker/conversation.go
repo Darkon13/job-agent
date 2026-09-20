@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
@@ -228,6 +229,53 @@ func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Ta
 		if _, err := handlers.workflow.EnqueueConversationSync(ctx, conversationID, task.IdempotencyKey, task.Priority); err != nil {
 			return err
 		}
+	}
+	return handlers.enqueueAwaitingQuestionnaire(ctx, task)
+}
+
+const (
+	// Discovery reads only the recent-activity window, so pending prompts that
+	// fell out of it would otherwise wait for an operator to open the chat.
+	pendingQuestionnaireCandidateLimit = 100
+	pendingQuestionnaireSyncBatch      = 25
+	pendingQuestionnaireSyncWindow     = 7 * 24 * time.Hour
+)
+
+// enqueueAwaitingQuestionnaire syncs locally known chats whose unanswered
+// questionnaire prompt already has a reviewed answer. Only conversations that
+// can actually be answered are enqueued, so chats without a ready answer are
+// not re-read on every discovery run.
+func (handlers *ConversationHandlers) enqueueAwaitingQuestionnaire(ctx context.Context, task core.Task) error {
+	if handlers.answers == nil || handlers.answerKnown == nil || !handlers.answerKnown(task.ProfileID) {
+		return nil
+	}
+	since := handlers.clock.Now().Add(-pendingQuestionnaireSyncWindow)
+	candidates, err := handlers.repository.ConversationsAwaitingQuestionnaire(
+		ctx, task.ProfileID, since, pendingQuestionnaireCandidateLimit,
+	)
+	if err != nil {
+		return err
+	}
+	enqueued := 0
+	for _, conversationID := range candidates {
+		if enqueued >= pendingQuestionnaireSyncBatch {
+			break
+		}
+		conversation, err := handlers.repository.Conversation(ctx, conversationID)
+		if err != nil {
+			continue
+		}
+		messages, err := handlers.repository.ConversationMessages(ctx, conversationID)
+		if err != nil {
+			continue
+		}
+		if _, found := core.ResolveKnownConversationAnswer(conversation.Platform, messages, handlers.answers); !found {
+			continue
+		}
+		if _, err := handlers.workflow.EnqueueConversationSync(ctx, conversationID, task.IdempotencyKey, task.Priority); err != nil {
+			return err
+		}
+		enqueued++
 	}
 	return nil
 }

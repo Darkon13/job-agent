@@ -3,7 +3,9 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
@@ -140,10 +142,17 @@ func (repository *Repository) ListReviewSessions(ctx context.Context, filter sto
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
 	result := make([]core.ReviewSession, 0, len(repository.reviews))
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	for _, session := range repository.reviews {
 		if filter.Status != "" && session.Status != filter.Status ||
 			filter.ProfileID != "" && session.ProfileID != filter.ProfileID ||
 			filter.Platform != "" && session.Platform != filter.Platform {
+			continue
+		}
+		if filter.Status == "" && session.Status == core.ReviewCancelled {
+			continue
+		}
+		if query != "" && !repository.reviewSessionMatchesQuery(session, query) {
 			continue
 		}
 		result = append(result, cloneReviewSession(session))
@@ -154,10 +163,66 @@ func (repository *Repository) ListReviewSessions(ctx context.Context, filter sto
 		}
 		return result[i].ID < result[j].ID
 	})
+	if filter.Offset > 0 {
+		if filter.Offset >= len(result) {
+			return nil, nil
+		}
+		result = result[filter.Offset:]
+	}
 	if filter.Limit > 0 && len(result) > filter.Limit {
 		result = result[:filter.Limit]
 	}
 	return result, nil
+}
+
+// reviewSessionMatchesQuery mirrors the SQLite search over the session
+// questionnaire, the test definition title and the current prompt.
+func (repository *Repository) reviewSessionMatchesQuery(session core.ReviewSession, query string) bool {
+	if strings.Contains(strings.ToLower(string(session.TestDefinitionID)), query) {
+		return true
+	}
+	if definition, exists := repository.tests[session.TestDefinitionID]; exists {
+		if strings.Contains(strings.ToLower(definition.Title), query) {
+			return true
+		}
+	}
+	for _, question := range session.Questionnaire.Questions {
+		if strings.Contains(strings.ToLower(question.Text), query) {
+			return true
+		}
+	}
+	promptID := core.ReviewPromptID(fmt.Sprintf("%s-prompt-%d", session.ID, session.Revision))
+	if prompt, exists := repository.prompts[promptID]; exists {
+		if strings.Contains(strings.ToLower(prompt.Question.Text), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func (repository *Repository) CancelReviewSession(ctx context.Context, session core.ReviewSession, expectedRevision uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := session.Validate(); err != nil {
+		return err
+	}
+	if session.Status != core.ReviewCancelled || session.Revision != expectedRevision+1 {
+		return errors.New("cancelled review session does not match the expected revision")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	stored, exists := repository.reviews[session.ID]
+	if !exists || stored.Revision != expectedRevision {
+		return storage.ErrRevisionConflict
+	}
+	switch stored.Status {
+	case core.ReviewPending, core.ReviewWaiting, core.ReviewAnswered:
+	default:
+		return storage.ErrRevisionConflict
+	}
+	repository.reviews[session.ID] = cloneReviewSession(session)
+	return nil
 }
 
 func (repository *Repository) ReviewPrompt(ctx context.Context, id core.ReviewPromptID) (core.ReviewPrompt, error) {
