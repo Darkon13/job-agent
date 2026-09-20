@@ -203,6 +203,9 @@ type ApplicationRetentionConfig struct {
 	StaleAfter              core.Duration `json:"stale_after"`
 	RemoveRejected          *bool         `json:"remove_rejected,omitempty"`
 	RemoveWaitingValidation bool          `json:"remove_waiting_validation,omitempty"`
+	// ValidationStaleAfter overrides StaleAfter for questionnaires that never
+	// became applications. Zero keeps the shared window.
+	ValidationStaleAfter core.Duration `json:"validation_stale_after,omitempty"`
 }
 
 func (configured ApplicationRetentionConfig) Payload(profileID core.ProfileID) core.ApplicationRetentionPayload {
@@ -213,6 +216,7 @@ func (configured ApplicationRetentionConfig) Payload(profileID core.ProfileID) c
 	return core.ApplicationRetentionPayload{
 		ProfileID: profileID, StaleAfter: configured.StaleAfter, RemoveRejected: removeRejected,
 		RemoveWaitingValidation: configured.RemoveWaitingValidation,
+		ValidationStaleAfter:    configured.ValidationStaleAfter,
 	}
 }
 

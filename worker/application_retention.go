@@ -128,16 +128,24 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 	if !payload.RemoveWaitingValidation {
 		return nil
 	}
+	validationStaleBefore := staleBefore
+	if payload.ValidationStaleAfter.Value() > 0 {
+		validationStaleBefore = now.Add(-payload.ValidationStaleAfter.Value())
+	}
 	stale, err := handler.states.ListStaleValidationApplications(ctx, payload.ProfileID)
 	if err != nil {
 		return err
 	}
 	for _, application := range stale {
-		if application.Key.Vacancy.Platform != task.Platform || application.UpdatedAt.After(staleBefore) {
+		if application.Key.Vacancy.Platform != task.Platform || application.UpdatedAt.After(validationStaleBefore) {
 			continue
 		}
+		removalWindow := payload.StaleAfter
+		if payload.ValidationStaleAfter.Value() > 0 {
+			removalWindow = payload.ValidationStaleAfter
+		}
 		if _, _, err := handler.removal.EnqueueRemoval(ctx, core.ApplicationRemovePayload{
-			ApplicationID: application.ID, Reason: core.ApplicationRemovalRetentionValidation, StaleAfter: payload.StaleAfter,
+			ApplicationID: application.ID, Reason: core.ApplicationRemovalRetentionValidation, StaleAfter: removalWindow,
 		}, "retention:"+string(task.ID)); err != nil {
 			return err
 		}
