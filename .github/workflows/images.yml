@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REGISTRY: ghcr.io
-      OWNER: ${{ github.repository_owner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,8 +30,10 @@ jobs:
           else
             version="${{ inputs.tag }}"
           fi
+          owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           {
             echo "version=${version}"
+            echo "owner=${owner}"
             echo "commit=${GITHUB_SHA::12}"
             echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
@@ -53,8 +54,8 @@ jobs:
           target: runtime
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/job-agent:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/job-agent:latest
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/job-agent:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/job-agent:latest
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ steps.meta.outputs.commit }}
@@ -68,5 +69,5 @@ jobs:
           file: ./browser-worker/Dockerfile.slim
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/job-agent-browser-worker:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/job-agent-browser-worker:latest
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/job-agent-browser-worker:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/job-agent-browser-worker:latest
