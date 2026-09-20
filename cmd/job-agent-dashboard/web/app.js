@@ -895,12 +895,20 @@ function renderReviewBatch(detail) {
       unsupported = true;
       input = text("p", `Тип вопроса «${question.kind}» пока не поддерживается интерактивно.`, "empty");
     }
-    block.append(input); form.append(block);
-    fields.push({ question, input });
+    block.append(input);
+    const questionBankLabel = document.createElement("label"); questionBankLabel.className = "review-option review-bank-question";
+    const questionBank = document.createElement("input"); questionBank.type = "checkbox"; questionBank.checked = true;
+    questionBankLabel.append(questionBank, text("span", "Сохранить этот ответ в банк"));
+    block.append(questionBankLabel);
+    form.append(block);
+    fields.push({ question, input, block });
   }
   const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
   const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
   bankLabel.append(bankControl, text("span", "Сохранить ответы в банк — пригодятся в других анкетах"));
+  bankControl.addEventListener("change", () => {
+    for (const control of form.querySelectorAll(".review-bank-question input")) control.checked = bankControl.checked;
+  });
   form.append(bankLabel);
   const footer = document.createElement("div"); footer.className = "review-actions";
   const submit = text("button", "Сохранить все ответы"); submit.type = "submit";
@@ -910,21 +918,23 @@ function renderReviewBatch(detail) {
   elements.reviewPrompt.replaceChildren(form);
 }
 
+function questionBankValue(block) { return block.querySelector(".review-bank-question input")?.checked !== false; }
+
 async function submitReviewBatch(detail, fields) {
   if (state.reviewBusy) return;
   const answers = [];
-  for (const { question, input } of fields) {
+  for (const { question, input, block } of fields) {
     if (question.kind === "text") {
       const value = input.value.trim();
       if (!value) { state.reviewMessage = `Заполните: ${question.text}`; renderReviewPrompt(); return; }
-      answers.push({ question_id: question.id, text: value });
+      answers.push({ question_id: question.id, text: value, bank: questionBankValue(block) });
       continue;
     }
     if (question.kind === "single" || question.kind === "multiple") {
       const selected = [...input.querySelectorAll("input:checked")].map((control) => control.value);
       if (question.kind === "single" && selected.length !== 1) { state.reviewMessage = `Выберите один вариант: ${question.text}`; renderReviewPrompt(); return; }
       if (question.kind === "multiple" && selected.length === 0) { state.reviewMessage = `Выберите хотя бы один вариант: ${question.text}`; renderReviewPrompt(); return; }
-      answers.push({ question_id: question.id, selected_options: selected });
+      answers.push({ question_id: question.id, selected_options: selected, bank: questionBankValue(block) });
       continue;
     }
     state.reviewMessage = `Вопрос «${question.text}» не поддерживается`; renderReviewPrompt(); return;

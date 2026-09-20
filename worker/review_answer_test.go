@@ -257,6 +257,50 @@ func TestReviewAnswerRecordsWholeBatchWithoutBaseBlock(t *testing.T) {
 	}
 }
 
+func TestReviewAnswerBatchKeepsUnmarkedAnswersOutOfTheBank(t *testing.T) {
+	questions := []core.Question{
+		{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{
+			{ID: "10", Text: "Go"}, {ID: "11", Text: "Python"},
+		}},
+		{ID: "2", Text: "Explain experience", Kind: core.QuestionText},
+	}
+	handler, repository, _, _, chain := reviewFixture(t, questions, 0, core.AnswerBlock{})
+	registry, err := core.NewAnswerBlockRegistry()
+	if err != nil {
+		t.Fatalf("empty registry: %v", err)
+	}
+	resolver, err := NewReviewedVacancyAnswers(registry, repository)
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	handler.ConfigureContinuation(resolver, repository, chain)
+	keep := false
+	err = handler.Handle(context.Background(), reviewAnswerTask(t, core.ReviewAnswerPayload{
+		SessionID: "review-1", ExpectedRevision: 1, Source: "dashboard",
+		Answers: []core.ReviewAnswerEntry{
+			{QuestionID: "1", SelectedOptions: []string{"Go"}},
+			{QuestionID: "2", Text: "Five years of Go", Bank: &keep},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("handle batch: %v", err)
+	}
+	latest, exists, err := repository.LatestAnswerBlockRevision(context.Background(), "hh-vacancy-reviewed")
+	if err != nil || !exists {
+		t.Fatalf("revision exists=%v err=%v", exists, err)
+	}
+	if len(latest.Answers) != 1 || latest.Answers[0].Question != "Pick a language" {
+		t.Fatalf("bank revision = %#v", latest.Answers)
+	}
+	selections, err := repository.ReviewSelections(context.Background(), "review-1")
+	if err != nil || len(selections) != 2 {
+		t.Fatalf("selections = %#v err=%v", selections, err)
+	}
+	if len(chain.answers) != 1 || len(chain.answers[0]) != 2 {
+		t.Fatalf("chain answers = %#v", chain.answers)
+	}
+}
+
 func TestReviewAnswerBatchRequiresFullCoverage(t *testing.T) {
 	questions := []core.Question{
 		{ID: "1", Text: "Pick a language", Kind: core.QuestionSingle, Options: []core.QuestionOption{

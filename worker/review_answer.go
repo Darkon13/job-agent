@@ -155,8 +155,12 @@ func (handler *ReviewAnswerHandler) handleBatch(ctx context.Context, session cor
 			return err
 		}
 		if handler.revisions != nil {
-			if payload.Bank != nil && !*payload.Bank {
-				// The operator kept this batch out of the reusable bank.
+			bank := payload.Bank
+			if entry.Bank != nil {
+				bank = entry.Bank
+			}
+			if bank != nil && !*bank {
+				// The operator kept this answer out of the reusable bank.
 			} else if err := handler.appendRevision(ctx, session, prompt, selection, now); err != nil {
 				return err
 			}

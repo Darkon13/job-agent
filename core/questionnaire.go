@@ -368,6 +368,32 @@ func UncoveredQuestions(questionnaire Questionnaire, block AnswerBlock) ([]Quest
 	return missing, nil
 }
 
+// ResolveBlockAnswers resolves every questionnaire question from a reviewed
+// answer block. It refuses a partially covered questionnaire so a missing
+// answer never turns into a guessed submission.
+func ResolveBlockAnswers(questionnaire Questionnaire, block AnswerBlock) ([]ResolvedAnswer, error) {
+	missing, err := UncoveredQuestions(questionnaire, block)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) != 0 {
+		return nil, fmt.Errorf("answer block %q does not cover %d question(s)", block.Tag, len(missing))
+	}
+	stored := make(map[string]StoredAnswer, len(block.Answers))
+	for _, answer := range block.Answers {
+		stored[NormalizeQuestionText(answer.Question)] = answer
+	}
+	answers := make([]ResolvedAnswer, 0, len(questionnaire.Questions))
+	for _, question := range questionnaire.Questions {
+		resolved, err := ResolveStoredAnswer(question, stored[NormalizeQuestionText(question.Text)])
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, resolved)
+	}
+	return answers, nil
+}
+
 // ValidateAnswerBlock validates the portable JSON object without requiring a
 // concrete platform questionnaire.
 func ValidateAnswerBlock(block AnswerBlock) error {

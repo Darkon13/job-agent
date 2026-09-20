@@ -889,6 +889,17 @@ func main() {
 		log.Fatalf("create review answer worker: %v", err)
 	}
 	workers = append(workers, reviewAnswerWorker)
+	answerCoveredHandler, err := taskworker.NewApplicationAnswerCoveredHandler(
+		store, vacancyAnswerResolver, vacancyTestWorkflow, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create application answer covered handler: %v", err)
+	}
+	answerCoveredWorker, err := newTaskWorker(store, core.TaskApplicationAnswerCovered, answerCoveredHandler.Handle)
+	if err != nil {
+		log.Fatalf("create application answer covered worker: %v", err)
+	}
+	workers = append(workers, answerCoveredWorker)
 	if profileStateWriters.Count() > 0 {
 		resumeUpdateHandler, err := taskworker.NewResumeUpdateHandler(profileStatePlanner, profileStateReaders, profileStateWriters, resumePublishers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -993,6 +1004,11 @@ func main() {
 			return nil, fmt.Errorf("build profile activity maintain scheduled jobs: %w", err)
 		}
 		definitions = append(definitions, activityMaintainDefinitions...)
+		answerCoveredDefinitions, err := applicationAnswerCoveredDefinitions(cfg, instances)
+		if err != nil {
+			return nil, fmt.Errorf("build application answer covered scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, answerCoveredDefinitions...)
 		profileStateDefinitions, err := profileStateReconcileDefinitions(
 			cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 		)
@@ -2722,6 +2738,43 @@ func profileActivityMaintainDefinitions(cfg appconfig.Config, instances map[stri
 					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
 					Expression: trigger.Expression, Timezone: trigger.Timezone,
 					ActionType: core.TaskProfileActivityMaintain, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
+		}
+	}
+	return definitions, nil
+}
+
+func applicationAnswerCoveredDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationAnswerCovered {
+			continue
+		}
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled {
+				continue
+			}
+			payload, err := json.Marshal(core.ApplicationAnswerCoveredPayload{
+				ProfileID: profileID, Limit: job.Action.Count,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationAnswerCovered, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 				})
 			}
