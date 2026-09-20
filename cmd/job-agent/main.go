@@ -28,6 +28,11 @@ import (
 	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
+	toolapprove "github.com/Darkon13/job-agent/internal/tools/approve"
+	toolbrowserstate "github.com/Darkon13/job-agent/internal/tools/browserstate"
+	toolcheck "github.com/Darkon13/job-agent/internal/tools/check"
+	toolquestionbank "github.com/Darkon13/job-agent/internal/tools/questionbank"
+	tooltrigger "github.com/Darkon13/job-agent/internal/tools/trigger"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/operator/openaichat"
 	"github.com/Darkon13/job-agent/operator/openairesponses"
@@ -155,6 +160,26 @@ func (sender liveConversationSend) SendConversationNow(ctx context.Context, conv
 	return nil
 }
 
+// runUtility dispatches the historical utility binaries that now live behind
+// the job-agent facade. Unknown names return handled=false so the server flags
+// keep working.
+func runUtility(name string, args []string) (int, bool) {
+	switch name {
+	case "check":
+		return toolcheck.Run(args), true
+	case "trigger":
+		return tooltrigger.Run(args), true
+	case "approve":
+		return toolapprove.Run(args), true
+	case "browser-state":
+		return toolbrowserstate.Run(args), true
+	case "question-bank-import":
+		return toolquestionbank.Run(args), true
+	default:
+		return 0, false
+	}
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if buildinfo.Requested(os.Args[1:]) {
@@ -162,6 +187,11 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+	if len(os.Args) > 1 {
+		if code, handled := runUtility(os.Args[1], os.Args[2:]); handled {
+			os.Exit(code)
+		}
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "profile" && os.Args[2] == "bootstrap" {
 		if err := runProfileBootstrap(context.Background(), os.Args[3:], os.Stdout, nil); err != nil {

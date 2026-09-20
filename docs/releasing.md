@@ -32,7 +32,7 @@ Release выполняется из чистого commit:
 1. заменить версию в `buildinfo/VERSION` (например, `1.7.2`) и синхронно
    передать `JOB_AGENT_VERSION=1.0.0` container build;
 2. выполнить `make release-check` и smoke основных read/write policy без
-   реальных нежелательных действий; отдельно запустить `job-agent-check` на
+   реальных нежелательных действий; отдельно запустить `job-agent check` на
    deployment config: `degraded` требует разбора failed-задач, а `blocked`
    запрещает выпуск;
 3. собрать image с commit SHA и RFC3339 build time, проверить версии трёх
@@ -50,7 +50,7 @@ Release выполняется из чистого commit:
 Операционная проверка перед выпуском:
 
 1. backup на чистом deployment и restore этого backup на копии с проверкой
-   `job-agent-check` и `/readyz`;
+   `job-agent check` и `/readyz`;
 2. upgrade и rollback миграций на копии backup (`job-agent-migrate up`, затем
    `--steps 1 down`), destructive guard подтверждён;
 3. `LICENSE`, `docs/quickstart.md` и `docs/runbook.md` соответствуют текущему
@@ -69,4 +69,4 @@ Release выполняется из чистого commit:
    контракт;
 6. проверенные upgrade/rollback миграций, backup/restore и destructive guard;
 7. зелёные `make verify` и `go test -race ./...`; LICENSE и quickstart;
-8. `job-agent-check` без `blocked`, выпуск из чистого commit по процессу выше.
+8. `job-agent check` без `blocked`, выпуск из чистого commit по процессу выше.

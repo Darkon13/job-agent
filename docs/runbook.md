@@ -15,7 +15,7 @@ job-agent db restore --config ./deploy/config.json --input job-agent.db.backup-2
 - `db restore` принимает только валидную базу этой же schema line, требует
   `--force` для замены и удаляет устаревшие `-wal`/`-shm`.
 - Восстановление выполняйте на остановленном сервисе. После restore запустите
-  `job-agent-check --config ./deploy/config.json` и проверьте `/readyz`.
+  `job-agent check --config ./deploy/config.json` и проверьте `/readyz`.
 
 Проверка backup без восстановления:
 
