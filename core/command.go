@@ -88,6 +88,9 @@ type ApplicationRetentionPayload struct {
 	// RemoveWaitingValidation also clears questionnaires and tests that were
 	// never submitted and are older than stale_after.
 	RemoveWaitingValidation bool `json:"remove_waiting_validation,omitempty"`
+	// ValidationStaleAfter overrides StaleAfter for questionnaire removals.
+	// Zero keeps the shared window.
+	ValidationStaleAfter Duration `json:"validation_stale_after,omitempty"`
 }
 
 func (payload ApplicationRetentionPayload) Validate() error {
@@ -96,6 +99,9 @@ func (payload ApplicationRetentionPayload) Validate() error {
 	}
 	if payload.StaleAfter.Value() <= 0 {
 		return errors.New("application retention requires positive stale_after")
+	}
+	if payload.ValidationStaleAfter.Value() < 0 {
+		return errors.New("application retention validation_stale_after must not be negative")
 	}
 	return nil
 }
