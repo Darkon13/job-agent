@@ -43,7 +43,9 @@ jobs:
                 go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
                 -o "${stage}/${cmd}" "./cmd/${cmd}"
             done
-            cp LICENSE README.md "${stage}/"
+            cp LICENSE README.md compose.yaml .env.example "${stage}/"
+            mkdir -p "${stage}/deploy"
+            cp -r deploy/. "${stage}/deploy/"
             tar -C "${stage}" -czf "dist/job-agent_${version}_linux_${arch}.tar.gz" .
             rm -rf "${stage}"
           done
