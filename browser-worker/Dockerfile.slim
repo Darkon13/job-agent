@@ -14,6 +14,9 @@ RUN npm run build
 
 FROM node:22-slim
 ENV NODE_ENV=production
+LABEL org.opencontainers.image.title="Job Agent Browser Worker" \
+      org.opencontainers.image.description="Slim Playwright worker with the system Chromium" \
+      org.opencontainers.image.source="https://github.com/Darkon13/job-agent"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates && \
     rm -rf /var/lib/apt/lists/*
