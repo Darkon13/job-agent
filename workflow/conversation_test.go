@@ -204,3 +204,32 @@ func TestConversationPresentationRetriesRevisionConflict(t *testing.T) {
 		t.Fatalf("stored conversation = %#v err=%v", stored, err)
 	}
 }
+
+func TestObserveConversationPresentationClampsFutureStoredState(t *testing.T) {
+	ctx := context.Background()
+	service, repository, _, clock := newConversationWorkflowFixture(t)
+	// A platform message timestamp ahead of the local clock pushes the stored
+	// conversation update time into the future.
+	future := clock.now.Add(5 * time.Minute)
+	_, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+		ID: "message-1", ConversationID: "conversation-1", ExternalID: "external-1",
+		Direction: core.MessageIncoming, Kind: core.MessageText, Status: core.MessageObserved,
+		Text: "Добрый день", OccurredAt: future,
+	}, future)
+	if err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	err = service.ObserveConversationPresentation(ctx, "conversation-1", core.ConversationPresentation{
+		VacancyTitle: "Go разработчик", Employer: "Тех",
+	}, clock.now)
+	if err != nil {
+		t.Fatalf("backwards presentation observation must not fail: %v", err)
+	}
+	conversation, err := repository.Conversation(ctx, "conversation-1")
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	if conversation.VacancyTitle != "Go разработчик" || conversation.Employer != "Тех" {
+		t.Fatalf("presentation was not stored: %#v", conversation)
+	}
+}

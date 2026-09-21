@@ -3,10 +3,16 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
 )
+
+// ErrVacancyTestUnavailable reports that the vacancy response popup currently
+// exposes no test: the questionnaire was withdrawn, already answered, or the
+// platform switched the vacancy to another flow. It is not a task failure.
+var ErrVacancyTestUnavailable = errors.New("vacancy test is not available")
 
 type Descriptor interface {
 	Name() string

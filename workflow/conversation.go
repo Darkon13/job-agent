@@ -169,7 +169,14 @@ func (workflow *ConversationWorkflow) EnqueueConversationSync(ctx context.Contex
 
 func (workflow *ConversationWorkflow) ObserveConversationPresentation(ctx context.Context, conversationID core.ConversationID, presentation core.ConversationPresentation, observedAt time.Time) error {
 	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
-		return conversation.ObservePresentation(presentation, observedAt)
+		// Platform message timestamps may run slightly ahead of the local
+		// clock; presentation metadata is auxiliary and must not fail the
+		// whole sync, so clamp the observation to the stored state.
+		effective := observedAt
+		if effective.Before(conversation.UpdatedAt) {
+			effective = conversation.UpdatedAt
+		}
+		return conversation.ObservePresentation(presentation, effective)
 	})
 	if err != nil {
 		return fmt.Errorf("save conversation presentation: %w", err)

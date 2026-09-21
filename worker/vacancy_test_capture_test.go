@@ -170,3 +170,30 @@ func TestVacancyTestCapturePropagatesAdapterError(t *testing.T) {
 }
 
 var _ adapter.VacancyTestCapturer = (*stubVacancyTestCapturer)(nil)
+
+func TestVacancyTestCaptureSkipsVacancyWithoutTest(t *testing.T) {
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	capturer := &stubVacancyTestCapturer{err: adapter.ErrVacancyTestUnavailable}
+	capturers := NewVacancyTestCapturerRegistry()
+	if err := capturers.Register("primary", capturer); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	repository := storagememory.NewRepository()
+	handler, err := NewVacancyTestCaptureHandler(capturers, repository, fixedClock{now: now})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if err := handler.Handle(context.Background(), testCaptureTask(t, "primary", "hh", "136720699")); err != nil {
+		t.Fatalf("a vacancy without a test must not fail the task: %v", err)
+	}
+	definitions, err := repository.ListTestDefinitions(context.Background(), storage.TestDefinitionFilter{Platform: "hh"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(definitions) != 0 {
+		t.Fatalf("no catalog entry expected: %#v", definitions)
+	}
+	if len(capturer.calls) != 1 {
+		t.Fatalf("capturer calls = %#v", capturer.calls)
+	}
+}
