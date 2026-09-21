@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -124,7 +125,9 @@ func parseVacancyTestState(document []byte) (vacancyResponseState, vacancyTest, 
 	}
 	test, ok := selectVacancyTest(state)
 	if !ok {
-		return vacancyResponseState{}, vacancyTest{}, errors.New("HH vacancy response does not contain a test")
+		return vacancyResponseState{}, vacancyTest{}, fmt.Errorf(
+			"HH vacancy response does not contain a test: %w", adapter.ErrVacancyTestUnavailable,
+		)
 	}
 	return state, test, nil
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -110,6 +111,14 @@ func (handler *VacancyTestCaptureHandler) Handle(ctx context.Context, task core.
 		Platform: payload.Platform, ExternalID: payload.VacancyExternalID,
 	})
 	if err != nil {
+		if errors.Is(err, adapter.ErrVacancyTestUnavailable) {
+			// The vacancy no longer exposes a questionnaire: nothing to
+			// capture or answer. The application itself stays untouched and
+			// can be retried from the operator UI.
+			slog.Default().Warn("vacancy response has no test to capture",
+				"profile", payload.ProfileID, "vacancy", payload.VacancyExternalID)
+			return nil
+		}
 		return err
 	}
 	now := handler.clock.Now()
