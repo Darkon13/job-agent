@@ -44,7 +44,7 @@ services:
     environment:
       # The worker refuses to start with an empty token, so the default
       # backend-only profile stays safe while `--profile browser` needs the
-      # variable explicitly.
+      # variable explicitly. Generate it once with scripts/init-env.sh.
       BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
       BROWSER_WORKER_HOST: 0.0.0.0
       BROWSER_WORKER_DATA_DIR: /data/browser-profiles
