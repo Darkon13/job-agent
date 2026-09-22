@@ -70,3 +70,7 @@ docker compose run --rm job-agent /usr/local/bin/job-agent \
 |---|---|
 | `JOB_AGENT_API_TOKEN` | обращения к API (`auth`, `review`, `qualification`) |
 | `BROWSER_WORKER_TOKEN` | сервис и browser-worker; генерируется `scripts/init-env.sh` |
+
+Оба секрета можно создать не только файлом: `scripts/init-env.sh` запишет
+`.env`, а `scripts/init-env.sh --print` напечатает готовые строки, чтобы
+вставить их в `.env` вручную.
