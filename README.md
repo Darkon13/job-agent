@@ -31,43 +31,46 @@
 
 ## Быстрый старт
 
-Понадобится Docker с Compose v2 — или Go и Node 22, если запускаете из
-исходников. Полный пошаговый маршрут с нуля — в
-[`docs/quickstart.md`](docs/quickstart.md).
+Нужен только Docker с Compose v2 — либо Go 1.26 и Node 22, если запускаете из
+исходников. Подробный маршрут с пустого аккаунта — в
+[`docs/quickstart.md`](docs/quickstart.md); ниже этапы от установки до первых
+реальных откликов.
 
-### 1. Конфигурация
+### Этап 1. Получите дистрибутив
+
+- **Архив релиза** со страницы Releases (`job-agent_<версия>_linux_amd64.tar.gz`):
+  внутри фасад `job-agent` (сервер и все утилиты подкомандами),
+  `job-agent-migrate`, `job-agent-dashboard`, `compose.yaml`, `.env.example`
+  и примеры `deploy/`.
+- **Готовые образы**: `ghcr.io/darkon13/job-agent:<версия>` и
+  `ghcr.io/darkon13/job-agent-browser-worker:<версия>` (slim, системный
+  Chromium).
+- **Из исходников**: `git clone` и `make build`.
+
+### Этап 2. Настройте окружение
 
 ```sh
-git clone https://github.com/Darkon13/job-agent.git
-cd job-agent
+cp .env.example .env                 # секреты: BROWSER_WORKER_TOKEN, JOB_AGENT_API_TOKEN
 cp deploy/config.example.json deploy/config.json
 ```
 
-Откройте `deploy/config.json` и замените `replace-with-hh-resume-id` на ID
-своего резюме HH (виден в ссылке на резюме в кабинете). Имя профиля `main` —
-произвольный тег: назовите профиль как удобно и используйте это имя в ссылках.
-В конфиге уже есть поиск с fallback, ежедневное поднятие резюме и рассылка
-откликов — сервис выполнит их сам по расписанию.
+В `deploy/config.json` замените `replace-with-hh-resume-id` на ID резюме HH
+(виден в ссылке на резюме в кабинете). Имя профиля `main` — произвольный тег:
+назовите профиль как удобно и используйте это имя в ссылках. Поиск с fallback,
+поднятие резюме и рассылка откликов уже описаны и выполняются по расписанию.
 
-### 2. Запуск (Docker Compose)
+### Этап 3. Запустите сервисы
 
 ```sh
 mkdir -p data
-export JOB_AGENT_API_TOKEN="$(openssl rand -hex 32)"
-JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_DATA_DIR=./data \
-  docker compose --profile browser up -d --build
+docker compose --profile browser up -d
 ```
 
-Проверка:
-
-```sh
-curl -sf -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
-  http://127.0.0.1:8080/api/v1/version
-curl -sf http://127.0.0.1:8081/dashboard-healthz
-```
+Compose сам применяет миграции (`-migrate-up`) и поднимает backend, dashboard
+и browser-worker.
 
 <details>
-<summary>Альтернатива: локальные бинарники без Docker</summary>
+<summary>Вариант без Docker: локальные бинарники</summary>
 
 ```sh
 make build
@@ -78,53 +81,45 @@ job-agent deploy/config.json          # backend, API на 127.0.0.1:8080
 job-agent-dashboard                   # dashboard на 127.0.0.1:8081
 ```
 
-Для входа в HH из исходников дополнительно запустите browser-worker
-(см. [`browser-worker/README.md`](browser-worker/README.md)).
+Для browser-only операций (анкеты, тесты, чаты, вход в HH) дополнительно
+запустите browser-worker — см. [`browser-worker/README.md`](browser-worker/README.md).
 </details>
 
-### 3. Один раз войдите в HH
-
-Вход и dashboard — опциональные удобства: сам сервис работает по конфигу и
-cron. CLI-команды используют собранные бинарники, поэтому один раз выполните
-`make build` и добавьте `dist/` в PATH (либо указывайте `./dist/job-agent`
-явно):
+### Этап 4. Проверьте конфигурацию и API
 
 ```sh
-make build
-export PATH="$PWD/dist:$PATH"
+docker compose run --rm job-agent /usr/local/bin/job-agent \
+  check /config/config.json
+curl -sf http://127.0.0.1:8081/dashboard-healthz
+```
 
+`job-agent check` печатает `OK config`, наличие ключей моделей, схему БД и
+очередь задач — та же диагностика, что раньше делал `job-agent-check`.
+Backend наружу не публикуется: dashboard проксирует его API.
+
+### Этап 5. Войдите в HH
+
+Откройте dashboard `http://127.0.0.1:8081` → «Вход в HH» → профиль `main` →
+«Начать вход». Сессия сохранится в browser-профиль и переживёт перезапуск.
+При запуске локальными бинарниками доступен и CLI:
+
+```sh
 job-agent auth login --profile main --state-output ./data/profiles/main.json
-# или импорт готового state:
-job-agent auth import --source export.json \
-  --state-output ./data/profiles/main.json --force
 ```
 
-Либо откройте dashboard `http://127.0.0.1:8081` → «Вход в HH» → профиль
-`main` → «Начать вход». Сессия переживёт перезапуск, а дальше сервис работает
-без вашего участия.
-
-> При запуске через Compose порт backend на хост не публикуется: для CLI
-> передайте `--api http://127.0.0.1:8081` (dashboard proxy) или войдите через
-> сам dashboard.
-
-### 4. Проверьте dry-run
-
-Запустите рассылку вручную из dashboard (раздел «Задания» → `Запустить`) или
-через API:
+### Этап 6. Прогоните dry-run
 
 ```sh
-curl -sf -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  http://127.0.0.1:8080/api/v1/jobs/daily-backend-applications/runs
+docker compose run --rm job-agent /usr/local/bin/job-agent \
+  trigger -idempotency-key "$(date +%s)" /config/config.json daily-applications
 ```
 
-В `dry_run` сервис делает всё, кроме отправки: находит вакансии, готовит
-письма и показывает, какие отклики были бы отправлены. Проверьте тексты в
-`deploy/messages/backend.json` и фильтры `qualification` в профиле — платформа
-не меняется. Несколько HH-аккаунтов описываются отдельными профилями: пример и
-правила в [`docs/quickstart.md`](docs/quickstart.md).
+То же самое делает кнопка «Выполнить» в разделе «Автоматизация из
+конфигурации» dashboard. В `dry_run` сервис находит вакансии и готовит письма,
+но платформу не меняет: проверьте тексты в `deploy/messages/backend.json` и
+фильтры `qualification` профиля.
 
-### 5. Включите реальные отклики
+### Этап 7. Включите реальные отклики
 
 В `deploy/config.json` у профиля:
 
@@ -136,10 +131,24 @@ curl -sf -X POST -H "Authorization: Bearer $JOB_AGENT_API_TOKEN" \
 }
 ```
 
-Перезапустите сервис. `daily_limit` задаёт дневной потолок откликов, а
-`submit_jitter` — паузу между отправками; сервис соблюдает и их, и лимиты
-платформы. Если вакансия требует анкету, отклик остановится в разделе
-«Проверки и опросники» — ответьте там, и отправка продолжится сама.
+Перезапустите сервис (`docker compose up -d`). `daily_limit` задаёт дневной
+потолок откликов, `submit_jitter` — паузу между отправками; лимиты платформы
+соблюдаются отдельно. Если вакансия требует анкету, отклик остановится в
+разделе «Проверки и опросники» — ответьте там, и отправка продолжится сама.
+
+### Этап 8. Эксплуатация
+
+```sh
+docker compose run --rm job-agent /usr/local/bin/job-agent \
+  db backup -config /config/config.json          # согласованный снимок БД
+job-agent review show --session <id> --api http://127.0.0.1:8081
+job-agent qualification catalog --profile main --api http://127.0.0.1:8081
+job-agent approve -idempotency-key K deploy/config.json main 12345678
+```
+
+Остальные подкоманды фасада: `browser-state sanitize`, `question-bank-import`,
+`startup`, `profile bootstrap`. Backup/restore, типовые сбои и восстановление
+описаны в [`docs/runbook.md`](docs/runbook.md).
 
 ## Как это работает
 
