@@ -153,9 +153,10 @@ job-agent qualification catalog --profile main --api http://127.0.0.1:8081
 job-agent approve -idempotency-key K deploy/config.json main 12345678
 ```
 
-Остальные подкоманды фасада: `browser-state sanitize`, `question-bank-import`,
-`startup`, `profile bootstrap`. Backup/restore, типовые сбои и восстановление
-описаны в [`docs/runbook.md`](docs/runbook.md).
+Полный список подкоманд, их синтаксис и способы подключения к работающему
+сервису — в [`docs/cli.md`](docs/cli.md); `job-agent help` печатает ту же
+справку из терминала. Backup/restore, типовые сбои и восстановление описаны в
+[`docs/runbook.md`](docs/runbook.md).
 
 ## Как это работает
 

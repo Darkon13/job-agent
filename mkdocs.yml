@@ -45,6 +45,7 @@ nav:
       - Возможности: features.md
       - Runbook: runbook.md
   - Справочник:
+      - CLI и фасад: cli.md
       - Конфигурация:
           - Обзор: reference/configuration.md
           - database: reference/configuration/database.md

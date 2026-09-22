@@ -160,6 +160,37 @@ func (sender liveConversationSend) SendConversationNow(ctx context.Context, conv
 	return nil
 }
 
+// mainUsage lists the service invocation and every facade subcommand. The
+// historical utilities are dispatched through runUtility; each one keeps its
+// own detailed usage message.
+const mainUsage = `job-agent — сервис автоматизации поиска работы.
+
+Запуск сервиса:
+  job-agent [-migrate-up] <config.json>       backend, scheduler и HTTP API
+  job-agent-dashboard                         dashboard на localhost
+  job-agent-migrate [-config FILE] up|down    миграции базы
+
+Подкоманды фасада:
+  check <config.json>                         проверить конфиг, ключи моделей и базу
+  trigger -idempotency-key KEY <config.json> <job-tag>
+                                              поставить job в очередь вручную
+  approve -idempotency-key KEY <config.json> <profile> <vacancy-id>
+                                              подтвердить подготовленный отклик
+  browser-state sanitize <state.json>         сжать browser storage state
+  question-bank-import ...                    импортировать внешний банк вопросов
+  auth login|import|status|logout ...         вход в HeadHunter
+  review show|answer ...                      проверки и опросники
+  qualification catalog|sync|start ...        каталог квалификаций
+  db backup|restore ...                       обслуживание базы
+  startup ...                                 однократная сверка при старте
+  profile bootstrap ...                       bootstrap профиля из файла
+
+  help | --help                               эта справка
+  --version                                   версия, commit и время сборки
+
+Подробности: https://darkon13.github.io/job-agent/
+`
+
 // runUtility dispatches the historical utility binaries that now live behind
 // the job-agent facade. Unknown names return handled=false so the server flags
 // keep working.
@@ -186,6 +217,10 @@ func main() {
 		if err := buildinfo.Write("job-agent", os.Stdout); err != nil {
 			log.Fatal(err)
 		}
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "help" || os.Args[1] == "-h" || os.Args[1] == "--help") {
+		fmt.Fprint(os.Stdout, mainUsage)
 		return
 	}
 	if len(os.Args) > 1 {
@@ -231,7 +266,12 @@ func main() {
 	}
 	options, err := parseMainOptions(os.Args[1:])
 	if err != nil {
-		log.Fatalf("usage: %s [-migrate-up] <config.json>: %v", os.Args[0], err)
+		fmt.Fprint(os.Stderr, mainUsage)
+		log.Fatalf("error: %v", err)
+	}
+	if _, err := os.Stat(options.configPath); err != nil {
+		fmt.Fprint(os.Stderr, mainUsage)
+		log.Fatalf("error: config %s: %v", options.configPath, err)
 	}
 
 	registry := adapter.NewRegistry()
