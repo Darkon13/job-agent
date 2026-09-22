@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import type { AddressInfo } from "node:net"
 import { BrowserManager } from "./manager.js"
 import { createWorkerServer } from "./server.js"
-import type { WorkerConfig } from "./config.js"
+import { DEFAULT_USER_AGENT, type WorkerConfig } from "./config.js"
 
 const config: WorkerConfig = {
   host: "127.0.0.1",
@@ -11,6 +11,7 @@ const config: WorkerConfig = {
   token: "secret",
   dataDir: "/tmp/job-agent-browser-worker-test",
   headless: true,
+  userAgent: DEFAULT_USER_AGENT,
   maxInFlight: 2,
   maxTimeoutMs: 5_000,
   maxBodyBytes: 4_096,

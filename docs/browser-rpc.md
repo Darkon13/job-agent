@@ -146,6 +146,11 @@ POST /v1/profiles/{profile}/locator
 
 - Каталог профилей: `BROWSER_WORKER_DATA_DIR` (по умолчанию `/data/browser-profiles`).
 - Каталог создаётся с правами `0700`, файлы Playwright остаются локальными.
+- Каждый context создаётся с обычным desktop Chrome User-Agent
+  (`BROWSER_WORKER_USER_AGENT`, по умолчанию Chrome/141), потому что headless
+  Chromium иначе отправляет `HeadlessChrome/…`. Тот же смысл у поля
+  `user_agent` HH-адаптера: держите строку такой же, как у browser-worker,
+  чтобы прямые HTTP-запросы профиля не выбивались из его страниц.
 - Headed-режим для VNC включается `BROWSER_WORKER_HEADLESS=0` и `DISPLAY=:1`;
   per-profile override `headless` в `ensure` имеет приоритет.
 - Если Playwright не находит браузер в стандартных путях, можно указать

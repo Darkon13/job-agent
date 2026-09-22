@@ -1,9 +1,16 @@
+// Headless Chromium advertises "HeadlessChrome" in its User-Agent; every
+// context overrides it with a regular desktop Chrome string so page traffic
+// does not stand out.
+export const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+
 export type WorkerConfig = {
   host: string
   port: number
   token: string
   dataDir: string
   headless: boolean
+  userAgent: string
   maxInFlight: number
   maxTimeoutMs: number
   maxBodyBytes: number
@@ -40,6 +47,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     token,
     dataDir: (env.BROWSER_WORKER_DATA_DIR ?? "/data/browser-profiles").trim(),
     headless: parseBoolean(env, "BROWSER_WORKER_HEADLESS", true),
+    userAgent: (env.BROWSER_WORKER_USER_AGENT ?? "").trim() || DEFAULT_USER_AGENT,
     maxInFlight: parseInteger(env, "BROWSER_WORKER_MAX_IN_FLIGHT", 4, 1, 64),
     maxTimeoutMs: parseInteger(env, "BROWSER_WORKER_MAX_TIMEOUT_MS", 120_000, 1_000, 600_000),
     maxBodyBytes: parseInteger(env, "BROWSER_WORKER_MAX_BODY_BYTES", 8 << 20, 4 << 10, 64 << 20),
