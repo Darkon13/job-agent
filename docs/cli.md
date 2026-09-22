@@ -31,20 +31,18 @@
 
 | Команда | Назначение |
 |---|---|
-| `job-agent trigger -idempotency-key KEY <config.json> <job-tag>` | поставить настроенную job в очередь один раз |
-| `job-agent approve -idempotency-key KEY <config.json> <profile> <vacancy-id>` | подтвердить подготовленный отклик в режиме `approval` |
 | `job-agent auth login --profile <tag> [--state-output FILE]` | вход в HH с сохранением browser state |
 | `job-agent auth import --source export.json --state-output FILE [--force]` | импорт сохранённого состояния |
 | `job-agent auth status --session <id> [--watch]` | статус интерактивной сессии |
 | `job-agent auth logout --profile <tag>` | выход и очистка сессии |
-| `job-agent review show --session <id>` | показать ожидающий вопрос проверки |
-| `job-agent review answer --session <id> --prompt <id> --revision <n> --option <text>\|--text <text>` | записать ответ и продолжить цепочку |
-| `job-agent qualification catalog --profile <tag>` | каталог тестов HH |
-| `job-agent qualification sync --profile <tag>` | обновить каталог |
-| `job-agent qualification start --profile <tag> --offering <id>` | начать попытку |
-| `job-agent question-bank-import ...` | импорт внешнего банка вопросов в study bank |
 | `job-agent startup ...` | однократная стартовая сверка профиля |
-| `job-agent profile bootstrap [--apply] resume.json` | bootstrap профиля из файла |
+
+Запуск job вручную, проверки и опросники, каталог тестов, импорт банка
+вопросов и bootstrap профиля выполняются в dashboard — CLI-формы для них
+временно убраны, потому что оказались неудобными и часть ещё не готова.
+Исторические бинарники (`job-agent-trigger`, `job-agent-approve`,
+`job-agent-question-bank-import`) при сборке из исходников по-прежнему
+собираются и работают.
 
 ## Подключение к работающему сервису
 
