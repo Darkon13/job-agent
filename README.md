@@ -54,15 +54,19 @@ scripts/init-env.sh                  # .env с сгенерированными 
 cp deploy/config.example.json deploy/config.json
 ```
 
-Скрипт создаёт `.env` из `.env.example` и подставляет случайные
-`BROWSER_WORKER_TOKEN` и `JOB_AGENT_API_TOKEN` — их backend и browser-worker
-используют как общий секрет, придумывать вручную ничего не нужно. Если
-предпочитаете заполнить файл сами, запустите `scripts/init-env.sh --print`
-(в чекауте — `make token`): утилита напечатает готовые строки, а вы скопируете
-их в `.env`. Ярлык `make init` соответствует запуску без флагов. Шаг
-выполняется один раз вручную: Compose не умеет генерировать секреты, поэтому
-при пропущенном токене browser-worker падает с подсказкой запустить этот
-скрипт.
+`BROWSER_WORKER_TOKEN` и `JOB_AGENT_API_TOKEN` — общий секрет backend'а и
+browser-worker. Способы на выбор:
+
+- `scripts/init-env.sh` (в чекауте — `make init`) создаёт `.env` из
+  `.env.example` с готовыми случайными значениями;
+- `scripts/init-env.sh --print` (или `make token`) печатает две строки
+  `KEY=VALUE` для копирования в `.env` вручную;
+- совсем вручную: `openssl rand -hex 32` — по одной команде на каждый токен,
+  результат вписать в `.env` рядом с `BROWSER_WORKER_TOKEN` и
+  `JOB_AGENT_API_TOKEN`.
+
+Шаг выполняется один раз: Compose не умеет генерировать секреты, поэтому при
+пропущенном токене browser-worker падает с подсказкой.
 
 В `deploy/config.json` замените `replace-with-hh-resume-id` на ID резюме HH
 (виден в ссылке на резюме в кабинете). Имя профиля `main` — произвольный тег:

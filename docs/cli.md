@@ -72,5 +72,5 @@ docker compose run --rm job-agent /usr/local/bin/job-agent \
 | `BROWSER_WORKER_TOKEN` | сервис и browser-worker; генерируется `scripts/init-env.sh` |
 
 Оба секрета можно создать не только файлом: `scripts/init-env.sh` запишет
-`.env`, а `scripts/init-env.sh --print` напечатает готовые строки, чтобы
-вставить их в `.env` вручную.
+`.env`, `scripts/init-env.sh --print` напечатает готовые строки, а совсем
+вручную значение даёт `openssl rand -hex 32` — одна команда на токен.
