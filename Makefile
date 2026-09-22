@@ -4,13 +4,16 @@ BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 MODIFIED ?= $(shell test -z "$$(git status --porcelain 2>/dev/null)" && printf false || printf true)
 LDFLAGS := -s -w -X github.com/Darkon13/job-agent/buildinfo.Version=$(VERSION) -X github.com/Darkon13/job-agent/buildinfo.Commit=$(COMMIT) -X github.com/Darkon13/job-agent/buildinfo.BuildTime=$(BUILD_TIME) -X github.com/Darkon13/job-agent/buildinfo.Modified=$(MODIFIED)
 
-.PHONY: version init build verify smoke release-check
+.PHONY: version init token build verify smoke release-check
 
 version:
 	@go run ./cmd/job-agent --version
 
 init:
 	@scripts/init-env.sh
+
+token:
+	@scripts/init-env.sh --print
 
 build:
 	@mkdir -p dist
