@@ -50,9 +50,14 @@
 ### Этап 2. Настройте окружение
 
 ```sh
-cp .env.example .env                 # секреты: BROWSER_WORKER_TOKEN, JOB_AGENT_API_TOKEN
+make init                            # .env с сгенерированными токенами
 cp deploy/config.example.json deploy/config.json
 ```
+
+`make init` (он же `scripts/init-env.sh`) создаёт `.env` из `.env.example` и
+подставляет случайные `BROWSER_WORKER_TOKEN` и `JOB_AGENT_API_TOKEN` — их
+используют backend и browser-worker как общий секрет, вручную придумывать
+ничего не нужно.
 
 В `deploy/config.json` замените `replace-with-hh-resume-id` на ID резюме HH
 (виден в ссылке на резюме в кабинете). Имя профиля `main` — произвольный тег:
