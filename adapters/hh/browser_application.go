@@ -633,8 +633,11 @@ func classifyBrowserApplicationGET(response *http.Response) error {
 		drain(response.Body)
 		return operationError(core.ErrorUnauthorized, operation, "HH browser session was rejected", nil)
 	case response.StatusCode == http.StatusForbidden:
-		drain(response.Body)
-		return operationError(core.ErrorPermanentFailure, operation, "HH application preflight is not accessible for this account", nil)
+		// HH answers 403 while an account is temporarily restricted, so the
+		// preflight stays retryable exactly like a forbidden submit.
+		data, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return operationError(core.ErrorTemporaryFailure, operation,
+			"HH application preflight is not accessible for this account"+responseSnippet(data), nil)
 	case response.StatusCode == http.StatusTooManyRequests:
 		drain(response.Body)
 		failure := operationError(core.ErrorRateLimited, operation, "HH application preflight was rate limited", nil)
@@ -679,13 +682,34 @@ func classifyBrowserApplicationPOST(response *http.Response, data []byte) (adapt
 	if response.StatusCode == http.StatusUnauthorized {
 		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorUnauthorized, operation, "HH rejected browser application authorization", nil)
 	}
+	if response.StatusCode == http.StatusForbidden {
+		// HH answers 403 while an account is temporarily restricted (anti-bot
+		// or daily limits). Retrying later is correct; a permanently forbidden
+		// vacancy exhausts its attempts and stays visible as a failure.
+		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorTemporaryFailure, operation,
+			"HH forbade the browser application"+responseSnippet(data), nil)
+	}
 	if response.StatusCode >= 500 || response.StatusCode >= 300 && response.StatusCode < 400 {
 		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, operation, fmt.Sprintf("HH browser application outcome is unknown after status %d", response.StatusCode), nil)
 	}
 	if response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity {
 		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorValidationRequired, operation, "HH rejected browser application input", nil)
 	}
-	return adapter.ApplicationSubmitResult{}, operationError(core.ErrorPermanentFailure, operation, fmt.Sprintf("HH rejected browser application with status %d", response.StatusCode), nil)
+	return adapter.ApplicationSubmitResult{}, operationError(core.ErrorPermanentFailure, operation,
+		fmt.Sprintf("HH rejected browser application with status %d", response.StatusCode)+responseSnippet(data), nil)
+}
+
+// responseSnippet adds a short, single-line copy of the response body to an
+// error so an unexpected status stays diagnosable without storing payloads.
+func responseSnippet(data []byte) string {
+	text := strings.Join(strings.Fields(string(data)), " ")
+	if text == "" {
+		return ""
+	}
+	if len(text) > 200 {
+		text = text[:200]
+	}
+	return ": " + text
 }
 
 func classifyBrowserApplicationPayloadFailure(operation, value string) (adapter.ApplicationSubmitResult, error) {
