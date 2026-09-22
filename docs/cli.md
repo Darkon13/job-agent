@@ -66,10 +66,15 @@ docker compose run --rm job-agent /usr/local/bin/job-agent \
 
 ## Переменные окружения CLI
 
-| Переменная | Где нужна |
-|---|---|
-| `JOB_AGENT_API_TOKEN` | обращения к API (`auth`, `review`, `qualification`) |
-| `BROWSER_WORKER_TOKEN` | сервис и browser-worker; генерируется `scripts/init-env.sh` |
+| Переменная | Зачем | Обязательность |
+|---|---|---|
+| `BROWSER_WORKER_TOKEN` | общий секрет backend'а и browser-worker: воркер управляет Chromium с авторизованными сессиями, каждый RPC подписан токеном | только с профилем `browser` |
+| `JOB_AGENT_API_TOKEN` | Bearer-токен HTTP API; защищает запуск откликов и переписку от доступа извне loopback, используется CLI и dashboard-прокси | только для внешнего API и CLI |
+| `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` | model-операторы для писем и ответов; без них работают шаблоны и банк | только при объявленных `models` |
+
+Backend без browser-воркера и без публикации API запускается с пустыми
+значениями: loopback-режим не требует токена, а browser-операции просто
+недоступны до его появления.
 
 Оба секрета можно создать не только файлом: `scripts/init-env.sh` запишет
 `.env`, `scripts/init-env.sh --print` напечатает готовые строки, а совсем
