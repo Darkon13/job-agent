@@ -50,14 +50,16 @@
 ### Этап 2. Настройте окружение
 
 ```sh
-make init                            # .env с сгенерированными токенами
+scripts/init-env.sh                  # .env с сгенерированными токенами
 cp deploy/config.example.json deploy/config.json
 ```
 
-`make init` (он же `scripts/init-env.sh`) создаёт `.env` из `.env.example` и
-подставляет случайные `BROWSER_WORKER_TOKEN` и `JOB_AGENT_API_TOKEN` — их
-используют backend и browser-worker как общий секрет, вручную придумывать
-ничего не нужно.
+Скрипт создаёт `.env` из `.env.example` и подставляет случайные
+`BROWSER_WORKER_TOKEN` и `JOB_AGENT_API_TOKEN` — их backend и browser-worker
+используют как общий секрет, придумывать вручную ничего не нужно. В git-чекауте
+доступен и ярлык `make init`. Шаг выполняется один раз вручную: Compose не
+умеет генерировать секреты, поэтому при пропущенном токене browser-worker
+падает с подсказкой запустить этот скрипт.
 
 В `deploy/config.json` замените `replace-with-hh-resume-id` на ID резюме HH
 (виден в ссылке на резюме в кабинете). Имя профиля `main` — произвольный тег:
