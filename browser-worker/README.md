@@ -30,6 +30,7 @@ Worker слушает `127.0.0.1:8088` и требует `Authorization: Bearer 
 | `BROWSER_WORKER_PORT` | `8088` | порт listener |
 | `BROWSER_WORKER_DATA_DIR` | `/data/browser-profiles` | каталог profile contexts |
 | `BROWSER_WORKER_HEADLESS` | `true` | headless-режим Chromium |
+| `BROWSER_WORKER_USER_AGENT` | обычный desktop Chrome | User-Agent для создаваемых contexts: headless Chromium иначе представляется как `HeadlessChrome/…` |
 | `BROWSER_WORKER_MAX_IN_FLIGHT` | `4` | лимит одновременных операций |
 | `BROWSER_WORKER_MAX_TIMEOUT_MS` | `120000` | потолок таймаута операции |
 | `BROWSER_WORKER_CHANNEL` | — | Playwright channel (`chrome` и т.п.) |

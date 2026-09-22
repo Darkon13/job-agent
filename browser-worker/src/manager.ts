@@ -72,6 +72,7 @@ export class BrowserManager {
         const context = await browser.newContext({
           viewport: VIEWPORT,
           locale: "ru-RU",
+          userAgent: this.config.userAgent,
           storageState: storageState ?? undefined,
         })
         this.profiles.set(profileID, { context, headless })
@@ -131,7 +132,12 @@ export class BrowserManager {
         }
         await this.persistStorage(profileID, storage)
         const browser = await this.browser(this.config.headless)
-        const context = await browser.newContext({ viewport: VIEWPORT, locale: "ru-RU", storageState: storage })
+        const context = await browser.newContext({
+          viewport: VIEWPORT,
+          locale: "ru-RU",
+          userAgent: this.config.userAgent,
+          storageState: storage,
+        })
         this.profiles.set(profileID, { context, headless: this.config.headless })
       }),
     )
