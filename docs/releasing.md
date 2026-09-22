@@ -45,9 +45,11 @@ Release выполняется из чистого commit:
 Архив релиза содержит `job-agent`, `job-agent-migrate`, `job-agent-dashboard`,
 `compose.yaml` с версионным тегом образа, `.env.example` и примеры `deploy/`.
 Операторские утилиты доступны подкомандами фасада: `job-agent check`,
-`job-agent trigger`, `job-agent approve`, `job-agent browser-state`,
-`job-agent question-bank-import`; исторические бинарники остаются тонкими
-обёртками.
+`job-agent browser-state`, `job-agent auth`, `job-agent db`,
+`job-agent startup`. Исторические бинарники остаются тонкими обёртками;
+`trigger`, `approve`, `review`, `qualification`, импорт банка вопросов и
+bootstrap пока убраны из фасада — соответствующие действия выполняет
+dashboard.
 
 Образы публикует workflow `Images` по тому же тегу: `ghcr.io/<owner>/job-agent`
 и `ghcr.io/<owner>/job-agent-browser-worker` (slim, системный Chromium) с

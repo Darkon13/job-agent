@@ -28,11 +28,8 @@ import (
 	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
-	toolapprove "github.com/Darkon13/job-agent/internal/tools/approve"
 	toolbrowserstate "github.com/Darkon13/job-agent/internal/tools/browserstate"
 	toolcheck "github.com/Darkon13/job-agent/internal/tools/check"
-	toolquestionbank "github.com/Darkon13/job-agent/internal/tools/questionbank"
-	tooltrigger "github.com/Darkon13/job-agent/internal/tools/trigger"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/operator/openaichat"
 	"github.com/Darkon13/job-agent/operator/openairesponses"
@@ -172,18 +169,13 @@ const mainUsage = `job-agent — сервис автоматизации пои�
 
 Подкоманды фасада:
   check <config.json>                         проверить конфиг, ключи моделей и базу
-  trigger -idempotency-key KEY <config.json> <job-tag>
-                                              поставить job в очередь вручную
-  approve -idempotency-key KEY <config.json> <profile> <vacancy-id>
-                                              подтвердить подготовленный отклик
   browser-state sanitize <state.json>         сжать browser storage state
-  question-bank-import ...                    импортировать внешний банк вопросов
   auth login|import|status|logout ...         вход в HeadHunter
-  review show|answer ...                      проверки и опросники
-  qualification catalog|sync|start ...        каталог квалификаций
   db backup|restore ...                       обслуживание базы
   startup ...                                 однократная сверка при старте
-  profile bootstrap ...                       bootstrap профиля из файла
+
+Запуск job вручную, проверки и опросники, тесты и bootstrap профиля живут в
+dashboard; CLI-формы для них временно убраны.
 
   help | --help                               эта справка
   --version                                   версия, commit и время сборки
@@ -198,14 +190,8 @@ func runUtility(name string, args []string) (int, bool) {
 	switch name {
 	case "check":
 		return toolcheck.Run(args), true
-	case "trigger":
-		return tooltrigger.Run(args), true
-	case "approve":
-		return toolapprove.Run(args), true
 	case "browser-state":
 		return toolbrowserstate.Run(args), true
-	case "question-bank-import":
-		return toolquestionbank.Run(args), true
 	default:
 		return 0, false
 	}
@@ -228,12 +214,6 @@ func main() {
 			os.Exit(code)
 		}
 	}
-	if len(os.Args) >= 3 && os.Args[1] == "profile" && os.Args[2] == "bootstrap" {
-		if err := runProfileBootstrap(context.Background(), os.Args[3:], os.Stdout, nil); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
 	if len(os.Args) >= 2 && os.Args[1] == "startup" {
 		if err := runProfileStartup(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
@@ -242,18 +222,6 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		if err := runAuth(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	if len(os.Args) >= 2 && os.Args[1] == "review" {
-		if err := runReview(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	if len(os.Args) >= 2 && os.Args[1] == "qualification" {
-		if err := runQualification(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return

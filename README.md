@@ -175,15 +175,13 @@ docker compose run --rm job-agent /usr/local/bin/job-agent \
 ```sh
 docker compose run --rm job-agent /usr/local/bin/job-agent \
   db backup -config /config/config.json          # согласованный снимок БД
-job-agent review show --session <id> --api http://127.0.0.1:8081
-job-agent qualification catalog --profile main --api http://127.0.0.1:8081
-job-agent approve -idempotency-key K deploy/config.json main 12345678
 ```
 
-Полный список подкоманд, их синтаксис и способы подключения к работающему
-сервису — в [`docs/cli.md`](docs/cli.md); `job-agent help` печатает ту же
-справку из терминала. Backup/restore, типовые сбои и восстановление описаны в
-[`docs/runbook.md`](docs/runbook.md).
+Запуск jobs, проверки и опросники, тесты и bootstrap профиля — в dashboard;
+CLI-формы для них пока убраны. Список подкоманд фасада, их синтаксис и способы
+подключения к работающему сервису — в [`docs/cli.md`](docs/cli.md), краткая
+справка есть и в терминале: `job-agent help`. Backup/restore, типовые сбои и
+восстановление описаны в [`docs/runbook.md`](docs/runbook.md).
 
 ## Как это работает
 

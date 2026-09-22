@@ -95,7 +95,8 @@
       не перезапускается. Review-ответы расширяют qualification-блок
       (`AnswerBlockTag` в review session, append-only ревизии), старт попытки
       доступен через `POST /profiles/{profile}/qualifications/{offering}/start`
-      и CLI `job-agent qualification catalog|sync|start`. Model fallback
+      и CLI `job-agent qualification catalog|sync|start` (CLI-форма временно
+      убрана из фасада, каталог и запуск доступны из dashboard). Model fallback
       реализован для auto-режима (`answers.model`): known-answer → model
       (локальный validator) → review; verified-ответы с provenance
       дописываются в qualification-блок. Осталось: live assessment transport
