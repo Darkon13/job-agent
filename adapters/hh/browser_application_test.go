@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -295,5 +297,23 @@ func writeBrowserPreflight(t *testing.T, writer http.ResponseWriter, payload str
 	writer.Header().Set("Content-Type", "application/json")
 	if _, err := writer.Write([]byte(payload)); err != nil {
 		t.Errorf("write response: %v", err)
+	}
+}
+
+func TestForbiddenBrowserApplicationStaysRetryable(t *testing.T) {
+	_, err := classifyBrowserApplicationPOST(&http.Response{StatusCode: http.StatusForbidden}, []byte("<html>temporarily blocked</html>"))
+	if !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("POST 403 category = %v", err)
+	}
+	if !strings.Contains(err.Error(), "temporarily blocked") {
+		t.Fatalf("POST 403 lost the response body: %v", err)
+	}
+	response := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("<html>denied</html>")),
+	}
+	if err := classifyBrowserApplicationGET(response); !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
+		t.Fatalf("GET 403 category = %v", err)
 	}
 }
