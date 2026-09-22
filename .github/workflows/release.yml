@@ -44,8 +44,9 @@ jobs:
                 -o "${stage}/${cmd}" "./cmd/${cmd}"
             done
             cp LICENSE README.md compose.yaml .env.example "${stage}/"
-            mkdir -p "${stage}/deploy"
+            mkdir -p "${stage}/deploy" "${stage}/scripts"
             cp -r deploy/. "${stage}/deploy/"
+            cp scripts/init-env.sh "${stage}/scripts/"
             tar -C "${stage}" -czf "dist/job-agent_${version}_linux_${arch}.tar.gz" .
             rm -rf "${stage}"
           done
