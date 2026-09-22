@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -47,8 +48,11 @@ func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Ta
 	if payload.ProfileID != task.ProfileID {
 		return errors.New("profile activity maintain task profile does not match payload")
 	}
-	if handler.activityAtMaximum(ctx, payload.ProfileID) {
+	score := handler.activityScore(ctx, payload.ProfileID)
+	if score != nil && *score >= 100 {
 		// Nothing to top up: the score is already at the platform maximum.
+		slog.Default().Info("activity maintenance skipped: score is already at the platform maximum",
+			"profile", payload.ProfileID, "score", *score)
 		return nil
 	}
 	targets, err := handler.targets(ctx, payload)
@@ -80,18 +84,24 @@ func (handler *ActivityMaintainHandler) Handle(ctx context.Context, task core.Ta
 			}
 		}
 	}
+	attributes := []any{"profile", payload.ProfileID, "viewed", viewed, "candidates", len(targets)}
+	if score != nil {
+		attributes = append(attributes, "score", *score)
+	}
+	slog.Default().Info("activity maintenance finished", attributes...)
 	return nil
 }
 
-func (handler *ActivityMaintainHandler) activityAtMaximum(ctx context.Context, profileID core.ProfileID) bool {
+// activityScore returns the latest observed activity score, or nil when the
+// profile has no snapshot yet.
+func (handler *ActivityMaintainHandler) activityScore(ctx context.Context, profileID core.ProfileID) *int {
 	snapshots, err := handler.snapshots.ListProfileActivitySnapshots(ctx, storage.ProfileActivitySnapshotFilter{
 		ProfileID: profileID, Limit: 1,
 	})
 	if err != nil || len(snapshots) == 0 {
-		return false
+		return nil
 	}
-	score := snapshots[0].Score
-	return score != nil && *score >= 100
+	return snapshots[0].Score
 }
 
 // targets returns lazy vacancy views from the configured global search. The
