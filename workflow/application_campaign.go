@@ -35,6 +35,11 @@ func (route ApplicationCampaignRoute) Validate() error {
 	return nil
 }
 
+// campaignMaxLifetime bounds how long a campaign may stay running. A stuck
+// in-flight application (a platform block, captcha or pacing wait) otherwise
+// keeps the campaign, and every removal guard that checks it, alive forever.
+const campaignMaxLifetime = 3 * time.Hour
+
 // ApplicationCampaignHandler executes one bounded reconciliation tick. Search
 // pages, applications and tasks are durable, so a failed tick can safely be
 // repeated without holding a worker lease for the whole campaign.
@@ -159,6 +164,9 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	}
 	if progress.Submitted >= campaign.TargetSuccessful {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignTargetReached, "target successful applications reached")
+	}
+	if handler.clock.Now().Sub(campaign.CreatedAt) >= campaignMaxLifetime {
+		return handler.stop(ctx, campaign, core.ApplicationCampaignExhausted, "campaign lifetime exceeded")
 	}
 
 	scheduled, err := handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight, priority)

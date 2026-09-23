@@ -665,6 +665,10 @@ func classifyBrowserApplicationPOST(response *http.Response, data []byte) (adapt
 	if alreadyApplied {
 		return adapter.ApplicationSubmitResult{ExternalNegotiationID: externalID, Applied: true, AlreadyApplied: true}, nil
 	}
+	if browserApplicationCaptcha(payload, data) {
+		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorConfirmationRequired, operation,
+			"HH требует пройти капчу перед откликом"+responseSnippet(data), nil)
+	}
 	if failure := browserApplicationPayloadError(payload); failure != "" {
 		return classifyBrowserApplicationPayloadFailure(operation, failure)
 	}
@@ -697,6 +701,18 @@ func classifyBrowserApplicationPOST(response *http.Response, data []byte) (adapt
 	}
 	return adapter.ApplicationSubmitResult{}, operationError(core.ErrorPermanentFailure, operation,
 		fmt.Sprintf("HH rejected browser application with status %d", response.StatusCode)+responseSnippet(data), nil)
+}
+
+// browserApplicationCaptcha reports HH's anti-bot check. The answer arrives as
+// a structured hhcaptcha document instead of an error code, and retrying is
+// pointless until the operator passes the check.
+func browserApplicationCaptcha(payload map[string]any, data []byte) bool {
+	if payload != nil {
+		if _, exists := payload["hhcaptcha"]; exists {
+			return true
+		}
+	}
+	return bytes.Contains(data, []byte("hhcaptcha"))
 }
 
 // responseSnippet adds a short, single-line copy of the response body to an
