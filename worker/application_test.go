@@ -348,6 +348,23 @@ func TestApplicationHandlerPersistsBrowserPreflightReview(t *testing.T) {
 	}
 }
 
+func TestApplicationHandlerParksCaptchaForOperator(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorConfirmationRequired, Operation: "applications.submit.browser", Platform: "hh",
+		Message: "HH требует пройти капчу перед откликом",
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "captcha_required" {
+		t.Fatalf("application=%#v err=%v", application, err)
+	}
+}
+
 func TestApplicationHandlerAcceptsKnownSuccessWithoutNegotiationID(t *testing.T) {
 	transport := &fakeApplicationTransport{result: adapter.ApplicationSubmitResult{Applied: true}}
 	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
