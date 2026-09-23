@@ -317,3 +317,11 @@ func TestForbiddenBrowserApplicationStaysRetryable(t *testing.T) {
 		t.Fatalf("GET 403 category = %v", err)
 	}
 }
+
+func TestCaptchaAnswerRequiresConfirmation(t *testing.T) {
+	_, err := classifyBrowserApplicationPOST(&http.Response{StatusCode: http.StatusForbidden},
+		[]byte(`{"hhcaptcha":{"isBot":true,"captchaState":"o"}}`))
+	if !core.ErrorIsCategory(err, core.ErrorConfirmationRequired) {
+		t.Fatalf("captcha category = %v", err)
+	}
+}

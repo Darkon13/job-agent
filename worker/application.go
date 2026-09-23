@@ -563,22 +563,51 @@ func (handler *ApplicationHandler) restoreTailoring(ctx context.Context, applica
 	return handler.tailoring.Restore(ctx, application.ID)
 }
 
+// Pacing waits are short (one submit interval), so the handler waits for the
+// slot inline instead of burning task attempts on a retry.
+const (
+	maxPacingWaitAttempts = 5
+	maxPacingWait         = 2 * time.Minute
+)
+
 func (handler *ApplicationHandler) acquirePacing(ctx context.Context, application core.Application, plan ApplicationPlan, now time.Time) error {
-	interval := handler.jitter.Between(plan.SubmitJitterMin, plan.SubmitJitterMax)
-	reservation, allowed, err := handler.pacing.AcquireApplicationPace(ctx, core.AcquireApplicationPaceParams{
-		ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
-		Interval: interval, Now: now,
-	})
-	if err != nil {
-		return &core.OperationError{
-			Category: core.ErrorTemporaryFailure, Operation: "applications.pacing.acquire", Platform: application.Key.Vacancy.Platform,
-			Message: "application pacing storage is temporarily unavailable", Cause: err,
+	deadline := now.Add(maxPacingWait)
+	var retryAt time.Time
+	for attempt := 0; attempt < maxPacingWaitAttempts; attempt++ {
+		interval := handler.jitter.Between(plan.SubmitJitterMin, plan.SubmitJitterMax)
+		reservation, allowed, err := handler.pacing.AcquireApplicationPace(ctx, core.AcquireApplicationPaceParams{
+			ApplicationID: application.ID, ProfileID: application.Key.ProfileID, Platform: application.Key.Vacancy.Platform,
+			Interval: interval, Now: now,
+		})
+		if err != nil {
+			return &core.OperationError{
+				Category: core.ErrorTemporaryFailure, Operation: "applications.pacing.acquire", Platform: application.Key.Vacancy.Platform,
+				Message: "application pacing storage is temporarily unavailable", Cause: err,
+			}
 		}
+		if allowed {
+			return nil
+		}
+		if reservation.ScheduledAt.After(deadline) {
+			retryAt = reservation.ScheduledAt
+			break
+		}
+		wait := reservation.ScheduledAt.Sub(now)
+		if wait <= 0 {
+			wait = time.Second
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		now = handler.clock.Now()
 	}
-	if allowed {
-		return nil
+	if retryAt.IsZero() {
+		retryAt = now.Add(maxPacingWait)
 	}
-	retryAt := reservation.ScheduledAt
 	return &core.OperationError{
 		Category: core.ErrorRateLimited, Operation: "applications.pacing.wait", Platform: application.Key.Vacancy.Platform,
 		RetryAfter: &retryAt, Message: "application submit is waiting for its pacing slot",
