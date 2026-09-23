@@ -805,10 +805,17 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		return operationError
 	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
-		if plan.SkipValidation && skipValidationDecisionCode(operationError.Metadata["code"]) {
-			if code := strings.TrimSpace(operationError.Metadata["code"]); code != "" {
-				application.DecisionCode = code
+		decisionCode := strings.TrimSpace(operationError.Metadata["code"])
+		if decisionCode == "" {
+			decisionCode = "platform_validation_required"
+			if operationError.Category == core.ErrorConfirmationRequired {
+				// A platform challenge (for example an hhcaptcha answer) needs
+				// an operator; the application must not look "just queued".
+				decisionCode = "captcha_required"
 			}
+		}
+		if plan.SkipValidation && skipValidationDecisionCode(decisionCode) {
+			application.DecisionCode = decisionCode
 			application.DecisionReason = "вакансия требует анкету или тест; пропущено по validation_action"
 			if err := application.Transition(core.ApplicationSkipped, now); err != nil {
 				return err
@@ -821,6 +828,7 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 			}
 			return handler.restoreTailoring(ctx, application)
 		}
+		application.DecisionCode = decisionCode
 		if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
 			return err
 		}
@@ -830,7 +838,7 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		if err := handler.releaseBudget(ctx, application, now); err != nil {
 			return err
 		}
-		if operationError.Metadata["code"] == "questionnaire_required" {
+		if decisionCode == "questionnaire_required" {
 			if err := handler.enqueueTestCapture(ctx, application, "application-submit"); err != nil {
 				return err
 			}
