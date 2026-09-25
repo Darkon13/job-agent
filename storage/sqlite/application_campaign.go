@@ -214,22 +214,23 @@ func (store *Store) ListCampaignApplicationStates(ctx context.Context, id core.A
 	if _, err := store.ApplicationCampaign(ctx, id); err != nil {
 		return nil, err
 	}
-	rows, err := store.db.QueryContext(ctx, `WITH outcomes AS (
-		SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
-			failure_category, failure_message, decision_code, decision_reason, prepared_resume_id,
-			prepared_message, preparation_provenance, created_at, updated_at, prepared_at, submitted_at FROM applications
-		UNION ALL
-		SELECT application_id, profile_id, platform, external_id, status, 0, '', '', '', '', '', '', '', '{}',
-			removed_at, removed_at, NULL, NULL FROM application_tombstones
-	) SELECT
-		i.route_index, i.application_id, i.discovered_at,
-		a.profile_id, a.platform, a.external_id, a.status, a.attempts,
-		a.external_negotiation_id, a.failure_category, a.failure_message,
-		a.decision_code, a.decision_reason, a.prepared_resume_id, a.prepared_message,
-		a.preparation_provenance, a.created_at, a.updated_at, a.prepared_at, a.submitted_at
+	// A live application or its tombstone carries the campaign outcome. The
+	// join keeps the query proportional to the campaign instead of unioning
+	// the whole application set on every call.
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT i.route_index, i.application_id, i.discovered_at,
+			COALESCE(a.profile_id, t.profile_id), COALESCE(a.platform, t.platform),
+			COALESCE(a.external_id, t.external_id), COALESCE(a.status, t.status), COALESCE(a.attempts, 0),
+			COALESCE(a.external_negotiation_id, ''), COALESCE(a.failure_category, ''), COALESCE(a.failure_message, ''),
+			COALESCE(a.decision_code, ''), COALESCE(a.decision_reason, ''), COALESCE(a.prepared_resume_id, ''),
+			COALESCE(a.prepared_message, ''), COALESCE(a.preparation_provenance, '{}'),
+			COALESCE(a.created_at, t.removed_at), COALESCE(a.updated_at, t.removed_at),
+			a.prepared_at, a.submitted_at
 		FROM application_campaign_items i
-		JOIN outcomes a ON a.id = i.application_id
-		JOIN vacancies v ON v.platform = a.platform AND v.external_id = a.external_id
+		LEFT JOIN applications a ON a.id = i.application_id
+		LEFT JOIN application_tombstones t ON t.application_id = i.application_id
+		JOIN vacancies v ON v.platform = COALESCE(a.platform, t.platform)
+			AND v.external_id = COALESCE(a.external_id, t.external_id)
 		WHERE i.campaign_id = ?
 		ORDER BY i.route_index,
 			COALESCE(v.published_at, v.observed_at) DESC,
