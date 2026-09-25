@@ -260,11 +260,11 @@ func (service *Service) store(ctx context.Context, application core.Application,
 		expires: now.Add(service.ttl),
 	}
 	if outcome.State == StateDone {
-		task, _, err := service.retry.Enqueue(ctx, application.ID, "browser-check-"+now.UTC().Format("20060102150405"))
+		confirmation, err := service.confirm(ctx, application, now)
 		if err != nil {
-			return Session{}, fmt.Errorf("confirm browser submission: %w", err)
+			return Session{}, err
 		}
-		entry.session.Message = joinMessage(entry.session.Message, "отклик отправлен из браузера, подтверждение задачей "+string(task.ID))
+		entry.session.Message = joinMessage(entry.session.Message, confirmation)
 	}
 	id, err := service.ids.NewID("browsercheck")
 	if err != nil {
@@ -275,6 +275,23 @@ func (service *Service) store(ctx context.Context, application core.Application,
 	defer service.mu.Unlock()
 	service.sessions[id] = entry
 	return entry.session, nil
+}
+
+// confirm routes a browser-submitted application through the durable retry
+// workflow. An application that is already confirmed needs no second task.
+func (service *Service) confirm(ctx context.Context, application core.Application, now time.Time) (string, error) {
+	if application.Status == core.ApplicationSubmitted {
+		return "отклик уже подтверждён", nil
+	}
+	task, _, err := service.retry.Enqueue(ctx, application.ID, "browser-check-"+now.UTC().Format("20060102150405"))
+	if err != nil {
+		current, lookupErr := service.applications.ApplicationByID(ctx, application.ID)
+		if lookupErr == nil && current.Status == core.ApplicationSubmitted {
+			return "отклик уже подтверждён", nil
+		}
+		return "", fmt.Errorf("confirm browser submission: %w", err)
+	}
+	return "отклик отправлен из браузера, подтверждение задачей " + string(task.ID), nil
 }
 
 func joinMessage(prefix, suffix string) string {
