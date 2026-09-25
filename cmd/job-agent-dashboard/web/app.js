@@ -18,7 +18,7 @@ const elements = Object.fromEntries([
   "profile-resources", "profile-state-state",
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
-  "conversation-more", "conversation-page-state", "application-captcha-check", "browser-check-controls",
+  "conversation-more", "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -174,25 +174,42 @@ function renderBrowserCheck() {
     elements.browserCheckImage.removeAttribute("src");
   }
 }
-function parkedCaptchaApplications() {
-  return (state.applicationObjects || []).filter((item) => item.decision_code === "captcha_required" && item.status === "waiting_validation");
+// captchaWaitingByProfile counts applications that need a human captcha per
+// account. The summary carries counts, so the header can warn without loading
+// the whole blocked list.
+function captchaWaitingByProfile() {
+  const counts = new Map();
+  for (const row of state.summary?.applications || []) {
+    if (row.decision_code !== "captcha_required") continue;
+    const profile = row.profile_id || "";
+    counts.set(profile, (counts.get(profile) || 0) + Number(row.count || 0));
+  }
+  return counts;
 }
-function updateCaptchaCheckButton() {
-  const parked = parkedCaptchaApplications();
-  elements.applicationCaptchaCheck.hidden = parked.length === 0;
-  elements.applicationCaptchaCheck.textContent = parked.length > 1 ? `Пройти проверку HH (${parked.length})` : "Пройти проверку HH";
-  elements.applicationCaptchaCheck.disabled = state.applicationActionBusy || state.applicationLoading;
+function updateCaptchaWarning() {
+  const counts = captchaWaitingByProfile();
+  let target = state.account;
+  if (!counts.get(target)) target = "";
+  if (!target && counts.size) {
+    target = [...counts.keys()].sort((left, right) => counts.get(right) - counts.get(left))[0];
+  }
+  const count = target ? counts.get(target) || 0 : 0;
+  elements.accountCaptcha.hidden = count === 0;
+  if (count === 0) return;
+  elements.accountCaptcha.dataset.profile = target;
+  elements.accountCaptchaLabel.textContent = `Нужно ввести капчу: ${profileDisplayName(target)}${count > 1 ? ` (${count})` : ""}`;
+  elements.accountCaptchaButton.textContent = "Ввести капчу";
 }
-// startCaptchaCheck runs one browser check for the selected profile and then
-// retries the remaining parked applications: the platform guard is per
-// account, so the operator solves it once instead of per application.
-async function startCaptchaCheck() {
+// startCaptchaCheck runs one browser check for the profile and then retries
+// the remaining parked applications: the platform guard is per account, so the
+// operator enters the captcha once instead of per application.
+async function startCaptchaCheck(profileID = "") {
   state.applicationActionBusy = true;
-  elements.applicationCaptchaCheck.disabled = true; elements.applicationCaptchaCheck.textContent = "Проверяю…";
+  elements.accountCaptchaButton.disabled = true; elements.accountCaptchaButton.textContent = "Проверяю…";
   state.applicationActionMessage = "Готовлю проверку HH…"; renderApplicationObjects();
   try {
     const params = new URLSearchParams({ status: "waiting_validation", decision_code: "captcha_required", limit: "200" });
-    if (state.account) params.set("profile_id", state.account);
+    if (profileID) params.set("profile_id", profileID);
     const listing = await request(`/api/v1/applications?${params}`);
     const parked = (listing.items || []).filter((item) => item.decision_code === "captcha_required");
     if (!parked.length) { state.applicationActionMessage = "Нет откликов, ожидающих проверку HH"; return; }
@@ -206,7 +223,7 @@ async function startCaptchaCheck() {
   } catch (error) {
     state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
   } finally {
-    state.applicationActionBusy = false; renderApplicationObjects();
+    state.applicationActionBusy = false; updateCaptchaWarning(); renderApplicationObjects();
   }
 }
 // retryRemainingAfterCheck releases the parked applications behind one manual
@@ -223,22 +240,6 @@ async function retryRemainingAfterCheck() {
   }
 }
 
-async function startBrowserCheck(item, button) {
-  state.applicationActionBusy = true; button.disabled = true;
-  state.applicationActionMessage = `Открываю вакансию в браузере профиля…`; renderApplicationObjects();
-  try {
-    const response = await fetch(`/api/v1/applications/${encodeURIComponent(item.id)}/browser-check`, { method: "POST" });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-    state.browserCheck = body;
-    state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[body.state] || body.state}`;
-    renderBrowserCheck();
-    if (body.state === "done") { await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
-  } catch (error) {
-    state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
-  }
-  state.applicationActionBusy = false; renderApplicationObjects();
-}
 async function submitBrowserCheckAnswer() {
   const session = state.browserCheck;
   if (!session) return;
@@ -340,12 +341,6 @@ function renderApplicationObjects() {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const link = text("a", needsInput ? "Вакансия ↗" : "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link);
     }
-    if (item.decision_code === "captcha_required" && item.platform === "hh") {
-      if (action.childNodes.length) action.append(document.createTextNode(" "));
-      const check = text("button", "Проверка", "secondary compact"); check.type = "button"; check.disabled = state.applicationActionBusy;
-      check.title = "Открыть вакансию в браузере профиля и пройти проверку HH";
-      check.addEventListener("click", () => startBrowserCheck(item, check)); action.append(check);
-    }
     if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
@@ -360,7 +355,6 @@ function renderApplicationObjects() {
     return row;
   }));
   updateApplicationSelection(items);
-  updateCaptchaCheckButton();
 }
 // The profile column is redundant while one account is selected: every row
 // belongs to it. It returns with the combined "all profiles" view.
@@ -1191,6 +1185,7 @@ async function refreshSummary() {
     state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
+    updateCaptchaWarning();
     renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
@@ -1313,7 +1308,7 @@ elements.applicationRunAction.addEventListener("click", async () => {
   } catch (error) { state.applicationActionMessage = error.message; }
   finally { state.applicationActionBusy = false; updateApplicationSelection(); }
 });
-elements.applicationCaptchaCheck.addEventListener("click", startCaptchaCheck);
+elements.accountCaptchaButton.addEventListener("click", () => startCaptchaCheck(elements.accountCaptcha.dataset.profile || state.account));
 elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
 elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
 elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
@@ -1332,7 +1327,7 @@ elements.accountSwitcher.addEventListener("change", () => {
   try { window.localStorage.setItem("job-agent-account", state.account); } catch {}
   state.selectedApplications.clear(); state.applicationOffset = 0; state.applicationTotal = 0;
   state.reviewSelected = null; state.reviewDetail = null;
-  refreshSummary(); refreshReviewSessions();
+  refreshSummary(); refreshReviewSessions(); updateCaptchaWarning();
 });
 elements.reviewFilter.addEventListener("change", () => { state.reviewSelected = null; refreshReviewSessions(); });
 let reviewSearchTimer;

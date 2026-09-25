@@ -565,8 +565,8 @@ func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.F
 // ApplicationCounts exposes lifecycle totals without profile, vacancy,
 // decision text or prepared message data.
 func (store *Store) ApplicationCounts(ctx context.Context) ([]ApplicationCount, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT status, decision_code, COUNT(*)
-		FROM applications GROUP BY status, decision_code ORDER BY status, decision_code`)
+	rows, err := store.db.QueryContext(ctx, `SELECT profile_id, status, decision_code, COUNT(*)
+		FROM applications GROUP BY profile_id, status, decision_code ORDER BY profile_id, status, decision_code`)
 	if err != nil {
 		return nil, fmt.Errorf("count applications by status: %w", err)
 	}
@@ -574,7 +574,7 @@ func (store *Store) ApplicationCounts(ctx context.Context) ([]ApplicationCount, 
 	counts := make([]ApplicationCount, 0)
 	for rows.Next() {
 		var item ApplicationCount
-		if err := rows.Scan(&item.Status, &item.DecisionCode, &item.Count); err != nil {
+		if err := rows.Scan(&item.ProfileID, &item.Status, &item.DecisionCode, &item.Count); err != nil {
 			return nil, fmt.Errorf("scan application count: %w", err)
 		}
 		counts = append(counts, item)

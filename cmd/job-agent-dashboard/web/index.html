@@ -13,6 +13,10 @@
     <div class="connection">
       <label class="account-switcher-label" for="account-switcher">Аккаунт</label>
       <select id="account-switcher" aria-label="Аккаунт"></select>
+      <span id="account-captcha" class="captcha-warning" hidden>
+        <span id="account-captcha-label">Нужно ввести капчу</span>
+        <button id="account-captcha-button" class="compact" type="button">Ввести капчу</button>
+      </span>
       <span id="runtime-version" class="muted">версия…</span>
       <span id="config-state" class="muted"></span>
       <span id="connection-dot" class="dot pending"></span>
@@ -68,7 +72,6 @@
       <div class="section-title">
         <div><p class="eyebrow">ОБЪЕКТЫ</p><h2 id="applications-title">Отклики</h2></div>
         <div class="section-actions">
-          <button id="application-captcha-check" class="primary compact" type="button" hidden>Пройти проверку HH</button>
           <span id="application-filter-state" class="muted">Загрузка откликов…</span>
         </div>
       </div>

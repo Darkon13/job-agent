@@ -165,6 +165,11 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	if progress.Submitted >= campaign.TargetSuccessful {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignTargetReached, "target successful applications reached")
 	}
+	if progress.CaptchaBlocked > 0 {
+		// The platform demands a human check. Continuing would pile up parked
+		// applications, so the campaign fails and waits for the operator.
+		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "HH требует капчу: введите её и запустите рассылку снова")
+	}
 	if handler.clock.Now().Sub(campaign.CreatedAt) >= campaignMaxLifetime {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignExhausted, "campaign lifetime exceeded")
 	}
@@ -315,6 +320,9 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 			continue
 		case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval:
 			progress.Blocked++
+			if state.Application.DecisionCode == "captcha_required" {
+				progress.CaptchaBlocked++
+			}
 			continue
 		case core.ApplicationDryRun, core.ApplicationSkipped:
 			progress.Skipped++

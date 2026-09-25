@@ -236,12 +236,13 @@ type CampaignApplicationState struct {
 }
 
 type ApplicationCampaignProgress struct {
-	Planned   int `json:"planned"`
-	InFlight  int `json:"in_flight"`
-	Submitted int `json:"submitted"`
-	Blocked   int `json:"blocked"`
-	Skipped   int `json:"skipped"`
-	Failed    int `json:"failed"`
+	Planned        int `json:"planned"`
+	InFlight       int `json:"in_flight"`
+	Submitted      int `json:"submitted"`
+	Blocked        int `json:"blocked"`
+	Skipped        int `json:"skipped"`
+	Failed         int `json:"failed"`
+	CaptchaBlocked int `json:"captcha_blocked,omitempty"`
 }
 
 func (item CampaignApplication) Validate() error {

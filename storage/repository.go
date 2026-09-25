@@ -63,6 +63,7 @@ type FailedTaskRepository interface {
 }
 
 type ApplicationCount struct {
+	ProfileID    core.ProfileID         `json:"profile_id,omitempty"`
 	Status       core.ApplicationStatus `json:"status"`
 	DecisionCode string                 `json:"decision_code,omitempty"`
 	Count        int                    `json:"count"`
