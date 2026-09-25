@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/browsercheck"
 	"github.com/Darkon13/job-agent/core"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/storage"
@@ -93,6 +94,7 @@ type ApplicationTransportRegistry struct {
 	vacancyReaders        map[core.ProfileID]adapter.VacancyReader
 	vacancySearchers      map[core.ProfileID]adapter.VacancySearcher
 	suitableResumeReaders map[core.ProfileID]adapter.SuitableResumeReader
+	browserSubmitters     map[core.ProfileID]browsercheck.Driver
 }
 
 func NewApplicationTransportRegistry() *ApplicationTransportRegistry {
@@ -101,7 +103,31 @@ func NewApplicationTransportRegistry() *ApplicationTransportRegistry {
 		vacancyReaders:        make(map[core.ProfileID]adapter.VacancyReader),
 		vacancySearchers:      make(map[core.ProfileID]adapter.VacancySearcher),
 		suitableResumeReaders: make(map[core.ProfileID]adapter.SuitableResumeReader),
+		browserSubmitters:     make(map[core.ProfileID]browsercheck.Driver),
 	}
+}
+
+// RegisterBrowserSubmitter attaches the browser fallback used when the direct
+// transport is challenged by the platform (for example an hhcaptcha answer).
+func (registry *ApplicationTransportRegistry) RegisterBrowserSubmitter(profileID core.ProfileID, submitter browsercheck.Driver) error {
+	if profileID == "" || submitter == nil {
+		return errors.New("browser submitter registration requires profile and submitter")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if _, exists := registry.browserSubmitters[profileID]; exists {
+		return fmt.Errorf("browser submitter for profile %s is already registered", profileID)
+	}
+	registry.browserSubmitters[profileID] = submitter
+	return nil
+}
+
+// ResolveBrowserSubmitter returns the optional browser fallback of one profile.
+func (registry *ApplicationTransportRegistry) ResolveBrowserSubmitter(profileID core.ProfileID) (browsercheck.Driver, bool) {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	submitter := registry.browserSubmitters[profileID]
+	return submitter, submitter != nil
 }
 
 func (registry *ApplicationTransportRegistry) Register(profileID core.ProfileID, transport adapter.ApplicationTransport) error {
@@ -821,12 +847,20 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		return operationError
 	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
+		if operationError.Category == core.ErrorConfirmationRequired {
+			// A platform challenge such as hhcaptcha often disappears when the
+			// same action runs from the profile's real browser session. Try
+			// that before parking the application for an operator.
+			if handled, err := handler.browserFallback(ctx, application); handled {
+				return err
+			}
+		}
 		decisionCode := strings.TrimSpace(operationError.Metadata["code"])
 		if decisionCode == "" {
 			decisionCode = "platform_validation_required"
 			if operationError.Category == core.ErrorConfirmationRequired {
-				// A platform challenge (for example an hhcaptcha answer) needs
-				// an operator; the application must not look "just queued".
+				// The browser fallback is unavailable or also challenged; park
+				// the application so an operator can pass the check.
 				decisionCode = "captcha_required"
 			}
 		}
@@ -889,6 +923,53 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		return operationError
 	}
+}
+
+// browserFallback completes a challenged submission through the profile's
+// browser session. It reports handled=false when no browser submitter is
+// registered so the caller keeps the ordinary error classification.
+func (handler *ApplicationHandler) browserFallback(ctx context.Context, application core.Application) (bool, error) {
+	submitter, ok := handler.transports.ResolveBrowserSubmitter(application.Key.ProfileID)
+	if !ok {
+		return false, nil
+	}
+	outcome, err := submitter.Submit(ctx, application.Key.ProfileID, application.Key.Vacancy.ExternalID, application.PreparedMessage)
+	if err != nil {
+		return false, nil
+	}
+	now := handler.clock.Now()
+	switch outcome.State {
+	case browsercheck.StateDone:
+		if err := application.Transition(core.ApplicationSubmitted, now); err != nil {
+			return true, err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return true, err
+		}
+		if err := handler.commitBudget(ctx, application, now); err != nil {
+			return true, err
+		}
+		if err := handler.recordSubmitted(ctx, application); err != nil {
+			return true, err
+		}
+		return true, handler.restoreTailoring(ctx, application)
+	case browsercheck.StateWaitingCaptcha:
+		application.DecisionCode = "captcha_required"
+		application.DecisionReason = "HH просит пройти капчу; откройте проверку в dashboard"
+	default:
+		application.DecisionCode = "platform_validation_required"
+		application.DecisionReason = strings.TrimSpace(outcome.Message)
+	}
+	if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
+		return true, err
+	}
+	if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+		return true, err
+	}
+	if err := handler.releaseBudget(ctx, application, now); err != nil {
+		return true, err
+	}
+	return true, handler.restoreTailoring(ctx, application)
 }
 
 func (handler *ApplicationHandler) reconcile(ctx context.Context, application core.Application) error {
