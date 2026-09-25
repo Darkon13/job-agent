@@ -557,6 +557,12 @@ func main() {
 				}
 			}
 		}
+		if browserSubmissionDriver != nil && instance.Name() == hh.Name && strings.TrimSpace(profile.StateFile) != "" {
+			if err := applicationTransports.RegisterBrowserSubmitter(profileID, browserSubmissionDriver); err != nil {
+				log.Fatalf("register browser submitter for profile %q: %v", profile.Tag, err)
+			}
+			logf("profile %q has the automatic browser submission fallback", profile.Tag)
+		}
 		if apiReady || runtime.BrowserReader != nil {
 			if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
 				profileStateReaders[profileID] = profileStateReader
@@ -581,11 +587,6 @@ func main() {
 			if transport, ok := instance.(adapter.ApplicationTransport); ok {
 				if err := applicationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if browserSubmissionDriver != nil && instance.Name() == hh.Name && strings.TrimSpace(profile.StateFile) != "" {
-				if err := applicationTransports.RegisterBrowserSubmitter(profileID, browserSubmissionDriver); err != nil {
-					log.Fatalf("register browser submitter for profile %q: %v", profile.Tag, err)
 				}
 			}
 			if observer, ok := instance.(adapter.ApplicationStateObserver); ok {
