@@ -199,3 +199,49 @@ func TestApplicationObservationRejectsAmbiguityAndStaleData(t *testing.T) {
 		t.Fatal("accepted duplicate negotiation")
 	}
 }
+
+type withdrawingRetentionObserver struct {
+	retentionObserver
+	withdrawn []string
+}
+
+func (observer *withdrawingRetentionObserver) WithdrawApplication(_ context.Context, _ core.ProfileID, state core.ApplicationPlatformState) (adapter.ApplicationWithdrawalResult, error) {
+	observer.withdrawn = append(observer.withdrawn, state.ExternalNegotiationID)
+	return adapter.ApplicationWithdrawalResult{}, nil
+}
+
+func TestApplicationRetentionHidesOrphanRefusals(t *testing.T) {
+	now := time.Date(2026, 9, 25, 18, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	storeSubmittedApplication(t, repository, "application-active", "vacancy-active", now.Add(-time.Hour))
+	observer := &withdrawingRetentionObserver{retentionObserver: retentionObserver{result: adapter.ApplicationStateObservationResult{
+		ObservedAt: now,
+		Applications: []adapter.ApplicationStateObservation{
+			{ExternalNegotiationID: "n-orphan", ExternalVacancyID: "vacancy-orphan", PlatformState: "DISCARD", Disposition: core.ApplicationDispositionRejected},
+			{ExternalNegotiationID: "n-active", ExternalVacancyID: "vacancy-active", PlatformState: "DISCARD", Disposition: core.ApplicationDispositionRejected},
+			{ExternalNegotiationID: "n-invited", ExternalVacancyID: "vacancy-invited", PlatformState: "INVITATION", Disposition: core.ApplicationDispositionInvited},
+		},
+	}}}
+	observers := NewApplicationStateObserverRegistry()
+	if err := observers.Register("primary", observer); err != nil {
+		t.Fatalf("register observer: %v", err)
+	}
+	clock := &conversationClock{now: now}
+	removal, err := workflow.NewApplicationRemovalWorkflow(repository, queue, clock, &conversationIDs{})
+	if err != nil {
+		t.Fatalf("new removal workflow: %v", err)
+	}
+	handler, err := NewApplicationRetentionHandler(repository, observers, removal, clock)
+	if err != nil {
+		t.Fatalf("new retention handler: %v", err)
+	}
+	payload, _ := json.Marshal(core.ApplicationRetentionPayload{ProfileID: "primary", StaleAfter: core.Duration(14 * 24 * time.Hour), RemoveRejected: true})
+	task := core.Task{ID: "retention-orphan", Type: core.TaskApplicationRetention, ProfileID: "primary", Platform: "hh", Payload: payload}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle retention: %v", err)
+	}
+	if len(observer.withdrawn) != 1 || observer.withdrawn[0] != "n-orphan" {
+		t.Fatalf("withdrawn=%#v want [n-orphan]", observer.withdrawn)
+	}
+}

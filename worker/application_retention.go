@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Darkon13/job-agent/adapter"
@@ -125,6 +126,9 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 			return err
 		}
 	}
+	if _, err := handler.purgeOrphanRejections(ctx, task, applications, observed); err != nil {
+		return err
+	}
 	if !payload.RemoveWaitingValidation {
 		return nil
 	}
@@ -151,4 +155,59 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 		}
 	}
 	return nil
+}
+
+// orphanRejectionPurgeLimit bounds how many platform refusals one retention
+// run hides so the cleanup never bursts the platform API.
+const orphanRejectionPurgeLimit = 50
+
+// purgeOrphanRejections hides platform refusals whose local application left
+// the working set. Removed applications keep their refusals visible on the
+// platform otherwise, so the platform counter never matches the local set.
+func (handler *ApplicationRetentionHandler) purgeOrphanRejections(ctx context.Context, task core.Task, applications []core.Application, observed adapter.ApplicationStateObservationResult) (int, error) {
+	observer, err := handler.observers.Resolve(task.ProfileID)
+	if err != nil {
+		return 0, err
+	}
+	withdrawer, ok := observer.(adapter.ApplicationWithdrawer)
+	if !ok {
+		return 0, nil
+	}
+	activeNegotiations := make(map[string]struct{}, len(applications))
+	activeVacancies := make(map[string]struct{}, len(applications))
+	for _, application := range applications {
+		if application.Key.Vacancy.Platform != task.Platform {
+			continue
+		}
+		if negotiationID := strings.TrimSpace(application.ExternalNegotiationID); negotiationID != "" {
+			activeNegotiations[negotiationID] = struct{}{}
+		}
+		activeVacancies[application.Key.Vacancy.ExternalID] = struct{}{}
+	}
+	purged := 0
+	for _, item := range observed.Applications {
+		if item.Disposition != core.ApplicationDispositionRejected {
+			continue
+		}
+		if _, exists := activeNegotiations[item.ExternalNegotiationID]; exists {
+			continue
+		}
+		if _, exists := activeVacancies[item.ExternalVacancyID]; exists {
+			continue
+		}
+		if purged >= orphanRejectionPurgeLimit {
+			break
+		}
+		state := core.ApplicationPlatformState{
+			ExternalNegotiationID: item.ExternalNegotiationID,
+			PlatformState:         item.PlatformState,
+			Disposition:           item.Disposition,
+			ObservedAt:            observed.ObservedAt,
+		}
+		if _, err := withdrawer.WithdrawApplication(ctx, task.ProfileID, state); err != nil {
+			return purged, fmt.Errorf("hide orphan refusal %s: %w", item.ExternalNegotiationID, err)
+		}
+		purged++
+	}
+	return purged, nil
 }
