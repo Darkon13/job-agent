@@ -3,7 +3,7 @@
 # proxy or has too little CPU/disk.
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /
-ARG VERSION=1.9.6
+ARG VERSION=1.9.7
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 LABEL org.opencontainers.image.title="Job Agent" \

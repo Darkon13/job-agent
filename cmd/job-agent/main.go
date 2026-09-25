@@ -410,11 +410,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create browser worker client: %v", err)
 	}
+	var browserSubmissionDriver *hh.BrowserSubmissionDriver
 	if browserClient != nil {
 		submissionDriver, err := hh.NewBrowserSubmissionDriver(browserClient)
 		if err != nil {
 			log.Fatalf("create browser submission driver: %v", err)
 		}
+		browserSubmissionDriver = submissionDriver
 		browserCheckService, err := browsercheck.NewService(
 			submissionDriver, store, applicationRetryWorkflow, workflow.SystemClock{}, workflow.RandomIDGenerator{},
 		)
@@ -579,6 +581,11 @@ func main() {
 			if transport, ok := instance.(adapter.ApplicationTransport); ok {
 				if err := applicationTransports.Register(profileID, transport); err != nil {
 					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
+				}
+			}
+			if browserSubmissionDriver != nil && instance.Name() == hh.Name && strings.TrimSpace(profile.StateFile) != "" {
+				if err := applicationTransports.RegisterBrowserSubmitter(profileID, browserSubmissionDriver); err != nil {
+					log.Fatalf("register browser submitter for profile %q: %v", profile.Tag, err)
 				}
 			}
 			if observer, ok := instance.(adapter.ApplicationStateObserver); ok {

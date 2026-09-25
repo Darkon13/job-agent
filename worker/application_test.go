@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/browsercheck"
 	"github.com/Darkon13/job-agent/core"
 	applicationoperator "github.com/Darkon13/job-agent/operator"
 	"github.com/Darkon13/job-agent/storage"
@@ -695,5 +696,62 @@ func TestApplicationHandlerEnforcesDailyBudgetBeforeTransport(t *testing.T) {
 	err := handler.Handle(context.Background(), task)
 	if !core.ErrorIsCategory(err, core.ErrorQuotaExceeded) || transport.calls != 0 {
 		t.Fatalf("handle error=%v calls=%d", err, transport.calls)
+	}
+}
+
+type fakeBrowserSubmitter struct {
+	outcome browsercheck.Outcome
+	err     error
+	calls   int
+}
+
+func (fake *fakeBrowserSubmitter) Submit(context.Context, core.ProfileID, string, string) (browsercheck.Outcome, error) {
+	fake.calls++
+	return fake.outcome, fake.err
+}
+
+func (fake *fakeBrowserSubmitter) Answer(context.Context, core.ProfileID, string, string) (browsercheck.Outcome, error) {
+	return browsercheck.Outcome{}, nil
+}
+
+func TestApplicationHandlerCompletesCaptchaInBrowser(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorConfirmationRequired, Operation: "applications.submit.browser", Platform: "hh",
+		Message: "HH requires captcha confirmation",
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	submitter := &fakeBrowserSubmitter{outcome: browsercheck.Outcome{State: browsercheck.StateDone}}
+	if err := handler.transports.RegisterBrowserSubmitter("profile-1", submitter); err != nil {
+		t.Fatalf("register browser submitter: %v", err)
+	}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationSubmitted || submitter.calls != 1 {
+		t.Fatalf("application=%#v err=%v browser calls=%d", application, err, submitter.calls)
+	}
+}
+
+func TestApplicationHandlerParksBrowserCaptchaForOperator(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorConfirmationRequired, Operation: "applications.submit.browser", Platform: "hh",
+		Message: "HH requires captcha confirmation",
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	submitter := &fakeBrowserSubmitter{outcome: browsercheck.Outcome{State: browsercheck.StateWaitingCaptcha, Message: "введите символы"}}
+	if err := handler.transports.RegisterBrowserSubmitter("profile-1", submitter); err != nil {
+		t.Fatalf("register browser submitter: %v", err)
+	}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationWaitingValidation || application.DecisionCode != "captcha_required" || submitter.calls != 1 {
+		t.Fatalf("application=%#v err=%v browser calls=%d", application, err, submitter.calls)
 	}
 }
