@@ -98,7 +98,9 @@ func (client *ReadClient) ObserveApplicationStates(ctx context.Context, profileI
 				return adapter.ApplicationStateObservationResult{}, operationError(core.ErrorTemporaryFailure, "applications.observe", "HH returned an incomplete negotiation", nil)
 			}
 			if _, duplicate := seen[negotiationID]; duplicate {
-				return adapter.ApplicationStateObservationResult{}, operationError(core.ErrorTemporaryFailure, "applications.observe", "HH negotiation pagination changed; retry observation", nil)
+				// HH shifts items between pages while the list changes, so the
+				// same negotiation may legitimately appear on two pages.
+				continue
 			}
 			seen[negotiationID] = struct{}{}
 			updatedAt, err := parseHHTime(item.UpdatedAt)
