@@ -133,6 +133,7 @@ func (api *ApplicationAPI) Handler(next http.Handler) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/applications/remove", api.remove)
+	mux.HandleFunc("POST /api/v1/applications/retry", api.retryApplications)
 	mux.HandleFunc("POST /api/v1/applications/{application_id}/retry", api.retryApplication)
 	mux.HandleFunc("POST /api/v1/applications/{application_id}/browser-check", api.startBrowserCheck)
 	mux.HandleFunc("GET /api/v1/applications/{application_id}/browser-check/{session_id}", api.browserCheckStatus)
@@ -180,6 +181,48 @@ type applicationActionResult struct {
 type applicationBulkResult struct {
 	bulkTaskResponse
 	Results []applicationActionResult `json:"results"`
+}
+
+// retryApplications releases several blocked applications in one idempotent
+// request so an operator can confirm a whole group after a manual check.
+func (api *ApplicationAPI) retryApplications(response http.ResponseWriter, request *http.Request) {
+	requestKey, ok := requireIdempotencyKey(response, request)
+	if !ok {
+		return
+	}
+	var body removeApplicationsRequest
+	if !decodeJSON(response, request, &body) {
+		return
+	}
+	if len(body.ApplicationIDs) == 0 || len(body.ApplicationIDs) > maxBulkApplicationAction {
+		writeProblem(response, http.StatusBadRequest, "application_ids must contain between 1 and 200 objects")
+		return
+	}
+	result := applicationBulkResult{bulkTaskResponse: bulkTaskResponse{Tasks: make([]taskResponse, 0, len(body.ApplicationIDs)), Matched: len(body.ApplicationIDs)}, Results: make([]applicationActionResult, 0, len(body.ApplicationIDs))}
+	seen := make(map[core.ApplicationID]struct{}, len(body.ApplicationIDs))
+	for _, applicationID := range body.ApplicationIDs {
+		applicationID = core.ApplicationID(strings.TrimSpace(string(applicationID)))
+		if applicationID == "" {
+			writeProblem(response, http.StatusBadRequest, "application_ids must not contain empty ids")
+			return
+		}
+		if _, duplicate := seen[applicationID]; duplicate {
+			continue
+		}
+		seen[applicationID] = struct{}{}
+		task, created, err := api.retry.Enqueue(request.Context(), applicationID, requestKey)
+		if err != nil {
+			result.Results = append(result.Results, applicationActionResult{ApplicationID: applicationID, Error: "not_enqueued"})
+			continue
+		}
+		if created {
+			result.Created++
+		}
+		result.Tasks = append(result.Tasks, taskResponse{TaskID: task.ID, Created: created})
+		result.Results = append(result.Results, applicationActionResult{ApplicationID: applicationID, TaskID: task.ID})
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusAccepted, result)
 }
 
 func (api *ApplicationAPI) remove(response http.ResponseWriter, request *http.Request) {

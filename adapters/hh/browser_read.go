@@ -161,6 +161,15 @@ func (client *BrowserReadClient) ReadVacancy(ctx context.Context, profileID core
 	endpoint := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + url.PathEscape(key.ExternalID)
 	document, finalURL, err := client.getHTML(ctx, endpoint, "vacancies.read.browser")
 	if err != nil {
+		if isBrowserResourceUnavailable(err) {
+			// HH answers 403 for a vacancy the account may not see. Retrying
+			// cannot change that, so the application is skipped with a reason.
+			return core.Vacancy{}, &core.OperationError{
+				Category: core.ErrorPermanentFailure, Operation: "vacancies.read.browser", Platform: Name,
+				Message: "HH vacancy is closed or unavailable", Cause: err,
+				Metadata: map[string]string{"code": "vacancy_closed"},
+			}
+		}
 		return core.Vacancy{}, err
 	}
 	if isLoginURL(finalURL) {
@@ -369,6 +378,15 @@ func (client *BrowserReadClient) getHTML(ctx context.Context, endpoint, operatio
 		return nil, response.Request.URL, operationError(core.ErrorTemporaryFailure, operation, "HH returned invalid HTML", err)
 	}
 	return document, response.Request.URL, nil
+}
+
+// isBrowserResourceUnavailable reports the 403 classification produced by
+// classifyBrowserReadResponse: the resource exists but is not visible to the
+// account, which is a platform-imposed skip for vacancy reads.
+func isBrowserResourceUnavailable(err error) bool {
+	var operationError *core.OperationError
+	return errors.As(err, &operationError) && operationError.Category == core.ErrorPermanentFailure &&
+		strings.Contains(operationError.Message, "not accessible for this account")
 }
 
 func classifyBrowserReadResponse(response *http.Response, operation string) error {

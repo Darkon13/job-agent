@@ -375,9 +375,25 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if application.PreparedAt == nil {
 		vacancy, err := handler.loadFullVacancy(ctx, application)
 		if err != nil {
-			if core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
-				var operationError *core.OperationError
-				if errors.As(err, &operationError) && operationError.Validate() == nil {
+			var operationError *core.OperationError
+			if errors.As(err, &operationError) && operationError.Validate() == nil {
+				if operationError.Metadata["code"] == "vacancy_closed" {
+					// The platform does not expose this vacancy to the account.
+					// It is a skip with a reason, not a failed submission.
+					application.DecisionCode = "vacancy_closed"
+					application.DecisionReason = "HH сообщил, что вакансия закрыта или недоступна"
+					if transitionErr := application.Transition(core.ApplicationSkipped, now); transitionErr != nil {
+						return transitionErr
+					}
+					if saveErr := handler.repository.SaveApplication(ctx, application, expectedStatus); saveErr != nil {
+						return saveErr
+					}
+					if releaseErr := handler.releaseBudget(ctx, application, now); releaseErr != nil {
+						return releaseErr
+					}
+					return handler.restoreTailoring(ctx, application)
+				}
+				if core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
 					if failErr := application.Fail(operationError, now); failErr != nil {
 						return failErr
 					}

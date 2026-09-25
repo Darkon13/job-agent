@@ -376,6 +376,9 @@ func main() {
 	}
 	profileContacts := resolveProfileContacts(cfg, instances)
 	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg, profileContacts))
+	if err == nil {
+		runtimeAPI.ConfigureSummaryCache(3 * time.Second)
+	}
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
 	}

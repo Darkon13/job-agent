@@ -5,10 +5,11 @@ const state = {
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
+  conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0,
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false,
-  browserCheck: null,
+  browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
@@ -17,6 +18,7 @@ const elements = Object.fromEntries([
   "profile-resources", "profile-state-state",
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
+  "conversation-more", "conversation-page-state", "application-captcha-check", "browser-check-controls",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -43,6 +45,7 @@ const decisionLabels = { qualified: "Проверки пройдены", resume_
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
+function plainText(value) { return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
 function statusCell(value, className = "") { const cell = document.createElement("td"); cell.append(text("span", value, `status ${className}`.trim())); return cell; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
 function taskTypeLabel(value) { return taskTypeLabels[value] || value; }
@@ -96,7 +99,7 @@ function renderStats(summary = {}) {
     { value: total(applications, (item) => (item.status === "submitted" || item.decision_code === "already_applied") && item.decision_code !== "imported_appltool"), label: "Отклики отправлены", filter: "sent" },
     { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
     { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
-    { value: (summary.conversations || []).filter((item) => item.status === "active").length, label: "Активные диалоги", target: "conversations-title" },
+    { value: summary.conversation_stats?.active || 0, label: "Активные диалоги", target: "conversations-title" },
   ];
   elements.stats.replaceChildren(...metrics.map((metric) => {
     const card = document.createElement(metric.filter || metric.target ? "button" : "article"); card.className = "stat-card";
@@ -158,9 +161,11 @@ function renderBrowserCheck() {
   elements.browserCheck.hidden = false;
   elements.browserCheckState.textContent = `${browserCheckStateLabels[session.state] || session.state}${session.message ? ` · ${session.message}` : ""}`;
   const waiting = session.state === "waiting_captcha";
+  elements.browserCheckControls.hidden = !waiting;
+  elements.browserCheckCancel.textContent = waiting ? "Отмена" : "Закрыть";
   elements.browserCheckAnswer.disabled = !waiting;
   elements.browserCheckSubmit.disabled = !waiting;
-  elements.browserCheckRefreshImage.hidden = !waiting;
+  elements.browserCheckRefreshImage.hidden = !waiting || !session.has_image;
   if (session.has_image) {
     elements.browserCheckImage.hidden = false;
     elements.browserCheckImage.src = browserCheckImageURL(session);
@@ -169,6 +174,53 @@ function renderBrowserCheck() {
     elements.browserCheckImage.removeAttribute("src");
   }
 }
+function parkedCaptchaApplications() {
+  return (state.applicationObjects || []).filter((item) => item.decision_code === "captcha_required" && item.status === "waiting_validation");
+}
+function updateCaptchaCheckButton() {
+  const parked = parkedCaptchaApplications();
+  elements.applicationCaptchaCheck.hidden = parked.length === 0;
+  elements.applicationCaptchaCheck.textContent = parked.length > 1 ? `Пройти проверку HH (${parked.length})` : "Пройти проверку HH";
+  elements.applicationCaptchaCheck.disabled = state.applicationActionBusy || state.applicationLoading;
+}
+// startCaptchaCheck runs one browser check for the selected profile and then
+// retries the remaining parked applications: the platform guard is per
+// account, so the operator solves it once instead of per application.
+async function startCaptchaCheck() {
+  state.applicationActionBusy = true; elements.applicationCaptchaCheck.disabled = true;
+  state.applicationActionMessage = "Готовлю проверку HH…"; renderApplicationObjects();
+  try {
+    const params = new URLSearchParams({ group: "needs_input", limit: "200" });
+    if (state.account) params.set("profile_id", state.account);
+    const listing = await request(`/api/v1/applications?${params}`);
+    const parked = (listing.items || []).filter((item) => item.decision_code === "captcha_required");
+    if (!parked.length) { state.applicationActionMessage = "Нет откликов, ожидающих проверку HH"; return; }
+    state.captchaCheckRemaining = parked.slice(1).map((item) => item.id);
+    const session = await request(`/api/v1/applications/${encodeURIComponent(parked[0].id)}/browser-check`, { method: "POST" });
+    state.browserCheck = session;
+    state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[session.state] || session.state}`;
+    renderBrowserCheck();
+    if (session.state === "done") { await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
+  } catch (error) {
+    state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
+  } finally {
+    state.applicationActionBusy = false; renderApplicationObjects();
+  }
+}
+// retryRemainingAfterCheck releases the parked applications behind one manual
+// check; the durable retry pipeline confirms each platform result.
+async function retryRemainingAfterCheck() {
+  const ids = (state.captchaCheckRemaining || []).slice(0, 200);
+  state.captchaCheckRemaining = [];
+  if (!ids.length) return;
+  try {
+    const result = await enqueue("/api/v1/applications/retry", { application_ids: ids });
+    state.applicationActionMessage = `${state.applicationActionMessage} · повторно поставлено: ${result.created || 0}`;
+  } catch (error) {
+    state.applicationActionMessage = `${state.applicationActionMessage} · не удалось повторить остальные: ${error.message}`;
+  }
+}
+
 async function startBrowserCheck(item, button) {
   state.applicationActionBusy = true; button.disabled = true;
   state.applicationActionMessage = `Открываю вакансию в браузере профиля…`; renderApplicationObjects();
@@ -179,7 +231,7 @@ async function startBrowserCheck(item, button) {
     state.browserCheck = body;
     state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[body.state] || body.state}`;
     renderBrowserCheck();
-    if (body.state === "done") { refreshApplications(); refreshSummary(); }
+    if (body.state === "done") { await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
   } catch (error) {
     state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
   }
@@ -200,7 +252,7 @@ async function submitBrowserCheckAnswer() {
     state.browserCheck = body;
     elements.browserCheckAnswer.value = "";
     renderBrowserCheck();
-    if (body.state === "done") { state.applicationActionMessage = body.message || "Отклик отправлен из браузера"; refreshApplications(); refreshSummary(); }
+    if (body.state === "done") { state.applicationActionMessage = body.message || "Отклик отправлен из браузера"; await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
   } catch (error) {
     state.applicationActionMessage = `Ответ не принят: ${error.message}`;
     elements.browserCheckSubmit.disabled = false;
@@ -305,6 +357,7 @@ function renderApplicationObjects() {
     return row;
   }));
   updateApplicationSelection(items);
+  updateCaptchaCheckButton();
 }
 const tailoringStatusLabels = { planned: "Готовится", applying: "Применяется", applied: "Применено", submitting: "Перед отправкой", restoring: "Восстанавливается", restored: "Восстановлено", recovery_required: "Нужно восстановление" };
 function tailoringCell(item) {
@@ -508,18 +561,15 @@ function renderActivityObservations(items = []) {
     card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}`, "muted")); return card;
   }));
 }
+// visibleConversations sorts the server-filtered page. The open conversation
+// stays pinned at the top even when a filter no longer matches it: reading a
+// chat must not yank it out of sight until the operator selects another one.
 function visibleConversations(items = []) {
-  const query = state.conversationQuery.trim().toLocaleLowerCase("ru");
-  const filtered = items.filter((item) => {
-    if (state.account && item.profile_id !== state.account) return false;
-    if (!state.conversationFilter && ["closed", "rejected", "archived"].includes(String(item.status || ""))) return false;
-    if (state.conversationFilter === "unread" && !item.unread_count) return false;
-    if (state.conversationFilter === "questionnaire" && !item.questionnaire_open) return false;
-    if (state.conversationFilter && !["unread", "questionnaire"].includes(state.conversationFilter) && item.status !== state.conversationFilter) return false;
-    return !query || [item.vacancy_title, item.employer, item.profile_id, conversationStatusLabels[item.status]].some((value) => String(value || "").toLocaleLowerCase("ru").includes(query));
-  });
+  const visible = [...items];
+  const selected = state.selectedConversation;
+  if (selected && !visible.some((item) => item.id === selected.id)) visible.unshift(selected);
   const stringCompare = (left, right) => String(left || "").localeCompare(String(right || ""), "ru", { sensitivity: "base" });
-  return filtered.sort((left, right) => {
+  return visible.sort((left, right) => {
     switch (state.conversationSort) {
     case "updated_asc": return new Date(left.updated_at) - new Date(right.updated_at);
     case "unread_desc": return Number(right.unread_count || 0) - Number(left.unread_count || 0) || new Date(right.updated_at) - new Date(left.updated_at);
@@ -528,9 +578,12 @@ function visibleConversations(items = []) {
     }
   });
 }
-function renderConversations(items = []) {
+function renderConversations(items = state.conversationItems) {
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
+  const loaded = state.conversationItems.length;
+  elements.conversationPageState.textContent = state.conversationTotal ? `Показано ${loaded} из ${state.conversationTotal}` : "";
+  elements.conversationMore.hidden = loaded >= state.conversationTotal;
   if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
   elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
@@ -544,8 +597,40 @@ function renderConversations(items = []) {
     button.addEventListener("click", () => selectConversation(item)); return button;
   }));
 }
+// refreshConversations loads one page of the server-filtered conversation
+// list. Filters and the search run in SQL, so pagination stays correct for
+// thousands of dialogs.
+async function refreshConversations({ append = false } = {}) {
+  if (state.conversationLoading) return;
+  state.conversationLoading = true;
+  const offset = append ? state.conversationItems.length : 0;
+  const params = new URLSearchParams({ limit: "50", offset: String(offset) });
+  if (state.account) params.set("profile_id", state.account);
+  if (state.conversationFilter === "unread") params.set("unread", "1");
+  else if (state.conversationFilter === "questionnaire") params.set("questionnaire", "1");
+  else if (state.conversationFilter) params.set("status", state.conversationFilter);
+  if (state.conversationQuery.trim()) params.set("q", state.conversationQuery.trim());
+  try {
+    const page = await request(`/api/v1/conversations?${params}`);
+    state.conversationItems = append ? [...state.conversationItems, ...(page.items || [])] : (page.items || []);
+    state.conversationTotal = Number(page.total || 0);
+    state.conversationUnreadTotal = Number(page.unread_total || 0);
+    if (state.selectedConversation) {
+      const fresh = state.conversationItems.find((item) => item.id === state.selectedConversation.id);
+      if (fresh) state.selectedConversation = fresh;
+    }
+    renderConversations(state.conversationItems);
+    renderAccountSwitcher(state.summary?.profiles || []);
+  } catch (error) {
+    state.conversationTotal = state.conversationItems.length;
+    elements.conversationBulkState.textContent = error.message;
+  } finally {
+    state.conversationLoading = false;
+  }
+}
+
 function updateMarkAllRead(items = []) {
-  const unread = items.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
+  const unread = Number(state.conversationUnreadTotal || 0) || items.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
   const pending = (state.summary?.tasks || []).some((item) => item.type === "conversation.mark_read" && ["new", "processing", "retry_scheduled", "waiting_confirmation"].includes(item.status));
   elements.markAllRead.textContent = unread ? `Прочитать все (${unread})` : "Все прочитано";
   elements.markAllRead.disabled = state.markAllReadBusy || pending || unread === 0;
@@ -554,6 +639,7 @@ function updateMarkAllRead(items = []) {
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
   elements.messages.replaceChildren(...items.map((item) => {
+    if (item.kind === "system") return text("p", plainText(item.text) || "Системное событие", "message-system");
     const article = document.createElement("article"); article.className = `message ${item.direction || ""}`;
     article.append(text("p", item.text || `[${item.kind}]`));
     if ((item.options || []).length) {
@@ -785,7 +871,7 @@ function renderAccountSwitcher(profiles = []) {
   for (const item of profiles) {
     if (item && item.id) labels.set(item.id, item.display_name || item.id);
   }
-  for (const item of state.summary?.conversations || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
+  for (const item of state.conversationItems || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
   for (const item of state.summary?.activity || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
   for (const item of state.failedTasks || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
   for (const item of state.jobs || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
@@ -860,9 +946,9 @@ function renderReviewSessions() {
     const button = document.createElement("button"); button.type = "button";
     button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
     const vacancy = session.vacancy || {};
-    button.append(text("strong", vacancy.title || session.question || `Проверка ${compactID(session.id)}`));
+    button.append(text("strong", vacancy.title || plainText(session.question) || `Проверка ${compactID(session.id)}`));
     const details = vacancy.title
-      ? [vacancy.employer || "Компания не определена", session.question, reviewStatusLabel(session.status), formatDate(session.updated_at)]
+      ? [vacancy.employer || "Компания не определена", plainText(session.question), reviewStatusLabel(session.status), formatDate(session.updated_at)]
       : [reviewStatusLabel(session.status), session.platform, profileDisplayName(session.profile_id), formatDate(session.updated_at)];
     button.append(text("small", details.filter(Boolean).join(" · ")));
     button.addEventListener("click", () => selectReviewSession(session));
@@ -914,7 +1000,7 @@ function renderReviewPrompt() {
     return;
   }
   const form = document.createElement("form"); form.className = "review-form";
-  form.append(text("p", prompt.question.text, "review-question"));
+  form.append(text("p", plainText(prompt.question.text), "review-question"));
   const kindLabels = { single: "один вариант", multiple: "несколько вариантов", text: "текстовый ответ" };
   const remaining = Array.isArray(detail.questions) ? detail.questions.length : 0;
   form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · в банке ответа ещё нет${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
@@ -932,7 +1018,7 @@ function renderReviewPrompt() {
       const control = document.createElement("input");
       control.type = kind === "single" ? "radio" : "checkbox";
       control.name = "review-option"; control.value = option.text;
-      label.append(control, text("span", option.text));
+      label.append(control, text("span", plainText(option.text)));
       input.append(label);
     }
   }
@@ -952,7 +1038,7 @@ function renderReviewBatch(detail) {
   let unsupported = false;
   for (const question of detail.questions) {
     const block = document.createElement("div"); block.className = "review-question-block";
-    block.append(text("p", question.text, "review-question"));
+    block.append(text("p", plainText(question.text), "review-question"));
     let input;
     if (question.kind === "text") {
       input = document.createElement("textarea"); input.rows = 4; input.placeholder = "Ответ"; input.required = true;
@@ -963,7 +1049,7 @@ function renderReviewBatch(detail) {
         const control = document.createElement("input");
         control.type = question.kind === "single" ? "radio" : "checkbox";
         control.name = reviewControlName(question.id); control.value = option.text;
-        label.append(control, text("span", option.text));
+        label.append(control, text("span", plainText(option.text)));
         input.append(label);
       }
     } else {
@@ -981,9 +1067,20 @@ function renderReviewBatch(detail) {
   const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
   const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
   bankLabel.append(bankControl, text("span", "Сохранить ответы в банк — пригодятся в других анкетах"));
+  // The bulk control mirrors the per-question controls and back: unchecking one
+  // answer clears the bulk checkbox, mixed selections become indeterminate.
+  const questionBanks = [...form.querySelectorAll(".review-bank-question input")];
+  const syncBankControl = () => {
+    const checked = questionBanks.filter((control) => control.checked).length;
+    bankControl.checked = questionBanks.length > 0 && checked === questionBanks.length;
+    bankControl.indeterminate = checked > 0 && checked < questionBanks.length;
+  };
+  for (const control of questionBanks) control.addEventListener("change", syncBankControl);
   bankControl.addEventListener("change", () => {
-    for (const control of form.querySelectorAll(".review-bank-question input")) control.checked = bankControl.checked;
+    for (const control of questionBanks) control.checked = bankControl.checked;
+    bankControl.indeterminate = false;
   });
+  syncBankControl();
   form.append(bankLabel);
   const footer = document.createElement("div"); footer.className = "review-actions";
   const submit = text("button", "Сохранить все ответы"); submit.type = "submit";
@@ -1096,10 +1193,9 @@ async function refreshSummary() {
   try {
     const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
     state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
-    if (state.selectedConversation) state.selectedConversation = (summary.conversations || []).find((item) => item.id === state.selectedConversation.id) || null;
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
-    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); renderConversations(summary.conversations || []);
+    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { elements.refresh.disabled = false; }
@@ -1112,7 +1208,7 @@ async function refreshVersion() {
   } catch (error) { elements.runtimeVersion.textContent = "версия недоступна"; }
 }
 async function selectConversation(conversation) {
-  state.selectedConversation = conversation; renderConversations(state.summary?.conversations || []); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${profileDisplayName(conversation.profile_id)} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
+  state.selectedConversation = conversation; renderConversations(state.conversationItems); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${profileDisplayName(conversation.profile_id)} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
@@ -1140,7 +1236,7 @@ async function selectConversation(conversation) {
       const key = `dashboard-open:${conversation.id}:${conversation.revision}`;
       await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/mark-read`, undefined, key);
       elements.actionState.textContent = "Диалог будет помечен прочитанным";
-      await refreshSummary();
+      await refreshSummary(); await refreshConversations();
     } catch (error) { elements.actionState.textContent = error.message; }
     finally { state.conversationReadBusy.delete(conversation.id); }
   }
@@ -1194,13 +1290,13 @@ elements.replyForm.addEventListener("submit", async (event) => {
   } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
 });
 elements.markAllRead.addEventListener("click", async () => {
-  state.markAllReadBusy = true; updateMarkAllRead(state.summary?.conversations || []); elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
+  state.markAllReadBusy = true; updateMarkAllRead(state.conversationItems); elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
   try {
     const result = await enqueue("/api/v1/conversations/mark-read");
     elements.conversationBulkState.textContent = result.created ? `Непрочитанных диалогов: ${result.created}` : "Новых задач не потребовалось";
-    await refreshSummary();
+    await refreshSummary(); await refreshConversations();
   } catch (error) { elements.conversationBulkState.textContent = error.message; }
-  finally { state.markAllReadBusy = false; updateMarkAllRead(state.summary?.conversations || []); }
+  finally { state.markAllReadBusy = false; updateMarkAllRead(state.conversationItems); }
 });
 let applicationSearchTimer;
 elements.applicationSearch.addEventListener("input", () => { clearTimeout(applicationSearchTimer); state.applicationQuery = elements.applicationSearch.value; state.applicationRequest++; state.applicationLoading = true; updateApplicationSelection(); applicationSearchTimer = setTimeout(changeApplicationQuery, 250); });
@@ -1221,6 +1317,7 @@ elements.applicationRunAction.addEventListener("click", async () => {
   } catch (error) { state.applicationActionMessage = error.message; }
   finally { state.applicationActionBusy = false; updateApplicationSelection(); }
 });
+elements.applicationCaptchaCheck.addEventListener("click", startCaptchaCheck);
 elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
 elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
 elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
@@ -1228,9 +1325,10 @@ elements.browserCheckCancel.addEventListener("click", cancelBrowserCheck);
 elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.selectedApplications.clear(); state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; elements.applicationBulkAction.value = ""; changeApplicationQuery(); });
 elements.applicationPrev.addEventListener("click", () => { state.applicationOffset = Math.max(0, state.applicationOffset - 200); state.selectedApplications.clear(); refreshApplications(); });
 elements.applicationNext.addEventListener("click", () => { state.applicationOffset += 200; state.selectedApplications.clear(); refreshApplications(); });
-elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; renderConversations(state.summary?.conversations || []); });
-elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; renderConversations(state.summary?.conversations || []); });
-elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.summary?.conversations || []); });
+elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; clearTimeout(state.conversationSearchTimer); state.conversationSearchTimer = setTimeout(() => refreshConversations(), 250); });
+elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; refreshConversations(); });
+elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.conversationItems); });
+elements.conversationMore.addEventListener("click", () => refreshConversations({ append: true }));
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); });
 elements.reviewRefresh.addEventListener("click", () => refreshReviewSessions());
 elements.accountSwitcher.addEventListener("change", () => {
@@ -1251,7 +1349,7 @@ elements.reviewSearch.addEventListener("input", () => {
   }, 250);
 });
 elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
-refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
+refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
 // Server-sent change notifications replace most of the polling latency; the
 // interval above stays as a safety net.
@@ -1266,6 +1364,7 @@ refreshVersion(); refreshSummary(); refreshProfileResources(); refreshReviewSess
     refreshTimer = globalThis.setTimeout(async () => {
       await refreshSummary();
       if (sections.includes("applications")) await refreshApplications();
+      if (sections.includes("conversations")) await refreshConversations();
       if (sections.includes("conversations") && state.selectedConversation) {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);

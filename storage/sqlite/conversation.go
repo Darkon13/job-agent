@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -93,21 +94,12 @@ func (store *Store) conversationByExternal(ctx context.Context, platform core.Pl
 }
 
 func (store *Store) ListConversations(ctx context.Context, filter storage.ConversationFilter) ([]core.Conversation, error) {
-	query := conversationSelect + ` WHERE 1 = 1`
-	args := make([]any, 0, 3)
-	if filter.Platform != "" {
-		query += ` AND platform = ?`
-		args = append(args, filter.Platform)
-	}
-	if filter.ProfileID != "" {
-		query += ` AND profile_id = ?`
-		args = append(args, filter.ProfileID)
-	}
-	if filter.Status != "" {
-		query += ` AND status = ?`
-		args = append(args, filter.Status)
-	}
+	query, args := conversationFilterQuery(filter)
 	query += ` ORDER BY updated_at DESC, id`
+	if filter.Limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, filter.Limit, max(filter.Offset, 0))
+	}
 	rows, err := store.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
@@ -125,6 +117,43 @@ func (store *Store) ListConversations(ctx context.Context, filter storage.Conver
 		return nil, fmt.Errorf("iterate conversations: %w", err)
 	}
 	return result, nil
+}
+
+// conversationFilterQuery applies the shared conversation filters so the list
+// and the counters never disagree.
+func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) {
+	query := conversationSelect + ` WHERE 1 = 1`
+	args := make([]any, 0, 6)
+	if filter.Platform != "" {
+		query += ` AND platform = ?`
+		args = append(args, filter.Platform)
+	}
+	if filter.ProfileID != "" {
+		query += ` AND profile_id = ?`
+		args = append(args, filter.ProfileID)
+	}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if queryText := strings.TrimSpace(filter.Query); queryText != "" {
+		like := "%" + queryText + "%"
+		query += ` AND (vacancy_title LIKE ? OR employer LIKE ? OR external_id LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	return query, args
+}
+
+// CountConversations returns totals for the same filter as ListConversations.
+func (store *Store) CountConversations(ctx context.Context, filter storage.ConversationFilter) (storage.ConversationCounts, error) {
+	countQuery := `SELECT COUNT(*), COALESCE(SUM(unread_count), 0), COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) FROM conversations WHERE 1 = 1`
+	filterQuery, args := conversationFilterQuery(filter)
+	_, condition, _ := strings.Cut(filterQuery, ` WHERE 1 = 1`)
+	var counts storage.ConversationCounts
+	if err := store.db.QueryRowContext(ctx, countQuery+condition, args...).Scan(&counts.Total, &counts.Unread, &counts.Active); err != nil {
+		return storage.ConversationCounts{}, fmt.Errorf("count conversations: %w", err)
+	}
+	return counts, nil
 }
 
 func (store *Store) AppendConversationMessage(ctx context.Context, message core.ConversationMessage, observedAt time.Time) (core.Conversation, bool, error) {
@@ -199,16 +228,16 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 // OpenQuestionnaireConversationIDs lists conversations whose latest incoming
 // questionnaire still has no outgoing answer after it.
 func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
+	// The badge marks a conversation where a questionnaire is still running.
+	// Answering one question does not finish it; the platform closing the chat
+	// does, so only active conversations keep the marker.
 	rows, err := store.db.QueryContext(ctx, `
-		SELECT m.conversation_id
+		SELECT DISTINCT m.conversation_id
 		FROM conversation_messages m
+		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.direction = 'incoming' AND m.kind = 'questionnaire'
 		  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
-		  AND m.occurred_at > COALESCE((
-			SELECT MAX(o.occurred_at) FROM conversation_messages o
-			WHERE o.conversation_id = m.conversation_id AND o.direction = 'outgoing'
-			  AND o.status IN ('sent', 'queued')), 0)
-		GROUP BY m.conversation_id
+		  AND c.status = 'active'
 		ORDER BY m.conversation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list open questionnaires: %w", err)

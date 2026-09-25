@@ -10,6 +10,9 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/buildinfo"
@@ -30,6 +33,7 @@ type RuntimeReadRepository interface {
 	ProfileActivityCounts(context.Context, storage.ProfileActivityFilter) ([]storage.ProfileActivityCount, error)
 	ListProfileActivitySnapshots(context.Context, storage.ProfileActivitySnapshotFilter) ([]core.ProfileActivitySnapshot, error)
 	ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error)
+	CountConversations(context.Context, storage.ConversationFilter) (storage.ConversationCounts, error)
 	OpenQuestionnaireConversationIDs(context.Context) ([]core.ConversationID, error)
 }
 
@@ -52,6 +56,21 @@ type RuntimeAPI struct {
 	now            func() time.Time
 	questionnaires QuestionnaireCapturer
 	configStatus   func() ConfigStatus
+
+	summaryMu      sync.Mutex
+	summaryCache   []byte
+	summaryExpires time.Time
+	summaryTTL     time.Duration
+}
+
+// ConfigureSummaryCache serves a recently generated summary for the given
+// window. The dashboard refreshes on every change notification, so a short
+// window collapses bursts of identical requests.
+func (api *RuntimeAPI) ConfigureSummaryCache(ttl time.Duration) {
+	if ttl < 0 {
+		ttl = 0
+	}
+	api.summaryTTL = ttl
 }
 
 // ConfigureConfigStatus attaches the live reload status shown in the summary.
@@ -83,7 +102,7 @@ type DashboardSummary struct {
 	Campaigns         []ApplicationCampaignSummary   `json:"campaigns"`
 	Activity          []storage.ProfileActivityCount `json:"activity"`
 	ActivitySnapshots []core.ProfileActivitySnapshot `json:"activity_snapshots"`
-	Conversations     []ConversationSummary          `json:"conversations"`
+	ConversationStats storage.ConversationCounts     `json:"conversation_stats"`
 }
 
 type ApplicationCampaignSummary struct {
@@ -169,6 +188,7 @@ func (api *RuntimeAPI) Handler(productAPI http.Handler) http.Handler {
 	mux.HandleFunc("GET /api/v1/version", api.version)
 	mux.HandleFunc("GET /api/v1/dashboard/summary", api.summary)
 	mux.HandleFunc("GET /api/v1/applications", api.listApplications)
+	mux.HandleFunc("GET /api/v1/conversations", api.listConversations)
 	mux.HandleFunc("GET /api/v1/events", api.events)
 	mux.HandleFunc("POST /api/v1/applications/{application_id}/questionnaire", api.captureQuestionnaire)
 	mux.Handle("/", productAPI)
@@ -290,6 +310,13 @@ func (api *RuntimeAPI) ready(response http.ResponseWriter, request *http.Request
 }
 
 func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Request) {
+	if payload, ok := api.cachedSummary(); ok {
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "no-store")
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write(payload)
+		return
+	}
 	stats, err := api.repository.Stats(request.Context())
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load runtime stats")
@@ -329,21 +356,128 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load profile activity observations")
 		return
 	}
-	conversations, err := api.repository.ListConversations(request.Context(), storage.ConversationFilter{})
+	conversationCounts, err := api.repository.CountConversations(request.Context(), storage.ConversationFilter{})
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load conversation counters")
+		return
+	}
+	configStatus := ConfigStatus{}
+	if api.configStatus != nil {
+		configStatus = api.configStatus()
+	}
+	payload, err := json.Marshal(DashboardSummary{
+		Config:            configStatus,
+		GeneratedAt:       api.now().UTC(),
+		Profiles:          api.profiles,
+		Stats:             stats,
+		Tasks:             tasks,
+		Applications:      applications,
+		Campaigns:         campaignSummaries,
+		Activity:          activity,
+		ActivitySnapshots: activitySnapshots,
+		ConversationStats: conversationCounts,
+	})
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "encode summary")
+		return
+	}
+	api.storeSummary(payload)
+	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Cache-Control", "no-store")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write(payload)
+}
+
+// cachedSummary returns a recently generated payload inside the cache window.
+func (api *RuntimeAPI) cachedSummary() ([]byte, bool) {
+	if api.summaryTTL <= 0 {
+		return nil, false
+	}
+	api.summaryMu.Lock()
+	defer api.summaryMu.Unlock()
+	if len(api.summaryCache) == 0 || !time.Now().Before(api.summaryExpires) {
+		return nil, false
+	}
+	return append([]byte(nil), api.summaryCache...), true
+}
+
+func (api *RuntimeAPI) storeSummary(payload []byte) {
+	if api.summaryTTL <= 0 {
+		return
+	}
+	api.summaryMu.Lock()
+	defer api.summaryMu.Unlock()
+	api.summaryCache = append([]byte(nil), payload...)
+	api.summaryExpires = time.Now().Add(api.summaryTTL)
+}
+
+// listConversations is the paginated dashboard feed: the summary carries only
+// counters, while the operator scrolls the list page by page.
+func (api *RuntimeAPI) listConversations(response http.ResponseWriter, request *http.Request) {
+	filter := storage.ConversationFilter{
+		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Platform:  core.Platform(strings.TrimSpace(request.URL.Query().Get("platform"))),
+		Status:    core.ConversationStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
+		Query:     strings.TrimSpace(request.URL.Query().Get("q")),
+		Limit:     50,
+	}
+	if value := strings.TrimSpace(request.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeProblem(response, http.StatusBadRequest, "conversation limit must be between 1 and 200")
+			return
+		}
+		filter.Limit = parsed
+	}
+	if value := strings.TrimSpace(request.URL.Query().Get("offset")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 {
+			writeProblem(response, http.StatusBadRequest, "invalid conversation offset")
+			return
+		}
+		filter.Offset = parsed
+	}
+	conversations, err := api.repository.ListConversations(request.Context(), filter)
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load conversations")
 		return
 	}
-	openQuestionnaires, err := api.repository.OpenQuestionnaireConversationIDs(request.Context())
+	counts, err := api.repository.CountConversations(request.Context(), filter)
 	if err != nil {
-		writeProblem(response, http.StatusInternalServerError, "load open questionnaires")
+		writeProblem(response, http.StatusInternalServerError, "load conversation counters")
 		return
+	}
+	items, err := api.conversationSummaries(request.Context(), conversations)
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "build conversation summaries")
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, struct {
+		Items       []ConversationSummary `json:"items"`
+		Total       int                   `json:"total"`
+		Offset      int                   `json:"offset"`
+		Limit       int                   `json:"limit"`
+		UnreadTotal int                   `json:"unread_total"`
+		ActiveTotal int                   `json:"active_total"`
+	}{Items: items, Total: counts.Total, Offset: filter.Offset, Limit: filter.Limit, UnreadTotal: counts.Unread, ActiveTotal: counts.Active})
+}
+
+// conversationSummaries decorates stored conversations with the open
+// questionnaire flag and the vacancy fallback used by the dashboard.
+func (api *RuntimeAPI) conversationSummaries(ctx context.Context, conversations []core.Conversation) ([]ConversationSummary, error) {
+	if len(conversations) == 0 {
+		return []ConversationSummary{}, nil
+	}
+	openQuestionnaires, err := api.repository.OpenQuestionnaireConversationIDs(ctx)
+	if err != nil {
+		return nil, err
 	}
 	openSet := make(map[core.ConversationID]struct{}, len(openQuestionnaires))
 	for _, id := range openQuestionnaires {
 		openSet[id] = struct{}{}
 	}
-	conversationSummaries := make([]ConversationSummary, 0, len(conversations))
+	result := make([]ConversationSummary, 0, len(conversations))
 	for _, conversation := range conversations {
 		_, questionnaireOpen := openSet[conversation.ID]
 		summary := ConversationSummary{
@@ -356,33 +490,17 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 			UnreadCount: conversation.UnreadCount,
 		}
 		if summary.VacancyTitle == "" && conversation.ApplicationID != "" {
-			if application, err := api.repository.ApplicationByID(request.Context(), conversation.ApplicationID); err == nil {
-				if vacancy, err := api.repository.Vacancy(request.Context(), application.Key.Vacancy); err == nil {
+			if application, err := api.repository.ApplicationByID(ctx, conversation.ApplicationID); err == nil {
+				if vacancy, err := api.repository.Vacancy(ctx, application.Key.Vacancy); err == nil {
 					summary.VacancyTitle = vacancy.Title
 					summary.Employer = vacancy.Employer
 					summary.VacancyURL = vacancy.URL
 				}
 			}
 		}
-		conversationSummaries = append(conversationSummaries, summary)
+		result = append(result, summary)
 	}
-	response.Header().Set("Cache-Control", "no-store")
-	configStatus := ConfigStatus{}
-	if api.configStatus != nil {
-		configStatus = api.configStatus()
-	}
-	writeJSON(response, http.StatusOK, DashboardSummary{
-		Config:            configStatus,
-		GeneratedAt:       api.now().UTC(),
-		Profiles:          api.profiles,
-		Stats:             stats,
-		Tasks:             tasks,
-		Applications:      applications,
-		Campaigns:         campaignSummaries,
-		Activity:          activity,
-		ActivitySnapshots: activitySnapshots,
-		Conversations:     conversationSummaries,
-	})
+	return result, nil
 }
 
 func applicationCampaignSummary(campaign core.ApplicationCampaign, states []core.CampaignApplicationState) ApplicationCampaignSummary {

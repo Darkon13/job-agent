@@ -365,6 +365,23 @@ func TestApplicationHandlerParksCaptchaForOperator(t *testing.T) {
 	}
 }
 
+func TestApplicationHandlerSkipsVacancyUnavailableForAccount(t *testing.T) {
+	transport := &fakeApplicationTransport{vacancyErr: &core.OperationError{
+		Category: core.ErrorPermanentFailure, Operation: "vacancies.read.browser", Platform: "hh",
+		Message: "HH vacancy is closed or unavailable", Metadata: map[string]string{"code": "vacancy_closed"},
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationSkipped || application.DecisionCode != "vacancy_closed" {
+		t.Fatalf("application=%#v err=%v", application, err)
+	}
+}
+
 func TestApplicationHandlerAcceptsKnownSuccessWithoutNegotiationID(t *testing.T) {
 	transport := &fakeApplicationTransport{result: adapter.ApplicationSubmitResult{Applied: true}}
 	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
