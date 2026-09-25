@@ -25,6 +25,7 @@ import (
 	"github.com/Darkon13/job-agent/auth"
 	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/browser"
+	"github.com/Darkon13/job-agent/browsercheck"
 	"github.com/Darkon13/job-agent/buildinfo"
 	appconfig "github.com/Darkon13/job-agent/config"
 	"github.com/Darkon13/job-agent/core"
@@ -171,6 +172,8 @@ const mainUsage = `job-agent — сервис автоматизации пои�
   check <config.json>                         проверить конфиг, ключи моделей и базу
   browser-state sanitize <state.json>         сжать browser storage state
   auth login|import|status|logout ...         вход в HeadHunter
+  captcha solve <application_id>              пройти проверку HH в браузере вручную
+  captcha list                                отклики, ожидающие капчу
   db backup|restore ...                       обслуживание базы
   startup ...                                 однократная сверка при старте
 
@@ -222,6 +225,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		if err := runAuth(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "captcha" {
+		if err := runCaptcha(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -393,6 +402,25 @@ func main() {
 	applicationAPI, err := httpapi.NewApplicationAPI(applicationRemovalWorkflow, applicationRetryWorkflow)
 	if err != nil {
 		log.Fatalf("create application API: %v", err)
+	}
+	browserClient, err := browserWorkerHTTPClient()
+	if err != nil {
+		log.Fatalf("create browser worker client: %v", err)
+	}
+	if browserClient != nil {
+		submissionDriver, err := hh.NewBrowserSubmissionDriver(browserClient)
+		if err != nil {
+			log.Fatalf("create browser submission driver: %v", err)
+		}
+		browserCheckService, err := browsercheck.NewService(
+			submissionDriver, store, applicationRetryWorkflow, workflow.SystemClock{}, workflow.RandomIDGenerator{},
+		)
+		if err != nil {
+			log.Fatalf("create browser check service: %v", err)
+		}
+		applicationAPI.ConfigureBrowserCheck(browserCheckService)
+	} else {
+		logf("browser worker is not configured; interactive browser checks are disabled")
 	}
 	profileStateResources, err := cfg.BuildProfileStateResources()
 	if err != nil {

@@ -8,6 +8,7 @@ const state = {
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false,
+  browserCheck: null,
 };
 const elements = Object.fromEntries([
   "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
@@ -15,6 +16,7 @@ const elements = Object.fromEntries([
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
+  "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -146,6 +148,73 @@ async function captureQuestionnaire(item, button) {
   button.disabled = false;
   updateApplicationSelection(state.applicationObjects);
 }
+function browserCheckImageURL(session) {
+  return `/api/v1/applications/${encodeURIComponent(session.application_id)}/browser-check/${encodeURIComponent(session.session_id)}/image?ts=${Date.now()}`;
+}
+const browserCheckStateLabels = { waiting_captcha: "HH просит ввести символы с картинки", done: "Отклик отправлен из браузера", review: "Нужен ручной просмотр страницы" };
+function renderBrowserCheck() {
+  const session = state.browserCheck;
+  if (!session) { elements.browserCheck.hidden = true; return; }
+  elements.browserCheck.hidden = false;
+  elements.browserCheckState.textContent = `${browserCheckStateLabels[session.state] || session.state}${session.message ? ` · ${session.message}` : ""}`;
+  const waiting = session.state === "waiting_captcha";
+  elements.browserCheckAnswer.disabled = !waiting;
+  elements.browserCheckSubmit.disabled = !waiting;
+  elements.browserCheckRefreshImage.hidden = !waiting;
+  if (session.has_image) {
+    elements.browserCheckImage.hidden = false;
+    elements.browserCheckImage.src = browserCheckImageURL(session);
+  } else {
+    elements.browserCheckImage.hidden = true;
+    elements.browserCheckImage.removeAttribute("src");
+  }
+}
+async function startBrowserCheck(item, button) {
+  state.applicationActionBusy = true; button.disabled = true;
+  state.applicationActionMessage = `Открываю вакансию в браузере профиля…`; renderApplicationObjects();
+  try {
+    const response = await fetch(`/api/v1/applications/${encodeURIComponent(item.id)}/browser-check`, { method: "POST" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    state.browserCheck = body;
+    state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[body.state] || body.state}`;
+    renderBrowserCheck();
+    if (body.state === "done") { refreshApplications(); refreshSummary(); }
+  } catch (error) {
+    state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
+  }
+  state.applicationActionBusy = false; renderApplicationObjects();
+}
+async function submitBrowserCheckAnswer() {
+  const session = state.browserCheck;
+  if (!session) return;
+  const value = elements.browserCheckAnswer.value.trim();
+  if (!value) return;
+  elements.browserCheckSubmit.disabled = true;
+  try {
+    const response = await fetch(`/api/v1/applications/${encodeURIComponent(session.application_id)}/browser-check/${encodeURIComponent(session.session_id)}/answer`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    state.browserCheck = body;
+    elements.browserCheckAnswer.value = "";
+    renderBrowserCheck();
+    if (body.state === "done") { state.applicationActionMessage = body.message || "Отклик отправлен из браузера"; refreshApplications(); refreshSummary(); }
+  } catch (error) {
+    state.applicationActionMessage = `Ответ не принят: ${error.message}`;
+    elements.browserCheckSubmit.disabled = false;
+  }
+}
+async function cancelBrowserCheck() {
+  const session = state.browserCheck;
+  state.browserCheck = null; renderBrowserCheck();
+  if (!session) return;
+  try {
+    await fetch(`/api/v1/applications/${encodeURIComponent(session.application_id)}/browser-check/${encodeURIComponent(session.session_id)}`, { method: "DELETE" });
+  } catch (_) { /* the session expires on its own */ }
+}
+
 async function retryApplication(item, button) {
   state.applicationActionBusy = true; button.disabled = true; state.applicationActionMessage = "Ставлю повторную подготовку…"; renderApplicationObjects();
   try {
@@ -215,6 +284,12 @@ function renderApplicationObjects() {
     if (url) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
       const link = text("a", needsInput ? "Вакансия ↗" : "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link);
+    }
+    if (item.decision_code === "captcha_required" && item.platform === "hh") {
+      if (action.childNodes.length) action.append(document.createTextNode(" "));
+      const check = text("button", "Проверка", "secondary compact"); check.type = "button"; check.disabled = state.applicationActionBusy;
+      check.title = "Открыть вакансию в браузере профиля и пройти проверку HH";
+      check.addEventListener("click", () => startBrowserCheck(item, check)); action.append(check);
     }
     if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
       if (action.childNodes.length) action.append(document.createTextNode(" "));
@@ -1146,6 +1221,10 @@ elements.applicationRunAction.addEventListener("click", async () => {
   } catch (error) { state.applicationActionMessage = error.message; }
   finally { state.applicationActionBusy = false; updateApplicationSelection(); }
 });
+elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
+elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
+elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
+elements.browserCheckCancel.addEventListener("click", cancelBrowserCheck);
 elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.selectedApplications.clear(); state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; elements.applicationBulkAction.value = ""; changeApplicationQuery(); });
 elements.applicationPrev.addEventListener("click", () => { state.applicationOffset = Math.max(0, state.applicationOffset - 200); state.selectedApplications.clear(); refreshApplications(); });
 elements.applicationNext.addEventListener("click", () => { state.applicationOffset += 200; state.selectedApplications.clear(); refreshApplications(); });
