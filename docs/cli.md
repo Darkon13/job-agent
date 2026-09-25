@@ -35,6 +35,8 @@
 | `job-agent auth import --source export.json --state-output FILE [--force]` | импорт сохранённого состояния |
 | `job-agent auth status --session <id> [--watch]` | статус интерактивной сессии |
 | `job-agent auth logout --profile <tag>` | выход и очистка сессии |
+| `job-agent captcha list [--api URL]` | отклики, ожидающие проверку HH (`captcha_required`) |
+| `job-agent captcha solve <application_id> [--api URL] [--image-protocol auto]` | ручная проверка в браузере профиля: картинка в терминале и ввод ответа |
 | `job-agent startup ...` | однократная стартовая сверка профиля |
 
 Запуск job вручную, проверки и опросники, каталог тестов, импорт банка
@@ -46,10 +48,11 @@
 
 ## Подключение к работающему сервису
 
-`auth`, `review` и `qualification` ходят в HTTP API и по умолчанию используют
-`http://127.0.0.1:8080`. При запуске через Compose backend наружу не
-публикуется — передайте `--api http://127.0.0.1:8081` (dashboard-прокси) и тот
-же токен, что у сервиса (`JOB_AGENT_API_TOKEN`).
+`auth`, `captcha`, `review` и `qualification` ходят в HTTP API и по умолчанию
+используют `http://127.0.0.1:8080`. При запуске через Compose backend наружу
+не публикуется — передайте `--api http://127.0.0.1:18081` (dashboard-прокси,
+он сам добавляет `JOB_AGENT_API_TOKEN`). Через VPN доступен
+`--api https://byzaxc.space:8443` при соответствующем конфиге Caddy.
 
 Команды, работающие с файлами (`check`, `db`, `trigger`, `approve`), читают
 конфиг и базу напрямую. В контейнере их удобно запускать через уже описанные

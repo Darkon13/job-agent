@@ -109,8 +109,9 @@ func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *h
 }
 
 type ApplicationAPI struct {
-	removal *workflow.ApplicationRemovalWorkflow
-	retry   *workflow.ApplicationRetryWorkflow
+	removal      *workflow.ApplicationRemovalWorkflow
+	retry        *workflow.ApplicationRetryWorkflow
+	browserCheck browserCheckController
 }
 
 func NewApplicationAPI(removal *workflow.ApplicationRemovalWorkflow, retry *workflow.ApplicationRetryWorkflow) (*ApplicationAPI, error) {
@@ -120,6 +121,12 @@ func NewApplicationAPI(removal *workflow.ApplicationRemovalWorkflow, retry *work
 	return &ApplicationAPI{removal: removal, retry: retry}, nil
 }
 
+// ConfigureBrowserCheck attaches the interactive browser check controller.
+// Without it the browser check routes report that the feature is unavailable.
+func (api *ApplicationAPI) ConfigureBrowserCheck(controller browserCheckController) {
+	api.browserCheck = controller
+}
+
 func (api *ApplicationAPI) Handler(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.NotFoundHandler()
@@ -127,6 +134,11 @@ func (api *ApplicationAPI) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/applications/remove", api.remove)
 	mux.HandleFunc("POST /api/v1/applications/{application_id}/retry", api.retryApplication)
+	mux.HandleFunc("POST /api/v1/applications/{application_id}/browser-check", api.startBrowserCheck)
+	mux.HandleFunc("GET /api/v1/applications/{application_id}/browser-check/{session_id}", api.browserCheckStatus)
+	mux.HandleFunc("GET /api/v1/applications/{application_id}/browser-check/{session_id}/image", api.browserCheckImage)
+	mux.HandleFunc("POST /api/v1/applications/{application_id}/browser-check/{session_id}/answer", api.answerBrowserCheck)
+	mux.HandleFunc("DELETE /api/v1/applications/{application_id}/browser-check/{session_id}", api.cancelBrowserCheck)
 	mux.Handle("/", next)
 	return mux
 }

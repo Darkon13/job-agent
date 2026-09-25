@@ -189,6 +189,18 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   border-radius: 4px;
 }
 
+.browser-check {
+  border-color: #d9a94d;
+}
+
+.browser-check img {
+  display: block;
+  max-width: 24rem;
+  margin: 0.75rem 0;
+  background: #fff;
+  border-radius: 4px;
+}
+
 .countdown { font-variant-numeric: tabular-nums; }
 
 .auth-step { margin: 0 0 0.75rem; }
