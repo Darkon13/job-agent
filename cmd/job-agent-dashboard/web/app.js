@@ -187,10 +187,11 @@ function updateCaptchaCheckButton() {
 // retries the remaining parked applications: the platform guard is per
 // account, so the operator solves it once instead of per application.
 async function startCaptchaCheck() {
-  state.applicationActionBusy = true; elements.applicationCaptchaCheck.disabled = true;
+  state.applicationActionBusy = true;
+  elements.applicationCaptchaCheck.disabled = true; elements.applicationCaptchaCheck.textContent = "Проверяю…";
   state.applicationActionMessage = "Готовлю проверку HH…"; renderApplicationObjects();
   try {
-    const params = new URLSearchParams({ group: "needs_input", limit: "200" });
+    const params = new URLSearchParams({ status: "waiting_validation", decision_code: "captcha_required", limit: "200" });
     if (state.account) params.set("profile_id", state.account);
     const listing = await request(`/api/v1/applications?${params}`);
     const parked = (listing.items || []).filter((item) => item.decision_code === "captcha_required");
@@ -200,6 +201,7 @@ async function startCaptchaCheck() {
     state.browserCheck = session;
     state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[session.state] || session.state}`;
     renderBrowserCheck();
+    elements.browserCheck.scrollIntoView({ behavior: "smooth", block: "center" });
     if (session.state === "done") { await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
   } catch (error) {
     state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
