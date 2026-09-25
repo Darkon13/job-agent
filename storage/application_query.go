@@ -30,6 +30,7 @@ type ApplicationListEntry struct {
 type ApplicationQuery struct {
 	ProfileID                    core.ProfileID
 	Status                       core.ApplicationStatus
+	DecisionCode                 string
 	Query, Employer, Group, Sort string
 	Offset, Limit                int
 }
@@ -48,7 +49,7 @@ func (query ApplicationQuery) Validate() error {
 	if query.Limit < 1 || query.Limit > 200 || query.Offset < 0 {
 		return errors.New("application page requires limit 1..200 and nonnegative offset")
 	}
-	if len(query.Query) > 500 || len(query.Employer) > 500 {
+	if len(query.Query) > 500 || len(query.Employer) > 500 || len(query.DecisionCode) > 100 {
 		return errors.New("application query is too long")
 	}
 	switch query.Sort {
@@ -86,7 +87,8 @@ func ApplicationListGroup(item ApplicationListEntry) string {
 	}
 	if item.Status == core.ApplicationWaitingValidation {
 		switch item.DecisionCode {
-		case "questionnaire_required", "vacancy_test_required", "platform_validation_required":
+		case "questionnaire_required", "vacancy_test_required", "platform_validation_required",
+			"unsupported_response_flow", "captcha_required", "response_impossible":
 			return "needs_input"
 		}
 	}
@@ -106,6 +108,9 @@ func SelectApplicationPage(entries []ApplicationListEntry, query ApplicationQuer
 	needle, employer := strings.ToLower(strings.TrimSpace(query.Query)), strings.ToLower(strings.TrimSpace(query.Employer))
 	for _, entry := range entries {
 		if query.ProfileID != "" && entry.ProfileID != query.ProfileID || query.Status != "" && entry.Status != query.Status {
+			continue
+		}
+		if query.DecisionCode != "" && entry.DecisionCode != query.DecisionCode {
 			continue
 		}
 		if !strings.Contains(strings.ToLower(entry.Employer), employer) {

@@ -15,7 +15,8 @@ func (store *Store) QueryApplications(ctx context.Context, query storage.Applica
 		COALESCE(s.disposition, ''), COALESCE(v.title, ''), COALESCE(v.employer, ''), a.updated_at
 		FROM applications a LEFT JOIN vacancies v ON v.platform = a.platform AND v.external_id = a.external_id
 		LEFT JOIN application_platform_states s ON s.application_id = a.id
-		WHERE (? = '' OR a.profile_id = ?) AND (? = '' OR a.status = ?)`, query.ProfileID, query.ProfileID, query.Status, query.Status)
+		WHERE (? = '' OR a.profile_id = ?) AND (? = '' OR a.status = ?) AND (? = '' OR a.decision_code = ?)`,
+		query.ProfileID, query.ProfileID, query.Status, query.Status, query.DecisionCode, query.DecisionCode)
 	if err != nil {
 		return storage.ApplicationPage{}, err
 	}
