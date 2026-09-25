@@ -26,7 +26,7 @@ const taskTypeLabels = {
   "conversation.reply": "Ответить в чате", "conversation.send": "Отправить сообщение", "conversation.follow_up": "Отправить напоминание", "conversation.follow_up.select": "Отправить напоминания в чатах",
   "conversation.discover": "Обновить список чатов", "conversation.mark_read": "Пометить чат прочитанным", "conversation.sync": "Загрузить сообщения чата", "vacancy.inspect": "Открыть и изучить вакансию",
   "resume.publish": "Опубликовать резюме", "resume.touch": "Поднять резюме", "resume.update": "Обновить резюме", "profile.activity.observe": "Обновить метрики резюме", "profile.session_refresh": "Обновить сессию профиля", "application.state.sync": "Синхронизировать состояния откликов",
-  "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
+  "profile.activity.maintain": "Просмотр вакансий для активности", "application.answer_covered": "Ответить на анкеты по банку ответов", "profile.bootstrap": "Заполнить профиль", "profile_state.reconcile": "Сверить профиль с конфигурацией", "profile_state.apply": "Применить изменения профиля", "skill_verification.start": "Запустить проверку навыка",
   "calendar.find_slots": "Найти свободное время", "calendar.create_event": "Создать событие", "challenge.respond": "Ответить на проверку", "notification.deliver": "Доставить уведомление",
 };
 const applicationGroupLabels = {
@@ -41,7 +41,7 @@ const campaignStatusLabels = { running: "Выполняется", target_reached
 const conversationStatusLabels = { active: "Активный", closed: "Закрыт", rejected: "Отказ", archived: "Архив" };
 const reviewStatusLabels = { pending: "Подготовка", waiting_answer: "Ждёт ответа", answer_recorded: "Ответ записан", completed: "Завершена", cancelled: "Отменена", unsupported: "Не поддерживается", expired: "Истекла" };
 const activityKindLabels = { "vacancy.inspected": "Просмотрена вакансия", "application.submitted": "Отправлен отклик", "conversation.message_sent": "Отправлено сообщение", "resume.touched": "Поднято резюме" };
-const decisionLabels = { qualified: "Проверки пройдены", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", captcha_required: "HH просит пройти капчу", unsupported_response_flow: "Платформа вернула неподдерживаемый сценарий отклика", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
+const decisionLabels = { qualified: "Проверки пройдены", response_impossible: "HH сейчас не разрешает отклик по этой вакансии", resume_not_suitable: "HH не предлагает доступного резюме", questionnaire_required: "Нужно заполнить анкету", vacancy_test_required: "Нужно пройти тест", platform_validation_required: "Платформа запросила дополнительные данные", captcha_required: "HH просит пройти капчу", unsupported_response_flow: "Платформа вернула неподдерживаемый сценарий отклика", cover_letter_required: "Не удалось подготовить обязательное сопроводительное", vacancy_closed: "Вакансия закрыта", already_applied: "Отклик уже существует" };
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
@@ -317,7 +317,8 @@ function renderApplicationObjects() {
   for (const id of state.selectedApplications) if (!existingIDs.has(id)) state.selectedApplications.delete(id);
   const items = visibleApplicationObjects();
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 9; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
+  updateApplicationProfileColumn();
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
   elements.applicationItems.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
     const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy || state.applicationLoading; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
@@ -350,27 +351,20 @@ function renderApplicationObjects() {
     }
     if (!action.childNodes.length) action.textContent = "—";
     const group = applicationGroup(item);
-    const profileCell = document.createElement("td");
+    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
     profileCell.append(text("strong", profileDisplayName(item.profile_id)));
     const profileTag = text("small", item.profile_id, "muted"); profileTag.style.display = "block"; profileCell.append(profileTag);
-    row.append(selection, vacancy, text("td", item.employer || "—"), profileCell, statusCell(applicationGroupLabels[group], `status-${group}`), tailoringCell(item), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
+    row.append(selection, vacancy, text("td", item.employer || "—"), profileCell, statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
     return row;
   }));
   updateApplicationSelection(items);
   updateCaptchaCheckButton();
 }
-const tailoringStatusLabels = { planned: "Готовится", applying: "Применяется", applied: "Применено", submitting: "Перед отправкой", restoring: "Восстанавливается", restored: "Восстановлено", recovery_required: "Нужно восстановление" };
-function tailoringCell(item) {
-  const tailoring = item.tailoring;
-  if (!tailoring) return text("td", "—");
-  const cell = document.createElement("td");
-  const recovery = tailoring.status === "recovery_required";
-  const badge = text("span", tailoringStatusLabels[tailoring.status] || tailoring.status, recovery ? "tailoring-status tailoring-recovery" : "tailoring-status");
-  const changed = (tailoring.changes || []).flatMap((change) => (change.added || []).map((skill) => `+${skill}`).concat((change.removed || []).map((skill) => `-${skill}`)));
-  if (changed.length) badge.title = changed.join(", ");
-  cell.append(badge);
-  if (tailoring.recovery_reason) cell.append(text("span", tailoring.recovery_reason, "tailoring-reason"));
-  return cell;
+// The profile column is redundant while one account is selected: every row
+// belongs to it. It returns with the combined "all profiles" view.
+function updateApplicationProfileColumn() {
+  const table = document.getElementById("application-table");
+  if (table) table.classList.toggle("profile-hidden", Boolean(state.account));
 }
 function renderTasks(items = []) {
   const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));
@@ -482,7 +476,7 @@ function renderJobs(items = []) {
     const run = document.createElement("td");
     const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
     button.addEventListener("click", () => runJob(item)); run.append(button);
-    const profileCell = document.createElement("td");
+    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
     const names = jobProfiles(item).map(profileDisplayName);
     if (names.length) profileCell.append(...names.map((name) => text("div", name)));
     else profileCell.append(text("span", "—", "muted"));

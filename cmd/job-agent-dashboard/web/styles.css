@@ -210,8 +210,9 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 
 .table-wrap { overflow-x: auto; }
 .table-wrap table { min-width: 1080px; }
-.task-actions { white-space: nowrap; }
-.task-actions > * + * { margin-left: .35rem; }
+.task-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .35rem; white-space: nowrap; }
+.task-actions > * + * { margin-left: 0; }
+#application-table.profile-hidden .application-profile { display: none; }
 
 .message-system {
   align-self: center;
