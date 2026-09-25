@@ -110,8 +110,29 @@ func (repository *runtimeRepository) ListProfileActivitySnapshots(context.Contex
 	return repository.activitySnapshots, repository.err
 }
 
-func (repository *runtimeRepository) ListConversations(context.Context, storage.ConversationFilter) ([]core.Conversation, error) {
-	return repository.conversations, repository.err
+func (repository *runtimeRepository) ListConversations(_ context.Context, filter storage.ConversationFilter) ([]core.Conversation, error) {
+	if repository.err != nil {
+		return nil, repository.err
+	}
+	result := repository.conversations
+	if filter.Limit > 0 && filter.Limit < len(result) {
+		result = result[:filter.Limit]
+	}
+	return result, nil
+}
+
+func (repository *runtimeRepository) CountConversations(context.Context, storage.ConversationFilter) (storage.ConversationCounts, error) {
+	if repository.err != nil {
+		return storage.ConversationCounts{}, repository.err
+	}
+	counts := storage.ConversationCounts{Total: len(repository.conversations)}
+	for _, conversation := range repository.conversations {
+		counts.Unread += conversation.UnreadCount
+		if conversation.Status == core.ConversationActive {
+			counts.Active++
+		}
+	}
+	return counts, nil
 }
 
 func (repository *runtimeRepository) OpenQuestionnaireConversationIDs(context.Context) ([]core.ConversationID, error) {
@@ -202,8 +223,17 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"id":"conversation-1"`, `"vacancy_title":"Go developer"`, `"employer":"Example"`, `"unread_count":2`, `"questionnaire_open":true`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"conversation_stats":{"total":1,"unread":2,"active":0}`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
 		t.Fatalf("unexpected summary: %s", body)
+	}
+	if body := response.Body.String(); strings.Contains(body, `"conversation-1"`) {
+		t.Fatalf("summary still carries conversations: %s", body)
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=10&offset=0", nil))
+	if body := response.Body.String(); response.Code != http.StatusOK || !containsAll(body, `"id":"conversation-1"`, `"vacancy_title":"Go developer"`, `"employer":"Example"`, `"unread_count":2`, `"questionnaire_open":true`, `"total":1`, `"unread_total":2`, `"limit":10`, `"offset":0`) {
+		t.Fatalf("conversation list response: %d %s", response.Code, body)
 	}
 
 	response = httptest.NewRecorder()

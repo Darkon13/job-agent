@@ -89,7 +89,11 @@ func classifyVacancyResponse(response *http.Response) error {
 		// HH answers 403 for a specific vacancy that the account may not see
 		// (region or employer restrictions) while the session itself is fine.
 		drain(response.Body)
-		return operationError(core.ErrorPermanentFailure, "vacancies.read", "HH vacancy is not accessible for this account", nil)
+		return &core.OperationError{
+			Category: core.ErrorPermanentFailure, Operation: "vacancies.read", Platform: Name,
+			Message:  "HH vacancy is not accessible for this account",
+			Metadata: map[string]string{"code": "vacancy_closed"},
+		}
 	case response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone:
 		drain(response.Body)
 		return operationError(core.ErrorPermanentFailure, "vacancies.read", "HH vacancy is unavailable", nil)

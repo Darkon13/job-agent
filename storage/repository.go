@@ -277,6 +277,16 @@ type ConversationFilter struct {
 	Platform  core.Platform
 	ProfileID core.ProfileID
 	Status    core.ConversationStatus
+	Query     string
+	Limit     int
+	Offset    int
+}
+
+// ConversationCounts summarizes a filtered conversation set without loading it.
+type ConversationCounts struct {
+	Total  int `json:"total"`
+	Unread int `json:"unread"`
+	Active int `json:"active"`
 }
 
 type FollowUpFilter struct {
@@ -291,6 +301,7 @@ type ConversationRepository interface {
 	Conversation(ctx context.Context, id core.ConversationID) (core.Conversation, error)
 	SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error
 	ListConversations(ctx context.Context, filter ConversationFilter) ([]core.Conversation, error)
+	CountConversations(ctx context.Context, filter ConversationFilter) (ConversationCounts, error)
 	AppendConversationMessage(ctx context.Context, message core.ConversationMessage, observedAt time.Time) (conversation core.Conversation, created bool, err error)
 	ConversationMessages(ctx context.Context, id core.ConversationID) ([]core.ConversationMessage, error)
 	CreateFollowUp(ctx context.Context, candidate core.FollowUp) (stored core.FollowUp, created bool, err error)

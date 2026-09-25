@@ -72,6 +72,9 @@ func TestReadVacancyNormalizesUnavailableAndRateLimit(t *testing.T) {
 			if test.category == core.ErrorRateLimited && (operationError.RetryAfter == nil || operationError.RetryAfter.Before(time.Now().Add(50*time.Second))) {
 				t.Fatalf("retry_after = %v", operationError.RetryAfter)
 			}
+			if test.status == http.StatusForbidden && operationError.Metadata["code"] != "vacancy_closed" {
+				t.Fatalf("metadata = %#v, want vacancy_closed code", operationError.Metadata)
+			}
 		})
 	}
 }

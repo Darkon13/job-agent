@@ -116,12 +116,12 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .review-session-row { display: flex; align-items: stretch; gap: .35rem; margin-bottom: .35rem; }
 .review-session-row .review-session { flex: 1 1 auto; width: auto; margin: 0; }
 .review-session-row .review-cancel { align-self: center; flex: 0 0 auto; }
-.review-session { width: 100%; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; }
+.review-session { width: 100%; min-width: 0; display: block; margin: 0 0 .35rem; padding: .8rem; border: 1px solid transparent; background: transparent; color: var(--text); text-align: left; overflow-wrap: anywhere; }
 .review-session:hover, .review-session.active { border-color: var(--line); background: var(--surface-2); filter: none; }
 .review-session.active { border-color: var(--cyan); }
 .review-session strong, .review-session small { display: block; }
 .review-session strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.review-session small { margin-top: .35rem; color: var(--muted); font-weight: 400; }
+.review-session small { margin-top: .35rem; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
 .review-panel { display: flex; flex-direction: column; gap: .8rem; }
 .review-prompt { flex: 1; }
 .review-form { display: grid; gap: .9rem; }
@@ -212,3 +212,15 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .table-wrap table { min-width: 1080px; }
 .task-actions { white-space: nowrap; }
 .task-actions > * + * { margin-left: .35rem; }
+
+.message-system {
+  align-self: center;
+  max-width: 80%;
+  margin: .2rem auto;
+  padding: .35rem .65rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, .12);
+  color: var(--muted);
+  font-size: .78rem;
+  text-align: center;
+}

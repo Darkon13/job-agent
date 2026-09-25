@@ -1,11 +1,11 @@
 # Версии и выпуск
 
 Версия продукта хранится в `buildinfo/VERSION` и следует SemVer. Выпуск —
-`1.9.2` (tag `v1.9.2`); префикс `v` используется только в Git tag, а в JSON и
+`1.9.3` (tag `v1.9.3`); префикс `v` используется только в Git tag, а в JSON и
 OCI label записывается чистая SemVer-строка. API имеет независимую версию
 контракта `v1`, отражённую в путях `/api/v1/...`.
 
-Известные ограничения `1.9.2`: создание резюме и `bootstrap.when:
+Известные ограничения `1.9.3`: создание резюме и `bootstrap.when:
 missing_resume` реализуются для native API (OAuth) после выпуска; browser-cookie
 профиль создавать резюме не умеет и сообщает `Unsupported`. Tailoring переписывает
 «О себе» и навыки, но ещё не раздел «Опыт»; живой skill verification зависит от
@@ -29,7 +29,7 @@ curl http://127.0.0.1:8081/dashboard-healthz
 
 Release выполняется из чистого commit:
 
-1. заменить версию в `buildinfo/VERSION` (например, `1.9.2`) и синхронно
+1. заменить версию в `buildinfo/VERSION` (например, `1.9.3`) и синхронно
    передать `JOB_AGENT_VERSION=1.0.0` container build;
 2. выполнить `make release-check` и smoke основных read/write policy без
    реальных нежелательных действий; отдельно запустить `job-agent check` на
@@ -37,7 +37,7 @@ Release выполняется из чистого commit:
    запрещает выпуск;
 3. собрать image с commit SHA и RFC3339 build time, проверить версии трёх
    бинарей и endpoints;
-4. создать annotated tag `v1.9.2` и запушить его: release workflow сам
+4. создать annotated tag `v1.9.3` и запушить его: release workflow сам
    проверит совпадение тега с `buildinfo/VERSION`, соберёт бинарники под
    linux amd64/arm64, посчитает checksums и опубликует GitHub Release; image
    публикуется отдельно и только явно.

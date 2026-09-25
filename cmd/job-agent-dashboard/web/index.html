@@ -67,7 +67,10 @@
     <section id="applications-section" aria-labelledby="applications-title">
       <div class="section-title">
         <div><p class="eyebrow">ОБЪЕКТЫ</p><h2 id="applications-title">Отклики</h2></div>
-        <span id="application-filter-state" class="muted">Загрузка откликов…</span>
+        <div class="section-actions">
+          <button id="application-captcha-check" class="primary compact" type="button" hidden>Пройти проверку HH</button>
+          <span id="application-filter-state" class="muted">Загрузка откликов…</span>
+        </div>
       </div>
       <div id="application-filters" class="filter-grid" aria-label="Фильтр откликов по состоянию"></div>
       <article class="panel">
@@ -99,7 +102,7 @@
       <article id="browser-check" class="panel browser-check" hidden>
         <div class="panel-heading"><div><h3>Проверка HH</h3><p id="browser-check-state" class="panel-description"></p></div><span class="tag">браузер</span></div>
         <img id="browser-check-image" alt="Проверка HH" hidden>
-        <div class="auth-controls">
+        <div id="browser-check-controls" class="auth-controls">
           <label for="browser-check-answer">Ответ с картинки <input id="browser-check-answer" type="text" autocomplete="off" disabled></label>
           <button id="browser-check-submit" type="button" disabled>Отправить</button>
           <button id="browser-check-refresh-image" class="secondary compact" type="button" hidden>Обновить картинку</button>
@@ -191,6 +194,8 @@
           <option value="unread_desc">Сначала непрочитанные</option>
           <option value="employer_asc">По компании</option>
         </select>
+        <button id="conversation-more" class="secondary compact" type="button" hidden>Показать ещё</button>
+        <span id="conversation-page-state" class="muted"></span>
       </div>
       <div class="chat-layout">
         <nav id="conversations" class="conversation-list" aria-label="Список диалогов"></nav>

@@ -144,9 +144,24 @@ func selectVacancyTest(state vacancyResponseState) (vacancyTest, bool) {
 	return vacancyTest{}, false
 }
 
+var htmlFragmentPattern = regexp.MustCompile(`(?s)<[^>]*>`)
+
+// questionText converts a short platform HTML fragment into readable text so
+// the operator sees the question, not the markup.
+func questionText(value string) string {
+	text := htmlFragmentPattern.ReplaceAllString(value, " ")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&quot;", "\"")
+	text = strings.ReplaceAll(text, "&#39;", "'")
+	return strings.Join(strings.Fields(text), " ")
+}
+
 func vacancyTaskQuestion(task vacancyTask) (core.Question, error) {
 	id := strings.TrimSpace(string(task.ID))
-	text := strings.TrimSpace(task.Description)
+	text := questionText(task.Description)
 	if id == "" || text == "" {
 		return core.Question{}, errors.New("HH vacancy task requires id and description")
 	}
@@ -165,9 +180,9 @@ func vacancyTaskQuestion(task vacancyTask) (core.Question, error) {
 		}
 		for _, solution := range task.CandidateSolutions {
 			optionID := strings.TrimSpace(string(solution.ID))
-			optionText := strings.TrimSpace(solution.Text)
+			optionText := questionText(solution.Text)
 			if optionText == "" {
-				optionText = strings.TrimSpace(solution.Description)
+				optionText = questionText(solution.Description)
 			}
 			if optionID == "" || optionText == "" {
 				return core.Question{}, fmt.Errorf("HH vacancy task %q contains an invalid option", text)

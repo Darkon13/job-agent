@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -88,9 +89,7 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 	defer repository.mu.RUnlock()
 	result := make([]core.Conversation, 0, len(repository.conversations))
 	for _, conversation := range repository.conversations {
-		if filter.Platform != "" && conversation.Platform != filter.Platform ||
-			filter.ProfileID != "" && conversation.ProfileID != filter.ProfileID ||
-			filter.Status != "" && conversation.Status != filter.Status {
+		if !conversationMatchesFilter(conversation, filter) {
 			continue
 		}
 		result = append(result, cloneConversation(conversation))
@@ -101,7 +100,56 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 		}
 		return result[i].ID < result[j].ID
 	})
+	if filter.Offset > 0 {
+		if filter.Offset >= len(result) {
+			return []core.Conversation{}, nil
+		}
+		result = result[filter.Offset:]
+	}
+	if filter.Limit > 0 && filter.Limit < len(result) {
+		result = result[:filter.Limit]
+	}
 	return result, nil
+}
+
+// conversationMatchesFilter keeps the in-memory behaviour aligned with SQL.
+func conversationMatchesFilter(conversation core.Conversation, filter storage.ConversationFilter) bool {
+	if filter.Platform != "" && conversation.Platform != filter.Platform ||
+		filter.ProfileID != "" && conversation.ProfileID != filter.ProfileID ||
+		filter.Status != "" && conversation.Status != filter.Status {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	if query == "" {
+		return true
+	}
+	for _, value := range []string{conversation.VacancyTitle, conversation.Employer, string(conversation.ExternalID)} {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
+}
+
+// CountConversations summarizes the same filtered set as ListConversations.
+func (repository *Repository) CountConversations(ctx context.Context, filter storage.ConversationFilter) (storage.ConversationCounts, error) {
+	if err := ctx.Err(); err != nil {
+		return storage.ConversationCounts{}, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	var counts storage.ConversationCounts
+	for _, conversation := range repository.conversations {
+		if !conversationMatchesFilter(conversation, filter) {
+			continue
+		}
+		counts.Total++
+		counts.Unread += conversation.UnreadCount
+		if conversation.Status == core.ConversationActive {
+			counts.Active++
+		}
+	}
+	return counts, nil
 }
 
 func (repository *Repository) AppendConversationMessage(ctx context.Context, message core.ConversationMessage, observedAt time.Time) (core.Conversation, bool, error) {

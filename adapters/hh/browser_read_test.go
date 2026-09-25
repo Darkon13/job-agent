@@ -3,6 +3,7 @@ package hh
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -155,8 +156,12 @@ func TestBrowserReadTreatsForbiddenResourceAsPermanent(t *testing.T) {
 		response.WriteHeader(http.StatusForbidden)
 	}))
 	_, err := client.ReadVacancy(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
-	if !core.ErrorIsCategory(err, core.ErrorPermanentFailure) {
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) || operationError.Category != core.ErrorPermanentFailure {
 		t.Fatalf("error = %v, want permanent failure", err)
+	}
+	if operationError.Metadata["code"] != "vacancy_closed" {
+		t.Fatalf("error = %#v, want vacancy_closed code", err)
 	}
 }
 
