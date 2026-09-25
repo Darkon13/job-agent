@@ -225,3 +225,15 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   font-size: .78rem;
   text-align: center;
 }
+
+.captcha-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .3rem .6rem;
+  border: 1px solid #d9a94d;
+  border-radius: 8px;
+  background: rgba(217, 169, 77, .12);
+  color: #f0c06a;
+  font-size: .82rem;
+}

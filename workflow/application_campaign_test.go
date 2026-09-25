@@ -363,3 +363,71 @@ func TestApplicationCampaignStopsAfterItsLifetime(t *testing.T) {
 		t.Fatalf("stalled campaign = %#v", campaign)
 	}
 }
+
+func TestApplicationCampaignStopsOnPlatformCaptcha(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	clock := &mutableClock{now: now}
+	searcher := &fakeSearcher{page: core.SearchPage{Done: true, Vacancies: []core.Vacancy{
+		{Platform: "hh", ExternalID: "v1", Title: "Vacancy", State: core.VacancyStateOpen, ObservedAt: now},
+	}}}
+	handler, err := NewApplicationCampaignHandler(repository, repository, repository, queue, clock, &sequentialIDs{}, time.Second)
+	if err != nil {
+		t.Fatalf("new campaign handler: %v", err)
+	}
+	if err := handler.Register(ApplicationCampaignRoute{
+		SearchID: "primary", Platform: "hh", SearchProfileID: "profile", Query: json.RawMessage(`{}`), Searcher: searcher,
+	}); err != nil {
+		t.Fatalf("register route: %v", err)
+	}
+	start := campaignStartTask(t, now, []core.ProfileID{"profile"}, []core.SearchID{"primary"}, 5, 1)
+	if err := handler.Handle(ctx, start); err != nil {
+		t.Fatalf("start campaign: %v", err)
+	}
+	campaignID := core.ApplicationCampaignID("campaign-" + string(start.ID))
+	campaign, err := repository.ApplicationCampaign(ctx, campaignID)
+	if err != nil {
+		t.Fatalf("load campaign: %v", err)
+	}
+	var submitPayload core.ApplicationSubmitPayload
+	for _, queued := range queue.Tasks() {
+		if queued.Type == core.TaskApplicationSubmit {
+			if err := json.Unmarshal(queued.Payload, &submitPayload); err != nil {
+				t.Fatalf("decode submit payload: %v", err)
+			}
+		}
+	}
+	if submitPayload.ApplicationID == "" {
+		t.Fatalf("campaign scheduled no application: %#v", queue.Tasks())
+	}
+	application, err := repository.ApplicationByID(ctx, submitPayload.ApplicationID)
+	if err != nil {
+		t.Fatalf("load scheduled application: %v", err)
+	}
+	if err := application.Transition(core.ApplicationPreparing, now); err != nil {
+		t.Fatalf("preparing: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, application, core.ApplicationNew); err != nil {
+		t.Fatalf("save preparing: %v", err)
+	}
+	application.DecisionCode = "captcha_required"
+	if err := application.Transition(core.ApplicationWaitingValidation, now); err != nil {
+		t.Fatalf("waiting validation: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, application, core.ApplicationPreparing); err != nil {
+		t.Fatalf("save parked: %v", err)
+	}
+
+	if err := handler.Handle(ctx, campaignTickTask(t, queue, campaignID, campaign.Revision)); err != nil {
+		t.Fatalf("tick campaign: %v", err)
+	}
+	campaign, err = repository.ApplicationCampaign(ctx, campaignID)
+	if err != nil {
+		t.Fatalf("reload campaign: %v", err)
+	}
+	if campaign.Status != core.ApplicationCampaignFailed || campaign.StopReason == "" {
+		t.Fatalf("campaign = %#v", campaign)
+	}
+}
