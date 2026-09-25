@@ -220,6 +220,9 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	if progress.Submitted >= campaign.TargetSuccessful {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignTargetReached, "target successful applications reached")
 	}
+	if progress.CaptchaBlocked > 0 {
+		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "HH требует капчу: введите её и запустите рассылку снова")
+	}
 	scheduled, err = handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight, priority)
 	if err != nil {
 		return err
