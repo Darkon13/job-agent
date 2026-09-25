@@ -132,6 +132,20 @@ func TestCheckStartStoresCaptchaAndAnswerConfirms(t *testing.T) {
 	}
 }
 
+func TestCheckDoneSkipsRetryWhenAlreadySubmitted(t *testing.T) {
+	driver := &testDriver{submitOutcome: Outcome{State: StateDone, Message: "отклик уже существует на странице вакансии"}}
+	retry := &testRetry{}
+	clock := &testClock{now: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}
+	application := checkApplication(t, "")
+	application.Status = core.ApplicationSubmitted
+	service := newCheckService(t, driver, testApplications{application: application}, retry, clock)
+
+	session, err := service.Start(context.Background(), "application-1")
+	if err != nil || session.State != StateDone || retry.calls != 0 {
+		t.Fatalf("session=%#v err=%v retry=%d", session, err, retry.calls)
+	}
+}
+
 func TestCheckAnswerRejectsNonCaptchaSession(t *testing.T) {
 	driver := &testDriver{submitOutcome: Outcome{State: StateDone}}
 	clock := &testClock{now: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}
