@@ -75,3 +75,20 @@ func TestApplicationPlatformStateRoundTripAndRemovalTombstone(t *testing.T) {
 		t.Fatalf("removed application was rediscovered: %v", err)
 	}
 }
+
+func TestApplicationPlatformStateSkipsMissingApplication(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	state := core.ApplicationPlatformState{
+		ApplicationID: "application-gone", ExternalNegotiationID: "negotiation-1", PlatformState: "response",
+		Disposition: core.ApplicationDispositionPending, ObservedAt: now,
+	}
+	if err := store.SaveApplicationPlatformState(ctx, state); !errors.Is(err, storage.ErrApplicationRemoved) {
+		t.Fatalf("missing application error = %v", err)
+	}
+}

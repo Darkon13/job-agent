@@ -5,9 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	sqlitedriver "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
+
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 )
 
 func (store *Store) SaveApplicationPlatformState(ctx context.Context, candidate core.ApplicationPlatformState) error {
@@ -29,9 +34,23 @@ func (store *Store) SaveApplicationPlatformState(ctx context.Context, candidate 
 		candidate.ApplicationID, candidate.ExternalNegotiationID, candidate.PlatformState, candidate.Disposition,
 		nullableBool(candidate.ViewedByOpponent), nullableTime(candidate.PlatformUpdatedAt), candidate.ObservedAt.UnixNano())
 	if err != nil {
+		// Retention may remove an application between listing and saving, so a
+		// vanished application is a skip rather than a failed observation.
+		if isForeignKeyViolation(err) {
+			return storage.ErrApplicationRemoved
+		}
 		return fmt.Errorf("save application platform state: %w", err)
 	}
 	return nil
+}
+
+// isForeignKeyViolation reports a SQLite foreign key constraint failure.
+func isForeignKeyViolation(err error) bool {
+	var sqliteErr *sqlitedriver.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
+		return true
+	}
+	return err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed")
 }
 
 func (store *Store) ApplicationPlatformState(ctx context.Context, applicationID core.ApplicationID) (core.ApplicationPlatformState, error) {

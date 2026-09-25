@@ -107,3 +107,47 @@ func TestBrowserVacancyReadReportsClosedVacancy(t *testing.T) {
 		t.Fatalf("unexpected error: %#v", err)
 	}
 }
+
+func TestBrowserObservationDeduplicatesPaginationOverlap(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Query().Get("page") {
+		case "0":
+			_, _ = response.Write([]byte(negotiationsPage(`{
+				"applicantNegotiations": {
+					"topicList": [
+						{"id": 111, "vacancyId": "42", "lastState": "RESPONSE", "lastModified": "2026-09-13T10:00:00+03:00"},
+						{"id": 112, "vacancyId": "43", "lastState": "INTERVIEW", "lastModified": "2026-09-13T11:00:00+03:00"}
+					],
+					"pageCount": "2"
+				}
+			}`)))
+		case "1":
+			_, _ = response.Write([]byte(negotiationsPage(`{
+				"applicantNegotiations": {
+					"topicList": [
+						{"id": 112, "vacancyId": "43", "lastState": "INTERVIEW", "lastModified": "2026-09-13T11:00:00+03:00"},
+						{"id": 113, "vacancyId": "44", "lastState": "DISCARD", "lastModified": "2026-09-13T12:00:00+03:00"}
+					],
+					"pageCount": "2"
+				}
+			}`)))
+		default:
+			t.Errorf("unexpected negotiations page: %s", request.URL.Query().Get("page"))
+		}
+	}))
+
+	result, err := client.ObserveApplicationStates(context.Background(), "primary")
+	if err != nil {
+		t.Fatalf("observe application states: %v", err)
+	}
+	if len(result.Applications) != 3 {
+		t.Fatalf("result = %#v", result.Applications)
+	}
+	seen := make(map[string]struct{}, len(result.Applications))
+	for _, application := range result.Applications {
+		if _, duplicate := seen[application.ExternalNegotiationID]; duplicate {
+			t.Fatalf("duplicate negotiation %s in %#v", application.ExternalNegotiationID, result.Applications)
+		}
+		seen[application.ExternalNegotiationID] = struct{}{}
+	}
+}

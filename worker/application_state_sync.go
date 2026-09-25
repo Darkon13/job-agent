@@ -61,6 +61,11 @@ func (handler *ApplicationStateSyncHandler) Handle(ctx context.Context, task cor
 			continue
 		}
 		if err := handler.states.SaveApplicationPlatformState(ctx, state); err != nil {
+			// The application was removed by retention after it was listed:
+			// there is no object left to carry the observed state.
+			if errors.Is(err, storage.ErrApplicationRemoved) {
+				continue
+			}
 			return err
 		}
 	}

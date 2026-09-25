@@ -62,7 +62,6 @@ func TestApplicationStateObserverClassifiesAuthorizationFailure(t *testing.T) {
 func TestApplicationStateObserverRejectsIncompletePagination(t *testing.T) {
 	for _, payload := range []string{
 		`{"items":[]}`, `{"page":1,"pages":1,"items":[]}`, `{"page":0,"pages":2,"items":[]}`,
-		`{"page":0,"pages":1,"items":[{"id":"n","state":{"id":"response"},"vacancy":{"id":"v"}},{"id":"n","state":{"id":"discard"},"vacancy":{"id":"v"}}]}`,
 	} {
 		t.Run(payload, func(t *testing.T) {
 			client := newReadClientFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, payload) }))
@@ -70,5 +69,34 @@ func TestApplicationStateObserverRejectsIncompletePagination(t *testing.T) {
 				t.Fatalf("partial observation escaped: %v %v", result, err)
 			}
 		})
+	}
+}
+
+func TestApplicationStateObserverDeduplicatesPaginationOverlap(t *testing.T) {
+	client := newReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Query().Get("page") {
+		case "0":
+			_, _ = fmt.Fprint(response, `{"pages":2,"page":0,"items":[{"id":"n-1","state":{"id":"response"},"updated_at":"2026-09-01T12:00:00+0300","vacancy":{"id":"v-1"}},{"id":"n-2","state":{"id":"invitation"},"vacancy":{"id":"v-2"}}]}`)
+		case "1":
+			_, _ = fmt.Fprint(response, `{"pages":2,"page":1,"items":[{"id":"n-2","state":{"id":"invitation"},"vacancy":{"id":"v-2"}},{"id":"n-3","state":{"id":"discard"},"vacancy":{"id":"v-3"}}]}`)
+		default:
+			t.Fatalf("unexpected page %q", request.URL.Query().Get("page"))
+		}
+	}))
+
+	result, err := client.ObserveApplicationStates(context.Background(), "primary")
+	if err != nil {
+		t.Fatalf("observe states: %v", err)
+	}
+	if len(result.Applications) != 3 {
+		t.Fatalf("observation = %#v", result.Applications)
+	}
+	seen := make(map[string]struct{}, len(result.Applications))
+	for _, application := range result.Applications {
+		if _, duplicate := seen[application.ExternalNegotiationID]; duplicate {
+			t.Fatalf("duplicate negotiation %s in %#v", application.ExternalNegotiationID, result.Applications)
+		}
+		seen[application.ExternalNegotiationID] = struct{}{}
 	}
 }
