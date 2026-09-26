@@ -45,7 +45,7 @@ func TestBrowserConversationDiscoversPaginatedCatalog(t *testing.T) {
 	defer server.Close()
 	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
 
-	result, err := client.DiscoverConversations(context.Background(), "primary")
+	result, err := client.DiscoverConversations(context.Background(), "primary", adapter.ConversationDiscoveryOptions{})
 	if err != nil {
 		t.Fatalf("discover conversations: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
 	defer server.Close()
 	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
 
-	result, err := client.DiscoverConversations(context.Background(), "primary")
+	result, err := client.DiscoverConversations(context.Background(), "primary", adapter.ConversationDiscoveryOptions{})
 	if err != nil {
 		t.Fatalf("discover conversations: %v", err)
 	}
@@ -233,6 +233,30 @@ func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
 	}
 }
 
+func TestBrowserConversationDiscoveryHonoursRecentPollWindow(t *testing.T) {
+	var window, unread atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("filterUnread") == "true" {
+			unread.Add(1)
+			_, _ = writer.Write([]byte(`{"chats":{"items":[{"id":9002,"currentParticipantId":"me","unreadCount":2}]}}`))
+			return
+		}
+		sequence := window.Add(1)
+		_, _ = fmt.Fprintf(writer, `{"chats":{"items":[{"id":%d,"currentParticipantId":"me"}],"nextFrom":%d}}`, sequence, sequence+1000)
+	}))
+	defer server.Close()
+	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
+
+	result, err := client.DiscoverConversations(context.Background(), "primary", adapter.ConversationDiscoveryOptions{MaxPages: 2})
+	if err != nil {
+		t.Fatalf("discover conversations: %v", err)
+	}
+	if !result.Truncated || window.Load() != 2 || unread.Load() != 1 || len(result.Conversations) != 3 {
+		t.Fatalf("result=%#v window=%d unread=%d", result, window.Load(), unread.Load())
+	}
+}
+
 func TestBrowserConversationDiscoverySkipsUnreadPassWithinWindow(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -243,7 +267,7 @@ func TestBrowserConversationDiscoverySkipsUnreadPassWithinWindow(t *testing.T) {
 	defer server.Close()
 	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
 
-	result, err := client.DiscoverConversations(context.Background(), "primary")
+	result, err := client.DiscoverConversations(context.Background(), "primary", adapter.ConversationDiscoveryOptions{})
 	if err != nil {
 		t.Fatalf("discover conversations: %v", err)
 	}

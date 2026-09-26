@@ -143,7 +143,7 @@ func newBrowserConversationClient(reader *BrowserReadClient, options adapter.Bro
 	return &BrowserConversationClient{reader: reader, options: options, chatBaseURL: defaultChatBaseURL}
 }
 
-func (client *BrowserConversationClient) DiscoverConversations(ctx context.Context, profileID core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+func (client *BrowserConversationClient) DiscoverConversations(ctx context.Context, profileID core.ProfileID, options adapter.ConversationDiscoveryOptions) (adapter.ConversationDiscoveryResult, error) {
 	if profileID == "" || profileID != client.reader.profileID {
 		return adapter.ConversationDiscoveryResult{}, errors.New("HH conversation discovery profile does not match")
 	}
@@ -153,9 +153,13 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 	observedAt := time.Now().UTC()
 	result := make([]core.ConversationObservation, 0)
 	seenConversations := make(map[string]struct{})
+	windowPages := options.MaxPages
+	if windowPages <= 0 || windowPages > maxChatDiscoveryPages {
+		windowPages = maxChatDiscoveryPages
+	}
 	truncated := true
 	nextFrom := ""
-	for page := 0; page < maxChatDiscoveryPages; page++ {
+	for page := 0; page < windowPages; page++ {
 		parameters := url.Values{
 			"filterUnread":         {"false"},
 			"filterHasTextMessage": {"false"},

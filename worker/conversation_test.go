@@ -67,9 +67,10 @@ func TestConversationFollowUpSelectionHandlerSchedulesEligibleReminder(t *testin
 }
 
 type fakeConversationTransport struct {
-	now       time.Time
-	commands  []adapter.ConversationSendCommand
-	discovery adapter.ConversationDiscoveryResult
+	now              time.Time
+	commands         []adapter.ConversationSendCommand
+	discovery        adapter.ConversationDiscoveryResult
+	discoveryOptions adapter.ConversationDiscoveryOptions
 }
 
 func (transport *fakeConversationTransport) SendConversationMessage(_ context.Context, command adapter.ConversationSendCommand) (core.ConversationMessage, error) {
@@ -89,7 +90,8 @@ func (transport *fakeConversationTransport) SyncConversation(context.Context, co
 	return adapter.ConversationSyncResult{ObservedAt: transport.now}, nil
 }
 
-func (transport *fakeConversationTransport) DiscoverConversations(context.Context, core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+func (transport *fakeConversationTransport) DiscoverConversations(_ context.Context, _ core.ProfileID, options adapter.ConversationDiscoveryOptions) (adapter.ConversationDiscoveryResult, error) {
+	transport.discoveryOptions = options
 	return transport.discovery, nil
 }
 
@@ -154,7 +156,7 @@ func TestConversationMarkReadHandlerClearsStoredUnreadCount(t *testing.T) {
 		t.Fatalf("load conversation: %v", err)
 	}
 	expectedRevision := conversation.Revision
-	if changed, err := conversation.ObserveCatalogState(core.ConversationActive, 2, clock.now); err != nil || !changed {
+	if changed, err := conversation.ObserveCatalogState(core.ConversationActive, 2, nil, clock.now); err != nil || !changed {
 		t.Fatalf("set unread count: changed=%t err=%v", changed, err)
 	}
 	if err := repository.SaveConversation(ctx, conversation, expectedRevision); err != nil {
@@ -190,7 +192,7 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 			{ExternalID: "external-chat-2", Status: core.ConversationActive, UnreadCount: 1},
 		},
 	}
-	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
+	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1", MaxPages: 2})
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: "discover-task", Type: core.TaskConversationDiscover, IdempotencyKey: "discover-run-1",
 		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-discover", Payload: payload,
@@ -214,6 +216,9 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 	messages, err := repository.ConversationMessages(ctx, "conversation-1")
 	if err != nil || len(messages) != 1 || messages[0].ExternalID != "message-external-1" {
 		t.Fatalf("messages=%#v err=%v", messages, err)
+	}
+	if transport.discoveryOptions.MaxPages != 2 {
+		t.Fatalf("recent poll window was not passed to the transport: %#v", transport.discoveryOptions)
 	}
 	if len(queue.Tasks()) != 2 {
 		t.Fatalf("sync tasks=%#v", queue.Tasks())
