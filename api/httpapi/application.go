@@ -38,7 +38,8 @@ func (api *RuntimeAPI) listApplications(response http.ResponseWriter, request *h
 		Limit:     limit,
 		Query:     request.URL.Query().Get("q"), Employer: request.URL.Query().Get("employer"),
 		Group: request.URL.Query().Get("group"), Sort: request.URL.Query().Get("sort"),
-		DecisionCode: strings.TrimSpace(request.URL.Query().Get("decision_code")),
+		DecisionCode:      strings.TrimSpace(request.URL.Query().Get("decision_code")),
+		VacancyExternalID: strings.TrimSpace(request.URL.Query().Get("vacancy_id")),
 	}
 	if value := request.URL.Query().Get("offset"); value != "" {
 		offset, err := strconv.Atoi(value)

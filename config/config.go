@@ -120,6 +120,7 @@ const (
 	JobActionProfileStateReconcile      = "profile_state.reconcile"
 	JobActionProfileActivityObserve     = "profile.activity.observe"
 	JobActionProfileActivityMaintain    = "profile.activity.maintain"
+	JobActionApplicationValidationCheck = "application.validation.refresh"
 	JobActionProfileSessionRefresh      = "profile.session_refresh"
 	JobActionConversationSync           = "conversation.sync"
 	JobActionConversationFollowUpSelect = "conversation.follow_up.select"
@@ -183,7 +184,10 @@ type JobAction struct {
 	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
 	Count            int                                  `json:"count,omitempty"`
 	Pause            core.Duration                        `json:"pause,omitempty"`
-	Retention        *ApplicationRetentionConfig          `json:"retention,omitempty"`
+	// MinAge delays the validation refresh so fresh questionnaires keep their
+	// operator window before the recheck.
+	MinAge    core.Duration               `json:"min_age,omitempty"`
+	Retention *ApplicationRetentionConfig `json:"retention,omitempty"`
 }
 
 // TargetProfiles returns the profile tags a job action applies to. A job either
@@ -1714,6 +1718,16 @@ func (c Config) Validate() error {
 				return fmt.Errorf("job %q profile.activity.maintain pause must not be negative", job.Tag)
 			}
 			_ = targets
+		case JobActionApplicationValidationCheck:
+			if _, err := jobActionTargets(job, profiles); err != nil {
+				return err
+			}
+			if job.Action.Count < 1 || job.Action.Count > 200 {
+				return fmt.Errorf("job %q application.validation.refresh count must be between 1 and 200", job.Tag)
+			}
+			if job.Action.MinAge.Value() < 0 {
+				return fmt.Errorf("job %q application.validation.refresh min_age must not be negative", job.Tag)
+			}
 		case JobActionApplicationStateSync:
 			if _, err := jobActionTargets(job, profiles); err != nil {
 				return err

@@ -237,3 +237,30 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   color: #f0c06a;
   font-size: .82rem;
 }
+
+.review-vacancy {
+  display: grid;
+  gap: .45rem;
+  margin-bottom: .5rem;
+  padding: .6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.review-vacancy-heading strong { display: block; min-width: 0; overflow-wrap: anywhere; }
+.review-vacancy-profiles { display: flex; flex-wrap: wrap; gap: .35rem; }
+.review-profile {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .1rem;
+  padding: .35rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.review-profile.active { border-color: var(--cyan); background: var(--surface-2); }
+.review-profile small { color: var(--muted); }
+.review-vacancy .review-cancel { justify-self: end; }
