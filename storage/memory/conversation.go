@@ -221,8 +221,12 @@ func (repository *Repository) openQuestionnaire(conversation core.Conversation) 
 	messages := repository.messages[conversation.ID]
 	var lastLeft, lastOpener time.Time
 	for _, message := range messages {
-		if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT") &&
-			message.OccurredAt.After(lastLeft) {
+		closed := message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT")
+		if message.Direction == core.MessageIncoming && message.Kind == core.MessageText &&
+			strings.Contains(strings.ToLower(message.Text), "не готовы пригласить") {
+			closed = true
+		}
+		if closed && message.OccurredAt.After(lastLeft) {
 			lastLeft = message.OccurredAt
 		}
 	}

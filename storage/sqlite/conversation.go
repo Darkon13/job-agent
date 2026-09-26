@@ -258,7 +258,9 @@ func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) 
 			       OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'))
 			  AND m.occurred_at > COALESCE((
 				SELECT MAX(e.occurred_at) FROM conversation_messages e
-				WHERE e.conversation_id = m.conversation_id AND e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%'), 0))`
+				WHERE e.conversation_id = m.conversation_id
+				  AND ((e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%')
+				    OR (e.direction = 'incoming' AND e.kind = 'text' AND e.text LIKE '%не готовы пригласить%'))), 0))`
 	}
 	return query, args
 }
@@ -363,8 +365,9 @@ func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]cor
 		  )
 		  AND m.occurred_at > COALESCE((
 			SELECT MAX(e.occurred_at) FROM conversation_messages e
-			WHERE e.conversation_id = m.conversation_id AND e.kind = 'system'
-			  AND e.text LIKE '%PARTICIPANT_LEFT%'), 0)
+			WHERE e.conversation_id = m.conversation_id
+			  AND ((e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%')
+			    OR (e.direction = 'incoming' AND e.kind = 'text' AND e.text LIKE '%не готовы пригласить%'))), 0)
 		ORDER BY m.conversation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list open questionnaires: %w", err)
