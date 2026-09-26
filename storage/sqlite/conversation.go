@@ -48,7 +48,7 @@ func (store *Store) CreateConversation(ctx context.Context, candidate core.Conve
 	if stored.ID == candidate.ID && !sameConversationIdentity(stored, candidate) {
 		return core.Conversation{}, false, errors.New("conversation id conflicts with a different conversation")
 	}
-	if stored.ID != candidate.ID && stored.ApplicationID != candidate.ApplicationID {
+	if stored.ID != candidate.ID && candidate.ApplicationID != "" && stored.ApplicationID != candidate.ApplicationID {
 		return core.Conversation{}, false, errors.New("conversation external id conflicts with a different application")
 	}
 	return stored, false, nil
@@ -119,14 +119,16 @@ func (store *Store) ListConversations(ctx context.Context, filter storage.Conver
 	return result, nil
 }
 
-// AttachConversationApplication links a chat to its application once.
-func (store *Store) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID, now time.Time) (bool, error) {
-	if id == "" || applicationID == "" || now.IsZero() {
-		return false, errors.New("conversation attach requires conversation, application and time")
+// AttachConversationApplication links a chat to its application once. The
+// stored updated_at stays untouched: the platform observation time must keep
+// looking fresh to the sync path.
+func (store *Store) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID) (bool, error) {
+	if id == "" || applicationID == "" {
+		return false, errors.New("conversation attach requires conversation and application")
 	}
 	result, err := store.db.ExecContext(ctx, `UPDATE conversations
-		SET application_id = ?, revision = revision + 1, updated_at = ?
-		WHERE id = ? AND application_id = ''`, applicationID, now.UnixNano(), id)
+		SET application_id = ?, revision = revision + 1
+		WHERE id = ? AND application_id = ''`, applicationID, id)
 	if err != nil {
 		return false, fmt.Errorf("attach conversation application: %w", err)
 	}
