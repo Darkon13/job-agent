@@ -1820,6 +1820,17 @@ function renderAuthProfileOptions(profiles = []) {
   captchaRefresh.addEventListener("click", () => {
     if (sessionId) setCaptcha(sessionId);
   });
+  // A backend restart or a transient failure must not leave the operator with
+  // a permanently broken captcha: retry the image a few times on its own.
+  let captchaAttempts = 0;
+  captcha.addEventListener("load", () => { captchaAttempts = 0; });
+  captcha.addEventListener("error", () => {
+    if (captchaRow.hidden || !sessionId || captchaAttempts >= 5) return;
+    captchaAttempts += 1;
+    globalThis.setTimeout(() => {
+      if (!captchaRow.hidden && sessionId) setCaptcha(sessionId);
+    }, 2_000 * captchaAttempts);
+  });
 
   submitButton.addEventListener("click", async () => {
     if (!sessionId) {
