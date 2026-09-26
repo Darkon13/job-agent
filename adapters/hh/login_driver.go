@@ -17,8 +17,9 @@ const (
 	loginStepTimeout  = 20 * time.Second
 	loginPollInterval = 500 * time.Millisecond
 	elementProbeMS    = 800
-	// captchaSettleDelay waits out the image swap after a failed attempt.
-	captchaSettleDelay = 1500 * time.Millisecond
+	// loginTransitionDelay lets a submitted form swap its step before the
+	// probes read the page again.
+	loginTransitionDelay = 1500 * time.Millisecond
 )
 
 const (
@@ -176,7 +177,16 @@ func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSessio
 func (driver *LoginDriver) challenge(ctx context.Context, setting LoginSettings) (auth.Outcome, bool, error) {
 	if driver.visible(ctx, setting.ProfileID, loginCaptchaImage) {
 		outcome, err := driver.captchaOutcome(ctx, setting)
-		return outcome, true, err
+		if err != nil {
+			// The image can disappear between the visibility probe and the
+			// screenshot when the platform accepted the previous answer; let
+			// the caller re-check the page instead of failing the session.
+			if elementVanished(err) {
+				return auth.Outcome{}, false, nil
+			}
+			return auth.Outcome{}, true, err
+		}
+		return outcome, true, nil
 	}
 	if driver.visible(ctx, setting.ProfileID, loginPasswordExpand) {
 		return auth.Outcome{}, true, &core.OperationError{
@@ -188,6 +198,11 @@ func (driver *LoginDriver) challenge(ctx context.Context, setting LoginSettings)
 }
 
 func (driver *LoginDriver) waitNextStep(ctx context.Context, setting LoginSettings) (auth.Outcome, error) {
+	// The submit started a page transition; wait it out so the probes do not
+	// read the step that is already gone.
+	if err := driver.sleep(ctx, loginTransitionDelay); err != nil {
+		return auth.Outcome{}, err
+	}
 	deadline := time.Now().Add(loginStepTimeout)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
@@ -230,11 +245,6 @@ func (driver *LoginDriver) exportState(ctx context.Context, setting LoginSetting
 }
 
 func (driver *LoginDriver) captchaOutcome(ctx context.Context, setting LoginSettings) (auth.Outcome, error) {
-	// A failed attempt makes HH swap in a fresh image; give the page a moment
-	// so the screenshot does not capture the previous captcha.
-	if err := driver.sleep(ctx, captchaSettleDelay); err != nil {
-		return auth.Outcome{}, err
-	}
 	screenshot, err := driver.client.Screenshot(ctx, setting.ProfileID, browser.ScreenshotRequest{
 		Selector: loginCaptchaImage, TimeoutMS: 10_000,
 	})
@@ -297,6 +307,16 @@ func nationalPhone(value string) string {
 		return normalized[1:]
 	}
 	return normalized
+}
+
+// elementVanished reports that a probe or screenshot lost its element because
+// the page moved on; the worker answers with a timeout or a not-found.
+func elementVanished(err error) bool {
+	var workerError *browser.Error
+	if !errors.As(err, &workerError) {
+		return false
+	}
+	return workerError.Code == "timeout" || workerError.Code == "not_found"
 }
 
 // clickSubmit presses the form submit button. A plain click can be intercepted
