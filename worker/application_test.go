@@ -755,3 +755,20 @@ func TestApplicationHandlerParksBrowserCaptchaForOperator(t *testing.T) {
 		t.Fatalf("application=%#v err=%v browser calls=%d", application, err, submitter.calls)
 	}
 }
+
+func TestApplicationHandlerRemembersQuotaFailure(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorQuotaExceeded, Operation: "applications.budget.reserve", Platform: "hh",
+		Message: "daily application budget is exhausted",
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err == nil {
+		t.Fatal("expected the quota error to keep the task retryable")
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.FailureCategory != core.ErrorQuotaExceeded {
+		t.Fatalf("application=%#v err=%v", application, err)
+	}
+}

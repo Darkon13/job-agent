@@ -2224,8 +2224,28 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			routeIDs = append(routeIDs, routeID)
 			ownedRoutes[routeID] = struct{}{}
 		}
+		targetSuccessful := job.Action.TargetSuccessful
+		for _, value := range job.Action.Profiles {
+			var configured appconfig.Profile
+			for _, candidate := range cfg.Profiles {
+				if candidate.Tag == value {
+					configured = candidate
+					break
+				}
+			}
+			instance := instances[configured.Adapter]
+			if configured.Tag == "" || instance == nil {
+				continue
+			}
+			limit := configured.Applications.EffectiveDailyLimit(instance.Name())
+			if limit > 0 && targetSuccessful > limit {
+				logf("campaign %q target %d is capped to the daily limit %d of profile %q",
+					job.Tag, targetSuccessful, limit, configured.Tag)
+				targetSuccessful = limit
+			}
+		}
 		payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
-			job.Tag, profileIDs, routeIDs, job.Action.TargetSuccessful, job.Action.MaxInFlight,
+			job.Tag, profileIDs, routeIDs, targetSuccessful, job.Action.MaxInFlight,
 		))
 		if err != nil {
 			return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q: %w", job.Tag, err)
