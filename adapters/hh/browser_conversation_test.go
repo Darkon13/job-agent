@@ -248,3 +248,26 @@ func TestBrowserConversationTreatsDuplicateSendAsDelivered(t *testing.T) {
 		t.Fatalf("message=%#v", message)
 	}
 }
+
+func TestBrowserConversationTreatsInvitationPromptAsSuggestion(t *testing.T) {
+	var raw hhChatMessage
+	if err := json.Unmarshal([]byte(`{"id":12,"creationTime":"2026-09-25T08:40:11Z","text":"Ответьте на приглашение, даже если оно вам не интересно. Так мы сможем рекомендовать вам более подходящие вакансии. Отправить ответ можно одной кнопкой:","type":"SIMPLE","participantId":"employer","actions":{"text_buttons":[{"text":"Посмотрю вакансию, спасибо"},{"text":"Интересно, обсудим детали?"},{"text":"К сожалению, не подходит"}]}}`), &raw); err != nil {
+		t.Fatalf("decode invitation fixture: %v", err)
+	}
+	observation, include, err := mapHHMessageObservation(raw, "me")
+	if err != nil || !include {
+		t.Fatalf("observation include=%v err=%v", include, err)
+	}
+	if observation.Kind != core.MessageSuggestion || len(observation.Options) != 3 {
+		t.Fatalf("kind=%s options=%d", observation.Kind, len(observation.Options))
+	}
+
+	var questionnaire hhChatMessage
+	if err := json.Unmarshal([]byte(`{"id":13,"creationTime":"2026-09-25T08:41:11Z","text":"Готовы ли вы работать в офисе?","type":"SIMPLE","participantId":"employer","actions":{"text_buttons":[{"text":"Да"},{"text":"Нет"}]}}`), &questionnaire); err != nil {
+		t.Fatalf("decode questionnaire fixture: %v", err)
+	}
+	observation, include, err = mapHHMessageObservation(questionnaire, "me")
+	if err != nil || !include || observation.Kind != core.MessageQuestionnaire {
+		t.Fatalf("questionnaire kind=%s include=%v err=%v", observation.Kind, include, err)
+	}
+}
