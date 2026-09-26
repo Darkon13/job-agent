@@ -167,7 +167,13 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 		return err
 	}
 	for _, application := range stale {
-		if application.Key.Vacancy.Platform != task.Platform || application.UpdatedAt.After(validationStaleBefore) {
+		if application.Key.Vacancy.Platform != task.Platform {
+			continue
+		}
+		// A vacancy that closed is a dead end: the record goes immediately
+		// instead of waiting for the age window.
+		deadEnd := application.Status == core.ApplicationSkipped && application.DecisionCode == "vacancy_closed"
+		if application.UpdatedAt.After(validationStaleBefore) && !deadEnd {
 			continue
 		}
 		removalWindow := payload.StaleAfter

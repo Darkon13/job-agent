@@ -89,7 +89,7 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 	defer repository.mu.RUnlock()
 	result := make([]core.Conversation, 0, len(repository.conversations))
 	for _, conversation := range repository.conversations {
-		if !conversationMatchesFilter(conversation, filter) {
+		if !repository.conversationMatchesFilter(conversation, filter) {
 			continue
 		}
 		result = append(result, cloneConversation(conversation))
@@ -167,11 +167,40 @@ func (repository *Repository) PurgeOrphanConversations(ctx context.Context, prof
 	return removed, nil
 }
 
+// openQuestionnaire reports whether the chat has a questionnaire prompt not
+// closed by PARTICIPANT_LEFT yet.
+func (repository *Repository) openQuestionnaire(conversation core.Conversation) bool {
+	if conversation.Status != core.ConversationActive {
+		return false
+	}
+	messages := repository.messages[conversation.ID]
+	var lastLeft, latestIncoming time.Time
+	for _, message := range messages {
+		if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT") &&
+			message.OccurredAt.After(lastLeft) {
+			lastLeft = message.OccurredAt
+		}
+	}
+	for _, message := range messages {
+		if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
+			message.OccurredAt.After(lastLeft) && message.OccurredAt.After(latestIncoming) {
+			latestIncoming = message.OccurredAt
+		}
+	}
+	return !latestIncoming.IsZero()
+}
+
 // conversationMatchesFilter keeps the in-memory behaviour aligned with SQL.
-func conversationMatchesFilter(conversation core.Conversation, filter storage.ConversationFilter) bool {
+func (repository *Repository) conversationMatchesFilter(conversation core.Conversation, filter storage.ConversationFilter) bool {
 	if filter.Platform != "" && conversation.Platform != filter.Platform ||
 		filter.ProfileID != "" && conversation.ProfileID != filter.ProfileID ||
 		filter.Status != "" && conversation.Status != filter.Status {
+		return false
+	}
+	if filter.UnreadOnly && conversation.UnreadCount == 0 {
+		return false
+	}
+	if filter.QuestionnaireOnly && !repository.openQuestionnaire(conversation) {
 		return false
 	}
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
@@ -195,7 +224,7 @@ func (repository *Repository) CountConversations(ctx context.Context, filter sto
 	defer repository.mu.RUnlock()
 	var counts storage.ConversationCounts
 	for _, conversation := range repository.conversations {
-		if !conversationMatchesFilter(conversation, filter) {
+		if !repository.conversationMatchesFilter(conversation, filter) {
 			continue
 		}
 		counts.Total++
@@ -259,25 +288,8 @@ func (repository *Repository) OpenQuestionnaireConversationIDs(ctx context.Conte
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
 	result := make([]core.ConversationID, 0)
-	for id, messages := range repository.messages {
-		conversation, exists := repository.conversations[id]
-		if !exists || conversation.Status != core.ConversationActive {
-			continue
-		}
-		var lastLeft, latestIncoming time.Time
-		for _, message := range messages {
-			if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT") &&
-				message.OccurredAt.After(lastLeft) {
-				lastLeft = message.OccurredAt
-			}
-		}
-		for _, message := range messages {
-			if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
-				message.OccurredAt.After(lastLeft) && message.OccurredAt.After(latestIncoming) {
-				latestIncoming = message.OccurredAt
-			}
-		}
-		if !latestIncoming.IsZero() {
+	for id, conversation := range repository.conversations {
+		if repository.openQuestionnaire(conversation) {
 			result = append(result, id)
 		}
 	}

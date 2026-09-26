@@ -197,6 +197,18 @@ func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) 
 		query += ` AND (vacancy_title LIKE ? OR employer LIKE ? OR external_id LIKE ?)`
 		args = append(args, like, like, like)
 	}
+	if filter.UnreadOnly {
+		query += ` AND unread_count > 0`
+	}
+	if filter.QuestionnaireOnly {
+		query += ` AND status = 'active' AND EXISTS (
+			SELECT 1 FROM conversation_messages m
+			WHERE m.conversation_id = conversations.id AND m.direction = 'incoming' AND m.kind = 'questionnaire'
+			  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
+			  AND m.occurred_at > COALESCE((
+				SELECT MAX(e.occurred_at) FROM conversation_messages e
+				WHERE e.conversation_id = m.conversation_id AND e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%'), 0))`
+	}
 	return query, args
 }
 

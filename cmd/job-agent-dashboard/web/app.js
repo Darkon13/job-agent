@@ -5,20 +5,21 @@ const state = {
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
-  conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0,
+  conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
+  reviewSendProfiles: new Set(),
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false,
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
-  "application-prev", "application-next", "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt", "review-send",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
-  "conversation-more", "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
+  "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -279,27 +280,27 @@ async function retryApplication(item, button) {
   } catch (error) { state.applicationActionMessage = error.message; }
   state.applicationActionBusy = false; renderApplicationObjects();
 }
-function applicationListURL() {
-  const parameters = {limit: "200", offset: String(state.applicationOffset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter};
+function applicationListURL(append = false) {
+  const offset = append ? state.applicationObjects.length : state.applicationOffset;
+  const parameters = {limit: "200", offset: String(offset), q: state.applicationQuery, sort: state.applicationSort, group: state.applicationFilter};
   if (state.account) parameters.profile_id = state.account;
   return "/api/v1/applications?" + new URLSearchParams(parameters);
 }
-async function refreshApplications() {
+// refreshApplications reloads the first page; append loads the next one for the
+// infinite scroll of the applications table.
+async function refreshApplications({ append = false } = {}) {
   const generation = ++state.applicationRequest;
   state.applicationLoading = true; updateApplicationSelection();
   try {
-    const data = await request(applicationListURL());
+    const data = await request(applicationListURL(append));
     if (generation !== state.applicationRequest) return;
-    state.applicationObjects = data.items || []; state.applicationTotal = data.total || 0; state.applicationGroups = data.groups || {};
-    if (state.applicationOffset >= state.applicationTotal && state.applicationOffset > 0) { state.applicationOffset = 0; return refreshApplications(); }
+    const items = data.items || [];
+    state.applicationObjects = append ? [...state.applicationObjects, ...items] : items;
+    state.applicationTotal = data.total || 0; state.applicationGroups = data.groups || {};
     renderApplicationFilters(); renderApplicationObjects();
   } catch (error) { if (generation === state.applicationRequest) state.applicationActionMessage = error.message; }
   finally {
-    if (generation === state.applicationRequest) {
-      state.applicationLoading = false; renderApplicationObjects();
-      elements.applicationPrev.disabled = state.applicationOffset === 0;
-      elements.applicationNext.disabled = state.applicationOffset + 200 >= state.applicationTotal;
-    }
+    if (generation === state.applicationRequest) { state.applicationLoading = false; renderApplicationObjects(); }
   }
 }
 function changeApplicationQuery() {
@@ -312,7 +313,7 @@ function updateApplicationSelection(items = visibleApplicationObjects()) {
   elements.applicationSelectAll.checked = visibleIDs.length > 0 && selectedVisible === visibleIDs.length;
   elements.applicationSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIDs.length;
   elements.applicationSelectionState.textContent = state.applicationActionMessage || (state.selectedApplications.size ? `Выбрано: ${state.selectedApplications.size}` : "Ничего не выбрано");
-  elements.applicationBulkAction.disabled = state.selectedApplications.size === 0 || state.applicationActionBusy || state.applicationLoading;
+  elements.applicationBulkAction.disabled = state.applicationActionBusy || state.applicationLoading;
   elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy || state.applicationLoading;
 }
 function renderApplicationObjects() {
@@ -557,7 +558,13 @@ function renderActivityObservations(items = []) {
 function visibleConversations(items = []) {
   const visible = [...items];
   const selected = state.selectedConversation;
-  if (selected && !visible.some((item) => item.id === selected.id)) visible.unshift(selected);
+  if (selected && !visible.some((item) => item.id === selected.id)) {
+    // Reading a chat clears its counter, so the unread filter drops it from
+    // the server page; the open chat stays at its previous position until the
+    // operator selects another one.
+    const index = Math.min(Math.max(state.conversationPinnedIndex || 0, 0), visible.length);
+    visible.splice(index, 0, selected);
+  }
   const stringCompare = (left, right) => String(left || "").localeCompare(String(right || ""), "ru", { sensitivity: "base" });
   return visible.sort((left, right) => {
     switch (state.conversationSort) {
@@ -571,6 +578,10 @@ function visibleConversations(items = []) {
 function renderConversations(items = state.conversationItems) {
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
+  if (state.selectedConversation) {
+    const index = visible.findIndex((item) => item.id === state.selectedConversation.id);
+    if (index >= 0) state.conversationPinnedIndex = index;
+  }
   const loaded = state.conversationItems.length;
   elements.conversationPageState.textContent = state.conversationTotal ? `Показано ${loaded} из ${state.conversationTotal}` : "";
   elements.conversationMore.hidden = loaded >= state.conversationTotal;
@@ -931,6 +942,16 @@ function reviewVacancyID(session) {
 }
 // sendReviewApplication enqueues the submit retry for the selected profile: a
 // filled questionnaire is attached by the application pipeline itself.
+function reviewSendTargets() {
+  const selected = [...state.reviewSendProfiles];
+  if (selected.length) return selected;
+  return state.reviewSelected ? [state.reviewSelected.profile_id] : [];
+}
+function updateReviewSendButton() {
+  const targets = reviewSendTargets();
+  elements.reviewSend.textContent = targets.length > 1 ? `Отправить отклик (${targets.length})` : "Отправить отклик";
+  elements.reviewSend.title = targets.length > 1 ? `Профили: ${targets.map((item) => profileDisplayName(item)).join(", ")}` : "";
+}
 async function sendReviewApplication() {
   const session = state.reviewSelected;
   const vacancyID = session ? reviewVacancyID(session) : "";
@@ -938,15 +959,23 @@ async function sendReviewApplication() {
     elements.reviewState.textContent = "У выбранной анкеты нет ссылки на вакансию";
     return;
   }
-  elements.reviewSend.disabled = true; elements.reviewState.textContent = "Ищу отклик по вакансии…";
+  elements.reviewSend.disabled = true; elements.reviewState.textContent = "Ищу отклики по вакансии…";
+  const targets = reviewSendTargets();
+  const queued = [], missing = [];
   try {
-    const params = new URLSearchParams({ profile_id: session.profile_id, vacancy_id: vacancyID, limit: "20" });
-    const listing = await request(`/api/v1/applications?${params}`);
-    const items = listing.items || [];
-    const application = items.find((item) => item.status === "waiting_validation") || items.find((item) => item.status === "failed") || items[0];
-    if (!application) { elements.reviewState.textContent = "Отклик по этой вакансии не найден"; return; }
-    await enqueue(`/api/v1/applications/${encodeURIComponent(application.id)}/retry`);
-    elements.reviewState.textContent = `Отклик ${application.id} поставлен в очередь (профиль ${profileDisplayName(session.profile_id)})`;
+    for (const profileID of targets) {
+      const params = new URLSearchParams({ profile_id: profileID, vacancy_id: vacancyID, limit: "20" });
+      const listing = await request(`/api/v1/applications?${params}`);
+      const items = listing.items || [];
+      const application = items.find((item) => item.status === "waiting_validation") || items.find((item) => item.status === "failed") || items[0];
+      if (!application) { missing.push(profileID); continue; }
+      await enqueue(`/api/v1/applications/${encodeURIComponent(application.id)}/retry`);
+      queued.push(profileID);
+    }
+    const parts = [];
+    if (queued.length) parts.push(`в очереди: ${queued.map((item) => profileDisplayName(item)).join(", ")}`);
+    if (missing.length) parts.push(`не найден отклик: ${missing.map((item) => profileDisplayName(item)).join(", ")}`);
+    elements.reviewState.textContent = parts.join(" · ") || "Отклики не найдены";
     refreshApplications(); refreshSummary();
   } catch (error) {
     elements.reviewState.textContent = error.message;
@@ -987,11 +1016,20 @@ function renderReviewSessions() {
     card.append(heading);
     const profiles = document.createElement("div"); profiles.className = "review-vacancy-profiles";
     for (const session of group.sessions) {
-      const chip = document.createElement("button"); chip.type = "button";
+      const chip = document.createElement("label");
       chip.className = `review-profile${state.reviewSelected?.id === session.id ? " active" : ""}`;
-      chip.append(text("span", profileDisplayName(session.profile_id), "review-profile-name"));
-      chip.append(text("small", reviewStatusLabel(session.status)));
-      chip.addEventListener("click", () => selectReviewSession(session));
+      const control = document.createElement("input"); control.type = "checkbox";
+      control.checked = state.reviewSendProfiles.has(session.profile_id);
+      control.addEventListener("change", () => {
+        if (control.checked) state.reviewSendProfiles.add(session.profile_id);
+        else state.reviewSendProfiles.delete(session.profile_id);
+        updateReviewSendButton();
+      });
+      const name = document.createElement("button"); name.type = "button"; name.className = "review-profile-name";
+      name.append(text("span", profileDisplayName(session.profile_id)));
+      name.append(text("small", reviewStatusLabel(session.status)));
+      name.addEventListener("click", () => selectReviewSession(session));
+      chip.append(control, name);
       profiles.append(chip);
     }
     card.append(profiles);
@@ -1022,6 +1060,7 @@ async function selectReviewSession(session) {
   }
   elements.reviewSend.hidden = !reviewVacancyID(session);
   elements.reviewSend.disabled = state.reviewBusy;
+  updateReviewSendButton();
   elements.reviewPrompt.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
     state.reviewDetail = await request(`/api/v1/review-sessions/${encodeURIComponent(session.id)}`);
@@ -1372,12 +1411,21 @@ elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.k
 elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
 elements.browserCheckCancel.addEventListener("click", cancelBrowserCheck);
 elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.selectedApplications.clear(); state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; elements.applicationBulkAction.value = ""; changeApplicationQuery(); });
-elements.applicationPrev.addEventListener("click", () => { state.applicationOffset = Math.max(0, state.applicationOffset - 200); state.selectedApplications.clear(); refreshApplications(); });
-elements.applicationNext.addEventListener("click", () => { state.applicationOffset += 200; state.selectedApplications.clear(); refreshApplications(); });
 elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; clearTimeout(state.conversationSearchTimer); state.conversationSearchTimer = setTimeout(() => refreshConversations(), 250); });
 elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; refreshConversations(); });
 elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.conversationItems); });
-elements.conversationMore.addEventListener("click", () => refreshConversations({ append: true }));
+const applicationTableScroll = document.querySelector("#applications-section .table-wrap");
+if (applicationTableScroll) applicationTableScroll.addEventListener("scroll", () => {
+  if (state.applicationLoading || applicationTableScroll.scrollTop + applicationTableScroll.clientHeight < applicationTableScroll.scrollHeight - 240) return;
+  if (state.applicationObjects.length >= state.applicationTotal) return;
+  refreshApplications({ append: true });
+});
+elements.conversations.addEventListener("scroll", () => {
+  const list = elements.conversations;
+  if (state.conversationLoading || list.scrollTop + list.clientHeight < list.scrollHeight - 240) return;
+  if (state.conversationItems.length >= state.conversationTotal) return;
+  refreshConversations({ append: true });
+});
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); });
 elements.reviewRefresh.addEventListener("click", () => refreshReviewSessions());
 elements.reviewSend.addEventListener("click", sendReviewApplication);
