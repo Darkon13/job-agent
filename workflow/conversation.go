@@ -46,6 +46,10 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		if err != nil {
 			return result, err
 		}
+		// The catalog reports the unread state together with the first sighting;
+		// storing it now keeps the badge accurate without waiting for the next
+		// discovery run.
+		candidate.UnreadCount = observation.UnreadCount
 		stored, created, err := workflow.repository.CreateConversation(ctx, candidate)
 		if err != nil {
 			return result, fmt.Errorf("store observed conversation %s: %w", observation.ExternalID, err)

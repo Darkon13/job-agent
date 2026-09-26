@@ -11,7 +11,7 @@ const state = {
   localReads: new Map(),
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
-  reviewQuery: "", reviewHasMore: false,
+  reviewQuery: "", reviewHasMore: false, reviewFocusPending: false,
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
@@ -145,14 +145,57 @@ async function captureQuestionnaire(item, button) {
       method: "POST", headers: { "Idempotency-Key": key },
     });
     if (!response.ok) throw new Error(String(response.status));
-    elements.reviewState.textContent = "Анкета захвачена — ответьте ниже и отправьте.";
-    refreshReviewSessions();
-    document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    state.applicationActionMessage = "";
+    const vacancyID = String(item.vacancy_url || "").match(/\/vacancy\/(\d+)/)?.[1] || "";
+    await focusReviewSession(vacancyID, item.profile_id);
   } catch (error) {
     state.applicationActionMessage = `Не удалось запросить анкету: ${error.message}`;
   }
   button.disabled = false;
   updateApplicationSelection(state.applicationObjects);
+}
+// matchingReviewSession finds the captured questionnaire among the listed
+// sessions: the vacancy identifies it, the profile disambiguates a vacancy
+// captured for several accounts.
+function matchingReviewSession(vacancyID, profileID) {
+  const sessions = state.reviewSessions || [];
+  const candidates = vacancyID ? sessions.filter((session) => reviewVacancyID(session) === vacancyID) : [];
+  return candidates.find((session) => session.profile_id === profileID) || candidates[0] || null;
+}
+// focusReviewSession waits for the asynchronously captured questionnaire and
+// selects exactly that card. Without it the review section keeps the first
+// session selected and the operator answers the wrong vacancy.
+async function focusReviewSession(vacancyID, profileID) {
+  if (!vacancyID) {
+    refreshReviewSessions();
+    document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  // The captured questionnaire may fall outside the active review filters.
+  if (elements.reviewFilter.value || state.reviewQuery) {
+    elements.reviewFilter.value = ""; elements.reviewSearch.value = ""; state.reviewQuery = "";
+  }
+  state.reviewSelected = null; state.reviewFocusPending = true;
+  const deadline = Date.now() + 60000;
+  try {
+    for (;;) {
+      await refreshReviewSessions();
+      const session = matchingReviewSession(vacancyID, profileID);
+      if (session) {
+        selectReviewSession(session);
+        document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        elements.reviewState.textContent = "HH ещё готовит анкету — обновите список проверок";
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } finally {
+    state.reviewFocusPending = false;
+    renderReviewSessions();
+  }
 }
 function browserCheckImageURL(session) {
   return `/api/v1/applications/${encodeURIComponent(session.application_id)}/browser-check/${encodeURIComponent(session.session_id)}/image?ts=${Date.now()}`;
@@ -1023,6 +1066,12 @@ async function cancelReviewSession(session) {
 // single card: the questionnaire is per vacancy, the profiles only choose
 // where the filled application is sent from.
 function reviewVacancyID(session) {
+  const external = session.vacancy?.external_id;
+  if (external) return String(external);
+  const platform = String(session.platform || "");
+  const definition = String(session.test_definition_id || "");
+  const prefix = `${platform}:vacancy:`;
+  if (platform && definition.startsWith(prefix)) return definition.slice(prefix.length);
   const url = safeExternalURL(session.vacancy?.url || "");
   return url ? (url.match(/\/vacancy\/(\d+)/)?.[1] || "") : "";
 }
@@ -1085,6 +1134,9 @@ function renderReviewSessions() {
   if (layout) layout.classList.toggle("empty", !sessions.length);
   if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
   if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {
+    // While a captured questionnaire is still being looked up, keep the list
+    // unselected instead of jumping to the top card.
+    if (state.reviewFocusPending) return;
     selectReviewSession(sessions[0]);
     return;
   }
