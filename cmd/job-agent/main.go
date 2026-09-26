@@ -1210,7 +1210,8 @@ func main() {
 // buildAPIHandler composes the public API chain. RequestID is outermost so the
 // access log always carries the correlation ID; the bearer token wraps both the
 // product API and the auth control plane, and gates /metrics as documented.
-// Authenticated requests then pass the metrics counters before routing.
+// Authenticated requests then pass the metrics counters and the short-lived
+// response cache before routing.
 func buildAPIHandler(
 	product http.Handler,
 	metrics *httpapi.MetricsAPI,
@@ -1218,7 +1219,7 @@ func buildAPIHandler(
 	authHandler func(http.Handler) http.Handler,
 	logger *slog.Logger,
 ) http.Handler {
-	handler := metrics.Handler(product)
+	handler := metrics.Handler(httpapi.NewResponseCache().Middleware(product))
 	if authHandler != nil {
 		handler = authHandler(handler)
 	}
