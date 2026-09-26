@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -303,6 +304,23 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	if err := handlers.workflow.ObserveConversationPresentation(ctx, conversation.ID, result.Presentation, result.ObservedAt); err != nil {
 		return err
 	}
+	// Chats are deleted together with their application, so remember which
+	// application a chat belongs to when the platform exposes the vacancy.
+	if applicationID := vacancyIDFromURL(result.Presentation.VacancyURL); applicationID != "" {
+		if applications, ok := handlers.repository.(interface {
+			Application(ctx context.Context, key core.ApplicationKey) (core.Application, error)
+		}); ok {
+			key := core.ApplicationKey{
+				ProfileID: conversation.ProfileID,
+				Vacancy:   core.VacancyKey{Platform: conversation.Platform, ExternalID: applicationID},
+			}
+			if application, err := applications.Application(ctx, key); err == nil {
+				if err := handlers.workflow.LinkConversationApplication(ctx, conversation.ID, application.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	for _, message := range result.Messages {
 		if _, _, err := handlers.repository.AppendConversationMessage(ctx, message, result.ObservedAt); err != nil {
 			// Message edits or parser changes must not fail the whole sync; the
@@ -391,4 +409,15 @@ func decodeTaskPayload(task core.Task, target any) error {
 		return fmt.Errorf("decode conversation task %s: %w", task.Type, err)
 	}
 	return nil
+}
+
+var vacancyURLPattern = regexp.MustCompile(`/vacancy/(\d+)`)
+
+// vacancyIDFromURL extracts the vacancy identity from a chat presentation URL.
+func vacancyIDFromURL(value string) string {
+	match := vacancyURLPattern.FindStringSubmatch(value)
+	if len(match) != 2 {
+		return ""
+	}
+	return match[1]
 }

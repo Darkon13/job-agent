@@ -129,6 +129,11 @@ func (repository *Repository) PurgeOrphanConversations(ctx context.Context, prof
 		if conversation.ProfileID != profileID {
 			continue
 		}
+		if conversation.ApplicationID == "" {
+			// Conversations discovered without a linked application are kept:
+			// an empty link is "unknown", not "removed".
+			continue
+		}
 		if _, exists := active[conversation.ApplicationID]; exists {
 			continue
 		}

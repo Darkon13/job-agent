@@ -24,6 +24,7 @@ type gcStore interface {
 	storage.ApplicationPaceRepository
 	storage.ApplicationCampaignRepository
 	storage.ConversationRepository
+	storage.ConversationPurgeRepository
 	storage.ApplicationQueryRepository
 }
 
@@ -276,6 +277,37 @@ func TestOpenQuestionnaireStopsAfterParticipantLeft(t *testing.T) {
 		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
 		if err != nil || len(open) != 0 {
 			t.Fatalf("open after left=%#v err=%v", open, err)
+		}
+	})
+}
+
+func TestConversationPurgeKeepsUnlinkedChats(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+		unlinked, err := core.NewConversation("chat-unlinked", "hh", "primary", "external-unlinked", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateConversation(ctx, unlinked); err != nil {
+			t.Fatal(err)
+		}
+		linked, err := core.NewConversation("chat-orphan", "hh", "primary", "external-orphan", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		linked.ApplicationID = "application-removed-long-ago"
+		if _, _, err := repository.CreateConversation(ctx, linked); err != nil {
+			t.Fatal(err)
+		}
+
+		removed, err := repository.PurgeOrphanConversations(ctx, "primary")
+		if err != nil || removed != 1 {
+			t.Fatalf("purged=%d err=%v", removed, err)
+		}
+		conversations, err := repository.ListConversations(ctx, storage.ConversationFilter{ProfileID: "primary"})
+		if err != nil || len(conversations) != 1 || conversations[0].ID != "chat-unlinked" {
+			t.Fatalf("conversations=%#v err=%v", conversations, err)
 		}
 	})
 }
