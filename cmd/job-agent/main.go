@@ -803,7 +803,7 @@ func main() {
 		workers = append(workers, applicationWorker)
 	}
 	applicationRemovalHandler, err := taskworker.NewApplicationRemovalHandler(
-		store, store, store, applicationStateObservers, taskworker.SystemClock{},
+		store, store, store, store, conversationTransports, applicationStateObservers, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create application removal handler: %v", err)
@@ -2702,7 +2702,7 @@ func conversationDiscoveryDefinitions(cfg appconfig.Config, instances map[string
 			if !profile.Enabled || !transports.CanDiscover(profileID) {
 				continue
 			}
-			payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: profileID})
+			payload, err := json.Marshal(core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: job.Action.RecentPages})
 			if err != nil {
 				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
 			}

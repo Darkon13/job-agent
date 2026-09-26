@@ -79,7 +79,7 @@ func (conversationTransportStub) SyncConversation(context.Context, core.ProfileI
 	return adapter.ConversationSyncResult{}, errors.New("not implemented")
 }
 
-func (conversationTransportStub) DiscoverConversations(context.Context, core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+func (conversationTransportStub) DiscoverConversations(context.Context, core.ProfileID, adapter.ConversationDiscoveryOptions) (adapter.ConversationDiscoveryResult, error) {
 	return adapter.ConversationDiscoveryResult{}, errors.New("not implemented")
 }
 
