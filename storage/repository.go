@@ -47,6 +47,14 @@ type TaskCount struct {
 	Count    int               `json:"count"`
 }
 
+// AuthWarning reports profiles whose tasks recently failed because the platform
+// rejected the stored session. The dashboard shows it as a sign-in banner.
+type AuthWarning struct {
+	ProfileID core.ProfileID `json:"profile_id"`
+	Count     int            `json:"count"`
+	LastAt    time.Time      `json:"last_at"`
+}
+
 // FailedTaskSummary is an operator-safe task view. It intentionally excludes
 // payload, source, idempotency key and correlation data.
 type FailedTaskSummary struct {

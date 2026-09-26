@@ -24,6 +24,7 @@ type RuntimeReadRepository interface {
 	storage.ApplicationQueryRepository
 	Stats(context.Context) (storage.RuntimeStats, error)
 	TaskCounts(context.Context) ([]storage.TaskCount, error)
+	AuthWarningProfiles(context.Context, time.Time) ([]storage.AuthWarning, error)
 	ApplicationCounts(context.Context) ([]storage.ApplicationCount, error)
 	ApplicationByID(context.Context, core.ApplicationID) (core.Application, error)
 	ListApplications(context.Context, storage.ApplicationFilter) ([]core.Application, error)
@@ -98,6 +99,7 @@ type DashboardSummary struct {
 	Profiles          []ProfileSummary               `json:"profiles,omitempty"`
 	Stats             storage.RuntimeStats           `json:"stats"`
 	Tasks             []storage.TaskCount            `json:"tasks"`
+	AuthWarnings      []storage.AuthWarning          `json:"auth_warnings,omitempty"`
 	Applications      []storage.ApplicationCount     `json:"applications"`
 	Campaigns         []ApplicationCampaignSummary   `json:"campaigns"`
 	Activity          []storage.ProfileActivityCount `json:"activity"`
@@ -327,6 +329,11 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load task summary")
 		return
 	}
+	authWarnings, err := api.repository.AuthWarningProfiles(request.Context(), api.now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		writeProblem(response, http.StatusInternalServerError, "load auth warnings")
+		return
+	}
 	applications, err := api.repository.ApplicationCounts(request.Context())
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load application summary")
@@ -371,6 +378,7 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		Profiles:          api.profiles,
 		Stats:             stats,
 		Tasks:             tasks,
+		AuthWarnings:      authWarnings,
 		Applications:      applications,
 		Campaigns:         campaignSummaries,
 		Activity:          activity,

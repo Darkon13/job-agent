@@ -538,6 +538,38 @@ func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
 	return counts, nil
 }
 
+// AuthWarningProfiles groups recent unauthorized task failures by profile so
+// the dashboard can tell the operator to sign in again.
+func (store *Store) AuthWarningProfiles(ctx context.Context, since time.Time) ([]storage.AuthWarning, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT profile_id, COUNT(*), MAX(updated_at)
+		FROM tasks
+		WHERE failure_category = ? AND status IN ('failed', 'retry_scheduled')
+			AND profile_id <> '' AND updated_at >= ?
+		GROUP BY profile_id ORDER BY MAX(updated_at) DESC`, string(core.ErrorUnauthorized), since.UnixNano())
+	if err != nil {
+		return nil, fmt.Errorf("load auth warnings: %w", err)
+	}
+	defer rows.Close()
+	warnings := make([]storage.AuthWarning, 0)
+	for rows.Next() {
+		var (
+			profileID core.ProfileID
+			count     int
+			lastAt    int64
+		)
+		if err := rows.Scan(&profileID, &count, &lastAt); err != nil {
+			return nil, fmt.Errorf("scan auth warning: %w", err)
+		}
+		warnings = append(warnings, storage.AuthWarning{
+			ProfileID: profileID, Count: count, LastAt: time.Unix(0, lastAt).UTC(),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate auth warnings: %w", err)
+	}
+	return warnings, nil
+}
+
 func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.FailedTaskSummary, error) {
 	if limit < 1 || limit > 200 {
 		return nil, errors.New("failed task limit must be between 1 and 200")

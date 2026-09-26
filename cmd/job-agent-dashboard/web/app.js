@@ -23,6 +23,7 @@ const elements = Object.fromEntries([
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt", "review-send",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
   "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
+  "account-auth", "account-auth-button", "account-auth-label",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -247,6 +248,18 @@ function updateCaptchaWarning() {
   elements.accountCaptchaLabel.textContent = `Нужно ввести капчу: ${profileDisplayName(target)}${count > 1 ? ` (${count})` : ""}`;
   elements.accountCaptchaButton.textContent = "Ввести капчу";
 }
+// updateAuthWarning surfaces profiles whose HH session was rejected: the
+// operator must sign in again before applications or campaigns can work.
+function updateAuthWarning() {
+  const warnings = state.summary?.auth_warnings || [];
+  const target = warnings.find((item) => item.profile_id === state.account) || warnings[0] || null;
+  elements.accountAuth.hidden = !target;
+  if (!target) return;
+  elements.accountAuth.dataset.profile = target.profile_id;
+  const count = Number(target.count || 0);
+  elements.accountAuthLabel.textContent = `HH отклонил сессию: ${profileDisplayName(target.profile_id)}${count > 1 ? ` (${count})` : ""} — нужен повторный вход`;
+}
+
 // startCaptchaCheck runs one browser check for the profile and then retries
 // the remaining parked applications: the platform guard is per account, so the
 // operator enters the captcha once instead of per application.
@@ -1452,6 +1465,7 @@ async function refreshSummary({ background = false } = {}) {
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
     updateCaptchaWarning();
+    updateAuthWarning();
     renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
@@ -1556,6 +1570,14 @@ elements.reply.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
   event.preventDefault();
   elements.replyForm.requestSubmit();
+});
+elements.accountAuthButton.addEventListener("click", () => {
+  const profile = elements.accountAuth.dataset.profile || "";
+  if (profile) {
+    const select = document.getElementById("auth-profile");
+    if (select) select.value = profile;
+  }
+  document.getElementById("auth-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true;
