@@ -191,14 +191,7 @@ func (workflow *ConversationWorkflow) LinkConversationApplication(ctx context.Co
 	if strings.TrimSpace(string(applicationID)) == "" {
 		return nil
 	}
-	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
-		if conversation.ApplicationID == applicationID {
-			return false, nil
-		}
-		conversation.ApplicationID = applicationID
-		return true, nil
-	})
-	if err != nil {
+	if _, err := workflow.repository.AttachConversationApplication(ctx, conversationID, applicationID, workflow.clock.Now()); err != nil {
 		return fmt.Errorf("link conversation to application: %w", err)
 	}
 	return nil

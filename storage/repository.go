@@ -324,4 +324,8 @@ type ConversationRepository interface {
 	// OpenQuestionnaireConversationIDs lists conversations where a questionnaire
 	// is still running: the latest prompt is not closed by PARTICIPANT_LEFT.
 	OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error)
+	// AttachConversationApplication links a chat to its application once. The
+	// identity is immutable through SaveConversation, so the link has its own
+	// operation.
+	AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID, now time.Time) (bool, error)
 }
