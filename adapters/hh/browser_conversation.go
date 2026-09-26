@@ -153,6 +153,7 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 	observedAt := time.Now().UTC()
 	result := make([]core.ConversationObservation, 0)
 	seenConversations := make(map[string]struct{})
+	truncated := true
 	nextFrom := ""
 	for page := 0; page < maxChatDiscoveryPages; page++ {
 		parameters := url.Values{
@@ -191,17 +192,78 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 		}
 		candidate := strings.TrimSpace(string(response.Chats.NextFrom))
 		if candidate == "" {
-			return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt}, nil
+			truncated = false
+			break
 		}
 		if candidate == nextFrom {
 			return adapter.ConversationDiscoveryResult{}, operationError(core.ErrorTemporaryFailure, "conversations.discover.browser", "HH conversation cursor did not advance", nil)
 		}
 		nextFrom = candidate
 	}
-	// The account can have thousands of historical chats; the catalog is
-	// ordered by last activity, so a bounded recent window is enough to keep
-	// the active set fresh instead of failing the whole discovery.
-	return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt, Truncated: true}, nil
+	if truncated {
+		// The account can have thousands of historical chats; the catalog is
+		// ordered by last activity, so a bounded recent window keeps the active
+		// set fresh. Chats with a stale unread badge fall outside that window,
+		// so the unread filter fetches them explicitly and the platform badge
+		// stays clearable from the local catalog.
+		if err := client.appendUnreadConversations(ctx, seenConversations, &result); err != nil {
+			return adapter.ConversationDiscoveryResult{}, err
+		}
+	}
+	return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt, Truncated: truncated}, nil
+}
+
+// appendUnreadConversations adds chats beyond the recent-activity window that
+// still carry unread messages. The unread filter returns a bounded list, so the
+// pass stays cheap even when the full catalog is large.
+func (client *BrowserConversationClient) appendUnreadConversations(ctx context.Context, seen map[string]struct{}, result *[]core.ConversationObservation) error {
+	const operation = "conversations.discover.unread.browser"
+	nextFrom := ""
+	for page := 0; page < maxChatDiscoveryPages; page++ {
+		parameters := url.Values{
+			"filterUnread":         {"true"},
+			"filterHasTextMessage": {"false"},
+		}
+		if nextFrom != "" {
+			parameters.Set("from", nextFrom)
+		}
+		var response hhChatListResponse
+		if err := client.getJSON(ctx, "/chatik/api/chats", parameters, &response, operation); err != nil {
+			return err
+		}
+		for _, item := range response.Chats.Items {
+			externalID := strings.TrimSpace(string(item.ID))
+			if externalID == "" {
+				return operationError(core.ErrorPermanentFailure, operation, "HH returned a conversation without id", nil)
+			}
+			if _, exists := seen[externalID]; exists {
+				continue
+			}
+			seen[externalID] = struct{}{}
+			observation := core.ConversationObservation{
+				ExternalID: externalID, Status: core.ConversationActive, UnreadCount: item.UnreadCount,
+			}
+			if item.LastMessage != nil {
+				message, include, err := mapHHMessageObservation(*item.LastMessage, item.CurrentParticipantID)
+				if err != nil {
+					return err
+				}
+				if include {
+					observation.LastMessage = &message
+				}
+			}
+			*result = append(*result, observation)
+		}
+		candidate := strings.TrimSpace(string(response.Chats.NextFrom))
+		if candidate == "" {
+			return nil
+		}
+		if candidate == nextFrom {
+			return operationError(core.ErrorTemporaryFailure, operation, "HH conversation cursor did not advance", nil)
+		}
+		nextFrom = candidate
+	}
+	return nil
 }
 
 func (client *BrowserConversationClient) SyncConversation(ctx context.Context, profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) (adapter.ConversationSyncResult, error) {
