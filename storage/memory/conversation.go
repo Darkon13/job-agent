@@ -112,6 +112,27 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 	return result, nil
 }
 
+// AttachConversationApplication mirrors the SQL link of a chat to its
+// application.
+func (repository *Repository) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID, now time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	conversation, exists := repository.conversations[id]
+	if !exists || conversation.ApplicationID != "" {
+		return false, nil
+	}
+	conversation.ApplicationID = applicationID
+	conversation.Revision++
+	if now.After(conversation.UpdatedAt) {
+		conversation.UpdatedAt = now
+	}
+	repository.conversations[id] = conversation
+	return true, nil
+}
+
 // PurgeOrphanConversations mirrors the SQL cleanup of conversations whose
 // application is no longer present.
 func (repository *Repository) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {

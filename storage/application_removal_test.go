@@ -311,3 +311,29 @@ func TestConversationPurgeKeepsUnlinkedChats(t *testing.T) {
 		}
 	})
 }
+
+func TestAttachConversationApplicationLinksOnce(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+		conversation, err := core.NewConversation("chat-attach", "hh", "primary", "external-attach", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		attached, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-1", now.Add(time.Minute))
+		if err != nil || !attached {
+			t.Fatalf("attach=%v err=%v", attached, err)
+		}
+		again, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-2", now.Add(2*time.Minute))
+		if err != nil || again {
+			t.Fatalf("second attach=%v err=%v", again, err)
+		}
+		stored, err := repository.Conversation(ctx, "chat-attach")
+		if err != nil || stored.ApplicationID != "application-1" {
+			t.Fatalf("conversation=%#v err=%v", stored, err)
+		}
+	})
+}

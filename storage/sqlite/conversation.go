@@ -119,6 +119,24 @@ func (store *Store) ListConversations(ctx context.Context, filter storage.Conver
 	return result, nil
 }
 
+// AttachConversationApplication links a chat to its application once.
+func (store *Store) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID, now time.Time) (bool, error) {
+	if id == "" || applicationID == "" || now.IsZero() {
+		return false, errors.New("conversation attach requires conversation, application and time")
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE conversations
+		SET application_id = ?, revision = revision + 1, updated_at = ?
+		WHERE id = ? AND application_id = ''`, applicationID, now.UnixNano(), id)
+	if err != nil {
+		return false, fmt.Errorf("attach conversation application: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count attached conversations: %w", err)
+	}
+	return affected > 0, nil
+}
+
 // PurgeOrphanConversations deletes conversations of the profile whose
 // application is no longer present (removed by retention or manually).
 func (store *Store) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {
