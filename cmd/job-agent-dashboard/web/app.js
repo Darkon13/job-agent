@@ -686,7 +686,9 @@ function updateMarkAllRead(items = []) {
   const unread = Number(state.conversationUnreadTotal || 0) || items.reduce((sum, item) => sum + Number(item.unread_count || 0), 0);
   const pending = (state.summary?.tasks || []).some((item) => item.type === "conversation.mark_read" && ["new", "processing", "retry_scheduled", "waiting_confirmation"].includes(item.status));
   elements.markAllRead.textContent = unread ? `Прочитать все (${unread})` : "Все прочитано";
-  elements.markAllRead.disabled = state.markAllReadBusy || pending || unread === 0;
+  // Pending tasks must not lock the button: pressing it again only enqueues the
+  // remaining unread chats.
+  elements.markAllRead.disabled = state.markAllReadBusy || unread === 0;
   if (pending) elements.conversationBulkState.textContent = "Прочтение уже выполняется";
 }
 function renderMessages(items = []) {
