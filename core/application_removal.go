@@ -40,14 +40,25 @@ func (request ApplicationRemoval) Eligible(application Application, state Applic
 	if request.Reason == ApplicationRemovalRetentionValidation {
 		return application.Status == ApplicationWaitingValidation || application.Status == ApplicationSkipped
 	}
-	if application.Status != ApplicationSubmitted || state.ApplicationID != application.ID ||
-		!state.ObservedAt.Equal(request.ObservedAt) || !FreshApplicationObservation(state.ObservedAt, now) {
+	if application.Status != ApplicationSubmitted || state.ApplicationID != application.ID {
 		return false
 	}
 	switch request.Reason {
 	case ApplicationRemovalRetentionRejected:
-		return state.Disposition == ApplicationDispositionRejected
+		if state.Disposition != ApplicationDispositionRejected {
+			return false
+		}
+		if state.ObservedAt.Equal(request.ObservedAt) && FreshApplicationObservation(state.ObservedAt, now) {
+			return true
+		}
+		// A refusal already hidden from the platform list (so absent from the
+		// latest observation) still removes the local record once the
+		// application aged past the retention window.
+		return !request.StaleBefore.IsZero() && application.UpdatedAt.Before(request.StaleBefore)
 	case ApplicationRemovalRetentionStale:
+		if !state.ObservedAt.Equal(request.ObservedAt) || !FreshApplicationObservation(state.ObservedAt, now) {
+			return false
+		}
 		return state.Disposition == ApplicationDispositionPending && !request.StaleBefore.IsZero() &&
 			application.SubmittedAt != nil && !application.SubmittedAt.After(request.StaleBefore)
 	}

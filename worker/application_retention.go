@@ -102,6 +102,20 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 		}
 		state, exists := matchApplicationObservation(application, observed)
 		if !exists {
+			// The negotiation may already be hidden on the platform, so the
+			// observation no longer lists it. A stored refusal that aged past
+			// the window still removes the local record; the next run purges
+			// the orphaned platform refusal if it reappears.
+			if payload.RemoveRejected {
+				if stored, stateErr := handler.states.ApplicationPlatformState(ctx, application.ID); stateErr == nil &&
+					stored.Disposition == core.ApplicationDispositionRejected && !application.UpdatedAt.After(staleBefore) {
+					if _, _, err := handler.removal.EnqueueRemoval(ctx, core.ApplicationRemovePayload{
+						ApplicationID: application.ID, Reason: core.ApplicationRemovalRetentionRejected, StaleAfter: payload.StaleAfter,
+					}, "retention:"+string(task.ID)); err != nil {
+						return err
+					}
+				}
+			}
 			continue
 		}
 		if err := handler.states.SaveApplicationPlatformState(ctx, state); err != nil {
