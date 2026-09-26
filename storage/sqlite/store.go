@@ -257,9 +257,11 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 		state, err := scanApplicationPlatformState(tx.QueryRowContext(ctx, `SELECT application_id, external_negotiation_id, platform_state,
 			disposition, viewed_by_opponent, platform_updated_at, observed_at FROM application_platform_states WHERE application_id = ?`, id))
 		if errors.Is(err, sql.ErrNoRows) {
-			return core.ApplicationTombstone{}, false, nil
-		}
-		if err != nil {
+			// Questionnaires and tests never submitted have no platform state.
+			// Their removal is governed by the application status and age, so
+			// the eligibility check runs with an empty observation.
+			state = core.ApplicationPlatformState{}
+		} else if err != nil {
 			return core.ApplicationTombstone{}, false, err
 		}
 		if !request.Eligible(application, state, removedAt) {

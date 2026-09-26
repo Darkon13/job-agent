@@ -201,3 +201,45 @@ func TestApplicationQueryFiltersWholeDatasetBeforePagination(t *testing.T) {
 		}
 	})
 }
+
+func TestApplicationGCRemovesStaleQuestionnaireWithoutPlatformState(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 9, 0, 0, 0, time.UTC)
+		vacancy := core.Vacancy{Platform: "hh", ExternalID: "v-questionnaire", Title: "Go developer", State: core.VacancyStateOpen, ObservedAt: now.Add(-14 * 24 * time.Hour)}
+		if _, err := repository.UpsertVacancy(ctx, vacancy); err != nil {
+			t.Fatal(err)
+		}
+		application, err := core.NewApplication("application-stale-questionnaire", core.ApplicationKey{
+			ProfileID: "primary", Vacancy: vacancy.Key(),
+		}, now.Add(-14*24*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateApplication(ctx, application); err != nil {
+			t.Fatal(err)
+		}
+		if err := application.Transition(core.ApplicationPreparing, now.Add(-13*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveApplication(ctx, application, core.ApplicationNew); err != nil {
+			t.Fatal(err)
+		}
+		application.DecisionCode = "questionnaire_required"
+		if err := application.Transition(core.ApplicationWaitingValidation, now.Add(-13*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveApplication(ctx, application, core.ApplicationPreparing); err != nil {
+			t.Fatal(err)
+		}
+
+		tombstone, removed, err := repository.RemoveApplication(ctx, application.ID,
+			core.ApplicationRemoval{Reason: core.ApplicationRemovalRetentionValidation}, now)
+		if err != nil || !removed || tombstone.Reason != core.ApplicationRemovalRetentionValidation {
+			t.Fatalf("removed=%v tombstone=%#v err=%v", removed, tombstone, err)
+		}
+		if _, err := repository.ApplicationByID(ctx, application.ID); err == nil {
+			t.Fatal("application still present after removal")
+		}
+	})
+}
