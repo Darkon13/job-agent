@@ -570,8 +570,14 @@ function renderActivityObservations(items = []) {
 // stays pinned at the top even when a filter no longer matches it: reading a
 // chat must not yank it out of sight until the operator selects another one.
 function visibleConversations(items = []) {
-  const visible = [...items];
+  let visible = [...items];
   const selected = state.selectedConversation;
+  if (state.conversationFilter === "unread") {
+    // Read chats leave the unread filter as soon as the read action is local,
+    // even if the platform page still carries the old counter. The open chat
+    // stays pinned until the operator selects another one.
+    visible = visible.filter((item) => item.unread_count || item.id === selected?.id);
+  }
   if (selected && !visible.some((item) => item.id === selected.id)) {
     // Reading a chat clears its counter, so the unread filter drops it from
     // the server page; the open chat stays at its previous position until the
