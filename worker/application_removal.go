@@ -84,8 +84,14 @@ func (handler *ApplicationRemovalHandler) Handle(ctx context.Context, task core.
 			}
 			state, found := matchApplicationObservation(application, result)
 			if !found {
-				return nil
-			} // Missing/ambiguous is not proof of rejection.
+				// A stored refusal whose negotiation was already hidden keeps
+				// its meaning: the record is old and the platform is clean.
+				stored, stateErr := handler.states.ApplicationPlatformState(ctx, application.ID)
+				if stateErr != nil || stored.Disposition != core.ApplicationDispositionRejected {
+					return nil // Missing/ambiguous is not proof of rejection.
+				}
+				state = stored
+			}
 			if err := handler.states.SaveApplicationPlatformState(ctx, state); err != nil {
 				return err
 			}

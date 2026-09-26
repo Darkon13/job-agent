@@ -301,3 +301,48 @@ func TestApplicationRetentionPurgesConversationsOfRemovedApplications(t *testing
 		t.Fatalf("conversations=%#v want only chat-kept", conversations)
 	}
 }
+
+func TestApplicationRetentionRemovesStoredRejectionsMissingFromObservation(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	application := storeSubmittedApplication(t, repository, "application-hidden-refusal", "vacancy-hidden", now.Add(-40*24*time.Hour))
+	if err := repository.SaveApplicationPlatformState(context.Background(), core.ApplicationPlatformState{
+		ApplicationID: application.ID, ExternalNegotiationID: "n-hidden", PlatformState: "discard",
+		Disposition: core.ApplicationDispositionRejected, ObservedAt: now.Add(-38 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("store platform state: %v", err)
+	}
+	observers := NewApplicationStateObserverRegistry()
+	if err := observers.Register("primary", retentionObserver{result: adapter.ApplicationStateObservationResult{
+		ObservedAt: now,
+	}}); err != nil {
+		t.Fatalf("register observer: %v", err)
+	}
+	clock := &conversationClock{now: now}
+	removal, err := workflow.NewApplicationRemovalWorkflow(repository, queue, clock, &conversationIDs{})
+	if err != nil {
+		t.Fatalf("new removal workflow: %v", err)
+	}
+	handler, err := NewApplicationRetentionHandler(repository, repository, observers, removal, clock)
+	if err != nil {
+		t.Fatalf("new retention handler: %v", err)
+	}
+	payload, _ := json.Marshal(core.ApplicationRetentionPayload{
+		ProfileID: "primary", StaleAfter: core.Duration(30 * 24 * time.Hour), RemoveRejected: true,
+	})
+	task := core.Task{ID: "retention-hidden-refusal", Type: core.TaskApplicationRetention, ProfileID: "primary", Platform: "hh", Payload: payload}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle retention: %v", err)
+	}
+	if len(queue.Tasks()) != 1 {
+		t.Fatalf("remove tasks=%d want=1: %#v", len(queue.Tasks()), queue.Tasks())
+	}
+	var remove core.ApplicationRemovePayload
+	if err := json.Unmarshal(queue.Tasks()[0].Payload, &remove); err != nil {
+		t.Fatalf("decode removal: %v", err)
+	}
+	if remove.ApplicationID != application.ID || remove.Reason != core.ApplicationRemovalRetentionRejected {
+		t.Fatalf("removal=%#v", remove)
+	}
+}

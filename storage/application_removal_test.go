@@ -337,3 +337,24 @@ func TestAttachConversationApplicationLinksOnce(t *testing.T) {
 		}
 	})
 }
+
+func TestApplicationGCRemovesStoredRejectionAfterWindow(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+		application := gcApplication(t, repository, "stored-rejection", "Sber", now.Add(-40*24*time.Hour))
+		observedAt := now.Add(-38 * 24 * time.Hour)
+		if err := repository.SaveApplicationPlatformState(ctx, core.ApplicationPlatformState{
+			ApplicationID: application.ID, ExternalNegotiationID: "n-hidden", PlatformState: "discard",
+			Disposition: core.ApplicationDispositionRejected, ObservedAt: observedAt,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		tombstone, removed, err := repository.RemoveApplication(ctx, application.ID, core.ApplicationRemoval{
+			Reason: core.ApplicationRemovalRetentionRejected, ObservedAt: observedAt, StaleBefore: now.Add(-30 * 24 * time.Hour),
+		}, now)
+		if err != nil || !removed || tombstone.Reason != core.ApplicationRemovalRetentionRejected {
+			t.Fatalf("removed=%v tombstone=%#v err=%v", removed, tombstone, err)
+		}
+	})
+}
