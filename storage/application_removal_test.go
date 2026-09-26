@@ -421,3 +421,43 @@ func TestOpenQuestionnaireTracksBotPresenceWithoutOptions(t *testing.T) {
 		}
 	})
 }
+
+func TestMarkConversationsReadLocallySweepsUnreadOnly(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 14, 0, 0, 0, time.UTC)
+		for index, unread := range []int{2, 0, 1} {
+			id := core.ConversationID("chat-sweep-" + string(rune('a'+index)))
+			conversation, err := core.NewConversation(id, "hh", "primary", "external-"+string(id), now.Add(-time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			conversation.UnreadCount = unread
+			if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+				t.Fatal(err)
+			}
+		}
+		marked, err := repository.MarkConversationsReadLocally(ctx, "primary", now)
+		if err != nil || marked != 2 {
+			t.Fatalf("marked=%d err=%v", marked, err)
+		}
+		again, err := repository.MarkConversationsReadLocally(ctx, "primary", now.Add(time.Minute))
+		if err != nil || again != 0 {
+			t.Fatalf("second sweep marked=%d err=%v", again, err)
+		}
+		conversations, err := repository.ListConversations(ctx, storage.ConversationFilter{ProfileID: "primary"})
+		if err != nil || len(conversations) != 3 {
+			t.Fatalf("conversations=%#v err=%v", conversations, err)
+		}
+		for _, conversation := range conversations {
+			if conversation.UnreadCount != 0 {
+				t.Fatalf("conversation still unread: %#v", conversation)
+			}
+			// The already read chat is untouched by the sweep; the other two
+			// carry the read marker.
+			if conversation.ID != "chat-sweep-b" && conversation.LastReadAt == nil {
+				t.Fatalf("conversation has no read marker: %#v", conversation)
+			}
+		}
+	})
+}

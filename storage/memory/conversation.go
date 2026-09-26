@@ -130,6 +130,33 @@ func (repository *Repository) AttachConversationApplication(ctx context.Context,
 	return true, nil
 }
 
+// MarkConversationsReadLocally mirrors the SQL read sweep.
+func (repository *Repository) MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	marked := 0
+	for id, conversation := range repository.conversations {
+		if profileID != "" && conversation.ProfileID != profileID {
+			continue
+		}
+		if conversation.UnreadCount == 0 {
+			continue
+		}
+		changed, err := conversation.MarkRead(now)
+		if err != nil {
+			return marked, err
+		}
+		if changed {
+			repository.conversations[id] = conversation
+			marked++
+		}
+	}
+	return marked, nil
+}
+
 // PurgeOrphanConversations mirrors the SQL cleanup of conversations whose
 // application is no longer present.
 func (repository *Repository) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {

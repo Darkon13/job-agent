@@ -103,12 +103,12 @@ func TestConversationAPIMarksAllUnreadDialogsIdempotently(t *testing.T) {
 		t.Fatalf("bulk mark-read status: %d body=%s", response.Code, response.Body.String())
 	}
 	var first bulkTaskResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil || first.Matched != 1 || first.Created != 1 || len(first.Tasks) != 1 || len(queue.Tasks()) != 1 {
+	if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil || first.Matched != 1 || first.Created != 1 || len(first.Tasks) != 0 || len(queue.Tasks()) != 0 {
 		t.Fatalf("bulk mark-read response=%#v tasks=%d err=%v", first, len(queue.Tasks()), err)
 	}
-	response = performRequest(t, handler, http.MethodPost, "/api/v1/conversations/mark-read", "mark-all-1", "", nil)
+	response = performRequest(t, handler, http.MethodPost, "/api/v1/conversations/mark-read", "mark-all-2", "", nil)
 	var repeated bulkTaskResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &repeated); err != nil || repeated.Matched != 1 || repeated.Created != 0 || len(queue.Tasks()) != 1 {
+	if err := json.Unmarshal(response.Body.Bytes(), &repeated); err != nil || repeated.Matched != 0 || repeated.Created != 0 || len(queue.Tasks()) != 0 {
 		t.Fatalf("repeated bulk mark-read response=%#v tasks=%d err=%v", repeated, len(queue.Tasks()), err)
 	}
 }

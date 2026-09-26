@@ -163,36 +163,21 @@ func (api *ConversationAPI) markRead(response http.ResponseWriter, request *http
 	writeJSON(response, http.StatusAccepted, taskResponse{TaskID: task.ID, Created: created})
 }
 
+// markAllRead marks every unread chat of the profile read. The sweep is local
+// and instant: the operator's read action must not wait for hundreds of
+// platform calls, and the stored read marker keeps the platform counter from
+// restoring the badge.
 func (api *ConversationAPI) markAllRead(response http.ResponseWriter, request *http.Request) {
-	key, ok := requireIdempotencyKey(response, request)
-	if !ok {
+	if _, ok := requireIdempotencyKey(response, request); !ok {
 		return
 	}
-	conversations, err := api.repository.ListConversations(request.Context(), storage.ConversationFilter{
-		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
-		Status:    core.ConversationActive,
-	})
+	profileID := core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id")))
+	marked, err := api.repository.MarkConversationsReadLocally(request.Context(), profileID, time.Now().UTC())
 	if err != nil {
 		writeError(response, err)
 		return
 	}
-	result := bulkTaskResponse{Tasks: make([]taskResponse, 0)}
-	for _, conversation := range conversations {
-		if conversation.UnreadCount == 0 {
-			continue
-		}
-		result.Matched++
-		task, created, err := api.workflow.EnqueueMarkRead(request.Context(), conversation.ID, key)
-		if err != nil {
-			writeError(response, err)
-			return
-		}
-		if created {
-			result.Created++
-		}
-		result.Tasks = append(result.Tasks, taskResponse{TaskID: task.ID, Created: created})
-	}
-	writeJSON(response, http.StatusAccepted, result)
+	writeJSON(response, http.StatusAccepted, bulkTaskResponse{Tasks: []taskResponse{}, Matched: marked, Created: marked})
 }
 
 func (api *ConversationAPI) syncConversation(response http.ResponseWriter, request *http.Request) {

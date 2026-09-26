@@ -599,7 +599,7 @@ function visibleConversations(items = []) {
 // even if a background refresh still shows the platform value.
 function markLocallyRead(id) {
   if (!id) return;
-  state.localReads.set(id, Date.now() + 120_000);
+  state.localReads.set(id, Date.now() + 900_000);
 }
 function applyLocalReads(items = []) {
   if (!state.localReads.size) return { items, hiddenUnread: 0 };

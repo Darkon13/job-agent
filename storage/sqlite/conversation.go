@@ -139,6 +139,31 @@ func (store *Store) AttachConversationApplication(ctx context.Context, id core.C
 	return affected > 0, nil
 }
 
+// MarkConversationsReadLocally marks every unread chat read. An empty profile
+// sweeps every account (the dashboard "all accounts" view).
+func (store *Store) MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error) {
+	if now.IsZero() {
+		return 0, errors.New("conversation read sweep requires time")
+	}
+	query := `UPDATE conversations
+		SET unread_count = 0, last_read_at = ?, updated_at = ?, revision = revision + 1
+		WHERE unread_count > 0`
+	args := []any{now.UnixNano(), now.UnixNano()}
+	if profileID != "" {
+		query += ` AND profile_id = ?`
+		args = append(args, profileID)
+	}
+	result, err := store.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("mark conversations read: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count read conversations: %w", err)
+	}
+	return int(affected), nil
+}
+
 // PurgeOrphanConversations deletes conversations of the profile whose
 // application is no longer present (removed by retention or manually).
 func (store *Store) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {
