@@ -414,10 +414,10 @@ func TestOpenQuestionnaireTracksBotPresenceWithoutOptions(t *testing.T) {
 		if err != nil || len(open) != 1 || open[0] != "chat-bot" {
 			t.Fatalf("open=%#v err=%v", open, err)
 		}
-		appendMessage("m-left", "Событие переговоров HH (PARTICIPANT_LEFT)", core.MessageSystem, now.Add(3*time.Minute))
+		appendMessage("m-refusal", "К сожалению, сейчас мы не готовы пригласить вас на следующий этап.", core.MessageText, now.Add(3*time.Minute))
 		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
 		if err != nil || len(open) != 0 {
-			t.Fatalf("open after left=%#v err=%v", open, err)
+			t.Fatalf("open after refusal=%#v err=%v", open, err)
 		}
 	})
 }

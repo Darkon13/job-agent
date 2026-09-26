@@ -697,6 +697,15 @@ function updateMarkAllRead(items = []) {
   elements.markAllRead.disabled = state.markAllReadBusy || unread === 0;
   if (pending) elements.conversationBulkState.textContent = "Прочтение уже выполняется";
 }
+// withPendingMessages keeps optimistic bubbles visible while the durable task
+// and the next sync replace them; a pending answer must never flicker away.
+function withPendingMessages(items) {
+  const pending = (state.selectedMessages || []).filter((item) => String(item.id).startsWith("pending-"));
+  if (!pending.length) return items;
+  const stored = new Set((items || []).filter((item) => item.direction === "outgoing").map((item) => String(item.text || "").trim()));
+  return [...(items || []), ...pending.filter((item) => !stored.has(String(item.text || "").trim()))];
+}
+
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
   elements.messages.replaceChildren(...items.map((item) => {
@@ -749,7 +758,7 @@ async function sendQuestionnaireOption(message, option) {
       try {
         const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
         if (state.selectedConversation?.id === conversation.id) {
-          state.selectedMessages = fresh.items || [];
+          state.selectedMessages = withPendingMessages(fresh.items || []);
           renderMessages(state.selectedMessages);
         }
       } catch (_) {}
@@ -1385,7 +1394,7 @@ async function selectConversation(conversation) {
   try {
     const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`);
     if (state.selectedConversation?.id !== conversation.id) return;
-    state.selectedMessages = result.items || []; renderMessages(state.selectedMessages);
+    state.selectedMessages = withPendingMessages(result.items || []); renderMessages(state.selectedMessages);
   } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
   try {
     const sync = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/sync`);
@@ -1395,7 +1404,7 @@ async function selectConversation(conversation) {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
           if (state.selectedConversation?.id !== conversation.id) return;
-          state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages);
+          state.selectedMessages = withPendingMessages(fresh.items || []); renderMessages(state.selectedMessages);
           refreshSummary();
         } catch (_) {}
       }, 4000);
@@ -1451,7 +1460,7 @@ elements.replyForm.addEventListener("submit", async (event) => {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`);
           if (state.selectedConversation?.id !== conversationID) return;
-          const items = fresh.items || [];
+          const items = withPendingMessages(fresh.items || []);
           state.selectedMessages = items;
           renderMessages(items);
           const stored = items.some((item) => item.direction === "outgoing" && item.text === value);
@@ -1571,7 +1580,7 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
       if (sections.includes("conversations") && state.selectedConversation) {
         try {
           const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);
-          if (state.selectedConversation) { state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages); }
+          if (state.selectedConversation) { state.selectedMessages = withPendingMessages(fresh.items || []); renderMessages(state.selectedMessages); }
         } catch (_) {}
       }
     }, 1200);
