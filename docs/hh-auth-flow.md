@@ -99,18 +99,19 @@ Applicant login URL:
 /account/login?role=applicant&backurl=...&hhtmFrom=...
 ```
 
-Первый экран выбирает роль `APPLICANT`/`EMPLOYER`. После выбора applicant
-доступны credential types `PHONE` и `EMAIL`.
+Первый экран выбирает роль `APPLICANT`/`EMPLOYER`; после нажатия его
+`submit-button` появляется форма credential с вкладками phone (по умолчанию) и
+email.
 
-Наблюдаемые стабильные атрибуты:
+Наблюдаемые стабильные атрибуты (проверено 2026-09-26):
 
 | Элемент | `data-qa` |
 |---|---|
-| Phone credential | `credential-type-PHONE` с возможным suffix `checked` |
-| Email credential | `credential-type-EMAIL` с возможным suffix `checked` |
+| Phone credential | `credential-type-phone` с возможным suffix `checked` |
+| Email credential | `credential-type-email` с возможным suffix `checked` |
 | Country calling code | `magritte-phone-input-calling-code-input` |
 | National phone number | `magritte-phone-input-national-number-input` |
-| Email | `applicant-login-input-email`, form name `username` |
+| Email | `applicant-login-input-email`, form name `login` |
 | Continue | `submit-button` |
 | Password branch | `expand-login-by-password` |
 | Social methods | `account-login-social-show-more` |
@@ -118,8 +119,12 @@ Applicant login URL:
 | Resend OTP | `applicant-login-button-code-sender` |
 | Change credential | `change-credential-button` |
 
-Suffix `checked` в `data-qa` нельзя считать частью точного селектора. Использовать
-prefix/role locator и проверять фактический `checked` state.
+Вкладки credential — это radio-input, закрытые собственным label, поэтому клик
+по input перехватывается и не срабатывает: кликать нужно по
+`label:has(input[data-qa="credential-type-email"])` (или `-phone`).
+`applicant-login-input-phone` — это контейнер, а не поле ввода; номер вводится в
+`magritte-phone-input-national-number-input`, код страны уже содержит `+7`.
+Suffix `checked` в `data-qa` нельзя считать частью точного селектора.
 
 Старый reference implementation использует `login-input-username`,
 `account-login-code-input` и `magritte-pincode-input-field`. Первый селектор уже

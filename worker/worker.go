@@ -39,10 +39,7 @@ type Config struct {
 	PollInterval      time.Duration
 	RetryBaseDelay    time.Duration
 	BlockedRetryDelay time.Duration
-	// UnauthorizedRetryDelay backs off tasks that need a fresh login; the
-	// session cannot heal on its own, so a short retry only burns attempts.
-	UnauthorizedRetryDelay time.Duration
-	MaxAttempts            int
+	MaxAttempts       int
 }
 
 func (config Config) Validate() error {
@@ -55,8 +52,7 @@ func (config Config) Validate() error {
 	if config.LeaseDuration <= 0 || config.HeartbeatInterval <= 0 || config.HeartbeatInterval >= config.LeaseDuration {
 		return errors.New("worker requires heartbeat interval shorter than a positive lease duration")
 	}
-	if config.PollInterval <= 0 || config.RetryBaseDelay <= 0 || config.BlockedRetryDelay <= 0 ||
-		config.UnauthorizedRetryDelay <= 0 || config.MaxAttempts < 1 {
+	if config.PollInterval <= 0 || config.RetryBaseDelay <= 0 || config.BlockedRetryDelay <= 0 || config.MaxAttempts < 1 {
 		return errors.New("worker requires positive polling, retry delays and max attempts")
 	}
 	return nil
@@ -173,10 +169,7 @@ func (worker *Worker) retryAt(operationError core.OperationError, attempts int, 
 	if operationError.RetryAfter != nil && operationError.RetryAfter.After(now) {
 		return *operationError.RetryAfter
 	}
-	switch operationError.Category {
-	case core.ErrorUnauthorized:
-		return now.Add(worker.config.UnauthorizedRetryDelay)
-	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
+	if operationError.Category == core.ErrorValidationRequired || operationError.Category == core.ErrorConfirmationRequired {
 		return now.Add(worker.config.BlockedRetryDelay)
 	}
 	delay := worker.config.RetryBaseDelay
@@ -248,7 +241,10 @@ func handlerFailureMessage(err error) string {
 func retryable(category core.ErrorCategory) bool {
 	switch category {
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded,
-		core.ErrorUnauthorized, core.ErrorValidationRequired, core.ErrorConfirmationRequired, core.ErrorAmbiguousResult:
+		core.ErrorValidationRequired, core.ErrorConfirmationRequired, core.ErrorAmbiguousResult:
+		// Unauthorized is intentionally absent: the stored session cannot heal
+		// on its own, and repeated attempts only spam the platform until the
+		// operator signs in again.
 		return true
 	default:
 		return false

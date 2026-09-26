@@ -20,8 +20,12 @@ const (
 )
 
 const (
-	loginEmailType      = `[data-qa^="credential-type-EMAIL"]`
+	// The credential tabs are radio inputs covered by their label, so the
+	// driver clicks the label and never the input itself.
+	loginEmailTypeLabel = `label:has(input[data-qa="credential-type-email"])`
+	loginPhoneTypeLabel = `label:has(input[data-qa="credential-type-phone"])`
 	loginEmailInput     = `input[data-qa="applicant-login-input-email"]`
+	loginPhoneInput     = `input[data-qa="magritte-phone-input-national-number-input"]`
 	loginSubmitButton   = `[data-qa="submit-button"]`
 	loginOTPInput       = `input[data-qa="magritte-pincode-input-field"]`
 	loginCaptchaImage   = `img[data-qa="account-captcha-picture"]`
@@ -102,16 +106,36 @@ func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSessio
 		if outcome, found, err := driver.challenge(ctx, setting); found || err != nil {
 			return outcome, err
 		}
-		// The login page may start on the phone credential; prefer e-mail when
-		// the switch is present. Failure is ignored because the page may
-		// already show the e-mail form.
-		_ = driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
-			Action: "click", Selector: loginEmailType, TimeoutMS: 2_000,
-		})
-		if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
-			Action: "fill", Selector: loginEmailInput, Value: input.Value, TimeoutMS: 10_000,
-		}); err != nil {
-			return auth.Outcome{}, err
+		// The current login page opens on the account-type card; the credential
+		// form appears only after its submit button is pressed.
+		if !driver.visible(ctx, setting.ProfileID, loginEmailInput) && !driver.visible(ctx, setting.ProfileID, loginPhoneInput) {
+			if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
+				Action: "click", Selector: loginSubmitButton, TimeoutMS: 10_000,
+			}); err != nil {
+				return auth.Outcome{}, err
+			}
+		}
+		if looksLikePhone(input.Value) {
+			// The phone tab is the default; select it explicitly in case the
+			// form kept the e-mail tab. Failure is ignored because the page may
+			// already show the phone form.
+			_ = driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
+				Action: "click", Selector: loginPhoneTypeLabel, TimeoutMS: 2_000,
+			})
+			if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
+				Action: "fill", Selector: loginPhoneInput, Value: nationalPhone(input.Value), TimeoutMS: 10_000,
+			}); err != nil {
+				return auth.Outcome{}, err
+			}
+		} else {
+			_ = driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
+				Action: "click", Selector: loginEmailTypeLabel, TimeoutMS: 2_000,
+			})
+			if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
+				Action: "fill", Selector: loginEmailInput, Value: input.Value, TimeoutMS: 10_000,
+			}); err != nil {
+				return auth.Outcome{}, err
+			}
 		}
 		if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
 			Action: "click", Selector: loginSubmitButton, TimeoutMS: 10_000,
@@ -236,6 +260,42 @@ func (driver *LoginDriver) visible(ctx context.Context, profileID core.ProfileID
 		Action: "wait", Selector: selector, State: "visible", TimeoutMS: elementProbeMS,
 	})
 	return err == nil
+}
+
+// looksLikePhone reports whether the operator typed a phone number instead of
+// an e-mail address: HH renders a different credential tab and input for it.
+func looksLikePhone(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.Contains(trimmed, "@") {
+		return false
+	}
+	digits := 0
+	for _, symbol := range trimmed {
+		switch {
+		case symbol >= '0' && symbol <= '9':
+			digits++
+		case symbol == '+', symbol == '-', symbol == '(', symbol == ')', symbol == ' ':
+		default:
+			return false
+		}
+	}
+	return digits >= 5
+}
+
+// nationalPhone keeps the local part of a Russian phone number: the national
+// number field expects ten digits and the calling-code field already holds +7.
+func nationalPhone(value string) string {
+	digits := make([]rune, 0, len(value))
+	for _, symbol := range value {
+		if symbol >= '0' && symbol <= '9' {
+			digits = append(digits, symbol)
+		}
+	}
+	normalized := string(digits)
+	if len(normalized) == 11 && (normalized[0] == '7' || normalized[0] == '8') {
+		return normalized[1:]
+	}
+	return normalized
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {

@@ -28,6 +28,7 @@ type runtimeRepository struct {
 	conversations      []core.Conversation
 	openQuestionnaires []core.ConversationID
 	tailoring          *core.ApplicationTailoring
+	authWarnings       []storage.AuthWarning
 	err                error
 }
 
@@ -37,6 +38,10 @@ func (repository *runtimeRepository) Stats(context.Context) (storage.RuntimeStat
 
 func (repository *runtimeRepository) TaskCounts(context.Context) ([]storage.TaskCount, error) {
 	return repository.tasks, repository.err
+}
+
+func (repository *runtimeRepository) AuthWarningProfiles(context.Context, time.Time) ([]storage.AuthWarning, error) {
+	return repository.authWarnings, repository.err
 }
 
 func (repository *runtimeRepository) ApplicationCounts(context.Context) ([]storage.ApplicationCount, error) {
@@ -191,6 +196,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		conversations:      []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
 		openQuestionnaires: []core.ConversationID{"conversation-1"},
 		tailoring:          &tailoring,
+		authWarnings:       []storage.AuthWarning{{ProfileID: "primary", Count: 2, LastAt: now}},
 	}
 	api, err := NewRuntimeAPI(repository, nil)
 	if err != nil {
@@ -223,7 +229,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"conversation_stats":{"total":1,"unread":2,"active":0}`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"conversation_stats":{"total":1,"unread":2,"active":0}`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`, `"auth_warnings":[{"profile_id":"primary","count":2`) {
 		t.Fatalf("unexpected summary: %s", body)
 	}
 	if body := response.Body.String(); strings.Contains(body, `"conversation-1"`) {

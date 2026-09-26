@@ -21,8 +21,7 @@ func workerConfig(taskType core.TaskType) Config {
 	return Config{
 		ID: "worker-1", TaskType: taskType, LeaseDuration: time.Minute,
 		HeartbeatInterval: 20 * time.Second, PollInterval: time.Second,
-		RetryBaseDelay: 5 * time.Second, BlockedRetryDelay: 5 * time.Minute,
-		UnauthorizedRetryDelay: 30 * time.Minute, MaxAttempts: 3,
+		RetryBaseDelay: 5 * time.Second, BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 3,
 	}
 }
 
@@ -148,7 +147,7 @@ func TestWorkerSchedulesRateLimitAtRetryAfterAndReleasesLease(t *testing.T) {
 	}
 }
 
-func TestWorkerBacksOffUnauthorizedUntilRelogin(t *testing.T) {
+func TestWorkerFailsUnauthorizedWithoutRetrying(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	queue := brokermemory.NewQueue()
 	enqueueWorkerTask(t, queue, "auth", core.TaskVacancySearchPage, now)
@@ -162,8 +161,8 @@ func TestWorkerBacksOffUnauthorizedUntilRelogin(t *testing.T) {
 		t.Fatalf("run once: worked=%t err=%v", worked, err)
 	}
 	task := queue.Tasks()[0]
-	if task.Status != core.TaskRetryScheduled || !task.AvailableAt.Equal(now.Add(30*time.Minute)) {
-		t.Fatalf("unexpected unauthorized retry: %#v", task)
+	if task.Status != core.TaskFailed || task.Failure == nil || task.Failure.Category != core.ErrorUnauthorized {
+		t.Fatalf("unauthorized task kept retrying: %#v", task)
 	}
 }
 
