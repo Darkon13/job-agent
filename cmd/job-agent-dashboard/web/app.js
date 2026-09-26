@@ -76,7 +76,7 @@ function applicationReason(item) {
   if (item.disposition === "rejected") return "HH подтвердил отказ — объект подходит для автоматической очистки";
   if (item.disposition === "pending") return item.viewed_by_opponent === true ? "Работодатель посмотрел отклик, но приглашения нет" : "Приглашения ещё нет";
   if ((item.status === "submitted" || item.decision_code === "already_applied") && !item.disposition) return "Состояние отклика ещё не синхронизировано с HH";
-  if (item.decision_code && item.decision_code !== "qualified") return decisionLabels[item.decision_code] || item.decision_code;
+  if (item.decision_code && item.decision_code !== "qualified") return item.decision_reason || decisionLabels[item.decision_code] || item.decision_code;
   if (item.failure_category) return failureLabels[item.failure_category] || `Ошибка: ${item.failure_category}`;
   switch (item.status) {
   case "new": return "Ожидает обработки";

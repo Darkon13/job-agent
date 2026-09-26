@@ -772,3 +772,21 @@ func TestApplicationHandlerRemembersQuotaFailure(t *testing.T) {
 		t.Fatalf("application=%#v err=%v", application, err)
 	}
 }
+
+func TestApplicationHandlerSkipsResponseImpossibleVacancy(t *testing.T) {
+	transport := &fakeApplicationTransport{err: &core.OperationError{
+		Category: core.ErrorValidationRequired, Operation: "applications.submit.browser", Platform: "hh",
+		Message:  "HH currently does not allow an application to this vacancy",
+		Metadata: map[string]string{"code": "response_impossible"},
+	}}
+	handler, repository, task, _ := applicationFixture(t, StaticApplicationPlans{"profile-1": liveApplicationPlan("resume-1")}, transport)
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	application, err := repository.Application(context.Background(), core.ApplicationKey{
+		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
+	})
+	if err != nil || application.Status != core.ApplicationSkipped || application.DecisionCode != "vacancy_closed" {
+		t.Fatalf("application=%#v err=%v", application, err)
+	}
+}
