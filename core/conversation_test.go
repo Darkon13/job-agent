@@ -166,3 +166,37 @@ func TestConversationFollowUpSelectionRequiresSafePolicy(t *testing.T) {
 		t.Fatal("expected selected follow-up without incoming cancellation to fail")
 	}
 }
+
+func TestConversationMarkReadSuppressesStalePlatformCounter(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	conversation, err := NewConversation("chat", "hh", "primary", "external", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	incoming := now.Add(-30 * time.Minute)
+	conversation.LastIncomingAt = &incoming
+	if _, err := conversation.MarkRead(now); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	if conversation.UnreadCount != 0 || conversation.LastReadAt == nil {
+		t.Fatalf("conversation=%#v", conversation)
+	}
+
+	// The platform still reports the old unread items; the operator's read wins.
+	if _, err := conversation.ObserveCatalogState(ConversationActive, 3, now.Add(time.Minute)); err != nil {
+		t.Fatalf("observe stale counter: %v", err)
+	}
+	if conversation.UnreadCount != 0 {
+		t.Fatalf("stale counter restored: %#v", conversation)
+	}
+
+	// A newer incoming message makes the counter meaningful again.
+	newer := now.Add(2 * time.Minute)
+	conversation.LastIncomingAt = &newer
+	if _, err := conversation.ObserveCatalogState(ConversationActive, 1, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("observe fresh counter: %v", err)
+	}
+	if conversation.UnreadCount != 1 {
+		t.Fatalf("fresh counter ignored: %#v", conversation)
+	}
+}

@@ -184,9 +184,13 @@ type Conversation struct {
 	LastMessageAt  *time.Time         `json:"last_message_at,omitempty"`
 	LastIncomingAt *time.Time         `json:"last_incoming_at,omitempty"`
 	LastOutgoingAt *time.Time         `json:"last_outgoing_at,omitempty"`
-	CreatedAt      time.Time          `json:"created_at"`
-	UpdatedAt      time.Time          `json:"updated_at"`
-	Revision       uint64             `json:"revision"`
+	// LastReadAt records the operator's read action. The platform counter does
+	// not always clear after mark-read, so a stale count for messages older
+	// than this moment stays suppressed.
+	LastReadAt *time.Time `json:"last_read_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	Revision   uint64     `json:"revision"`
 }
 
 func (conversation *Conversation) ObservePresentation(presentation ConversationPresentation, now time.Time) (bool, error) {
@@ -236,6 +240,12 @@ func (conversation *Conversation) ObserveCatalogState(status ConversationStatus,
 	if now.Before(conversation.UpdatedAt) {
 		return false, fmt.Errorf("conversation catalog observation: %w", ErrConversationObservationStale)
 	}
+	if unreadCount > 0 && conversation.LastReadAt != nil &&
+		(conversation.LastIncomingAt == nil || !conversation.LastIncomingAt.After(*conversation.LastReadAt)) {
+		// The operator already read everything up to the last incoming
+		// message; the platform still counts older unread items.
+		unreadCount = 0
+	}
 	if conversation.Status == status && conversation.UnreadCount == unreadCount {
 		return false, nil
 	}
@@ -247,7 +257,27 @@ func (conversation *Conversation) ObserveCatalogState(status ConversationStatus,
 }
 
 func (conversation *Conversation) MarkRead(now time.Time) (bool, error) {
-	return conversation.ObserveCatalogState(conversation.Status, 0, now)
+	hadUnread := conversation.UnreadCount > 0
+	changed, err := conversation.ObserveCatalogState(conversation.Status, 0, now)
+	if err != nil {
+		return false, err
+	}
+	// Repeating the action on an already read chat changes nothing; the marker
+	// only advances when there was something to read.
+	if !hadUnread && conversation.LastReadAt != nil {
+		return changed, nil
+	}
+	readAt := now
+	if conversation.LastReadAt != nil && !readAt.After(*conversation.LastReadAt) {
+		return changed, nil
+	}
+	conversation.LastReadAt = &readAt
+	if !changed {
+		conversation.UpdatedAt = now
+		conversation.Revision++
+		changed = true
+	}
+	return changed, nil
 }
 
 func (conversation Conversation) Validate() error {

@@ -358,3 +358,32 @@ func TestApplicationGCRemovesStoredRejectionAfterWindow(t *testing.T) {
 		}
 	})
 }
+
+func TestConversationReadMarkerRoundTrips(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+		conversation, err := core.NewConversation("chat-read", "hh", "primary", "external-read", now.Add(-time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		conversation.UnreadCount = 2
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := repository.Conversation(ctx, "chat-read")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stored.MarkRead(now); err != nil {
+			t.Fatal(err)
+		}
+		if err := repository.SaveConversation(ctx, stored, stored.Revision-1); err != nil {
+			t.Fatalf("save read conversation: %v", err)
+		}
+		reloaded, err := repository.Conversation(ctx, "chat-read")
+		if err != nil || reloaded.UnreadCount != 0 || reloaded.LastReadAt == nil {
+			t.Fatalf("reloaded=%#v err=%v", reloaded, err)
+		}
+	})
+}
