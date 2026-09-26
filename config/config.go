@@ -182,8 +182,11 @@ type JobAction struct {
 	TargetSuccessful int                                  `json:"target_successful,omitempty"`
 	MaxInFlight      int                                  `json:"max_in_flight,omitempty"`
 	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
-	Count            int                                  `json:"count,omitempty"`
-	Pause            core.Duration                        `json:"pause,omitempty"`
+	// RecentPages narrows the conversation discovery window for the frequent
+	// poll job; zero keeps the full window.
+	RecentPages int           `json:"recent_pages,omitempty"`
+	Count       int           `json:"count,omitempty"`
+	Pause       core.Duration `json:"pause,omitempty"`
 	// MinAge delays the validation refresh so fresh questionnaires keep their
 	// operator window before the recheck.
 	MinAge    core.Duration               `json:"min_age,omitempty"`
@@ -1689,6 +1692,9 @@ func (c Config) Validate() error {
 		case JobActionConversationSync:
 			if _, err := jobActionTargets(job, profiles); err != nil {
 				return err
+			}
+			if job.Action.RecentPages < 0 {
+				return fmt.Errorf("job %q recent_pages must not be negative", job.Tag)
 			}
 		case JobActionConversationFollowUpSelect:
 			targets, err := jobActionTargets(job, profiles)

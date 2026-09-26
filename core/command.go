@@ -560,11 +560,17 @@ type ConversationSendPayload struct {
 
 type ConversationDiscoverPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
+	// MaxPages bounds the recent-activity window of the frequent poll; zero
+	// keeps the full discovery window.
+	MaxPages int `json:"max_pages,omitempty"`
 }
 
 func (payload ConversationDiscoverPayload) Validate() error {
 	if payload.ProfileID == "" {
 		return errors.New("conversation discovery payload requires profile")
+	}
+	if payload.MaxPages < 0 {
+		return errors.New("conversation discovery payload max pages must not be negative")
 	}
 	return nil
 }

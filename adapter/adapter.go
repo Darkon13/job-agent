@@ -158,8 +158,15 @@ type ConversationDiscoveryResult struct {
 	Truncated bool
 }
 
+// ConversationDiscoveryOptions tunes the catalog read. The frequent poll uses a
+// small recent window; the scheduled discovery keeps the adapter default.
+type ConversationDiscoveryOptions struct {
+	// MaxPages bounds the recent-activity window; zero keeps the default.
+	MaxPages int
+}
+
 type ConversationDiscoverer interface {
-	DiscoverConversations(ctx context.Context, profileID core.ProfileID) (ConversationDiscoveryResult, error)
+	DiscoverConversations(ctx context.Context, profileID core.ProfileID, options ConversationDiscoveryOptions) (ConversationDiscoveryResult, error)
 }
 
 type ConversationTransport interface {

@@ -8,6 +8,7 @@ const state = {
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
   reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
+  messageRequest: new Map(), messageSignatures: new Map(),
   localReads: new Map(),
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
@@ -751,6 +752,28 @@ function withPendingMessages(items, conversationID) {
   return [...(items || []), ...pending.filter((item) => !stored.has(String(item.text || "").trim()))];
 }
 
+// messageSignature identifies a rendered message list so an unchanged refresh
+// leaves the panel alone instead of rebuilding it under the operator's eyes.
+function messageSignature(items) {
+  return (items || []).map((item) => `${item.id}:${item.status || ""}:${(item.text || "").length}`).join("|");
+}
+// loadConversationMessages refreshes the open chat through one ordered path:
+// a response that lost the race with a newer request never touches the panel.
+async function loadConversationMessages(conversationID, { live = false } = {}) {
+  const requestID = (state.messageRequest.get(conversationID) || 0) + 1;
+  state.messageRequest.set(conversationID, requestID);
+  const result = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages${live ? "?live=1" : ""}`);
+  if (state.selectedConversation?.id !== conversationID) return null;
+  if (state.messageRequest.get(conversationID) !== requestID) return null;
+  const items = withPendingMessages(result.items || [], conversationID);
+  state.selectedMessages = items;
+  const signature = messageSignature(items);
+  if (state.messageSignatures.get(conversationID) !== signature) {
+    state.messageSignatures.set(conversationID, signature);
+    renderMessages(items);
+  }
+  return items;
+}
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
   elements.messages.replaceChildren(...items.map((item) => {
@@ -1445,11 +1468,10 @@ async function selectConversation(conversation) {
   state.selectedConversation = conversation; renderConversations(state.conversationItems); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${profileDisplayName(conversation.profile_id)} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
   state.selectedMessages = [];
+  state.messageSignatures.delete(conversation.id);
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
-    const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`);
-    if (state.selectedConversation?.id !== conversation.id) return;
-    state.selectedMessages = withPendingMessages(result.items || [], conversation.id); renderMessages(state.selectedMessages);
+    await loadConversationMessages(conversation.id, { live: true });
   } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
   try {
     const sync = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/sync`);
@@ -1457,9 +1479,7 @@ async function selectConversation(conversation) {
       globalThis.setTimeout(async () => {
         if (state.selectedConversation?.id !== conversation.id) return;
         try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
-          if (state.selectedConversation?.id !== conversation.id) return;
-          state.selectedMessages = withPendingMessages(fresh.items || [], conversationID); renderMessages(state.selectedMessages);
+          await loadConversationMessages(conversation.id);
           refreshSummary();
         } catch (_) {}
       }, 4000);
@@ -1513,13 +1533,8 @@ elements.replyForm.addEventListener("submit", async (event) => {
       const confirm = async () => {
         if (state.selectedConversation?.id !== conversationID) return;
         try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`);
-          if (state.selectedConversation?.id !== conversationID) return;
-          const items = withPendingMessages(fresh.items || [], conversationID);
-          state.selectedMessages = items;
-          renderMessages(items);
-          const stored = items.some((item) => item.direction === "outgoing" && item.text === value);
-          if (stored) return;
+          const items = await loadConversationMessages(conversationID);
+          if (items && items.some((item) => item.direction === "outgoing" && item.text === value)) return;
         } catch (_) {}
         if (++attempts < 10) globalThis.setTimeout(confirm, 1500);
       };
@@ -1535,6 +1550,12 @@ elements.replyForm.addEventListener("submit", async (event) => {
       await refreshSummary();
     }
   } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
+});
+// Enter sends the reply; Shift+Enter keeps the newline.
+elements.reply.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  elements.replyForm.requestSubmit();
 });
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true;
@@ -1633,10 +1654,7 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
       if (sections.includes("applications")) await refreshApplications();
       if (sections.includes("conversations")) await refreshConversations();
       if (sections.includes("conversations") && state.selectedConversation) {
-        try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);
-          if (state.selectedConversation) { state.selectedMessages = withPendingMessages(fresh.items || [], state.selectedConversation.id); renderMessages(state.selectedMessages); }
-        } catch (_) {}
+        try { await loadConversationMessages(state.selectedConversation.id); } catch (_) {}
       }
     }, 1200);
   });
