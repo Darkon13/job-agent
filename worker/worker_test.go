@@ -21,7 +21,8 @@ func workerConfig(taskType core.TaskType) Config {
 	return Config{
 		ID: "worker-1", TaskType: taskType, LeaseDuration: time.Minute,
 		HeartbeatInterval: 20 * time.Second, PollInterval: time.Second,
-		RetryBaseDelay: 5 * time.Second, BlockedRetryDelay: 5 * time.Minute, MaxAttempts: 3,
+		RetryBaseDelay: 5 * time.Second, BlockedRetryDelay: 5 * time.Minute,
+		UnauthorizedRetryDelay: 30 * time.Minute, MaxAttempts: 3,
 	}
 }
 
@@ -147,12 +148,31 @@ func TestWorkerSchedulesRateLimitAtRetryAfterAndReleasesLease(t *testing.T) {
 	}
 }
 
-func TestWorkerSchedulesBlockedCategoryWithoutKeepingLease(t *testing.T) {
+func TestWorkerBacksOffUnauthorizedUntilRelogin(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	queue := brokermemory.NewQueue()
 	enqueueWorkerTask(t, queue, "auth", core.TaskVacancySearchPage, now)
 	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
 		return &core.OperationError{Category: core.ErrorUnauthorized, Operation: "vacancies.search.global"}
+	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	task := queue.Tasks()[0]
+	if task.Status != core.TaskRetryScheduled || !task.AvailableAt.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("unexpected unauthorized retry: %#v", task)
+	}
+}
+
+func TestWorkerSchedulesBlockedCategoryWithoutKeepingLease(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	queue := brokermemory.NewQueue()
+	enqueueWorkerTask(t, queue, "validation", core.TaskVacancySearchPage, now)
+	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{Category: core.ErrorValidationRequired, Operation: "vacancies.search.global"}
 	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
 	if err != nil {
 		t.Fatalf("new worker: %v", err)
