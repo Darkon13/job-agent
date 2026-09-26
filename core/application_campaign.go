@@ -243,6 +243,7 @@ type ApplicationCampaignProgress struct {
 	Skipped        int `json:"skipped"`
 	Failed         int `json:"failed"`
 	CaptchaBlocked int `json:"captcha_blocked,omitempty"`
+	QuotaBlocked   int `json:"quota_blocked,omitempty"`
 }
 
 func (item CampaignApplication) Validate() error {

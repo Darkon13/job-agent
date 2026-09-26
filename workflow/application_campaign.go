@@ -170,6 +170,11 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 		// applications, so the campaign fails and waits for the operator.
 		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "HH требует капчу: введите её и запустите рассылку снова")
 	}
+	if progress.QuotaBlocked > 0 {
+		// The daily platform budget is exhausted; only the next window can
+		// continue, so the campaign ends with an explicit reason.
+		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "дневной лимит откликов исчерпан: продолжите рассылку завтра")
+	}
 	if handler.clock.Now().Sub(campaign.CreatedAt) >= campaignMaxLifetime {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignExhausted, "campaign lifetime exceeded")
 	}
@@ -222,6 +227,9 @@ func (handler *ApplicationCampaignHandler) runTick(ctx context.Context, campaign
 	}
 	if progress.CaptchaBlocked > 0 {
 		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "HH требует капчу: введите её и запустите рассылку снова")
+	}
+	if progress.QuotaBlocked > 0 {
+		return handler.stop(ctx, campaign, core.ApplicationCampaignFailed, "дневной лимит откликов исчерпан: продолжите рассылку завтра")
 	}
 	scheduled, err = handler.scheduleApplications(ctx, campaign, states, campaign.MaxInFlight-progress.InFlight, priority)
 	if err != nil {
@@ -317,6 +325,9 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 	var progress core.ApplicationCampaignProgress
 	var nextCheckAt time.Time
 	for _, state := range states {
+		if state.Application.FailureCategory == core.ErrorQuotaExceeded {
+			progress.QuotaBlocked++
+		}
 		switch state.Application.Status {
 		case core.ApplicationSubmitted:
 			progress.Submitted++

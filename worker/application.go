@@ -564,6 +564,8 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 		return handler.finishFailure(ctx, application, plan, errors.New("application transport returned empty negotiation id"))
 	}
 	application.ExternalNegotiationID = result.ExternalNegotiationID
+	application.FailureCategory = ""
+	application.FailureMessage = ""
 	if err := application.Transition(core.ApplicationSubmitted, handler.clock.Now()); err != nil {
 		return err
 	}
@@ -895,6 +897,11 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		return handler.restoreTailoring(ctx, application)
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded, core.ErrorUnauthorized:
+		if operationError.Category == core.ErrorQuotaExceeded {
+			// The campaign reads this flag to stop with an explicit reason.
+			application.FailureCategory = operationError.Category
+			application.FailureMessage = operationError.Message
+		}
 		if err := application.Transition(core.ApplicationReady, now); err != nil {
 			return err
 		}
