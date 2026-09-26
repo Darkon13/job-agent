@@ -117,3 +117,35 @@ func applicationBudgetStore(t *testing.T, now time.Time, count int) (interface {
 	}
 	return store, applications
 }
+
+func TestStoreApplicationBudgetReplacesStaleWindowReservation(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	store, applications := applicationBudgetStore(t, now, 2)
+	windowStart := now.Truncate(24 * time.Hour)
+	first := core.ReserveApplicationBudgetParams{
+		ApplicationID: applications[0], ProfileID: "primary", Platform: "hh",
+		WindowStart: windowStart, WindowEnd: windowStart.Add(24 * time.Hour), Limit: 1, Now: now,
+	}
+	if _, err := store.ReserveApplicationBudget(ctx, first); err != nil {
+		t.Fatalf("reserve first window: %v", err)
+	}
+	// A crash after the reservation leaves it reserved forever; the next day
+	// the retry must reserve in the current window instead of failing.
+	next := first
+	next.WindowStart = windowStart.Add(24 * time.Hour)
+	next.WindowEnd = windowStart.Add(48 * time.Hour)
+	next.Now = now.Add(24 * time.Hour)
+	reservation, err := store.ReserveApplicationBudget(ctx, next)
+	if err != nil {
+		t.Fatalf("reserve next window: %v", err)
+	}
+	if reservation.State != core.ApplicationBudgetReserved || !reservation.WindowStart.Equal(next.WindowStart) {
+		t.Fatalf("reservation=%#v", reservation)
+	}
+	replacement := next
+	replacement.ApplicationID = applications[1]
+	if _, err := store.ReserveApplicationBudget(ctx, replacement); !core.ErrorIsCategory(err, core.ErrorQuotaExceeded) {
+		t.Fatalf("second application error=%v, want quota exceeded", err)
+	}
+}

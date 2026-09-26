@@ -35,11 +35,28 @@ func (store *Store) ReserveApplicationBudget(ctx context.Context, params core.Re
 		return core.ApplicationBudgetReservation{}, err
 	}
 	if found && existing.State != core.ApplicationBudgetReleased {
-		if existing.ProfileID != params.ProfileID || existing.Platform != params.Platform ||
-			!existing.WindowStart.Equal(params.WindowStart) || !existing.WindowEnd.Equal(params.WindowEnd) {
+		if existing.ProfileID != params.ProfileID || existing.Platform != params.Platform {
 			return core.ApplicationBudgetReservation{}, errors.New("application budget reservation conflicts with another window")
 		}
-		return existing, tx.Commit()
+		if existing.WindowStart.Equal(params.WindowStart) && existing.WindowEnd.Equal(params.WindowEnd) {
+			return existing, tx.Commit()
+		}
+		if !existing.WindowStart.Before(params.WindowStart) {
+			return core.ApplicationBudgetReservation{}, errors.New("application budget reservation conflicts with another window")
+		}
+		// A previous attempt crashed after reserving and before committing or
+		// releasing. The reservation belongs to a past window, so release it
+		// and reserve in the current one instead of failing forever.
+		if _, err := tx.ExecContext(ctx, `UPDATE application_budget_reservations SET state = ?, updated_at = ?
+			WHERE application_id = ? AND state = ?`,
+			core.ApplicationBudgetReleased, params.Now.UnixNano(), params.ApplicationID, core.ApplicationBudgetReserved); err != nil {
+			return core.ApplicationBudgetReservation{}, fmt.Errorf("release stale application budget reservation: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE application_budget_buckets SET used = used - 1
+			WHERE profile_id = ? AND platform = ? AND window_start = ? AND used > 0`,
+			existing.ProfileID, existing.Platform, existing.WindowStart.UnixNano()); err != nil {
+			return core.ApplicationBudgetReservation{}, fmt.Errorf("release stale application budget slot: %w", err)
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE application_budget_buckets SET used = used + 1
 		WHERE profile_id = ? AND platform = ? AND window_start = ? AND used < limit_value`,
