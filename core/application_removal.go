@@ -51,10 +51,10 @@ func (request ApplicationRemoval) Eligible(application Application, state Applic
 		if state.ObservedAt.Equal(request.ObservedAt) && FreshApplicationObservation(state.ObservedAt, now) {
 			return true
 		}
-		// A refusal already hidden from the platform list (so absent from the
-		// latest observation) still removes the local record once the
-		// application aged past the retention window.
-		return !request.StaleBefore.IsZero() && application.UpdatedAt.Before(request.StaleBefore)
+		// A refusal already hidden from the platform list is terminal for the
+		// applicant, so the local record can go without waiting for the age
+		// window used by pending responses.
+		return true
 	case ApplicationRemovalRetentionStale:
 		if !state.ObservedAt.Equal(request.ObservedAt) || !FreshApplicationObservation(state.ObservedAt, now) {
 			return false
