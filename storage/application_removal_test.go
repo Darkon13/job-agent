@@ -461,3 +461,35 @@ func TestMarkConversationsReadLocallySweepsUnreadOnly(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenQuestionnaireIgnoresApplicantInitiatedJoin(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
+		conversation, err := core.NewConversation("chat-outgoing", "hh", "primary", "external-outgoing", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+			ID: "m-join", ConversationID: "chat-outgoing", Direction: core.MessageIncoming,
+			Kind: core.MessageSystem, Status: core.MessageObserved,
+			Text: "Событие переговоров HH (PARTICIPANT_JOINED)", OccurredAt: now.Add(time.Minute),
+		}, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+			ID: "m-applicant", ConversationID: "chat-outgoing", Direction: core.MessageOutgoing,
+			Kind: core.MessageText, Status: core.MessageSent,
+			Text: "Добрый день! Подскажите, пожалуйста, актуальна ли ещё вакансия?", OccurredAt: now.Add(2 * time.Minute),
+		}, now.Add(2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		open, err := repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 0 {
+			t.Fatalf("applicant-initiated chat flagged: %#v err=%v", open, err)
+		}
+	})
+}
