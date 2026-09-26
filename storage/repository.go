@@ -297,6 +297,12 @@ type FollowUpFilter struct {
 	DueBefore      *time.Time
 }
 
+// ConversationPurgeRepository removes conversations whose application left the
+// working set; the application retention job uses it after removals.
+type ConversationPurgeRepository interface {
+	PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error)
+}
+
 type ConversationRepository interface {
 	CreateConversation(ctx context.Context, candidate core.Conversation) (stored core.Conversation, created bool, err error)
 	Conversation(ctx context.Context, id core.ConversationID) (core.Conversation, error)
@@ -315,4 +321,7 @@ type ConversationRepository interface {
 	// catalog, so the scheduler uses this to keep locally known pending
 	// prompts in sync instead of waiting for an operator to open the chat.
 	ConversationsAwaitingQuestionnaire(ctx context.Context, profileID core.ProfileID, since time.Time, limit int) ([]core.ConversationID, error)
+	// OpenQuestionnaireConversationIDs lists conversations where a questionnaire
+	// is still running: the latest prompt is not closed by PARTICIPANT_LEFT.
+	OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error)
 }

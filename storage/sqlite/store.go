@@ -279,6 +279,9 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 		return core.ApplicationTombstone{}, false, fmt.Errorf("store application tombstone: %w", err)
 	}
 	for _, statement := range []string{
+		`DELETE FROM conversation_follow_ups WHERE conversation_id IN (SELECT id FROM conversations WHERE application_id = ?)`,
+		`DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE application_id = ?)`,
+		`DELETE FROM conversations WHERE application_id = ?`,
 		`DELETE FROM application_tailorings WHERE application_id = ?`,
 		`DELETE FROM applications WHERE id = ?`,
 	} {

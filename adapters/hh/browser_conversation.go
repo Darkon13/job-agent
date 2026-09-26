@@ -556,6 +556,11 @@ func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (co
 		text = hhSystemMessagePrefix + " (" + messageType + ")"
 	} else if raw.Type != "" && raw.Type != "SIMPLE" && len(options) == 0 {
 		kind = core.MessageSystem
+		// Keep the platform event type in the text: the questionnaire badge and
+		// the operator both rely on PARTICIPANT_JOINED/PARTICIPANT_LEFT.
+		if messageType := strings.TrimSpace(raw.Type); messageType != "" {
+			text = hhSystemMessagePrefix + " (" + messageType + "): " + text
+		}
 	}
 	return core.ConversationMessageObservation{
 		ExternalID: externalID, Direction: direction, Kind: kind,

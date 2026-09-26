@@ -127,8 +127,8 @@ func TestApplicationGCProtectsAccountingHistoryAndConversations(t *testing.T) {
 		if _, err := repository.ApplicationByID(ctx, a.ID); err == nil {
 			t.Fatal("application content survived GC")
 		}
-		if messages, err := repository.ConversationMessages(ctx, "chat"); err != nil || len(messages) != 1 {
-			t.Fatalf("chat lost: %v %v", messages, err)
+		if conversations, err := repository.ListConversations(ctx, storage.ConversationFilter{ProfileID: "primary"}); err != nil || len(conversations) != 0 {
+			t.Fatalf("chat survived GC: %v %v", conversations, err)
 		}
 		if states, err := repository.ListCampaignApplicationStates(ctx, campaign.ID); err != nil || len(states) != 1 || states[0].Application.Status != core.ApplicationSubmitted {
 			t.Fatalf("history lost: %v %v", states, err)
@@ -240,6 +240,42 @@ func TestApplicationGCRemovesStaleQuestionnaireWithoutPlatformState(t *testing.T
 		}
 		if _, err := repository.ApplicationByID(ctx, application.ID); err == nil {
 			t.Fatal("application still present after removal")
+		}
+	})
+}
+
+func TestOpenQuestionnaireStopsAfterParticipantLeft(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+		conversation, err := core.NewConversation("chat-open", "hh", "primary", "external-open", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+			ID: "message-1", ConversationID: "chat-open", Direction: core.MessageIncoming,
+			Kind: core.MessageQuestionnaire, Status: core.MessageObserved, Text: "Готовы?",
+			Options: []core.MessageOption{{ID: "1", Text: "Да"}}, OccurredAt: now,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+		open, err := repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 1 || open[0] != "chat-open" {
+			t.Fatalf("open=%#v err=%v", open, err)
+		}
+		if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+			ID: "message-2", ConversationID: "chat-open", Direction: core.MessageIncoming,
+			Kind: core.MessageSystem, Status: core.MessageObserved,
+			Text: "Событие переговоров HH (PARTICIPANT_LEFT)", OccurredAt: now.Add(time.Minute),
+		}, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 0 {
+			t.Fatalf("open after left=%#v err=%v", open, err)
 		}
 	})
 }
