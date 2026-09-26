@@ -297,15 +297,19 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 // questionnaire still has no outgoing answer after it.
 func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
 	// The badge marks a conversation where a questionnaire is still running.
-	// Answering one question does not finish it; the questionnaire bot leaving
-	// the chat (PARTICIPANT_LEFT) does. A later join starts a new round.
+	// It opens with a questionnaire prompt (with options) or with the bot
+	// joining the chat (PARTICIPANT_JOINED, free-text questionnaires) and it
+	// closes when the bot leaves (PARTICIPANT_LEFT).
 	rows, err := store.db.QueryContext(ctx, `
 		SELECT DISTINCT m.conversation_id
 		FROM conversation_messages m
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.direction = 'incoming' AND m.kind = 'questionnaire'
-		  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
-		  AND c.status = 'active'
+		WHERE c.status = 'active'
+		  AND (
+			(m.direction = 'incoming' AND m.kind = 'questionnaire'
+			 AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
+			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%')
+		  )
 		  AND m.occurred_at > COALESCE((
 			SELECT MAX(e.occurred_at) FROM conversation_messages e
 			WHERE e.conversation_id = m.conversation_id AND e.kind = 'system'
