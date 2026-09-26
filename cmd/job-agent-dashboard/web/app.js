@@ -7,6 +7,7 @@ const state = {
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
   reviewSendProfiles: new Set(),
+  cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false,
@@ -287,16 +288,28 @@ function applicationListURL(append = false) {
   return "/api/v1/applications?" + new URLSearchParams(parameters);
 }
 // refreshApplications reloads the first page; append loads the next one for the
-// infinite scroll of the applications table.
+// infinite scroll of the applications table. The first page renders from the
+// in-memory cache immediately and revalidates in the background.
 async function refreshApplications({ append = false } = {}) {
   const generation = ++state.applicationRequest;
+  const requestURL = applicationListURL(append);
+  if (!append) {
+    const cached = state.cache.applications;
+    if (cached && cached.key === requestURL) {
+      state.applicationObjects = cached.items; state.applicationTotal = cached.total; state.applicationGroups = cached.groups;
+      renderApplicationFilters(); renderApplicationObjects();
+    }
+  }
   state.applicationLoading = true; updateApplicationSelection();
   try {
-    const data = await request(applicationListURL(append));
+    const data = await request(requestURL);
     if (generation !== state.applicationRequest) return;
     const items = data.items || [];
     state.applicationObjects = append ? [...state.applicationObjects, ...items] : items;
     state.applicationTotal = data.total || 0; state.applicationGroups = data.groups || {};
+    if (!append) {
+      state.cache.applications = { key: requestURL, at: Date.now(), items: state.applicationObjects, total: state.applicationTotal, groups: state.applicationGroups };
+    }
     renderApplicationFilters(); renderApplicationObjects();
   } catch (error) { if (generation === state.applicationRequest) state.applicationActionMessage = error.message; }
   finally {
@@ -611,11 +624,28 @@ async function refreshConversations({ append = false } = {}) {
   else if (state.conversationFilter === "questionnaire") params.set("questionnaire", "1");
   else if (state.conversationFilter) params.set("status", state.conversationFilter);
   if (state.conversationQuery.trim()) params.set("q", state.conversationQuery.trim());
+  const cacheKey = params.toString();
+  if (!append) {
+    const cached = state.cache.conversations.get(cacheKey);
+    if (cached) {
+      state.conversationItems = cached.items; state.conversationTotal = cached.total; state.conversationUnreadTotal = cached.unread;
+      renderConversations(state.conversationItems);
+    }
+  }
   try {
     const page = await request(`/api/v1/conversations?${params}`);
     state.conversationItems = append ? [...state.conversationItems, ...(page.items || [])] : (page.items || []);
     state.conversationTotal = Number(page.total || 0);
     state.conversationUnreadTotal = Number(page.unread_total || 0);
+    if (!append) {
+      state.cache.conversations.set(cacheKey, {
+        at: Date.now(), items: state.conversationItems, total: state.conversationTotal, unread: state.conversationUnreadTotal,
+      });
+      if (state.cache.conversations.size > 12) {
+        const oldest = [...state.cache.conversations.entries()].sort((left, right) => left[1].at - right[1].at)[0];
+        if (oldest) state.cache.conversations.delete(oldest[0]);
+      }
+    }
     if (state.selectedConversation) {
       const fresh = state.conversationItems.find((item) => item.id === state.selectedConversation.id);
       if (fresh) state.selectedConversation = fresh;
@@ -894,15 +924,20 @@ const reviewPageSize = 50;
 
 async function refreshReviewSessions(options = {}) {
   const append = options.append === true;
-  if (!append) state.reviewSessions = [];
+  const parameters = new URLSearchParams({ limit: String(reviewPageSize), offset: String(append ? state.reviewSessions.length : 0) });
+  if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
+  if (state.account) parameters.set("profile_id", state.account);
+  if (state.reviewQuery) parameters.set("q", state.reviewQuery);
+  const cacheKey = parameters.toString();
+  if (!append) {
+    const cached = state.cache.reviews;
+    if (cached && cached.key === cacheKey) state.reviewSessions = cached.items;
+  }
   try {
-    const parameters = new URLSearchParams({ limit: String(reviewPageSize), offset: String(append ? state.reviewSessions.length : 0) });
-    if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
-    if (state.account) parameters.set("profile_id", state.account);
-    if (state.reviewQuery) parameters.set("q", state.reviewQuery);
     const result = await request(`/api/v1/review-sessions?${parameters}`);
     const items = result.items || [];
     state.reviewSessions = append ? [...state.reviewSessions, ...items] : items;
+    if (!append) state.cache.reviews = { key: cacheKey, at: Date.now(), items: state.reviewSessions };
     state.reviewHasMore = items.length === reviewPageSize;
     elements.reviewMore.hidden = !state.reviewHasMore;
     elements.reviewState.textContent = state.reviewSessions.length
@@ -1277,9 +1312,15 @@ async function runJob(job) {
 
 async function refreshSummary() {
   elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
+  if (state.cache.summary) {
+    state.summary = state.cache.summary;
+    renderAccountSwitcher(state.summary.profiles || []);
+    renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.summary.tasks || []);
+    renderCampaigns(state.summary.campaigns || []); renderActivity(state.summary.activity || []); renderActivityObservations(state.summary.activity_snapshots || []);
+  }
   try {
     const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
-    state.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
+    state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
     updateCaptchaWarning();
@@ -1319,13 +1360,24 @@ async function selectConversation(conversation) {
     }
   } catch (_) {}
   if (conversation.unread_count && !state.conversationReadBusy.has(conversation.id)) {
-    state.conversationReadBusy.add(conversation.id); elements.actionState.textContent = "Помечаю открытый диалог прочитанным…";
+    state.conversationReadBusy.add(conversation.id);
+    // Optimistic: the counter drops immediately, the durable task confirms it.
+    const unread = Number(conversation.unread_count || 0);
+    conversation.unread_count = 0;
+    state.conversationUnreadTotal = Math.max(0, state.conversationUnreadTotal - unread);
+    renderConversations(state.conversationItems);
+    elements.actionState.textContent = "Помечаю открытый диалог прочитанным…";
     try {
       const key = `dashboard-open:${conversation.id}:${conversation.revision}`;
       await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/mark-read`, undefined, key);
-      elements.actionState.textContent = "Диалог будет помечен прочитанным";
-      await refreshSummary(); await refreshConversations();
-    } catch (error) { elements.actionState.textContent = error.message; }
+      elements.actionState.textContent = "Диалог помечен прочитанным";
+      refreshConversations(); refreshSummary();
+    } catch (error) {
+      elements.actionState.textContent = error.message;
+      conversation.unread_count = unread;
+      state.conversationUnreadTotal += unread;
+      renderConversations(state.conversationItems);
+    }
     finally { state.conversationReadBusy.delete(conversation.id); }
   }
 }
@@ -1378,13 +1430,23 @@ elements.replyForm.addEventListener("submit", async (event) => {
   } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
 });
 elements.markAllRead.addEventListener("click", async () => {
-  state.markAllReadBusy = true; updateMarkAllRead(state.conversationItems); elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
+  state.markAllReadBusy = true;
+  const previousUnread = state.conversationItems.map((item) => item.unread_count || 0);
+  for (const item of state.conversationItems) item.unread_count = 0;
+  state.conversationUnreadTotal = 0;
+  renderConversations(state.conversationItems);
+  elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
   try {
     const result = await enqueue("/api/v1/conversations/mark-read");
     elements.conversationBulkState.textContent = result.created ? `Непрочитанных диалогов: ${result.created}` : "Новых задач не потребовалось";
-    await refreshSummary(); await refreshConversations();
-  } catch (error) { elements.conversationBulkState.textContent = error.message; }
-  finally { state.markAllReadBusy = false; updateMarkAllRead(state.conversationItems); }
+    refreshConversations(); refreshSummary();
+  } catch (error) {
+    elements.conversationBulkState.textContent = error.message;
+    state.conversationItems.forEach((item, index) => { item.unread_count = previousUnread[index]; });
+    state.conversationUnreadTotal = previousUnread.reduce((sum, value) => sum + value, 0);
+    renderConversations(state.conversationItems);
+  }
+  finally { state.markAllReadBusy = false; }
 });
 let applicationSearchTimer;
 elements.applicationSearch.addEventListener("input", () => { clearTimeout(applicationSearchTimer); state.applicationQuery = elements.applicationSearch.value; state.applicationRequest++; state.applicationLoading = true; updateApplicationSelection(); applicationSearchTimer = setTimeout(changeApplicationQuery, 250); });
