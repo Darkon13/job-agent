@@ -409,6 +409,7 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		return nil
 	}
 	var messageID int64
+	hasDiscard := false
 	for index := len(data.Chat.Messages.Items) - 1; index >= 0; index-- {
 		message := data.Chat.Messages.Items[index]
 		if message.ParticipantID == data.Chat.CurrentParticipantID || message.Hidden || message.Deleted {
@@ -418,6 +419,9 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		if err != nil {
 			return err
 		}
+		// System/discard events keep their own unread flag on HH; the payload
+		// must tell the platform that such a message is included.
+		hasDiscard = strings.Contains(strings.ToUpper(message.Type), "DISCARD") || strings.Contains(strings.ToUpper(message.Type), "SYSTEM")
 		break
 	}
 	if messageID == 0 {
@@ -427,7 +431,7 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		ChatID                  int64 `json:"chatId"`
 		MessageID               int64 `json:"messageId"`
 		HasUnreadDiscardMessage bool  `json:"hasUnreadDiscardMessage"`
-	}{ChatID: chatID, MessageID: messageID}
+	}{ChatID: chatID, MessageID: messageID, HasUnreadDiscardMessage: hasDiscard}
 	return client.postJSON(ctx, "/chatik/api/mark_read", nil, payload, nil, "conversations.mark_read.browser", false, externalConversationID)
 }
 
