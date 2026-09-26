@@ -174,7 +174,7 @@ func (repository *Repository) openQuestionnaire(conversation core.Conversation) 
 		return false
 	}
 	messages := repository.messages[conversation.ID]
-	var lastLeft, latestIncoming time.Time
+	var lastLeft, lastOpener time.Time
 	for _, message := range messages {
 		if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT") &&
 			message.OccurredAt.After(lastLeft) {
@@ -182,12 +182,15 @@ func (repository *Repository) openQuestionnaire(conversation core.Conversation) 
 		}
 	}
 	for _, message := range messages {
-		if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
-			message.OccurredAt.After(lastLeft) && message.OccurredAt.After(latestIncoming) {
-			latestIncoming = message.OccurredAt
+		opens := message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0
+		if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_JOINED") {
+			opens = true
+		}
+		if opens && message.OccurredAt.After(lastLeft) && message.OccurredAt.After(lastOpener) {
+			lastOpener = message.OccurredAt
 		}
 	}
-	return !latestIncoming.IsZero()
+	return !lastOpener.IsZero()
 }
 
 // conversationMatchesFilter keeps the in-memory behaviour aligned with SQL.

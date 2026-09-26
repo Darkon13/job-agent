@@ -387,3 +387,37 @@ func TestConversationReadMarkerRoundTrips(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenQuestionnaireTracksBotPresenceWithoutOptions(t *testing.T) {
+	gcStores(t, func(t *testing.T, repository gcStore) {
+		ctx := context.Background()
+		now := time.Date(2026, 9, 26, 13, 0, 0, 0, time.UTC)
+		conversation, err := core.NewConversation("chat-bot", "hh", "primary", "external-bot", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+			t.Fatal(err)
+		}
+		appendMessage := func(id, text string, kind core.MessageKind, at time.Time) {
+			t.Helper()
+			if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
+				ID: core.MessageID(id), ConversationID: "chat-bot", Direction: core.MessageIncoming,
+				Kind: kind, Status: core.MessageObserved, Text: text, OccurredAt: at,
+			}, at); err != nil {
+				t.Fatalf("append %s: %v", id, err)
+			}
+		}
+		appendMessage("m-join", "Событие переговоров HH (PARTICIPANT_JOINED)", core.MessageSystem, now.Add(time.Minute))
+		appendMessage("m-question", "Расскажите, пожалуйста, как долго вы занимаетесь тестированием?", core.MessageText, now.Add(2*time.Minute))
+		open, err := repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 1 || open[0] != "chat-bot" {
+			t.Fatalf("open=%#v err=%v", open, err)
+		}
+		appendMessage("m-left", "Событие переговоров HH (PARTICIPANT_LEFT)", core.MessageSystem, now.Add(3*time.Minute))
+		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 0 {
+			t.Fatalf("open after left=%#v err=%v", open, err)
+		}
+	})
+}
