@@ -139,6 +139,30 @@ func (store *Store) AttachConversationApplication(ctx context.Context, id core.C
 	return affected > 0, nil
 }
 
+// ApplicationConversations lists the chats linked to one application.
+func (store *Store) ApplicationConversations(ctx context.Context, applicationID core.ApplicationID) ([]core.Conversation, error) {
+	if applicationID == "" {
+		return nil, errors.New("application conversations require application")
+	}
+	rows, err := store.db.QueryContext(ctx, conversationSelect+` WHERE application_id = ? ORDER BY id`, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("list application conversations: %w", err)
+	}
+	defer rows.Close()
+	result := make([]core.Conversation, 0)
+	for rows.Next() {
+		conversation, err := scanConversation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan application conversation: %w", err)
+		}
+		result = append(result, conversation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application conversations: %w", err)
+	}
+	return result, nil
+}
+
 // MarkConversationsReadLocally marks every unread chat read. An empty profile
 // sweeps every account (the dashboard "all accounts" view).
 func (store *Store) MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error) {
@@ -231,10 +255,16 @@ func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) 
 			WHERE m.conversation_id = conversations.id
 			  AND ((m.direction = 'incoming' AND m.kind = 'questionnaire'
 			        AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
-			       OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'))
+			       OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'
+			           AND (SELECT f.direction FROM conversation_messages f
+			                WHERE f.conversation_id = m.conversation_id AND f.kind <> 'system'
+			                  AND f.occurred_at > m.occurred_at
+			                ORDER BY f.occurred_at LIMIT 1) = 'incoming'))
 			  AND m.occurred_at > COALESCE((
 				SELECT MAX(e.occurred_at) FROM conversation_messages e
-				WHERE e.conversation_id = m.conversation_id AND e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%'), 0))`
+				WHERE e.conversation_id = m.conversation_id
+				  AND ((e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%')
+				    OR (e.direction = 'incoming' AND e.kind = 'text' AND e.text LIKE '%не готовы пригласить%'))), 0))`
 	}
 	return query, args
 }
@@ -335,12 +365,17 @@ func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]cor
 		  AND (
 			(m.direction = 'incoming' AND m.kind = 'questionnaire'
 			 AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
-			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%')
+			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'
+			    AND (SELECT f.direction FROM conversation_messages f
+			         WHERE f.conversation_id = m.conversation_id AND f.kind <> 'system'
+			           AND f.occurred_at > m.occurred_at
+			         ORDER BY f.occurred_at LIMIT 1) = 'incoming')
 		  )
 		  AND m.occurred_at > COALESCE((
 			SELECT MAX(e.occurred_at) FROM conversation_messages e
-			WHERE e.conversation_id = m.conversation_id AND e.kind = 'system'
-			  AND e.text LIKE '%PARTICIPANT_LEFT%'), 0)
+			WHERE e.conversation_id = m.conversation_id
+			  AND ((e.kind = 'system' AND e.text LIKE '%PARTICIPANT_LEFT%')
+			    OR (e.direction = 'incoming' AND e.kind = 'text' AND e.text LIKE '%не готовы пригласить%'))), 0)
 		ORDER BY m.conversation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list open questionnaires: %w", err)

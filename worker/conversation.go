@@ -209,11 +209,11 @@ func (handlers *ConversationHandlers) Discover(ctx context.Context, task core.Ta
 			Message: "conversation transport does not support discovery",
 		}
 	}
-	discovery, err := discoverer.DiscoverConversations(ctx, payload.ProfileID)
+	discovery, err := discoverer.DiscoverConversations(ctx, payload.ProfileID, adapter.ConversationDiscoveryOptions{MaxPages: payload.MaxPages})
 	if err != nil {
 		return err
 	}
-	if discovery.Truncated {
+	if discovery.Truncated && payload.MaxPages == 0 {
 		slog.Default().Warn("conversation discovery reached the recent-activity window",
 			"profile", payload.ProfileID, "observed", len(discovery.Conversations))
 	}

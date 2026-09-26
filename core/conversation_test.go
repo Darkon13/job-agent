@@ -93,7 +93,7 @@ func TestInactiveConversationCancelsFollowUp(t *testing.T) {
 func TestConversationTracksUnreadCatalogStateAndMarkRead(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	conversation := testConversation(t, now)
-	changed, err := conversation.ObserveCatalogState(ConversationActive, 3, now.Add(time.Minute))
+	changed, err := conversation.ObserveCatalogState(ConversationActive, 3, nil, now.Add(time.Minute))
 	if err != nil || !changed || conversation.UnreadCount != 3 || conversation.Revision != 2 {
 		t.Fatalf("observe unread state: conversation=%#v changed=%t err=%v", conversation, changed, err)
 	}
@@ -183,7 +183,7 @@ func TestConversationMarkReadSuppressesStalePlatformCounter(t *testing.T) {
 	}
 
 	// The platform still reports the old unread items; the operator's read wins.
-	if _, err := conversation.ObserveCatalogState(ConversationActive, 3, now.Add(time.Minute)); err != nil {
+	if _, err := conversation.ObserveCatalogState(ConversationActive, 3, nil, now.Add(time.Minute)); err != nil {
 		t.Fatalf("observe stale counter: %v", err)
 	}
 	if conversation.UnreadCount != 0 {
@@ -193,10 +193,28 @@ func TestConversationMarkReadSuppressesStalePlatformCounter(t *testing.T) {
 	// A newer incoming message makes the counter meaningful again.
 	newer := now.Add(2 * time.Minute)
 	conversation.LastIncomingAt = &newer
-	if _, err := conversation.ObserveCatalogState(ConversationActive, 1, now.Add(3*time.Minute)); err != nil {
+	if _, err := conversation.ObserveCatalogState(ConversationActive, 1, nil, now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("observe fresh counter: %v", err)
 	}
 	if conversation.UnreadCount != 1 {
 		t.Fatalf("fresh counter ignored: %#v", conversation)
+	}
+}
+
+func TestConversationCatalogUnreadSurvivesUnreadMessageSync(t *testing.T) {
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	conversation := testConversation(t, now)
+	if _, err := conversation.MarkRead(now); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	// The stored last incoming message is older than the read marker, but the
+	// catalog already carries a newer incoming message that the sync has not
+	// stored yet; the unread counter must stay meaningful.
+	observedIncoming := now.Add(5 * time.Minute)
+	if _, err := conversation.ObserveCatalogState(ConversationActive, 1, &observedIncoming, now.Add(6*time.Minute)); err != nil {
+		t.Fatalf("observe catalog with pending incoming: %v", err)
+	}
+	if conversation.UnreadCount != 1 {
+		t.Fatalf("unread counter was dropped: %#v", conversation)
 	}
 }
