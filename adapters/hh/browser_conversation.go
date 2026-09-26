@@ -143,7 +143,7 @@ func newBrowserConversationClient(reader *BrowserReadClient, options adapter.Bro
 	return &BrowserConversationClient{reader: reader, options: options, chatBaseURL: defaultChatBaseURL}
 }
 
-func (client *BrowserConversationClient) DiscoverConversations(ctx context.Context, profileID core.ProfileID) (adapter.ConversationDiscoveryResult, error) {
+func (client *BrowserConversationClient) DiscoverConversations(ctx context.Context, profileID core.ProfileID, options adapter.ConversationDiscoveryOptions) (adapter.ConversationDiscoveryResult, error) {
 	if profileID == "" || profileID != client.reader.profileID {
 		return adapter.ConversationDiscoveryResult{}, errors.New("HH conversation discovery profile does not match")
 	}
@@ -153,8 +153,13 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 	observedAt := time.Now().UTC()
 	result := make([]core.ConversationObservation, 0)
 	seenConversations := make(map[string]struct{})
+	windowPages := options.MaxPages
+	if windowPages <= 0 || windowPages > maxChatDiscoveryPages {
+		windowPages = maxChatDiscoveryPages
+	}
+	truncated := true
 	nextFrom := ""
-	for page := 0; page < maxChatDiscoveryPages; page++ {
+	for page := 0; page < windowPages; page++ {
 		parameters := url.Values{
 			"filterUnread":         {"false"},
 			"filterHasTextMessage": {"false"},
@@ -191,17 +196,78 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 		}
 		candidate := strings.TrimSpace(string(response.Chats.NextFrom))
 		if candidate == "" {
-			return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt}, nil
+			truncated = false
+			break
 		}
 		if candidate == nextFrom {
 			return adapter.ConversationDiscoveryResult{}, operationError(core.ErrorTemporaryFailure, "conversations.discover.browser", "HH conversation cursor did not advance", nil)
 		}
 		nextFrom = candidate
 	}
-	// The account can have thousands of historical chats; the catalog is
-	// ordered by last activity, so a bounded recent window is enough to keep
-	// the active set fresh instead of failing the whole discovery.
-	return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt, Truncated: true}, nil
+	if truncated {
+		// The account can have thousands of historical chats; the catalog is
+		// ordered by last activity, so a bounded recent window keeps the active
+		// set fresh. Chats with a stale unread badge fall outside that window,
+		// so the unread filter fetches them explicitly and the platform badge
+		// stays clearable from the local catalog.
+		if err := client.appendUnreadConversations(ctx, seenConversations, &result); err != nil {
+			return adapter.ConversationDiscoveryResult{}, err
+		}
+	}
+	return adapter.ConversationDiscoveryResult{Conversations: result, ObservedAt: observedAt, Truncated: truncated}, nil
+}
+
+// appendUnreadConversations adds chats beyond the recent-activity window that
+// still carry unread messages. The unread filter returns a bounded list, so the
+// pass stays cheap even when the full catalog is large.
+func (client *BrowserConversationClient) appendUnreadConversations(ctx context.Context, seen map[string]struct{}, result *[]core.ConversationObservation) error {
+	const operation = "conversations.discover.unread.browser"
+	nextFrom := ""
+	for page := 0; page < maxChatDiscoveryPages; page++ {
+		parameters := url.Values{
+			"filterUnread":         {"true"},
+			"filterHasTextMessage": {"false"},
+		}
+		if nextFrom != "" {
+			parameters.Set("from", nextFrom)
+		}
+		var response hhChatListResponse
+		if err := client.getJSON(ctx, "/chatik/api/chats", parameters, &response, operation); err != nil {
+			return err
+		}
+		for _, item := range response.Chats.Items {
+			externalID := strings.TrimSpace(string(item.ID))
+			if externalID == "" {
+				return operationError(core.ErrorPermanentFailure, operation, "HH returned a conversation without id", nil)
+			}
+			if _, exists := seen[externalID]; exists {
+				continue
+			}
+			seen[externalID] = struct{}{}
+			observation := core.ConversationObservation{
+				ExternalID: externalID, Status: core.ConversationActive, UnreadCount: item.UnreadCount,
+			}
+			if item.LastMessage != nil {
+				message, include, err := mapHHMessageObservation(*item.LastMessage, item.CurrentParticipantID)
+				if err != nil {
+					return err
+				}
+				if include {
+					observation.LastMessage = &message
+				}
+			}
+			*result = append(*result, observation)
+		}
+		candidate := strings.TrimSpace(string(response.Chats.NextFrom))
+		if candidate == "" {
+			return nil
+		}
+		if candidate == nextFrom {
+			return operationError(core.ErrorTemporaryFailure, operation, "HH conversation cursor did not advance", nil)
+		}
+		nextFrom = candidate
+	}
+	return nil
 }
 
 func (client *BrowserConversationClient) SyncConversation(ctx context.Context, profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) (adapter.ConversationSyncResult, error) {
@@ -409,6 +475,7 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		return nil
 	}
 	var messageID int64
+	hasDiscard := false
 	for index := len(data.Chat.Messages.Items) - 1; index >= 0; index-- {
 		message := data.Chat.Messages.Items[index]
 		if message.ParticipantID == data.Chat.CurrentParticipantID || message.Hidden || message.Deleted {
@@ -418,6 +485,9 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		if err != nil {
 			return err
 		}
+		// System/discard events keep their own unread flag on HH; the payload
+		// must tell the platform that such a message is included.
+		hasDiscard = strings.Contains(strings.ToUpper(message.Type), "DISCARD") || strings.Contains(strings.ToUpper(message.Type), "SYSTEM")
 		break
 	}
 	if messageID == 0 {
@@ -427,7 +497,7 @@ func (client *BrowserConversationClient) MarkConversationRead(ctx context.Contex
 		ChatID                  int64 `json:"chatId"`
 		MessageID               int64 `json:"messageId"`
 		HasUnreadDiscardMessage bool  `json:"hasUnreadDiscardMessage"`
-	}{ChatID: chatID, MessageID: messageID}
+	}{ChatID: chatID, MessageID: messageID, HasUnreadDiscardMessage: hasDiscard}
 	return client.postJSON(ctx, "/chatik/api/mark_read", nil, payload, nil, "conversations.mark_read.browser", false, externalConversationID)
 }
 
@@ -542,6 +612,25 @@ func classifyChatStatus(response *http.Response, operation string) error {
 	return failure
 }
 
+// hhInvitationPrompt reports the employer-invitation prompt: options that ask
+// whether the applicant is interested in a received invitation.
+func hhInvitationPrompt(text string, options []core.MessageOption) bool {
+	haystack := strings.ToLower(text)
+	for _, option := range options {
+		haystack += " " + strings.ToLower(option.Text)
+	}
+	for _, marker := range []string{
+		"ответьте на приглашение",
+		"отправить ответ можно одной кнопкой",
+		"посмотрю вакансию, спасибо",
+	} {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // chatConflict reports the duplicate-send answer: HH rejects a message that is
 // already in the chat, which is a success for an idempotent operator action.
 func chatConflict(err error) bool {
@@ -586,6 +675,11 @@ func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (co
 	}
 	if len(options) != 0 {
 		kind = core.MessageQuestionnaire
+		if hhInvitationPrompt(text, options) {
+			// Invitation buttons look like a questionnaire but only answer an
+			// invitation; the chat must not be flagged as a running one.
+			kind = core.MessageSuggestion
+		}
 	}
 	if text == "" && len(options) == 0 {
 		kind = core.MessageSystem

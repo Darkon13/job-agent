@@ -168,14 +168,30 @@ func (api *ConversationAPI) markRead(response http.ResponseWriter, request *http
 // platform calls, and the stored read marker keeps the platform counter from
 // restoring the badge.
 func (api *ConversationAPI) markAllRead(response http.ResponseWriter, request *http.Request) {
-	if _, ok := requireIdempotencyKey(response, request); !ok {
+	requestKey, ok := requireIdempotencyKey(response, request)
+	if !ok {
 		return
 	}
 	profileID := core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id")))
+	conversations, err := api.repository.ListConversations(request.Context(), storage.ConversationFilter{
+		ProfileID: profileID, Status: core.ConversationActive, UnreadOnly: true,
+	})
+	if err != nil {
+		writeError(response, err)
+		return
+	}
 	marked, err := api.repository.MarkConversationsReadLocally(request.Context(), profileID, time.Now().UTC())
 	if err != nil {
 		writeError(response, err)
 		return
+	}
+	// The platform badge clears in the background; the operator already sees
+	// every chat read.
+	for _, conversation := range conversations {
+		if _, _, err := api.workflow.EnqueueMarkRead(request.Context(), conversation.ID, requestKey); err != nil {
+			writeError(response, err)
+			return
+		}
 	}
 	writeJSON(response, http.StatusAccepted, bulkTaskResponse{Tasks: []taskResponse{}, Matched: marked, Created: marked})
 }
