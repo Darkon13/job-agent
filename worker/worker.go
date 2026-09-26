@@ -39,7 +39,10 @@ type Config struct {
 	PollInterval      time.Duration
 	RetryBaseDelay    time.Duration
 	BlockedRetryDelay time.Duration
-	MaxAttempts       int
+	// UnauthorizedRetryDelay backs off tasks that need a fresh login; the
+	// session cannot heal on its own, so a short retry only burns attempts.
+	UnauthorizedRetryDelay time.Duration
+	MaxAttempts            int
 }
 
 func (config Config) Validate() error {
@@ -52,7 +55,8 @@ func (config Config) Validate() error {
 	if config.LeaseDuration <= 0 || config.HeartbeatInterval <= 0 || config.HeartbeatInterval >= config.LeaseDuration {
 		return errors.New("worker requires heartbeat interval shorter than a positive lease duration")
 	}
-	if config.PollInterval <= 0 || config.RetryBaseDelay <= 0 || config.BlockedRetryDelay <= 0 || config.MaxAttempts < 1 {
+	if config.PollInterval <= 0 || config.RetryBaseDelay <= 0 || config.BlockedRetryDelay <= 0 ||
+		config.UnauthorizedRetryDelay <= 0 || config.MaxAttempts < 1 {
 		return errors.New("worker requires positive polling, retry delays and max attempts")
 	}
 	return nil
@@ -169,7 +173,10 @@ func (worker *Worker) retryAt(operationError core.OperationError, attempts int, 
 	if operationError.RetryAfter != nil && operationError.RetryAfter.After(now) {
 		return *operationError.RetryAfter
 	}
-	if operationError.Category == core.ErrorUnauthorized || operationError.Category == core.ErrorValidationRequired || operationError.Category == core.ErrorConfirmationRequired {
+	switch operationError.Category {
+	case core.ErrorUnauthorized:
+		return now.Add(worker.config.UnauthorizedRetryDelay)
+	case core.ErrorValidationRequired, core.ErrorConfirmationRequired:
 		return now.Add(worker.config.BlockedRetryDelay)
 	}
 	delay := worker.config.RetryBaseDelay
