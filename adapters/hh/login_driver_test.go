@@ -229,6 +229,43 @@ func TestLoginDriverIdentifierAdvancesFromAccountTypeStep(t *testing.T) {
 	}
 }
 
+func TestLoginDriverFallsBackToEnterWhenSubmitClickIsBlocked(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch {
+		case request.Selector == loginSubmitButton && request.Action == "click":
+			return errors.New("element intercepts pointer events")
+		case request.Selector == loginOTPInput:
+			return nil
+		case request.Selector == loginCaptchaImage, request.Selector == loginPasswordExpand:
+			return errors.New("element is not visible")
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	outcome, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if outcome.Request == nil || outcome.Request.Challenge == nil || outcome.Request.Challenge.Kind != core.AuthChallengeOTP {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	fallback := false
+	for _, call := range fake.CallsOf("locator") {
+		request := call.Request.(browser.LocatorRequest)
+		if request.Selector == loginSubmitButton && request.Action == "press" && request.Value == "Enter" {
+			fallback = true
+		}
+	}
+	if !fallback {
+		t.Fatalf("blocked submit click did not fall back to Enter")
+	}
+}
+
 func TestLoginDriverCaptchaReturnsScreenshotChallenge(t *testing.T) {
 	fake := browsertest.New()
 	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}

@@ -17,6 +17,8 @@ const (
 	loginStepTimeout  = 20 * time.Second
 	loginPollInterval = 500 * time.Millisecond
 	elementProbeMS    = 800
+	// captchaSettleDelay waits out the image swap after a failed attempt.
+	captchaSettleDelay = 1500 * time.Millisecond
 )
 
 const (
@@ -109,9 +111,7 @@ func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSessio
 		// The current login page opens on the account-type card; the credential
 		// form appears only after its submit button is pressed.
 		if !driver.visible(ctx, setting.ProfileID, loginEmailInput) && !driver.visible(ctx, setting.ProfileID, loginPhoneInput) {
-			if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
-				Action: "click", Selector: loginSubmitButton, TimeoutMS: 10_000,
-			}); err != nil {
+			if err := driver.clickSubmit(ctx, setting.ProfileID); err != nil {
 				return auth.Outcome{}, err
 			}
 		}
@@ -137,9 +137,7 @@ func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSessio
 				return auth.Outcome{}, err
 			}
 		}
-		if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
-			Action: "click", Selector: loginSubmitButton, TimeoutMS: 10_000,
-		}); err != nil {
+		if err := driver.clickSubmit(ctx, setting.ProfileID); err != nil {
 			return auth.Outcome{}, err
 		}
 		return driver.waitNextStep(ctx, setting)
@@ -161,9 +159,7 @@ func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSessio
 		}); err != nil {
 			return auth.Outcome{}, err
 		}
-		if err := driver.client.Locator(ctx, setting.ProfileID, browser.LocatorRequest{
-			Action: "click", Selector: loginSubmitButton, TimeoutMS: 10_000,
-		}); err != nil {
+		if err := driver.clickSubmit(ctx, setting.ProfileID); err != nil {
 			return auth.Outcome{}, err
 		}
 		return driver.waitNextStep(ctx, setting)
@@ -234,6 +230,11 @@ func (driver *LoginDriver) exportState(ctx context.Context, setting LoginSetting
 }
 
 func (driver *LoginDriver) captchaOutcome(ctx context.Context, setting LoginSettings) (auth.Outcome, error) {
+	// A failed attempt makes HH swap in a fresh image; give the page a moment
+	// so the screenshot does not capture the previous captcha.
+	if err := driver.sleep(ctx, captchaSettleDelay); err != nil {
+		return auth.Outcome{}, err
+	}
 	screenshot, err := driver.client.Screenshot(ctx, setting.ProfileID, browser.ScreenshotRequest{
 		Selector: loginCaptchaImage, TimeoutMS: 10_000,
 	})
@@ -296,6 +297,22 @@ func nationalPhone(value string) string {
 		return normalized[1:]
 	}
 	return normalized
+}
+
+// clickSubmit presses the form submit button. A plain click can be intercepted
+// by a validation popover (for example right after a wrong captcha), so the
+// driver falls back to pressing Enter on the focused button, which submits the
+// form regardless of what covers it.
+func (driver *LoginDriver) clickSubmit(ctx context.Context, profileID core.ProfileID) error {
+	clickErr := driver.client.Locator(ctx, profileID, browser.LocatorRequest{
+		Action: "click", Selector: loginSubmitButton, TimeoutMS: 5_000,
+	})
+	if clickErr == nil {
+		return nil
+	}
+	return driver.client.Locator(ctx, profileID, browser.LocatorRequest{
+		Action: "press", Selector: loginSubmitButton, Value: "Enter", TimeoutMS: 10_000,
+	})
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {
