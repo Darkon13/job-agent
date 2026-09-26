@@ -321,13 +321,13 @@ function changeApplicationQuery() {
 }
 function updateApplicationSelection(items = visibleApplicationObjects()) {
   const visibleIDs = items.filter(applicationCanRemove).map((item) => item.id);
-  elements.applicationSelectAll.disabled = state.applicationLoading || state.applicationActionBusy || !visibleIDs.length;
+  elements.applicationSelectAll.disabled = state.applicationActionBusy || !visibleIDs.length;
   const selectedVisible = visibleIDs.filter((id) => state.selectedApplications.has(id)).length;
   elements.applicationSelectAll.checked = visibleIDs.length > 0 && selectedVisible === visibleIDs.length;
   elements.applicationSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIDs.length;
   elements.applicationSelectionState.textContent = state.applicationActionMessage || (state.selectedApplications.size ? `Выбрано: ${state.selectedApplications.size}` : "Ничего не выбрано");
-  elements.applicationBulkAction.disabled = state.applicationActionBusy || state.applicationLoading;
-  elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy || state.applicationLoading;
+  elements.applicationBulkAction.disabled = state.applicationActionBusy;
+  elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy;
 }
 function renderApplicationObjects() {
   const existingIDs = new Set(state.applicationObjects.map((item) => item.id));
@@ -338,7 +338,7 @@ function renderApplicationObjects() {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
   elements.applicationItems.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
-    const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy || state.applicationLoading; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
+    const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
     checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
     const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
     const action = document.createElement("td"); action.className = "task-actions"; const url = safeExternalURL(item.vacancy_url);
@@ -597,7 +597,6 @@ function renderConversations(items = state.conversationItems) {
   }
   const loaded = state.conversationItems.length;
   elements.conversationPageState.textContent = state.conversationTotal ? `Показано ${loaded} из ${state.conversationTotal}` : "";
-  elements.conversationMore.hidden = loaded >= state.conversationTotal;
   if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
   elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
@@ -1310,8 +1309,10 @@ async function runJob(job) {
   }
 }
 
-async function refreshSummary() {
-  elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
+async function refreshSummary({ background = false } = {}) {
+  if (!background) {
+    elements.refresh.disabled = true; elements.connectionState.textContent = "Обновление…"; elements.connectionDot.className = "dot pending";
+  }
   if (state.cache.summary) {
     state.summary = state.cache.summary;
     renderAccountSwitcher(state.summary.profiles || []);
@@ -1327,7 +1328,7 @@ async function refreshSummary() {
     renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
-  finally { elements.refresh.disabled = false; }
+  finally { if (!background) elements.refresh.disabled = false; }
 }
 async function refreshVersion() {
   try {
@@ -1509,7 +1510,7 @@ elements.reviewSearch.addEventListener("input", () => {
   }, 250);
 });
 elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
-refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
+refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary({ background: true }); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 
 // Server-sent change notifications replace most of the polling latency; the
 // interval above stays as a safety net.
@@ -1522,7 +1523,7 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
     try { sections = (JSON.parse(event.data || "{}").sections) || []; } catch (_) {}
     globalThis.clearTimeout(refreshTimer);
     refreshTimer = globalThis.setTimeout(async () => {
-      await refreshSummary();
+      await refreshSummary({ background: true });
       if (sections.includes("applications")) await refreshApplications();
       if (sections.includes("conversations")) await refreshConversations();
       if (sections.includes("conversations") && state.selectedConversation) {
