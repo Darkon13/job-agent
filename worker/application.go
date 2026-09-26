@@ -825,9 +825,9 @@ func (handler *ApplicationHandler) finishFailure(ctx context.Context, applicatio
 		}
 		operationError.RetryAfter = &resetAt
 	}
-	if operationError.Metadata["code"] == "vacancy_closed" {
+	if code := operationError.Metadata["code"]; code == "vacancy_closed" || code == "response_impossible" {
 		application.DecisionCode = "vacancy_closed"
-		application.DecisionReason = "HH сообщил, что вакансия закрыта или недоступна"
+		application.DecisionReason = "HH не разрешает отклик: вакансия в архиве или недоступна"
 		if err := application.Transition(core.ApplicationSkipped, now); err != nil {
 			return err
 		}

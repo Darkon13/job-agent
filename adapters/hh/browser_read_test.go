@@ -270,3 +270,18 @@ func TestBrowserReadRejectsUnsupportedProfileStateBeforeRequest(t *testing.T) {
 		t.Fatalf("error=%v requests=%d, want unsupported without request", err, requests)
 	}
 }
+
+func TestBrowserReadDetectsArchivedVacancyTitle(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`<html><body>
+			<h1 data-qa="vacancy-title">Инженер (вакансия в архиве c 24 сентября 2026)</h1>
+		</body></html>`))
+	}))
+	vacancy, err := client.ReadVacancy(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
+	if err != nil {
+		t.Fatalf("browser vacancy read: %v", err)
+	}
+	if vacancy.State != core.VacancyStateArchived {
+		t.Fatalf("vacancy state = %s, want archived", vacancy.State)
+	}
+}

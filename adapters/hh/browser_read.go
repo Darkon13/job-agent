@@ -202,7 +202,9 @@ func (client *BrowserReadClient) ReadVacancy(ctx context.Context, profileID core
 	if findHTMLNode(document, func(node *html.Node) bool {
 		value := htmlAttribute(node, "data-qa")
 		return value == "vacancy-archive" || value == "vacancy-closed"
-	}) != nil {
+	}) != nil || strings.Contains(strings.ToLower(title), "в архиве") {
+		// The archive banner is either a dedicated element or a note in the
+		// vacancy title («вакансия в архиве c …»).
 		state = core.VacancyStateArchived
 	}
 	attributes := map[string]any{"read_channel": "browser"}
