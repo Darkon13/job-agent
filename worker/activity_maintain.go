@@ -12,6 +12,16 @@ import (
 	"github.com/Darkon13/job-agent/storage"
 )
 
+const (
+	// maximumMaintainSearchPages bounds how deep the maintain job pages through
+	// its search for cards the applicant has not opened recently.
+	maximumMaintainSearchPages = 5
+	// maintainInspectedWindow keeps recently opened vacancies out of the target
+	// list. Older cards become viewable again once the platform window passed,
+	// so a profile whose first search page is exhausted keeps a warmup source.
+	maintainInspectedWindow = 30 * 24 * time.Hour
+)
+
 // ActivityMaintainHandler opens real candidate vacancies through the profile
 // browser session so the applicant activity stays warm. It only reads: the
 // apply decision still belongs to the application pipeline, and closed
@@ -123,22 +133,32 @@ func (handler *ActivityMaintainHandler) targets(ctx context.Context, payload cor
 	if err != nil {
 		return nil, err
 	}
-	page, err := searcher.Search(ctx, payload.ProfileID, payload.Query, "")
-	if err != nil {
-		return nil, err
-	}
 	targets := make([]func() (core.Vacancy, error), 0, payload.Count)
-	for _, vacancy := range page.Vacancies {
-		if vacancy.State != core.VacancyStateOpen {
-			continue
+	cursor := ""
+	for pageIndex := 0; pageIndex < maximumMaintainSearchPages && len(targets) < payload.Count; pageIndex++ {
+		page, err := searcher.Search(ctx, payload.ProfileID, payload.Query, cursor)
+		if err != nil {
+			return nil, err
 		}
-		if _, seen := inspected[vacancy.ExternalID]; seen {
-			continue
+		for _, vacancy := range page.Vacancies {
+			if vacancy.State != core.VacancyStateOpen {
+				continue
+			}
+			if _, seen := inspected[vacancy.ExternalID]; seen {
+				continue
+			}
+			target := vacancy
+			targets = append(targets, func() (core.Vacancy, error) {
+				return reader.ReadVacancy(ctx, payload.ProfileID, target.Key())
+			})
+			if len(targets) >= payload.Count {
+				break
+			}
 		}
-		vacancy := vacancy
-		targets = append(targets, func() (core.Vacancy, error) {
-			return reader.ReadVacancy(ctx, payload.ProfileID, vacancy.Key())
-		})
+		if page.Done || page.NextCursor == "" || page.NextCursor == cursor {
+			break
+		}
+		cursor = page.NextCursor
 	}
 	return targets, nil
 }
@@ -153,7 +173,11 @@ func (handler *ActivityMaintainHandler) inspectedVacancies(ctx context.Context, 
 		return nil, err
 	}
 	seen := make(map[string]struct{}, len(records))
+	cutoff := handler.clock.Now().Add(-maintainInspectedWindow)
 	for _, record := range records {
+		if record.OccurredAt.Before(cutoff) {
+			continue
+		}
 		seen[record.SourceID] = struct{}{}
 	}
 	return seen, nil
