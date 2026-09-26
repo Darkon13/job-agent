@@ -542,6 +542,25 @@ func classifyChatStatus(response *http.Response, operation string) error {
 	return failure
 }
 
+// hhInvitationPrompt reports the employer-invitation prompt: options that ask
+// whether the applicant is interested in a received invitation.
+func hhInvitationPrompt(text string, options []core.MessageOption) bool {
+	haystack := strings.ToLower(text)
+	for _, option := range options {
+		haystack += " " + strings.ToLower(option.Text)
+	}
+	for _, marker := range []string{
+		"ответьте на приглашение",
+		"отправить ответ можно одной кнопкой",
+		"посмотрю вакансию, спасибо",
+	} {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // chatConflict reports the duplicate-send answer: HH rejects a message that is
 // already in the chat, which is a success for an idempotent operator action.
 func chatConflict(err error) bool {
@@ -586,6 +605,11 @@ func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (co
 	}
 	if len(options) != 0 {
 		kind = core.MessageQuestionnaire
+		if hhInvitationPrompt(text, options) {
+			// Invitation buttons look like a questionnaire but only answer an
+			// invitation; the chat must not be flagged as a running one.
+			kind = core.MessageSuggestion
+		}
 	}
 	if text == "" && len(options) == 0 {
 		kind = core.MessageSystem
