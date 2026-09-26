@@ -415,11 +415,13 @@ func (api *RuntimeAPI) storeSummary(payload []byte) {
 // counters, while the operator scrolls the list page by page.
 func (api *RuntimeAPI) listConversations(response http.ResponseWriter, request *http.Request) {
 	filter := storage.ConversationFilter{
-		ProfileID: core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
-		Platform:  core.Platform(strings.TrimSpace(request.URL.Query().Get("platform"))),
-		Status:    core.ConversationStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
-		Query:     strings.TrimSpace(request.URL.Query().Get("q")),
-		Limit:     50,
+		ProfileID:         core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id"))),
+		Platform:          core.Platform(strings.TrimSpace(request.URL.Query().Get("platform"))),
+		Status:            core.ConversationStatus(strings.TrimSpace(request.URL.Query().Get("status"))),
+		Query:             strings.TrimSpace(request.URL.Query().Get("q")),
+		UnreadOnly:        request.URL.Query().Get("unread") == "1",
+		QuestionnaireOnly: request.URL.Query().Get("questionnaire") == "1",
+		Limit:             50,
 	}
 	if value := strings.TrimSpace(request.URL.Query().Get("limit")); value != "" {
 		parsed, err := strconv.Atoi(value)

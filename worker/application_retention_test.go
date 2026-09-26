@@ -346,3 +346,59 @@ func TestApplicationRetentionRemovesStoredRejectionsMissingFromObservation(t *te
 		t.Fatalf("removal=%#v", remove)
 	}
 }
+
+func TestApplicationRetentionRemovesClosedVacancyApplicationsImmediately(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	vacancy := core.Vacancy{Platform: "hh", ExternalID: "vacancy-closed-card", Title: "Go developer", State: core.VacancyStateArchived, ObservedAt: now.Add(-time.Hour)}
+	if _, err := repository.UpsertVacancy(ctx, vacancy); err != nil {
+		t.Fatalf("store vacancy: %v", err)
+	}
+	application, err := core.NewApplication("application-closed-card", core.ApplicationKey{ProfileID: "primary", Vacancy: vacancy.Key()}, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("new application: %v", err)
+	}
+	if _, _, err := repository.CreateApplication(ctx, application); err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	if err := application.Transition(core.ApplicationPreparing, now.Add(-30*time.Minute)); err != nil {
+		t.Fatalf("preparing: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, application, core.ApplicationNew); err != nil {
+		t.Fatalf("save preparing: %v", err)
+	}
+	application.DecisionCode = "vacancy_closed"
+	application.DecisionReason = "HH не разрешает отклик: вакансия в архиве или недоступна"
+	if err := application.Transition(core.ApplicationSkipped, now.Add(-20*time.Minute)); err != nil {
+		t.Fatalf("skip: %v", err)
+	}
+	if err := repository.SaveApplication(ctx, application, core.ApplicationPreparing); err != nil {
+		t.Fatalf("save skipped: %v", err)
+	}
+	observers := NewApplicationStateObserverRegistry()
+	if err := observers.Register("primary", retentionObserver{result: adapter.ApplicationStateObservationResult{ObservedAt: now}}); err != nil {
+		t.Fatalf("register observer: %v", err)
+	}
+	clock := &conversationClock{now: now}
+	removal, err := workflow.NewApplicationRemovalWorkflow(repository, queue, clock, &conversationIDs{})
+	if err != nil {
+		t.Fatalf("new removal workflow: %v", err)
+	}
+	handler, err := NewApplicationRetentionHandler(repository, repository, observers, removal, clock)
+	if err != nil {
+		t.Fatalf("new retention handler: %v", err)
+	}
+	payload, _ := json.Marshal(core.ApplicationRetentionPayload{
+		ProfileID: "primary", StaleAfter: core.Duration(30 * 24 * time.Hour),
+		RemoveWaitingValidation: true, ValidationStaleAfter: core.Duration(7 * 24 * time.Hour),
+	})
+	task := core.Task{ID: "retention-closed-card", Type: core.TaskApplicationRetention, ProfileID: "primary", Platform: "hh", Payload: payload}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle retention: %v", err)
+	}
+	if len(queue.Tasks()) != 1 {
+		t.Fatalf("remove tasks=%d want=1", len(queue.Tasks()))
+	}
+}

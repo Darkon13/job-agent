@@ -279,8 +279,11 @@ type ConversationFilter struct {
 	ProfileID core.ProfileID
 	Status    core.ConversationStatus
 	Query     string
-	Limit     int
-	Offset    int
+	// UnreadOnly and QuestionnaireOnly mirror the dashboard filters.
+	UnreadOnly        bool
+	QuestionnaireOnly bool
+	Limit             int
+	Offset            int
 }
 
 // ConversationCounts summarizes a filtered conversation set without loading it.
