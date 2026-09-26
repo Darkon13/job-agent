@@ -112,6 +112,38 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 	return result, nil
 }
 
+// PurgeOrphanConversations mirrors the SQL cleanup of conversations whose
+// application is no longer present.
+func (repository *Repository) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	active := make(map[core.ApplicationID]struct{}, len(repository.applications))
+	for _, application := range repository.applications {
+		active[application.ID] = struct{}{}
+	}
+	removed := 0
+	for conversationID, conversation := range repository.conversations {
+		if conversation.ProfileID != profileID {
+			continue
+		}
+		if _, exists := active[conversation.ApplicationID]; exists {
+			continue
+		}
+		delete(repository.conversations, conversationID)
+		delete(repository.messages, conversationID)
+		for followUpID, followUp := range repository.followUps {
+			if followUp.ConversationID == conversationID {
+				delete(repository.followUps, followUpID)
+			}
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // conversationMatchesFilter keeps the in-memory behaviour aligned with SQL.
 func conversationMatchesFilter(conversation core.Conversation, filter storage.ConversationFilter) bool {
 	if filter.Platform != "" && conversation.Platform != filter.Platform ||
@@ -205,16 +237,20 @@ func (repository *Repository) OpenQuestionnaireConversationIDs(ctx context.Conte
 	defer repository.mu.RUnlock()
 	result := make([]core.ConversationID, 0)
 	for id, messages := range repository.messages {
-		var lastOutgoing, latestIncoming time.Time
+		conversation, exists := repository.conversations[id]
+		if !exists || conversation.Status != core.ConversationActive {
+			continue
+		}
+		var lastLeft, latestIncoming time.Time
 		for _, message := range messages {
-			if message.Direction == core.MessageOutgoing && (message.Status == core.MessageSent || message.Status == core.MessageQueued) &&
-				message.OccurredAt.After(lastOutgoing) {
-				lastOutgoing = message.OccurredAt
+			if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_LEFT") &&
+				message.OccurredAt.After(lastLeft) {
+				lastLeft = message.OccurredAt
 			}
 		}
 		for _, message := range messages {
 			if message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0 &&
-				message.OccurredAt.After(lastOutgoing) && message.OccurredAt.After(latestIncoming) {
+				message.OccurredAt.After(lastLeft) && message.OccurredAt.After(latestIncoming) {
 				latestIncoming = message.OccurredAt
 			}
 		}

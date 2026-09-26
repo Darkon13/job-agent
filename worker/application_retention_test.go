@@ -10,6 +10,7 @@ import (
 	"github.com/Darkon13/job-agent/adapter"
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
+	"github.com/Darkon13/job-agent/storage"
 	storagememory "github.com/Darkon13/job-agent/storage/memory"
 	"github.com/Darkon13/job-agent/workflow"
 )
@@ -80,7 +81,7 @@ func TestApplicationRetentionUsesFreshPlatformStateAndProtectsInvitations(t *tes
 	if err != nil {
 		t.Fatalf("new removal workflow: %v", err)
 	}
-	handler, err := NewApplicationRetentionHandler(repository, observers, removal, clock)
+	handler, err := NewApplicationRetentionHandler(repository, repository, observers, removal, clock)
 	if err != nil {
 		t.Fatalf("new retention handler: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestApplicationRetentionHidesOrphanRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new removal workflow: %v", err)
 	}
-	handler, err := NewApplicationRetentionHandler(repository, observers, removal, clock)
+	handler, err := NewApplicationRetentionHandler(repository, repository, observers, removal, clock)
 	if err != nil {
 		t.Fatalf("new retention handler: %v", err)
 	}
@@ -243,5 +244,60 @@ func TestApplicationRetentionHidesOrphanRefusals(t *testing.T) {
 	}
 	if len(observer.withdrawn) != 1 || observer.withdrawn[0] != "n-orphan" {
 		t.Fatalf("withdrawn=%#v want [n-orphan]", observer.withdrawn)
+	}
+}
+
+func TestApplicationRetentionPurgesConversationsOfRemovedApplications(t *testing.T) {
+	now := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	active := storeSubmittedApplication(t, repository, "application-active", "vacancy-active", now.Add(-time.Hour))
+
+	orphan, err := core.NewConversation("chat-orphan", "hh", "primary", "external-orphan", now)
+	if err != nil {
+		t.Fatalf("new orphan conversation: %v", err)
+	}
+	orphan.ApplicationID = "application-removed-long-ago"
+	if _, _, err := repository.CreateConversation(context.Background(), orphan); err != nil {
+		t.Fatalf("store orphan conversation: %v", err)
+	}
+	kept, err := core.NewConversation("chat-kept", "hh", "primary", "external-kept", now)
+	if err != nil {
+		t.Fatalf("new kept conversation: %v", err)
+	}
+	kept.ApplicationID = active.ID
+	if _, _, err := repository.CreateConversation(context.Background(), kept); err != nil {
+		t.Fatalf("store kept conversation: %v", err)
+	}
+
+	observers := NewApplicationStateObserverRegistry()
+	if err := observers.Register("primary", retentionObserver{result: adapter.ApplicationStateObservationResult{
+		ObservedAt: now,
+		Applications: []adapter.ApplicationStateObservation{
+			{ExternalNegotiationID: "n-active", ExternalVacancyID: "vacancy-active", PlatformState: "response", Disposition: core.ApplicationDispositionPending},
+		},
+	}}); err != nil {
+		t.Fatalf("register observer: %v", err)
+	}
+	clock := &conversationClock{now: now}
+	removal, err := workflow.NewApplicationRemovalWorkflow(repository, queue, clock, &conversationIDs{})
+	if err != nil {
+		t.Fatalf("new removal workflow: %v", err)
+	}
+	handler, err := NewApplicationRetentionHandler(repository, repository, observers, removal, clock)
+	if err != nil {
+		t.Fatalf("new retention handler: %v", err)
+	}
+	payload, _ := json.Marshal(core.ApplicationRetentionPayload{ProfileID: "primary", StaleAfter: core.Duration(14 * 24 * time.Hour)})
+	task := core.Task{ID: "retention-chats", Type: core.TaskApplicationRetention, ProfileID: "primary", Platform: "hh", Payload: payload}
+	if err := handler.Handle(context.Background(), task); err != nil {
+		t.Fatalf("handle retention: %v", err)
+	}
+	conversations, err := repository.ListConversations(context.Background(), storage.ConversationFilter{ProfileID: "primary"})
+	if err != nil {
+		t.Fatalf("list conversations: %v", err)
+	}
+	if len(conversations) != 1 || conversations[0].ID != "chat-kept" {
+		t.Fatalf("conversations=%#v want only chat-kept", conversations)
 	}
 }

@@ -816,7 +816,7 @@ func main() {
 	}
 	workers = append(workers, applicationRemovalWorker)
 	applicationRetentionHandler, err := taskworker.NewApplicationRetentionHandler(
-		store, applicationStateObservers, applicationRemovalWorkflow, taskworker.SystemClock{},
+		store, store, applicationStateObservers, applicationRemovalWorkflow, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create application retention handler: %v", err)

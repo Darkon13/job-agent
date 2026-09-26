@@ -119,6 +119,42 @@ func (store *Store) ListConversations(ctx context.Context, filter storage.Conver
 	return result, nil
 }
 
+// PurgeOrphanConversations deletes conversations of the profile whose
+// application is no longer present (removed by retention or manually).
+func (store *Store) PurgeOrphanConversations(ctx context.Context, profileID core.ProfileID) (int, error) {
+	if profileID == "" {
+		return 0, errors.New("conversation purge requires profile")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin conversation purge: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`DELETE FROM conversation_follow_ups WHERE conversation_id IN (
+			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
+			WHERE c.profile_id = ? AND a.id IS NULL)`,
+		`DELETE FROM conversation_messages WHERE conversation_id IN (
+			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
+			WHERE c.profile_id = ? AND a.id IS NULL)`,
+		`DELETE FROM conversations WHERE id IN (
+			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
+			WHERE c.profile_id = ? AND a.id IS NULL)`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, profileID); err != nil {
+			return 0, fmt.Errorf("purge orphan conversations: %w", err)
+		}
+	}
+	var removed int
+	if err := tx.QueryRowContext(ctx, `SELECT changes()`).Scan(&removed); err != nil {
+		return 0, fmt.Errorf("count purged conversations: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit conversation purge: %w", err)
+	}
+	return removed, nil
+}
+
 // conversationFilterQuery applies the shared conversation filters so the list
 // and the counters never disagree.
 func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) {
@@ -229,8 +265,8 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 // questionnaire still has no outgoing answer after it.
 func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
 	// The badge marks a conversation where a questionnaire is still running.
-	// Answering one question does not finish it; the platform closing the chat
-	// does, so only active conversations keep the marker.
+	// Answering one question does not finish it; the questionnaire bot leaving
+	// the chat (PARTICIPANT_LEFT) does. A later join starts a new round.
 	rows, err := store.db.QueryContext(ctx, `
 		SELECT DISTINCT m.conversation_id
 		FROM conversation_messages m
@@ -238,6 +274,10 @@ func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]cor
 		WHERE m.direction = 'incoming' AND m.kind = 'questionnaire'
 		  AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0
 		  AND c.status = 'active'
+		  AND m.occurred_at > COALESCE((
+			SELECT MAX(e.occurred_at) FROM conversation_messages e
+			WHERE e.conversation_id = m.conversation_id AND e.kind = 'system'
+			  AND e.text LIKE '%PARTICIPANT_LEFT%'), 0)
 		ORDER BY m.conversation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list open questionnaires: %w", err)

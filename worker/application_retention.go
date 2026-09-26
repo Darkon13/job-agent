@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -53,17 +54,18 @@ func (registry *ApplicationStateObserverRegistry) Has(profileID core.ProfileID) 
 }
 
 type ApplicationRetentionHandler struct {
-	states    storage.ApplicationPlatformStateRepository
-	observers *ApplicationStateObserverRegistry
-	removal   *workflow.ApplicationRemovalWorkflow
-	clock     Clock
+	states        storage.ApplicationPlatformStateRepository
+	conversations storage.ConversationPurgeRepository
+	observers     *ApplicationStateObserverRegistry
+	removal       *workflow.ApplicationRemovalWorkflow
+	clock         Clock
 }
 
-func NewApplicationRetentionHandler(states storage.ApplicationPlatformStateRepository, observers *ApplicationStateObserverRegistry, removal *workflow.ApplicationRemovalWorkflow, clock Clock) (*ApplicationRetentionHandler, error) {
-	if states == nil || observers == nil || removal == nil || clock == nil {
-		return nil, errors.New("application retention handler requires states, observers, removal workflow and clock")
+func NewApplicationRetentionHandler(states storage.ApplicationPlatformStateRepository, conversations storage.ConversationPurgeRepository, observers *ApplicationStateObserverRegistry, removal *workflow.ApplicationRemovalWorkflow, clock Clock) (*ApplicationRetentionHandler, error) {
+	if states == nil || conversations == nil || observers == nil || removal == nil || clock == nil {
+		return nil, errors.New("application retention handler requires states, conversations, observers, removal workflow and clock")
 	}
-	return &ApplicationRetentionHandler{states: states, observers: observers, removal: removal, clock: clock}, nil
+	return &ApplicationRetentionHandler{states: states, conversations: conversations, observers: observers, removal: removal, clock: clock}, nil
 }
 
 func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task core.Task) error {
@@ -128,6 +130,16 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 	}
 	if _, err := handler.purgeOrphanRejections(ctx, task, applications, observed); err != nil {
 		return err
+	}
+	// Conversations follow their application: chats of already removed
+	// applications would otherwise stay in the dashboard forever.
+	purgedConversations, err := handler.conversations.PurgeOrphanConversations(ctx, payload.ProfileID)
+	if err != nil {
+		return err
+	}
+	if purgedConversations > 0 {
+		slog.Default().Info("removed conversations of deleted applications",
+			"profile", payload.ProfileID, "conversations", purgedConversations)
 	}
 	if !payload.RemoveWaitingValidation {
 		return nil

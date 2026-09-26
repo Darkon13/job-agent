@@ -322,6 +322,18 @@ func (repository *Repository) RemoveApplication(ctx context.Context, id core.App
 		delete(repository.applicationTailorings, tailoringID)
 		delete(repository.tailoringApplications, id)
 	}
+	for conversationID, conversation := range repository.conversations {
+		if conversation.ApplicationID != id {
+			continue
+		}
+		delete(repository.conversations, conversationID)
+		delete(repository.messages, conversationID)
+		for followUpID, followUp := range repository.followUps {
+			if followUp.ConversationID == conversationID {
+				delete(repository.followUps, followUpID)
+			}
+		}
+	}
 	delete(repository.applicationStates, id)
 	delete(repository.applications, application.Key)
 	tombstone := core.ApplicationTombstone{ApplicationID: id, Key: application.Key, Reason: request.Reason, RemovedAt: removedAt.UTC(), Status: application.Status}
