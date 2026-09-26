@@ -331,4 +331,8 @@ type ConversationRepository interface {
 	// identity is immutable through SaveConversation, so the link has its own
 	// operation.
 	AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID) (bool, error)
+	// MarkConversationsReadLocally marks every unread chat read in one step; an
+	// empty profile sweeps every account. The platform mark-read stays a
+	// per-chat best effort.
+	MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error)
 }
