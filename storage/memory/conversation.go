@@ -530,6 +530,7 @@ func cloneConversation(source core.Conversation) core.Conversation {
 	result.LastMessageAt = cloneTime(source.LastMessageAt)
 	result.LastIncomingAt = cloneTime(source.LastIncomingAt)
 	result.LastOutgoingAt = cloneTime(source.LastOutgoingAt)
+	result.LastReadAt = cloneTime(source.LastReadAt)
 	return result
 }
 

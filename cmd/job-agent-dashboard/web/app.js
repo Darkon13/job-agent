@@ -8,6 +8,7 @@ const state = {
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
   reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
+  localReads: new Map(),
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false,
@@ -588,6 +589,27 @@ function visibleConversations(items = []) {
     }
   });
 }
+// Locally read chats keep their zero counter until the durable task lands,
+// even if a background refresh still shows the platform value.
+function markLocallyRead(id) {
+  if (!id) return;
+  state.localReads.set(id, Date.now() + 120_000);
+}
+function applyLocalReads(items = []) {
+  if (!state.localReads.size) return { items, hiddenUnread: 0 };
+  const now = Date.now();
+  let hiddenUnread = 0;
+  const result = items.map((item) => {
+    const expires = state.localReads.get(item.id);
+    if (expires === undefined) return item;
+    if (expires <= now) { state.localReads.delete(item.id); return item; }
+    if (!item.unread_count) { state.localReads.delete(item.id); return item; }
+    hiddenUnread += Number(item.unread_count);
+    return { ...item, unread_count: 0 };
+  });
+  return { items: result, hiddenUnread };
+}
+
 function renderConversations(items = state.conversationItems) {
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
@@ -633,9 +655,10 @@ async function refreshConversations({ append = false } = {}) {
   }
   try {
     const page = await request(`/api/v1/conversations?${params}`);
-    state.conversationItems = append ? [...state.conversationItems, ...(page.items || [])] : (page.items || []);
+    const applied = append ? { items: page.items || [], hiddenUnread: 0 } : applyLocalReads(page.items || []);
+    state.conversationItems = append ? [...state.conversationItems, ...applied.items] : applied.items;
     state.conversationTotal = Number(page.total || 0);
-    state.conversationUnreadTotal = Number(page.unread_total || 0);
+    state.conversationUnreadTotal = Math.max(0, Number(page.unread_total || 0) - applied.hiddenUnread);
     if (!append) {
       state.cache.conversations.set(cacheKey, {
         at: Date.now(), items: state.conversationItems, total: state.conversationTotal, unread: state.conversationUnreadTotal,
@@ -1364,6 +1387,7 @@ async function selectConversation(conversation) {
     state.conversationReadBusy.add(conversation.id);
     // Optimistic: the counter drops immediately, the durable task confirms it.
     const unread = Number(conversation.unread_count || 0);
+    markLocallyRead(conversation.id);
     conversation.unread_count = 0;
     state.conversationUnreadTotal = Math.max(0, state.conversationUnreadTotal - unread);
     renderConversations(state.conversationItems);
@@ -1433,7 +1457,7 @@ elements.replyForm.addEventListener("submit", async (event) => {
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true;
   const previousUnread = state.conversationItems.map((item) => item.unread_count || 0);
-  for (const item of state.conversationItems) item.unread_count = 0;
+  for (const item of state.conversationItems) { if (item.unread_count) markLocallyRead(item.id); item.unread_count = 0; }
   state.conversationUnreadTotal = 0;
   renderConversations(state.conversationItems);
   elements.conversationBulkState.textContent = "Ставлю задачи в очередь…";
