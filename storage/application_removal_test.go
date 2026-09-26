@@ -323,11 +323,11 @@ func TestAttachConversationApplicationLinksOnce(t *testing.T) {
 		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
 			t.Fatal(err)
 		}
-		attached, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-1", now.Add(time.Minute))
+		attached, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-1")
 		if err != nil || !attached {
 			t.Fatalf("attach=%v err=%v", attached, err)
 		}
-		again, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-2", now.Add(2*time.Minute))
+		again, err := repository.AttachConversationApplication(ctx, "chat-attach", "application-2")
 		if err != nil || again {
 			t.Fatalf("second attach=%v err=%v", again, err)
 		}

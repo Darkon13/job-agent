@@ -32,7 +32,7 @@ func (repository *Repository) CreateConversation(ctx context.Context, candidate 
 	externalKey := conversationExternalKey{platform: candidate.Platform, profileID: candidate.ProfileID, externalID: candidate.ExternalID}
 	if existingID, exists := repository.conversationExternal[externalKey]; exists {
 		stored := repository.conversations[existingID]
-		if stored.ApplicationID != candidate.ApplicationID {
+		if candidate.ApplicationID != "" && stored.ApplicationID != candidate.ApplicationID {
 			return core.Conversation{}, false, errors.New("conversation external id conflicts with a different application")
 		}
 		return cloneConversation(stored), false, nil
@@ -114,7 +114,7 @@ func (repository *Repository) ListConversations(ctx context.Context, filter stor
 
 // AttachConversationApplication mirrors the SQL link of a chat to its
 // application.
-func (repository *Repository) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID, now time.Time) (bool, error) {
+func (repository *Repository) AttachConversationApplication(ctx context.Context, id core.ConversationID, applicationID core.ApplicationID) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -126,9 +126,6 @@ func (repository *Repository) AttachConversationApplication(ctx context.Context,
 	}
 	conversation.ApplicationID = applicationID
 	conversation.Revision++
-	if now.After(conversation.UpdatedAt) {
-		conversation.UpdatedAt = now
-	}
 	repository.conversations[id] = conversation
 	return true, nil
 }
