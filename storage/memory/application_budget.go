@@ -18,12 +18,20 @@ func (repository *Repository) ReserveApplicationBudget(ctx context.Context, para
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if reservation, exists := repository.applicationBudgets[params.ApplicationID]; exists {
-		if reservation.ProfileID != params.ProfileID || reservation.Platform != params.Platform ||
-			!reservation.WindowStart.Equal(params.WindowStart) || !reservation.WindowEnd.Equal(params.WindowEnd) {
+		if reservation.ProfileID != params.ProfileID || reservation.Platform != params.Platform {
 			return core.ApplicationBudgetReservation{}, errors.New("application budget reservation conflicts with another window")
 		}
-		if reservation.State != core.ApplicationBudgetReleased {
+		sameWindow := reservation.WindowStart.Equal(params.WindowStart) && reservation.WindowEnd.Equal(params.WindowEnd)
+		if !sameWindow && !reservation.WindowStart.Before(params.WindowStart) {
+			return core.ApplicationBudgetReservation{}, errors.New("application budget reservation conflicts with another window")
+		}
+		if sameWindow && reservation.State != core.ApplicationBudgetReleased {
 			return reservation, nil
+		}
+		if !sameWindow {
+			reservation.State = core.ApplicationBudgetReleased
+			reservation.UpdatedAt = params.Now
+			repository.applicationBudgets[params.ApplicationID] = reservation
 		}
 	}
 	used := 0
