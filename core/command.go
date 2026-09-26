@@ -137,6 +137,27 @@ func (payload ApplicationAnswerCoveredPayload) Validate() error {
 	return nil
 }
 
+// ApplicationValidationRefreshPayload rechecks questionnaires and tests that
+// never became applications, so vacancies that closed stop waiting for input.
+type ApplicationValidationRefreshPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+	Count     int       `json:"count"`
+	MinAge    Duration  `json:"min_age,omitempty"`
+}
+
+func (payload ApplicationValidationRefreshPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("application validation refresh requires profile")
+	}
+	if payload.Count < 1 || payload.Count > 200 {
+		return errors.New("application validation refresh count must be between 1 and 200")
+	}
+	if payload.MinAge.Value() < 0 {
+		return errors.New("application validation refresh min_age must not be negative")
+	}
+	return nil
+}
+
 // ProfileActivityMaintainPayload views real candidate vacancies so the
 // applicant activity stays warm. It never applies to a vacancy.
 type ProfileActivityMaintainPayload struct {

@@ -16,7 +16,7 @@ const elements = Object.fromEntries([
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
-  "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt",
+  "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt", "review-send",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
   "conversation-more", "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
@@ -922,32 +922,88 @@ async function cancelReviewSession(session) {
   }
 }
 
-function renderReviewSessions() {
-  const layout = elements.reviewSessions.closest(".review-layout");
-  if (layout) layout.classList.toggle("empty", !state.reviewSessions.length);
-  if (!state.reviewSessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
-  if (!state.reviewSelected || !state.reviewSessions.some((item) => item.id === state.reviewSelected.id)) {
-    selectReviewSession(state.reviewSessions[0]);
+// reviewVacancyKey groups the per-profile sessions of one vacancy into a
+// single card: the questionnaire is per vacancy, the profiles only choose
+// where the filled application is sent from.
+function reviewVacancyID(session) {
+  const url = safeExternalURL(session.vacancy?.url || "");
+  return url ? (url.match(/\/vacancy\/(\d+)/)?.[1] || "") : "";
+}
+// sendReviewApplication enqueues the submit retry for the selected profile: a
+// filled questionnaire is attached by the application pipeline itself.
+async function sendReviewApplication() {
+  const session = state.reviewSelected;
+  const vacancyID = session ? reviewVacancyID(session) : "";
+  if (!session || !vacancyID) {
+    elements.reviewState.textContent = "У выбранной анкеты нет ссылки на вакансию";
     return;
   }
-  elements.reviewSessions.replaceChildren(...state.reviewSessions.map((session) => {
-    const row = document.createElement("div");
-    row.className = "review-session-row";
-    const button = document.createElement("button"); button.type = "button";
-    button.className = `review-session${state.reviewSelected?.id === session.id ? " active" : ""}`;
-    const vacancy = session.vacancy || {};
-    button.append(text("strong", vacancy.title || plainText(session.question) || `Проверка ${compactID(session.id)}`));
-    const details = vacancy.title
-      ? [vacancy.employer || "Компания не определена", plainText(session.question), reviewStatusLabel(session.status), formatDate(session.updated_at)]
-      : [reviewStatusLabel(session.status), session.platform, profileDisplayName(session.profile_id), formatDate(session.updated_at)];
-    button.append(text("small", details.filter(Boolean).join(" · ")));
-    button.addEventListener("click", () => selectReviewSession(session));
-    const cancel = document.createElement("button");
-    cancel.type = "button"; cancel.className = "secondary compact review-cancel";
-    cancel.textContent = "Убрать"; cancel.disabled = state.reviewBusy;
-    cancel.addEventListener("click", () => cancelReviewSession(session));
-    row.append(button, cancel);
-    return row;
+  elements.reviewSend.disabled = true; elements.reviewState.textContent = "Ищу отклик по вакансии…";
+  try {
+    const params = new URLSearchParams({ profile_id: session.profile_id, vacancy_id: vacancyID, limit: "20" });
+    const listing = await request(`/api/v1/applications?${params}`);
+    const items = listing.items || [];
+    const application = items.find((item) => item.status === "waiting_validation") || items.find((item) => item.status === "failed") || items[0];
+    if (!application) { elements.reviewState.textContent = "Отклик по этой вакансии не найден"; return; }
+    await enqueue(`/api/v1/applications/${encodeURIComponent(application.id)}/retry`);
+    elements.reviewState.textContent = `Отклик ${application.id} поставлен в очередь (профиль ${profileDisplayName(session.profile_id)})`;
+    refreshApplications(); refreshSummary();
+  } catch (error) {
+    elements.reviewState.textContent = error.message;
+  } finally {
+    elements.reviewSend.disabled = false;
+  }
+}
+
+function reviewVacancyKey(session) {
+  const vacancy = session.vacancy || {};
+  const url = safeExternalURL(vacancy.url || "");
+  if (url) {
+    const id = url.match(/\/vacancy\/(\d+)/)?.[1];
+    if (id) return `vacancy:${id}`;
+  }
+  return `title:${vacancy.title || session.question || session.id}|${vacancy.employer || ""}`;
+}
+function renderReviewSessions() {
+  const layout = elements.reviewSessions.closest(".review-layout");
+  const sessions = state.reviewSessions || [];
+  if (layout) layout.classList.toggle("empty", !sessions.length);
+  if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
+  if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {
+    selectReviewSession(sessions[0]);
+    return;
+  }
+  const groups = new Map();
+  for (const session of sessions) {
+    const key = reviewVacancyKey(session);
+    if (!groups.has(key)) groups.set(key, { vacancy: session.vacancy || {}, sessions: [] });
+    groups.get(key).sessions.push(session);
+  }
+  elements.reviewSessions.replaceChildren(...[...groups.values()].map((group) => {
+    const card = document.createElement("div"); card.className = "review-vacancy";
+    const heading = document.createElement("div"); heading.className = "review-vacancy-heading";
+    heading.append(text("strong", group.vacancy.title || "Без названия"));
+    heading.append(text("small", group.vacancy.employer || "Компания не определена", "muted"));
+    card.append(heading);
+    const profiles = document.createElement("div"); profiles.className = "review-vacancy-profiles";
+    for (const session of group.sessions) {
+      const chip = document.createElement("button"); chip.type = "button";
+      chip.className = `review-profile${state.reviewSelected?.id === session.id ? " active" : ""}`;
+      chip.append(text("span", profileDisplayName(session.profile_id), "review-profile-name"));
+      chip.append(text("small", reviewStatusLabel(session.status)));
+      chip.addEventListener("click", () => selectReviewSession(session));
+      profiles.append(chip);
+    }
+    card.append(profiles);
+    const selected = group.sessions.find((item) => item.id === state.reviewSelected?.id);
+    if (selected) {
+      const cancel = document.createElement("button");
+      cancel.type = "button"; cancel.className = "secondary compact review-cancel";
+      cancel.textContent = "Убрать"; cancel.disabled = state.reviewBusy;
+      cancel.addEventListener("click", () => cancelReviewSession(selected));
+      card.append(cancel);
+    }
+    return card;
   }));
 }
 
@@ -964,6 +1020,8 @@ async function selectReviewSession(session) {
     link.textContent = " Открыть вакансию ↗"; link.className = "table-link";
     elements.reviewSessionMeta.append(link);
   }
+  elements.reviewSend.hidden = !reviewVacancyID(session);
+  elements.reviewSend.disabled = state.reviewBusy;
   elements.reviewPrompt.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
     state.reviewDetail = await request(`/api/v1/review-sessions/${encodeURIComponent(session.id)}`);
@@ -1322,6 +1380,7 @@ elements.conversationSort.addEventListener("change", () => { state.conversationS
 elements.conversationMore.addEventListener("click", () => refreshConversations({ append: true }));
 elements.refresh.addEventListener("click", () => { refreshSummary(); refreshProfileResources(); refreshReviewSessions(); });
 elements.reviewRefresh.addEventListener("click", () => refreshReviewSessions());
+elements.reviewSend.addEventListener("click", sendReviewApplication);
 elements.accountSwitcher.addEventListener("change", () => {
   state.account = elements.accountSwitcher.value;
   try { window.localStorage.setItem("job-agent-account", state.account); } catch {}

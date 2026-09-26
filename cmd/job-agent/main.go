@@ -852,6 +852,17 @@ func main() {
 		log.Fatalf("create activity maintain worker: %v", err)
 	}
 	workers = append(workers, activityMaintainWorker)
+	validationRefreshHandler, err := taskworker.NewValidationRefreshHandler(
+		store, store, applicationTransports, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create validation refresh handler: %v", err)
+	}
+	validationRefreshWorker, err := newTaskWorker(store, core.TaskApplicationValidationCheck, validationRefreshHandler.Handle)
+	if err != nil {
+		log.Fatalf("create validation refresh worker: %v", err)
+	}
+	workers = append(workers, validationRefreshWorker)
 	if resumeTouchers.Count() > 0 {
 		resumeHandler, err := taskworker.NewResumeTouchHandler(resumeTouchers, store, taskworker.SystemClock{})
 		if err != nil {
@@ -1086,6 +1097,11 @@ func main() {
 			return nil, fmt.Errorf("build application answer covered scheduled jobs: %w", err)
 		}
 		definitions = append(definitions, answerCoveredDefinitions...)
+		validationRefreshDefinitions, err := applicationValidationRefreshDefinitions(cfg, instances, applicationTransports)
+		if err != nil {
+			return nil, fmt.Errorf("build application validation refresh scheduled jobs: %w", err)
+		}
+		definitions = append(definitions, validationRefreshDefinitions...)
 		profileStateDefinitions, err := profileStateReconcileDefinitions(
 			cfg, profileStateResources, profileStateReaders, profileStatePlatforms,
 		)
@@ -2835,6 +2851,47 @@ func profileActivityMaintainDefinitions(cfg appconfig.Config, instances map[stri
 					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
 					Expression: trigger.Expression, Timezone: trigger.Timezone,
 					ActionType: core.TaskProfileActivityMaintain, Platform: core.Platform(instance.Name()), ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
+		}
+	}
+	return definitions, nil
+}
+
+func applicationValidationRefreshDefinitions(cfg appconfig.Config, instances map[string]adapter.Adapter, transports *taskworker.ApplicationTransportRegistry) ([]jobscheduler.Definition, error) {
+	profiles := make(map[string]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profiles[profile.Tag] = profile
+	}
+	definitions := make([]jobscheduler.Definition, 0)
+	for _, job := range cfg.Jobs {
+		if !job.Enabled || job.Action.Type != appconfig.JobActionApplicationValidationCheck {
+			continue
+		}
+		for profileIndex, target := range job.Action.TargetProfiles() {
+			profile := profiles[target]
+			profileID := core.ProfileID(profile.Tag)
+			if !profile.Enabled {
+				continue
+			}
+			if _, err := transports.ResolveVacancyReader(profileID); err != nil {
+				logf("application validation refresh %q is disabled until profile %q has a browser read session", job.Tag, profile.Tag)
+				continue
+			}
+			payload, err := json.Marshal(core.ApplicationValidationRefreshPayload{
+				ProfileID: profileID, Count: job.Action.Count, MinAge: job.Action.MinAge,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)
+			}
+			instance := instances[profile.Adapter]
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationValidationCheck, Platform: core.Platform(instance.Name()), ProfileID: profileID,
 					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 				})
 			}

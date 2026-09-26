@@ -22,6 +22,7 @@ type ApplicationListEntry struct {
 	Status       core.ApplicationStatus
 	DecisionCode string
 	Disposition  core.ApplicationDisposition
+	ExternalID   string
 	Title        string
 	Employer     string
 	UpdatedAt    time.Time
@@ -31,6 +32,7 @@ type ApplicationQuery struct {
 	ProfileID                    core.ProfileID
 	Status                       core.ApplicationStatus
 	DecisionCode                 string
+	VacancyExternalID            string
 	Query, Employer, Group, Sort string
 	Offset, Limit                int
 }
@@ -49,7 +51,7 @@ func (query ApplicationQuery) Validate() error {
 	if query.Limit < 1 || query.Limit > 200 || query.Offset < 0 {
 		return errors.New("application page requires limit 1..200 and nonnegative offset")
 	}
-	if len(query.Query) > 500 || len(query.Employer) > 500 || len(query.DecisionCode) > 100 {
+	if len(query.Query) > 500 || len(query.Employer) > 500 || len(query.DecisionCode) > 100 || len(query.VacancyExternalID) > 100 {
 		return errors.New("application query is too long")
 	}
 	switch query.Sort {
@@ -111,6 +113,9 @@ func SelectApplicationPage(entries []ApplicationListEntry, query ApplicationQuer
 			continue
 		}
 		if query.DecisionCode != "" && entry.DecisionCode != query.DecisionCode {
+			continue
+		}
+		if query.VacancyExternalID != "" && entry.ExternalID != query.VacancyExternalID {
 			continue
 		}
 		if !strings.Contains(strings.ToLower(entry.Employer), employer) {
