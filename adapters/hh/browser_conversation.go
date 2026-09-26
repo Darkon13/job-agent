@@ -338,6 +338,10 @@ func (client *BrowserConversationClient) SendConversationMessage(ctx context.Con
 	var response hhChatMessage
 	parameters := url.Values{"hhtmSourceLabel": {"chat"}, "hhtmSource": {"chat"}}
 	if err := client.postJSON(ctx, "/chatik/api/send", parameters, payload, &response, "conversations.send.browser", true, command.ExternalConversationID); err != nil {
+		if chatConflict(err) {
+			// A repeated operator action: the answer is already in the chat.
+			return client.resyncSentMessage(ctx, chatID, command)
+		}
 		return core.ConversationMessage{}, err
 	}
 	observation, include, err := mapHHMessageObservation(response, data.Chat.CurrentParticipantID)
@@ -357,6 +361,30 @@ func (client *BrowserConversationClient) SendConversationMessage(ctx context.Con
 	}
 	message.ReplyToID = command.ReplyToID
 	return message, message.Validate()
+}
+
+// resyncSentMessage finds the already delivered message for one send command.
+func (client *BrowserConversationClient) resyncSentMessage(ctx context.Context, chatID int64, command adapter.ConversationSendCommand) (core.ConversationMessage, error) {
+	data, err := client.fetchChatData(ctx, chatID, "", "conversations.send.reconcile.browser")
+	if err != nil {
+		return core.ConversationMessage{}, err
+	}
+	for index := len(data.Chat.Messages.Items) - 1; index >= 0; index-- {
+		observation, include, err := mapHHMessageObservation(data.Chat.Messages.Items[index], data.Chat.CurrentParticipantID)
+		if err != nil || !include {
+			continue
+		}
+		if observation.Direction != core.MessageOutgoing || strings.TrimSpace(observation.Text) != command.Text {
+			continue
+		}
+		message, err := observation.Message(hhMessageID(observation.ExternalID), command.ConversationID)
+		if err != nil {
+			continue
+		}
+		return message, message.Validate()
+	}
+	return core.ConversationMessage{}, operationError(core.ErrorTemporaryFailure, "conversations.send.browser",
+		"HH reported a duplicate message but it was not found in the chat", nil)
 }
 
 func (client *BrowserConversationClient) MarkConversationRead(ctx context.Context, profileID core.ProfileID, externalConversationID string) error {
@@ -507,10 +535,22 @@ func classifyChatStatus(response *http.Response, operation string) error {
 		category = core.ErrorTemporaryFailure
 	}
 	failure := operationError(category, operation, fmt.Sprintf("HH returned status %d", response.StatusCode), nil)
+	failure.Metadata = map[string]string{"http_status": strconv.Itoa(response.StatusCode)}
 	if category == core.ErrorRateLimited {
 		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
 	}
 	return failure
+}
+
+// chatConflict reports the duplicate-send answer: HH rejects a message that is
+// already in the chat, which is a success for an idempotent operator action.
+func chatConflict(err error) bool {
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) || operationError.Validate() != nil {
+		return false
+	}
+	status, parseErr := strconv.Atoi(operationError.Metadata["http_status"])
+	return parseErr == nil && status == http.StatusConflict
 }
 
 func (client *BrowserConversationClient) validateIdentity(profileID core.ProfileID, conversationID core.ConversationID, externalConversationID string) error {

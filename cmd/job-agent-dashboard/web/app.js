@@ -727,6 +727,15 @@ async function sendQuestionnaireOption(message, option) {
   const key = `dashboard-answer:${conversation.id}:${message.id}:${option.id}`;
   state.conversationAnswerBusy = `${message.id}:${option.id}`;
   elements.actionState.textContent = `Отправляю «${option.text}»…`;
+  // Optimistic bubble: the answer shows up immediately, the durable task and
+  // the next sync replace it with the stored message.
+  const pendingID = `pending-answer-${message.id}-${option.id}`;
+  if (!state.selectedMessages.some((item) => item.id === pendingID)) {
+    state.selectedMessages = [...state.selectedMessages, {
+      id: pendingID, direction: "outgoing", kind: "text", status: "pending",
+      text: option.text, occurred_at: new Date().toISOString(),
+    }];
+  }
   renderMessages(state.selectedMessages);
   try {
     const result = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`, {
@@ -748,6 +757,7 @@ async function sendQuestionnaireOption(message, option) {
     }
   } catch (error) {
     elements.actionState.textContent = error.message;
+    state.selectedMessages = state.selectedMessages.filter((item) => item.id !== pendingID);
   }
   state.conversationAnswerBusy = "";
   renderMessages(state.selectedMessages);
