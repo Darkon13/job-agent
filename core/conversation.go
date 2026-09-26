@@ -222,7 +222,11 @@ func (conversation *Conversation) ObservePresentation(presentation ConversationP
 	return true, nil
 }
 
-func (conversation *Conversation) ObserveCatalogState(status ConversationStatus, unreadCount int, now time.Time) (bool, error) {
+// ObserveCatalogState applies the platform catalog state. observedIncomingAt
+// is the newest incoming message time the catalog itself reported; the unread
+// counter it carries must not be dropped as "already read" while that message
+// is still waiting for the message sync.
+func (conversation *Conversation) ObserveCatalogState(status ConversationStatus, unreadCount int, observedIncomingAt *time.Time, now time.Time) (bool, error) {
 	if conversation == nil {
 		return false, errors.New("conversation is nil")
 	}
@@ -240,8 +244,12 @@ func (conversation *Conversation) ObserveCatalogState(status ConversationStatus,
 	if now.Before(conversation.UpdatedAt) {
 		return false, fmt.Errorf("conversation catalog observation: %w", ErrConversationObservationStale)
 	}
+	lastIncoming := conversation.LastIncomingAt
+	if observedIncomingAt != nil && (lastIncoming == nil || observedIncomingAt.After(*lastIncoming)) {
+		lastIncoming = observedIncomingAt
+	}
 	if unreadCount > 0 && conversation.LastReadAt != nil &&
-		(conversation.LastIncomingAt == nil || !conversation.LastIncomingAt.After(*conversation.LastReadAt)) {
+		(lastIncoming == nil || !lastIncoming.After(*conversation.LastReadAt)) {
 		// The operator already read everything up to the last incoming
 		// message; the platform still counts older unread items.
 		unreadCount = 0
@@ -258,7 +266,7 @@ func (conversation *Conversation) ObserveCatalogState(status ConversationStatus,
 
 func (conversation *Conversation) MarkRead(now time.Time) (bool, error) {
 	hadUnread := conversation.UnreadCount > 0
-	changed, err := conversation.ObserveCatalogState(conversation.Status, 0, now)
+	changed, err := conversation.ObserveCatalogState(conversation.Status, 0, nil, now)
 	if err != nil {
 		return false, err
 	}

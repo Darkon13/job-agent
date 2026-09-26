@@ -46,6 +46,10 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		if err != nil {
 			return result, err
 		}
+		// The catalog reports the unread state together with the first sighting;
+		// storing it now keeps the badge accurate without waiting for the next
+		// discovery run.
+		candidate.UnreadCount = observation.UnreadCount
 		stored, created, err := workflow.repository.CreateConversation(ctx, candidate)
 		if err != nil {
 			return result, fmt.Errorf("store observed conversation %s: %w", observation.ExternalID, err)
@@ -58,8 +62,15 @@ func (workflow *ConversationWorkflow) ObserveConversations(ctx context.Context, 
 		// message. Unchanged conversations stay on their stored timeline.
 		needsSync := created
 		if !created {
+			// The catalog carries the newest incoming message with the unread
+			// counter; the sync that stores it runs right after this update.
+			var observedIncoming *time.Time
+			if observation.LastMessage != nil && observation.LastMessage.Direction == core.MessageIncoming {
+				occurred := observation.LastMessage.OccurredAt
+				observedIncoming = &occurred
+			}
 			changed, err := workflow.updateConversation(ctx, stored.ID, func(conversation *core.Conversation) (bool, error) {
-				changed, observeErr := conversation.ObserveCatalogState(observation.Status, observation.UnreadCount, observedAt)
+				changed, observeErr := conversation.ObserveCatalogState(observation.Status, observation.UnreadCount, observedIncoming, observedAt)
 				if errors.Is(observeErr, core.ErrConversationObservationStale) {
 					// A concurrent sync advanced the conversation after the catalog
 					// snapshot; its state is newer and must not be overwritten.

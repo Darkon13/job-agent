@@ -8,10 +8,11 @@ const state = {
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
   reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
+  messageRequest: new Map(), messageSignatures: new Map(),
   localReads: new Map(),
   profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
-  reviewQuery: "", reviewHasMore: false,
+  reviewQuery: "", reviewHasMore: false, reviewFocusPending: false,
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
@@ -145,14 +146,57 @@ async function captureQuestionnaire(item, button) {
       method: "POST", headers: { "Idempotency-Key": key },
     });
     if (!response.ok) throw new Error(String(response.status));
-    elements.reviewState.textContent = "Анкета захвачена — ответьте ниже и отправьте.";
-    refreshReviewSessions();
-    document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    state.applicationActionMessage = "";
+    const vacancyID = String(item.vacancy_url || "").match(/\/vacancy\/(\d+)/)?.[1] || "";
+    await focusReviewSession(vacancyID, item.profile_id);
   } catch (error) {
     state.applicationActionMessage = `Не удалось запросить анкету: ${error.message}`;
   }
   button.disabled = false;
   updateApplicationSelection(state.applicationObjects);
+}
+// matchingReviewSession finds the captured questionnaire among the listed
+// sessions: the vacancy identifies it, the profile disambiguates a vacancy
+// captured for several accounts.
+function matchingReviewSession(vacancyID, profileID) {
+  const sessions = state.reviewSessions || [];
+  const candidates = vacancyID ? sessions.filter((session) => reviewVacancyID(session) === vacancyID) : [];
+  return candidates.find((session) => session.profile_id === profileID) || candidates[0] || null;
+}
+// focusReviewSession waits for the asynchronously captured questionnaire and
+// selects exactly that card. Without it the review section keeps the first
+// session selected and the operator answers the wrong vacancy.
+async function focusReviewSession(vacancyID, profileID) {
+  if (!vacancyID) {
+    refreshReviewSessions();
+    document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  // The captured questionnaire may fall outside the active review filters.
+  if (elements.reviewFilter.value || state.reviewQuery) {
+    elements.reviewFilter.value = ""; elements.reviewSearch.value = ""; state.reviewQuery = "";
+  }
+  state.reviewSelected = null; state.reviewFocusPending = true;
+  const deadline = Date.now() + 60000;
+  try {
+    for (;;) {
+      await refreshReviewSessions();
+      const session = matchingReviewSession(vacancyID, profileID);
+      if (session) {
+        selectReviewSession(session);
+        document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        elements.reviewState.textContent = "HH ещё готовит анкету — обновите список проверок";
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } finally {
+    state.reviewFocusPending = false;
+    renderReviewSessions();
+  }
 }
 function browserCheckImageURL(session) {
   return `/api/v1/applications/${encodeURIComponent(session.application_id)}/browser-check/${encodeURIComponent(session.session_id)}/image?ts=${Date.now()}`;
@@ -697,6 +741,39 @@ function updateMarkAllRead(items = []) {
   elements.markAllRead.disabled = state.markAllReadBusy || unread === 0;
   if (pending) elements.conversationBulkState.textContent = "Прочтение уже выполняется";
 }
+// withPendingMessages keeps optimistic bubbles visible while the durable task
+// and the next sync replace them. Pending items belong to one conversation, so
+// a bubble never leaks into another chat.
+function withPendingMessages(items, conversationID) {
+  const pending = (state.selectedMessages || []).filter((item) => String(item.id).startsWith("pending-") && item.conversation_id === conversationID);
+  if (!pending.length) return items;
+  if (conversationID && (!state.selectedConversation || state.selectedConversation.id !== conversationID)) return items;
+  const stored = new Set((items || []).filter((item) => item.direction === "outgoing").map((item) => String(item.text || "").trim()));
+  return [...(items || []), ...pending.filter((item) => !stored.has(String(item.text || "").trim()))];
+}
+
+// messageSignature identifies a rendered message list so an unchanged refresh
+// leaves the panel alone instead of rebuilding it under the operator's eyes.
+function messageSignature(items) {
+  return (items || []).map((item) => `${item.id}:${item.status || ""}:${(item.text || "").length}`).join("|");
+}
+// loadConversationMessages refreshes the open chat through one ordered path:
+// a response that lost the race with a newer request never touches the panel.
+async function loadConversationMessages(conversationID, { live = false } = {}) {
+  const requestID = (state.messageRequest.get(conversationID) || 0) + 1;
+  state.messageRequest.set(conversationID, requestID);
+  const result = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages${live ? "?live=1" : ""}`);
+  if (state.selectedConversation?.id !== conversationID) return null;
+  if (state.messageRequest.get(conversationID) !== requestID) return null;
+  const items = withPendingMessages(result.items || [], conversationID);
+  state.selectedMessages = items;
+  const signature = messageSignature(items);
+  if (state.messageSignatures.get(conversationID) !== signature) {
+    state.messageSignatures.set(conversationID, signature);
+    renderMessages(items);
+  }
+  return items;
+}
 function renderMessages(items = []) {
   if (!items.length) { elements.messages.replaceChildren(text("p", "В этом диалоге сообщений пока нет.", "empty")); return; }
   elements.messages.replaceChildren(...items.map((item) => {
@@ -733,7 +810,7 @@ async function sendQuestionnaireOption(message, option) {
   if (!state.selectedMessages.some((item) => item.id === pendingID)) {
     state.selectedMessages = [...state.selectedMessages, {
       id: pendingID, direction: "outgoing", kind: "text", status: "pending",
-      text: option.text, occurred_at: new Date().toISOString(),
+      text: option.text, conversation_id: conversation.id, occurred_at: new Date().toISOString(),
     }];
   }
   renderMessages(state.selectedMessages);
@@ -749,7 +826,7 @@ async function sendQuestionnaireOption(message, option) {
       try {
         const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
         if (state.selectedConversation?.id === conversation.id) {
-          state.selectedMessages = fresh.items || [];
+          state.selectedMessages = withPendingMessages(fresh.items || [], conversation.id);
           renderMessages(state.selectedMessages);
         }
       } catch (_) {}
@@ -1012,6 +1089,12 @@ async function cancelReviewSession(session) {
 // single card: the questionnaire is per vacancy, the profiles only choose
 // where the filled application is sent from.
 function reviewVacancyID(session) {
+  const external = session.vacancy?.external_id;
+  if (external) return String(external);
+  const platform = String(session.platform || "");
+  const definition = String(session.test_definition_id || "");
+  const prefix = `${platform}:vacancy:`;
+  if (platform && definition.startsWith(prefix)) return definition.slice(prefix.length);
   const url = safeExternalURL(session.vacancy?.url || "");
   return url ? (url.match(/\/vacancy\/(\d+)/)?.[1] || "") : "";
 }
@@ -1074,6 +1157,9 @@ function renderReviewSessions() {
   if (layout) layout.classList.toggle("empty", !sessions.length);
   if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
   if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {
+    // While a captured questionnaire is still being looked up, keep the list
+    // unselected instead of jumping to the top card.
+    if (state.reviewFocusPending) return;
     selectReviewSession(sessions[0]);
     return;
   }
@@ -1381,11 +1467,11 @@ async function refreshVersion() {
 async function selectConversation(conversation) {
   state.selectedConversation = conversation; renderConversations(state.conversationItems); elements.chatTitle.textContent = conversationLabel(conversation); elements.chatMeta.textContent = `${conversation.employer || "Компания не определена"} · профиль ${profileDisplayName(conversation.profile_id)} · ${conversationStatusLabels[conversation.status] || conversation.status}`;
   const vacancyURL = safeExternalURL(conversation.vacancy_url); elements.chatVacancyLink.classList.toggle("hidden", !vacancyURL); if (vacancyURL) elements.chatVacancyLink.href = vacancyURL; else elements.chatVacancyLink.removeAttribute("href");
+  state.selectedMessages = [];
+  state.messageSignatures.delete(conversation.id);
   elements.reply.disabled = false; elements.send.disabled = false; elements.messages.replaceChildren(text("p", "Загрузка…", "empty"));
   try {
-    const result = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages?live=1`);
-    if (state.selectedConversation?.id !== conversation.id) return;
-    state.selectedMessages = result.items || []; renderMessages(state.selectedMessages);
+    await loadConversationMessages(conversation.id, { live: true });
   } catch (error) { elements.messages.replaceChildren(text("p", error.message, "empty")); }
   try {
     const sync = await enqueue(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/sync`);
@@ -1393,9 +1479,7 @@ async function selectConversation(conversation) {
       globalThis.setTimeout(async () => {
         if (state.selectedConversation?.id !== conversation.id) return;
         try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversation.id)}/messages`);
-          if (state.selectedConversation?.id !== conversation.id) return;
-          state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages);
+          await loadConversationMessages(conversation.id);
           refreshSummary();
         } catch (_) {}
       }, 4000);
@@ -1442,20 +1526,15 @@ elements.replyForm.addEventListener("submit", async (event) => {
       const pendingID = `pending-${result.task_id}`;
       state.selectedMessages = [...state.selectedMessages, {
         id: pendingID, direction: "outgoing", kind: "text", status: "pending",
-        text: value, occurred_at: new Date().toISOString(),
+        text: value, conversation_id: conversationID, occurred_at: new Date().toISOString(),
       }];
       renderMessages(state.selectedMessages);
       let attempts = 0;
       const confirm = async () => {
         if (state.selectedConversation?.id !== conversationID) return;
         try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(conversationID)}/messages`);
-          if (state.selectedConversation?.id !== conversationID) return;
-          const items = fresh.items || [];
-          state.selectedMessages = items;
-          renderMessages(items);
-          const stored = items.some((item) => item.direction === "outgoing" && item.text === value);
-          if (stored) return;
+          const items = await loadConversationMessages(conversationID);
+          if (items && items.some((item) => item.direction === "outgoing" && item.text === value)) return;
         } catch (_) {}
         if (++attempts < 10) globalThis.setTimeout(confirm, 1500);
       };
@@ -1471,6 +1550,12 @@ elements.replyForm.addEventListener("submit", async (event) => {
       await refreshSummary();
     }
   } catch (error) { elements.actionState.textContent = error.message; } finally { elements.send.disabled = false; }
+});
+// Enter sends the reply; Shift+Enter keeps the newline.
+elements.reply.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  elements.replyForm.requestSubmit();
 });
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true;
@@ -1569,10 +1654,7 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
       if (sections.includes("applications")) await refreshApplications();
       if (sections.includes("conversations")) await refreshConversations();
       if (sections.includes("conversations") && state.selectedConversation) {
-        try {
-          const fresh = await request(`/api/v1/conversations/${encodeURIComponent(state.selectedConversation.id)}/messages`);
-          if (state.selectedConversation) { state.selectedMessages = fresh.items || []; renderMessages(state.selectedMessages); }
-        } catch (_) {}
+        try { await loadConversationMessages(state.selectedConversation.id); } catch (_) {}
       }
     }, 1200);
   });
