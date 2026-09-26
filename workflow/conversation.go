@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -180,6 +181,25 @@ func (workflow *ConversationWorkflow) ObserveConversationPresentation(ctx contex
 	})
 	if err != nil {
 		return fmt.Errorf("save conversation presentation: %w", err)
+	}
+	return nil
+}
+
+// LinkConversationApplication records which application a chat belongs to so a
+// removal can delete the chat together with its application.
+func (workflow *ConversationWorkflow) LinkConversationApplication(ctx context.Context, conversationID core.ConversationID, applicationID core.ApplicationID) error {
+	if strings.TrimSpace(string(applicationID)) == "" {
+		return nil
+	}
+	_, err := workflow.updateConversation(ctx, conversationID, func(conversation *core.Conversation) (bool, error) {
+		if conversation.ApplicationID == applicationID {
+			return false, nil
+		}
+		conversation.ApplicationID = applicationID
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("link conversation to application: %w", err)
 	}
 	return nil
 }

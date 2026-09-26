@@ -133,13 +133,13 @@ func (store *Store) PurgeOrphanConversations(ctx context.Context, profileID core
 	for _, statement := range []string{
 		`DELETE FROM conversation_follow_ups WHERE conversation_id IN (
 			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
-			WHERE c.profile_id = ? AND a.id IS NULL)`,
+			WHERE c.profile_id = ? AND c.application_id <> '' AND a.id IS NULL)`,
 		`DELETE FROM conversation_messages WHERE conversation_id IN (
 			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
-			WHERE c.profile_id = ? AND a.id IS NULL)`,
+			WHERE c.profile_id = ? AND c.application_id <> '' AND a.id IS NULL)`,
 		`DELETE FROM conversations WHERE id IN (
 			SELECT c.id FROM conversations c LEFT JOIN applications a ON a.id = c.application_id
-			WHERE c.profile_id = ? AND a.id IS NULL)`,
+			WHERE c.profile_id = ? AND c.application_id <> '' AND a.id IS NULL)`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, profileID); err != nil {
 			return 0, fmt.Errorf("purge orphan conversations: %w", err)
