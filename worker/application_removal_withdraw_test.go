@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestApplicationRemovalWithdrawsOnPlatformBeforeLocalRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new removal workflow: %v", err)
 	}
-	handler, err := NewApplicationRemovalHandler(repository, repository, repository, observers, clock)
+	handler, err := NewApplicationRemovalHandler(repository, repository, repository, repository, testConversationTransports(), observers, clock)
 	if err != nil {
 		t.Fatalf("new removal handler: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestApplicationRemovalAcceptsObservationReadAfterTaskStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new removal workflow: %v", err)
 	}
-	handler, err := NewApplicationRemovalHandler(repository, repository, repository, observers, clock)
+	handler, err := NewApplicationRemovalHandler(repository, repository, repository, repository, testConversationTransports(), observers, clock)
 	if err != nil {
 		t.Fatalf("new removal handler: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestApplicationRemovalKeepsLocalRecordWhenWithdrawalFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new removal workflow: %v", err)
 	}
-	handler, err := NewApplicationRemovalHandler(repository, repository, repository, observers, clock)
+	handler, err := NewApplicationRemovalHandler(repository, repository, repository, repository, testConversationTransports(), observers, clock)
 	if err != nil {
 		t.Fatalf("new removal handler: %v", err)
 	}
@@ -174,5 +175,70 @@ func TestApplicationRemovalKeepsLocalRecordWhenWithdrawalFails(t *testing.T) {
 	}
 	if _, err := repository.ApplicationByID(ctx, application.ID); err != nil {
 		t.Fatal("application must stay local when withdrawal failed")
+	}
+}
+
+// testConversationTransports returns an empty registry; tests that need a
+// platform chat transport register their own fake.
+func testConversationTransports() *ConversationTransportRegistry {
+	return NewConversationTransportRegistry()
+}
+
+type recordingConversationTransport struct {
+	readIDs []string
+}
+
+func (*recordingConversationTransport) SendConversationMessage(context.Context, adapter.ConversationSendCommand) (core.ConversationMessage, error) {
+	return core.ConversationMessage{}, errors.New("unexpected send")
+}
+
+func (transport *recordingConversationTransport) MarkConversationRead(_ context.Context, _ core.ProfileID, externalConversationID string) error {
+	transport.readIDs = append(transport.readIDs, externalConversationID)
+	return nil
+}
+
+func (*recordingConversationTransport) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
+	return adapter.ConversationSyncResult{}, errors.New("unexpected sync")
+}
+
+func TestApplicationRemovalMarksLinkedChatsRead(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 15, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	application := storeSubmittedApplication(t, repository, "application-chat", "vacancy-chat", now.Add(-time.Hour))
+	conversation, err := core.NewConversation("chat-removal", "hh", "primary", "external-chat-77", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation.ApplicationID = application.ID
+	conversation.UnreadCount = 2
+	if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
+		t.Fatal(err)
+	}
+
+	observers := NewApplicationStateObserverRegistry()
+	if err := observers.Register("primary", retentionObserver{result: adapter.ApplicationStateObservationResult{ObservedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	transports := NewConversationTransportRegistry()
+	fake := &recordingConversationTransport{}
+	if err := transports.Register("primary", fake); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewApplicationRemovalHandler(repository, repository, repository, repository, transports, observers, &conversationClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(core.ApplicationRemovePayload{ApplicationID: application.ID, Reason: core.ApplicationRemovalManual})
+	task := core.Task{ID: "remove-chat", Type: core.TaskApplicationRemove, ProfileID: "primary", Platform: "hh", Payload: payload}
+	if err := handler.Handle(ctx, task); err != nil {
+		t.Fatalf("handle removal: %v", err)
+	}
+	if len(fake.readIDs) != 1 || fake.readIDs[0] != "external-chat-77" {
+		t.Fatalf("read=%#v", fake.readIDs)
+	}
+	conversations, err := repository.ApplicationConversations(ctx, application.ID)
+	if err != nil || len(conversations) != 0 {
+		t.Fatalf("chats survived: %#v err=%v", conversations, err)
 	}
 }

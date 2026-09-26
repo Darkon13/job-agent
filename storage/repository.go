@@ -335,4 +335,6 @@ type ConversationRepository interface {
 	// empty profile sweeps every account. The platform mark-read stays a
 	// per-chat best effort.
 	MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error)
+	// ApplicationConversations lists the chats linked to one application.
+	ApplicationConversations(ctx context.Context, applicationID core.ApplicationID) ([]core.Conversation, error)
 }

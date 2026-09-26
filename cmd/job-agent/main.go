@@ -803,7 +803,7 @@ func main() {
 		workers = append(workers, applicationWorker)
 	}
 	applicationRemovalHandler, err := taskworker.NewApplicationRemovalHandler(
-		store, store, store, applicationStateObservers, taskworker.SystemClock{},
+		store, store, store, store, conversationTransports, applicationStateObservers, taskworker.SystemClock{},
 	)
 	if err != nil {
 		log.Fatalf("create application removal handler: %v", err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
@@ -17,18 +18,28 @@ import (
 const freshRemovalStateWindow = 10 * time.Minute
 
 type ApplicationRemovalHandler struct {
-	applications storage.ApplicationReadRepository
-	removals     storage.ApplicationRemovalRepository
-	states       storage.ApplicationPlatformStateRepository
-	observers    *ApplicationStateObserverRegistry
-	clock        Clock
+	applications  storage.ApplicationReadRepository
+	removals      storage.ApplicationRemovalRepository
+	states        storage.ApplicationPlatformStateRepository
+	conversations storage.ConversationRepository
+	transports    *ConversationTransportRegistry
+	observers     *ApplicationStateObserverRegistry
+	clock         Clock
 }
 
-func NewApplicationRemovalHandler(applications storage.ApplicationReadRepository, removals storage.ApplicationRemovalRepository, states storage.ApplicationPlatformStateRepository, observers *ApplicationStateObserverRegistry, clock Clock) (*ApplicationRemovalHandler, error) {
-	if applications == nil || removals == nil || states == nil || observers == nil || clock == nil {
-		return nil, errors.New("application removal requires applications, removals, states, observers and clock")
+func NewApplicationRemovalHandler(
+	applications storage.ApplicationReadRepository,
+	removals storage.ApplicationRemovalRepository,
+	states storage.ApplicationPlatformStateRepository,
+	conversations storage.ConversationRepository,
+	transports *ConversationTransportRegistry,
+	observers *ApplicationStateObserverRegistry,
+	clock Clock,
+) (*ApplicationRemovalHandler, error) {
+	if applications == nil || removals == nil || states == nil || conversations == nil || transports == nil || observers == nil || clock == nil {
+		return nil, errors.New("application removal requires applications, removals, states, conversations, transports, observers and clock")
 	}
-	return &ApplicationRemovalHandler{applications, removals, states, observers, clock}, nil
+	return &ApplicationRemovalHandler{applications, removals, states, conversations, transports, observers, clock}, nil
 }
 
 func (handler *ApplicationRemovalHandler) Handle(ctx context.Context, task core.Task) error {
@@ -103,8 +114,34 @@ func (handler *ApplicationRemovalHandler) Handle(ctx context.Context, task core.
 	if err := handler.withdrawOnPlatform(ctx, task, application, observed); err != nil {
 		return err
 	}
+	handler.markApplicationChatsRead(ctx, application)
 	_, _, err = handler.removals.RemoveApplication(ctx, application.ID, request, handler.clock.Now())
 	return err
+}
+
+// markApplicationChatsRead clears the platform unread badge of the chats that
+// disappear with the application, so the operator's notifications do not keep
+// chats that no longer exist locally. Failures stay best effort: the local
+// removal must not depend on the platform chat state.
+func (handler *ApplicationRemovalHandler) markApplicationChatsRead(ctx context.Context, application core.Application) {
+	transport, err := handler.transports.Resolve(application.Key.ProfileID)
+	if err != nil {
+		return
+	}
+	conversations, err := handler.conversations.ApplicationConversations(ctx, application.ID)
+	if err != nil {
+		slog.Default().Warn("listing application chats failed", "application", application.ID, "error", err)
+		return
+	}
+	for _, conversation := range conversations {
+		if conversation.UnreadCount == 0 {
+			continue
+		}
+		if err := transport.MarkConversationRead(ctx, conversation.ProfileID, conversation.ExternalID); err != nil {
+			slog.Default().Warn("marking chat read before removal failed",
+				"profile", conversation.ProfileID, "conversation", conversation.ID, "error", err)
+		}
+	}
 }
 
 // withdrawOnPlatform cancels a pending response or hides a closed negotiation

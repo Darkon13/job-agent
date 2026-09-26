@@ -130,6 +130,24 @@ func (repository *Repository) AttachConversationApplication(ctx context.Context,
 	return true, nil
 }
 
+// ApplicationConversations mirrors the SQL listing of one application chats.
+func (repository *Repository) ApplicationConversations(ctx context.Context, applicationID core.ApplicationID) ([]core.Conversation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	result := make([]core.Conversation, 0)
+	for _, conversation := range repository.conversations {
+		if conversation.ApplicationID != applicationID {
+			continue
+		}
+		result = append(result, cloneConversation(conversation))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+
 // MarkConversationsReadLocally mirrors the SQL read sweep.
 func (repository *Repository) MarkConversationsReadLocally(ctx context.Context, profileID core.ProfileID, now time.Time) (int, error) {
 	if err := ctx.Err(); err != nil {

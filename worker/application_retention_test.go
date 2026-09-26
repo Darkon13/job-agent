@@ -149,7 +149,7 @@ func TestRemovalReobservesBeforeDeletingAndRetriesAfterCommit(t *testing.T) {
 	if err := observers.Register("primary", retentionObserver{result: adapter.ApplicationStateObservationResult{ObservedAt: now, Applications: []adapter.ApplicationStateObservation{{ExternalNegotiationID: "n", ExternalVacancyID: "v", PlatformState: "invitation", Disposition: core.ApplicationDispositionInvited}}}}); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewApplicationRemovalHandler(repository, repository, repository, observers, clock)
+	handler, err := NewApplicationRemovalHandler(repository, repository, repository, repository, testConversationTransports(), observers, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
