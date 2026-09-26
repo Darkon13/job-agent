@@ -290,6 +290,32 @@ func TestLoginDriverCaptchaReturnsScreenshotChallenge(t *testing.T) {
 	}
 }
 
+func TestLoginDriverRechecksWhenCaptchaVanishesAfterAccept(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	fake.Errors = map[string]error{"screenshot": &browser.Error{Code: "timeout", Message: "waiting for locator to be visible"}}
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch request.Selector {
+		case loginCaptchaImage, loginOTPInput:
+			return nil
+		case loginPasswordExpand:
+			return errors.New("element is not visible")
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	outcome, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if outcome.Request == nil || outcome.Request.Challenge == nil || outcome.Request.Challenge.Kind != core.AuthChallengeOTP {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
 func TestLoginDriverOTPCompletesWithSanitizedBrowserState(t *testing.T) {
 	fake := browsertest.New()
 	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
