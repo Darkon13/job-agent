@@ -108,7 +108,7 @@ func (handler *ApplicationRetentionHandler) Handle(ctx context.Context, task cor
 			// the orphaned platform refusal if it reappears.
 			if payload.RemoveRejected {
 				if stored, stateErr := handler.states.ApplicationPlatformState(ctx, application.ID); stateErr == nil &&
-					stored.Disposition == core.ApplicationDispositionRejected && !application.UpdatedAt.After(staleBefore) {
+					stored.Disposition == core.ApplicationDispositionRejected {
 					if _, _, err := handler.removal.EnqueueRemoval(ctx, core.ApplicationRemovePayload{
 						ApplicationID: application.ID, Reason: core.ApplicationRemovalRetentionRejected, StaleAfter: payload.StaleAfter,
 					}, "retention:"+string(task.ID)); err != nil {
