@@ -255,7 +255,11 @@ func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) 
 			WHERE m.conversation_id = conversations.id
 			  AND ((m.direction = 'incoming' AND m.kind = 'questionnaire'
 			        AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
-			       OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'))
+			       OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'
+			           AND (SELECT f.direction FROM conversation_messages f
+			                WHERE f.conversation_id = m.conversation_id AND f.kind <> 'system'
+			                  AND f.occurred_at > m.occurred_at
+			                ORDER BY f.occurred_at LIMIT 1) = 'incoming'))
 			  AND m.occurred_at > COALESCE((
 				SELECT MAX(e.occurred_at) FROM conversation_messages e
 				WHERE e.conversation_id = m.conversation_id
@@ -361,7 +365,11 @@ func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]cor
 		  AND (
 			(m.direction = 'incoming' AND m.kind = 'questionnaire'
 			 AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
-			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%')
+			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'
+			    AND (SELECT f.direction FROM conversation_messages f
+			         WHERE f.conversation_id = m.conversation_id AND f.kind <> 'system'
+			           AND f.occurred_at > m.occurred_at
+			         ORDER BY f.occurred_at LIMIT 1) = 'incoming')
 		  )
 		  AND m.occurred_at > COALESCE((
 			SELECT MAX(e.occurred_at) FROM conversation_messages e
