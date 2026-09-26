@@ -222,3 +222,29 @@ func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
 		t.Fatalf("result=%#v requests=%d", result, requests.Load())
 	}
 }
+
+func TestBrowserConversationTreatsDuplicateSendAsDelivered(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet {
+			_, _ = writer.Write([]byte(`{"chat":{"id":41,"currentParticipantId":"me","messages":{"items":[
+				{"id":10,"chatId":41,"creationTime":"2026-09-07T10:00:00Z","text":"Да","type":"SIMPLE","participantId":"me"}
+			],"hasMore":false}},"chatStates":{"writeMessageState":{"allowed":true}}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusConflict)
+		_, _ = writer.Write([]byte(`{"error":"duplicate"}`))
+	}))
+	defer server.Close()
+	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{AllowSend: true})
+	message, err := client.SendConversationMessage(context.Background(), adapter.ConversationSendCommand{
+		ProfileID: "primary", ConversationID: "conversation-1", ExternalConversationID: "41",
+		Text: "Да", IdempotencyKey: "answer-1",
+	})
+	if err != nil {
+		t.Fatalf("duplicate send: %v", err)
+	}
+	if message.ExternalID != "10" || message.Direction != core.MessageOutgoing || message.Status != core.MessageSent {
+		t.Fatalf("message=%#v", message)
+	}
+}
