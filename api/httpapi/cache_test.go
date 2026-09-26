@@ -37,13 +37,34 @@ func TestResponseCacheServesRepeatReadsAndRekeysMutations(t *testing.T) {
 		t.Fatalf("cache miss on repeat: calls=%d", calls)
 	}
 
-	// Any mutation drops the cached reads so the dashboard never hides an action.
+	// A mutation marks the reads stale: the next request is answered instantly
+	// and a background refresh rebuilds the entry.
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/applications/remove", nil))
 	third := httptest.NewRecorder()
 	handler.ServeHTTP(third, httptest.NewRequest(http.MethodGet, "/api/v1/applications?limit=10", nil))
-	if third.Code != http.StatusOK || atomic.LoadInt64(&calls) != 3 {
-		t.Fatalf("after mutation status=%d calls=%d", third.Code, calls)
+	if third.Code != http.StatusOK {
+		t.Fatalf("after mutation status=%d", third.Code)
 	}
+	waitFor(t, func() bool { return atomic.LoadInt64(&calls) == 3 })
+	fourth := httptest.NewRequest(http.MethodGet, "/api/v1/applications?limit=10", nil)
+	fourth.Header.Set("If-None-Match", third.Header().Get("ETag"))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, fourth)
+	if response.Code != http.StatusNotModified {
+		t.Fatalf("refreshed entry status=%d", response.Code)
+	}
+}
+
+func waitFor(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not met in time")
 }
 
 func TestResponseCacheLeavesUnconfiguredPathsAlone(t *testing.T) {
@@ -75,7 +96,8 @@ func TestResponseCacheExpiresEntries(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil))
 	now = now.Add(16 * time.Second)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil))
-	if atomic.LoadInt64(&calls) != 2 {
-		t.Fatalf("expired entry was served: calls=%d", calls)
+	if atomic.LoadInt64(&calls) != 1 {
+		t.Fatalf("stale entry must be served instantly: calls=%d", calls)
 	}
+	waitFor(t, func() bool { return atomic.LoadInt64(&calls) == 2 })
 }
