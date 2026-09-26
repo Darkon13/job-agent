@@ -205,10 +205,15 @@ func newTestBrowserConversationClient(t *testing.T, server *httptest.Server, opt
 }
 
 func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
-	var requests atomic.Int32
+	var window, unread atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		sequence := requests.Add(1)
 		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("filterUnread") == "true" {
+			unread.Add(1)
+			_, _ = writer.Write([]byte(`{"chats":{"items":[{"id":9001,"currentParticipantId":"me","unreadCount":4}]}}`))
+			return
+		}
+		sequence := window.Add(1)
 		_, _ = fmt.Fprintf(writer, `{"chats":{"items":[{"id":%d,"currentParticipantId":"me"}],"nextFrom":%d}}`, sequence, sequence+1000)
 	}))
 	defer server.Close()
@@ -218,7 +223,31 @@ func TestBrowserConversationDiscoveryTruncatesAtRecentWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover conversations: %v", err)
 	}
-	if !result.Truncated || len(result.Conversations) != maxChatDiscoveryPages || requests.Load() != int32(maxChatDiscoveryPages) {
+	if !result.Truncated || len(result.Conversations) != maxChatDiscoveryPages+1 ||
+		window.Load() != int32(maxChatDiscoveryPages) || unread.Load() != 1 {
+		t.Fatalf("result=%#v window=%d unread=%d", result, window.Load(), unread.Load())
+	}
+	extra := result.Conversations[len(result.Conversations)-1]
+	if extra.ExternalID != "9001" || extra.UnreadCount != 4 {
+		t.Fatalf("unread observation=%#v", extra)
+	}
+}
+
+func TestBrowserConversationDiscoverySkipsUnreadPassWithinWindow(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"chats":{"items":[{"id":7,"currentParticipantId":"me"}]}}`))
+	}))
+	defer server.Close()
+	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
+
+	result, err := client.DiscoverConversations(context.Background(), "primary")
+	if err != nil {
+		t.Fatalf("discover conversations: %v", err)
+	}
+	if result.Truncated || len(result.Conversations) != 1 || requests.Load() != 1 {
 		t.Fatalf("result=%#v requests=%d", result, requests.Load())
 	}
 }
