@@ -187,7 +187,7 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 					Kind: core.MessageText, Text: "Добрый день", OccurredAt: clock.now.Add(-time.Minute),
 				},
 			},
-			{ExternalID: "external-chat-2", Status: core.ConversationActive},
+			{ExternalID: "external-chat-2", Status: core.ConversationActive, UnreadCount: 1},
 		},
 	}
 	payload, _ := json.Marshal(core.ConversationDiscoverPayload{ProfileID: "profile-1"})
@@ -205,8 +205,11 @@ func TestConversationDiscoverHandlerStoresCatalogAndSchedulesFullSync(t *testing
 	if err != nil || len(conversations) != 2 {
 		t.Fatalf("conversations=%#v err=%v", conversations, err)
 	}
-	if (conversations[0].ExternalID == "external-chat-1" && conversations[0].UnreadCount != 2) || (conversations[1].ExternalID == "external-chat-1" && conversations[1].UnreadCount != 2) {
-		t.Fatalf("unread count was not stored: %#v", conversations)
+	wantedUnread := map[string]int{"external-chat-1": 2, "external-chat-2": 1}
+	for _, conversation := range conversations {
+		if expected, ok := wantedUnread[conversation.ExternalID]; ok && conversation.UnreadCount != expected {
+			t.Fatalf("unread count was not stored for %s: %#v", conversation.ExternalID, conversation)
+		}
 	}
 	messages, err := repository.ConversationMessages(ctx, "conversation-1")
 	if err != nil || len(messages) != 1 || messages[0].ExternalID != "message-external-1" {
@@ -313,7 +316,7 @@ func TestConversationDiscoverHandlerSkipsUnchangedConversations(t *testing.T) {
 		ObservedAt: clock.now,
 		Conversations: []core.ConversationObservation{
 			{ExternalID: "external-chat-1", Status: core.ConversationActive},
-			{ExternalID: "external-chat-2", Status: core.ConversationActive},
+			{ExternalID: "external-chat-2", Status: core.ConversationActive, UnreadCount: 1},
 		},
 	}
 	newTask := func(key string) core.Task {

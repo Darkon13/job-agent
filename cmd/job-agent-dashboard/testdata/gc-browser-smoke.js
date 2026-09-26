@@ -8,6 +8,9 @@ async (page) => {
   const now = "2026-09-11T10:00:00Z";
   const application = (id, status = "submitted") => ({id, profile_id: "primary", platform: "hh", status, vacancy_title: "Backend Go", employer: "Сбер", updated_at: now, disposition: "pending"});
   const chat = {id: "chat-1", platform: "hh", profile_id: "primary", employer: "Сбер", vacancy_title: "Backend Go", unread_count: 2, status: "active", revision: 1, updated_at: now};
+  const reviewSession = (id, vacancyID, title) => ({id, test_definition_id: `hh:vacancy:${vacancyID}`, platform: "hh", profile_id: "primary", status: "waiting_answer", revision: 1, created_at: now, updated_at: now,
+    vacancy: {external_id: vacancyID, title, employer: "Сбер", url: `https://hh.ru/vacancy/${vacancyID}`}});
+  const questionnaireApplication = {...application("anketa", "waiting_validation"), vacancy_title: "Анкета-вакансия", vacancy_url: "https://hh.ru/vacancy/222"};
   const assert = (value, message) => { if (!value) throw Error(message); };
   testPage.on("pageerror", error => errors.push(error.message));
   await testPage.route("http://127.0.0.1:18088/**", async route => {
@@ -15,7 +18,7 @@ async (page) => {
     if (path.startsWith("/api/")) return route.fallback();
     const asset = {"/":"index.html", "/app.js":"app.js", "/styles.css":"styles.css"}[path];
     if (!asset) return route.fulfill({status:404, body:""});
-    return route.fulfill({path:"/home/user/Projects/job-agent/cmd/job-agent-dashboard/web/"+asset});
+    return route.fulfill({path:"/home/darkon/Projects/job-agent/cmd/job-agent-dashboard/web/"+asset});
   });
   await testPage.route("**/api/**", async route => {
     const request = route.request();
@@ -28,8 +31,10 @@ async (page) => {
     else if (url.pathname === "/api/v1/applications") {
       const query = url.searchParams.get("q");
       const offset = Number(url.searchParams.get("offset"));
-      body = {items: query ? [application("older-match")] : offset ? [application("page-2")] : [application("page-1"), application("active", "submitting")], total: query ? 1 : 201, groups: query ? {"":1, waiting_invitation:1} : {"":201, waiting_invitation:200, queued:1}};
-    } else if (url.pathname === "/api/v1/jobs") body = {items: [{tag:"gc-test", task_type:"application.retention", platform:"hh", profile_id:"primary", priority:0}]};
+      body = {items: query ? [application("older-match")] : offset ? [application("page-2")] : [application("page-1"), application("active", "submitting"), questionnaireApplication], total: query ? 1 : 201, groups: query ? {"":1, waiting_invitation:1} : {"":201, waiting_invitation:200, queued:1}};
+    } else if (url.pathname === "/api/v1/applications/anketa/questionnaire") body = {created: true};
+    else if (url.pathname === "/api/v1/review-sessions") body = {items: [reviewSession("review-first", "111", "Другая вакансия"), reviewSession("review-target", "222", "Нужная вакансия")]};
+    else if (url.pathname === "/api/v1/jobs") body = {items: [{tag:"gc-test", task_type:"application.retention", platform:"hh", profile_id:"primary", priority:0}]};
     else if (url.pathname === "/api/v1/applications/remove") {
       removals++;
       assert(JSON.stringify(request.postDataJSON().application_ids) === JSON.stringify(["older-match"]), "wrong selected object");
@@ -54,6 +59,9 @@ async (page) => {
     await testPage.locator("#application-next").click();
     await testPage.locator("#application-filter-state").filter({hasText:"201–201"}).waitFor();
     await testPage.locator("#application-prev").click();
+    await testPage.locator("#review-session-title").filter({hasText:"Другая вакансия"}).waitFor();
+    await testPage.locator("#application-items tr", {hasText:"Анкета-вакансия"}).locator("button", {hasText:"Анкета"}).click();
+    await testPage.locator("#review-session-title").filter({hasText:"Нужная вакансия"}).waitFor();
     await testPage.locator("#application-search").fill("СБЕР");
     await testPage.locator("#application-filter-state").filter({hasText:"1–1 из 1"}).waitFor();
     await testPage.locator("#application-select-all").check();
