@@ -353,24 +353,19 @@ func (store *Store) AppendConversationMessage(ctx context.Context, message core.
 // OpenQuestionnaireConversationIDs lists conversations whose latest incoming
 // questionnaire still has no outgoing answer after it.
 func (store *Store) OpenQuestionnaireConversationIDs(ctx context.Context) ([]core.ConversationID, error) {
-	// The badge marks a conversation where a questionnaire is still running.
-	// It opens with a questionnaire prompt (with options) or with the bot
-	// joining the chat (PARTICIPANT_JOINED, free-text questionnaires) and it
-	// closes when the bot leaves (PARTICIPANT_LEFT).
+	// The badge marks a conversation where a questionnaire is still running:
+	// its last prompt (with options or a free-text question) has no answer after
+	// it, the bot has not left and the chat is not a refusal.
 	rows, err := store.db.QueryContext(ctx, `
 		SELECT DISTINCT m.conversation_id
 		FROM conversation_messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.status = 'active'
-		  AND (
-			(m.direction = 'incoming' AND m.kind = 'questionnaire'
-			 AND CASE WHEN json_valid(m.options) THEN json_array_length(m.options) ELSE 0 END > 0)
-			OR (m.kind = 'system' AND m.text LIKE '%PARTICIPANT_JOINED%'
-			    AND (SELECT f.direction FROM conversation_messages f
-			         WHERE f.conversation_id = m.conversation_id AND f.kind <> 'system'
-			           AND f.occurred_at > m.occurred_at
-			         ORDER BY f.occurred_at LIMIT 1) = 'incoming')
-		  )
+		  AND m.direction = 'incoming' AND m.kind = 'questionnaire'
+		  AND NOT EXISTS (
+			SELECT 1 FROM conversation_messages a
+			WHERE a.conversation_id = m.conversation_id AND a.direction = 'outgoing'
+			  AND a.status IN ('sent', 'queued') AND a.occurred_at > m.occurred_at)
 		  AND m.occurred_at > COALESCE((
 			SELECT MAX(e.occurred_at) FROM conversation_messages e
 			WHERE e.conversation_id = m.conversation_id

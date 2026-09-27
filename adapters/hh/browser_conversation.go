@@ -649,6 +649,35 @@ func (client *BrowserConversationClient) validateIdentity(profileID core.Profile
 	return nil
 }
 
+// hhChatQuestionPrompt reports whether a plain incoming message asks the
+// applicant something. Greetings, refusals and test links stay plain text: the
+// chat is only a questionnaire when the counterpart really asks a question.
+func hhChatQuestionPrompt(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	for _, excluded := range []string{
+		"спасибо за интерес", "большое спасибо", "к сожалению", "не готовы пригласить",
+		"закрыли эту позицию", "уже закрыта", "я ии-помощник", "откликнулись на вакансию",
+	} {
+		if strings.Contains(normalized, excluded) {
+			return false
+		}
+	}
+	if strings.Contains(normalized, "?") {
+		return true
+	}
+	for _, prompt := range []string{
+		"укажите", "уточните", "ответьте", "подскажите", "напишите", "расскажите", "выберите",
+	} {
+		if strings.Contains(normalized, prompt) {
+			return true
+		}
+	}
+	return false
+}
+
 func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (core.ConversationMessageObservation, bool, error) {
 	if raw.Hidden || raw.Deleted {
 		return core.ConversationMessageObservation{}, false, nil
@@ -680,6 +709,10 @@ func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (co
 			// invitation; the chat must not be flagged as a running one.
 			kind = core.MessageSuggestion
 		}
+	} else if direction == core.MessageIncoming && hhChatQuestionPrompt(text) {
+		// Free-text questionnaires ask their questions as plain messages, so
+		// the prompt itself is the questionnaire signal.
+		kind = core.MessageQuestionnaire
 	}
 	if text == "" && len(options) == 0 {
 		kind = core.MessageSystem

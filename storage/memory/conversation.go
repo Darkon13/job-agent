@@ -212,23 +212,6 @@ func (repository *Repository) PurgeOrphanConversations(ctx context.Context, prof
 	return removed, nil
 }
 
-// firstNonSystemDirection returns the direction of the earliest non-system
-// message after the given moment (zero value when there is none).
-func firstNonSystemDirection(messages map[core.MessageID]core.ConversationMessage, after time.Time) core.MessageDirection {
-	var earliest time.Time
-	direction := core.MessageDirection("")
-	for _, message := range messages {
-		if message.Kind == core.MessageSystem || !message.OccurredAt.After(after) {
-			continue
-		}
-		if earliest.IsZero() || message.OccurredAt.Before(earliest) {
-			earliest = message.OccurredAt
-			direction = message.Direction
-		}
-	}
-	return direction
-}
-
 // openQuestionnaire reports whether the chat has a questionnaire prompt not
 // closed by PARTICIPANT_LEFT yet.
 func (repository *Repository) openQuestionnaire(conversation core.Conversation) bool {
@@ -248,14 +231,20 @@ func (repository *Repository) openQuestionnaire(conversation core.Conversation) 
 		}
 	}
 	for _, message := range messages {
-		opens := message.Direction == core.MessageIncoming && message.Kind == core.MessageQuestionnaire && len(message.Options) > 0
-		if message.Kind == core.MessageSystem && strings.Contains(message.Text, "PARTICIPANT_JOINED") {
-			// A bot join means a questionnaire only when the counterpart speaks
-			// first; an applicant-initiated message after the join is a plain
-			// conversation.
-			opens = firstNonSystemDirection(messages, message.OccurredAt) == core.MessageIncoming
+		if message.Direction != core.MessageIncoming || message.Kind != core.MessageQuestionnaire ||
+			!message.OccurredAt.After(lastLeft) || !message.OccurredAt.After(lastOpener) {
+			continue
 		}
-		if opens && message.OccurredAt.After(lastLeft) && message.OccurredAt.After(lastOpener) {
+		answered := false
+		for _, reply := range messages {
+			if reply.Direction == core.MessageOutgoing &&
+				(reply.Status == core.MessageSent || reply.Status == core.MessageQueued) &&
+				reply.OccurredAt.After(message.OccurredAt) {
+				answered = true
+				break
+			}
+		}
+		if !answered {
 			lastOpener = message.OccurredAt
 		}
 	}
