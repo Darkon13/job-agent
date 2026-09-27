@@ -12,12 +12,12 @@ func TestProfileStoreLoadsDashboardFragments(t *testing.T) {
 	writeConfigTestFile(t, configPath, `{
 		"schema_version":1,
 		"database":{"driver":"sqlite","path":"data/job-agent.db"},
+		"profile_store":{"dir":"profile-store"},
 		"adapters":[{"tag":"hh-main","type":"hh"}],
 		"profiles":[{"tag":"primary","adapter":"hh-main","enabled":false,"resume":"resume-1"}]
 	}`)
-	// The default store lives in a dedicated directory next to the database
-	// file; a missing directory is not an error, so the same config works
-	// before the first fragment.
+	// The fragment store is a dedicated directory; a missing directory is not
+	// an error, so the same config works before the first fragment.
 	loaded, err := Load(configPath)
 	if err != nil {
 		t.Fatalf("load without store: %v", err)
@@ -25,7 +25,7 @@ func TestProfileStoreLoadsDashboardFragments(t *testing.T) {
 	if loaded.Profiles[0].Source != ProfileSourceConfig {
 		t.Fatalf("config profile source = %q", loaded.Profiles[0].Source)
 	}
-	writeConfigTestFile(t, filepath.Join(directory, "data", "profile-store", "secondary.json"), `{
+	writeConfigTestFile(t, filepath.Join(directory, "profile-store", "secondary.json"), `{
 		"profiles":[{"tag":"secondary","adapter":"hh-main","enabled":true,
 			"resumes":[{"id":"resume-9","title":"Go","primary":true},{"id":"resume-8","primary":false}]}]
 	}`)
@@ -91,8 +91,10 @@ func TestProfileStoreDirectoryResolution(t *testing.T) {
 	if dir := absolute.ProfileStoreDirectory("/etc/job-agent"); dir != "/srv/profiles" {
 		t.Fatalf("absolute dir = %q", dir)
 	}
+	// A relative database path keeps the runtime base, so the default store
+	// stays usable in the container where the database path is process-relative.
 	fallback := Config{Database: DatabaseConfig{Path: "./data/job-agent.db"}}
-	if dir := fallback.ProfileStoreDirectory("/etc/job-agent"); dir != "/etc/job-agent/data/profile-store" {
+	if dir := fallback.ProfileStoreDirectory("/etc/job-agent"); dir != "data/profile-store" {
 		t.Fatalf("default dir = %q", dir)
 	}
 }

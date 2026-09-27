@@ -401,7 +401,8 @@ type ProfileStoreConfig struct {
 // ProfileStoreDirectory returns the effective profile store directory. An
 // explicit relative dir resolves against the main config file (or the fragment
 // itself when loading one); otherwise the store lives in a dedicated
-// `profile-store` directory next to the database file.
+// `profile-store` directory next to the database file, using the same base the
+// runtime uses to open the database.
 func (c Config) ProfileStoreDirectory(mainDirectory string) string {
 	if dir := strings.TrimSpace(c.ProfileStore.Dir); dir != "" {
 		if !filepath.IsAbs(dir) {
@@ -413,11 +414,9 @@ func (c Config) ProfileStoreDirectory(mainDirectory string) string {
 	if path == "" {
 		return ""
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(mainDirectory, path)
-	}
-	// Fragments live in a dedicated directory: session files keep their own
-	// layout, for example <db dir>/profiles/<tag>.json.
+	// A relative database path is process-relative (that is how the runtime
+	// opens it), so the derived store keeps the same base: fragments live in a
+	// dedicated directory next to the database file.
 	return filepath.Join(filepath.Dir(path), "profile-store")
 }
 

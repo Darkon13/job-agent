@@ -1351,9 +1351,17 @@ func buildProfileDraftWorkflow(cfg appconfig.Config, configPath string, instance
 	reader := func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
 		return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
 	}
+	// The derived default can be process-relative; the runtime reports and
+	// writes an absolute path so logs, the API and the fragments agree.
+	directory := cfg.ProfileStoreDirectory(filepath.Dir(absolute))
+	if directory != "" {
+		if resolved, err := filepath.Abs(directory); err == nil {
+			directory = resolved
+		}
+	}
 	return workflow.NewProfileDraftWorkflow(
 		store, declared, platforms, fallbackAdapter,
-		cfg.ProfileStoreDirectory(filepath.Dir(absolute)), reader, workflow.SystemClock{},
+		directory, reader, workflow.SystemClock{},
 	)
 }
 
