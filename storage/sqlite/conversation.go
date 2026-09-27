@@ -39,7 +39,7 @@ func (store *Store) CreateConversation(ctx context.Context, candidate core.Conve
 		return candidate, true, nil
 	}
 	stored, err := store.Conversation(ctx, candidate.ID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, storage.ErrConversationNotFound) {
 		stored, err = store.conversationByExternal(ctx, candidate.Platform, candidate.ProfileID, candidate.ExternalID)
 	}
 	if err != nil {
@@ -93,8 +93,12 @@ func (store *Store) SaveConversation(ctx context.Context, candidate core.Convers
 }
 
 func (store *Store) conversationByExternal(ctx context.Context, platform core.Platform, profileID core.ProfileID, externalID string) (core.Conversation, error) {
-	return scanConversation(store.db.QueryRowContext(ctx, conversationSelect+
+	conversation, err := scanConversation(store.db.QueryRowContext(ctx, conversationSelect+
 		` WHERE platform = ? AND profile_id = ? AND external_id = ?`, platform, profileID, externalID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Conversation{}, storage.ErrConversationNotFound
+	}
+	return conversation, err
 }
 
 func (store *Store) ListConversations(ctx context.Context, filter storage.ConversationFilter) ([]core.Conversation, error) {

@@ -114,3 +114,33 @@ func TestStorePersistsConversationsAndDueFollowUpsAcrossReopen(t *testing.T) {
 		t.Fatalf("conversation stats: %#v err=%v", stats, err)
 	}
 }
+
+func TestStoreReusesConversationWithTheSameExternalID(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	first, err := core.NewConversation("conversation-1", "hh", "profile-1", "external-chat-1", now)
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	if _, created, err := store.CreateConversation(ctx, first); err != nil || !created {
+		t.Fatalf("create conversation: created=%t err=%v", created, err)
+	}
+	second, err := core.NewConversation("conversation-2", "hh", "profile-1", "external-chat-1", now)
+	if err != nil {
+		t.Fatalf("new conversation: %v", err)
+	}
+	stored, created, err := store.CreateConversation(ctx, second)
+	if err != nil || created {
+		t.Fatalf("duplicate external id: created=%t err=%v", created, err)
+	}
+	if stored.ID != first.ID {
+		t.Fatalf("stored id = %q, want %q", stored.ID, first.ID)
+	}
+	if _, err := store.Conversation(ctx, "conversation-missing"); !errors.Is(err, storage.ErrConversationNotFound) {
+		t.Fatalf("missing conversation error = %v", err)
+	}
+}
