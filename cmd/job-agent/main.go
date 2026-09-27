@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -1236,7 +1237,15 @@ func main() {
 	jobAPI.SetPauses(store)
 	jobAPI.SetSystemTags(systemJobTags())
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
-	authAPI, err := configureAuthAPI(cfg, instances, store)
+	profileDrafts, err := buildProfileDraftWorkflow(cfg, options.configPath, instances, store)
+	if err != nil {
+		log.Fatalf("create profile draft workflow: %v", err)
+	}
+	profileDraftAPI, err := httpapi.NewProfileDraftAPI(profileDrafts)
+	if err != nil {
+		log.Fatalf("create profile draft API: %v", err)
+	}
+	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)
 	}
@@ -1279,7 +1288,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create qualification API: %v", err)
 	}
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(profileCatalogAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler())))))))))
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(profileCatalogAPI.Handler(profileDraftAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))))
 	var authHandler func(http.Handler) http.Handler
 	if authAPI != nil {
 		authHandler = authAPI.Handler
@@ -1315,10 +1324,60 @@ func buildAPIHandler(
 	return httpapi.RequestID(handler)
 }
 
+// buildProfileDraftWorkflow prepares the dashboard onboarding pipeline: it owns
+// profile drafts, derives their session paths inside the profile store and
+// writes the applied fragments there.
+func buildProfileDraftWorkflow(cfg appconfig.Config, configPath string, instances map[string]adapter.Adapter, store *storesqlite.Store) (*workflow.ProfileDraftWorkflow, error) {
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, err
+	}
+	declared := make([]core.ProfileID, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		declared = append(declared, core.ProfileID(profile.Tag))
+	}
+	platforms := make(map[string]string, len(cfg.Adapters))
+	fallbackAdapter := ""
+	for _, item := range cfg.Adapters {
+		instance := instances[item.Tag]
+		if instance == nil {
+			continue
+		}
+		platforms[item.Tag] = instance.Name()
+		if fallbackAdapter == "" && instance.Name() == hh.Name {
+			fallbackAdapter = item.Tag
+		}
+	}
+	reader := func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+		return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+	}
+	return workflow.NewProfileDraftWorkflow(
+		store, declared, platforms, fallbackAdapter,
+		cfg.ProfileStoreDirectory(filepath.Dir(absolute)), reader, workflow.SystemClock{},
+	)
+}
+
+// draftLoginSettings lets the login driver start a session for a profile draft
+// that is not declared in the config yet.
+type draftLoginSettings struct {
+	drafts *workflow.ProfileDraftWorkflow
+}
+
+func (resolver draftLoginSettings) LoginSettings(profileID core.ProfileID) (hh.LoginSettings, bool) {
+	if resolver.drafts == nil {
+		return hh.LoginSettings{}, false
+	}
+	stateFile, ok := resolver.drafts.ProfileStateFile(context.Background(), profileID)
+	if !ok {
+		return hh.LoginSettings{}, false
+	}
+	return hh.LoginSettings{ProfileID: profileID, StateFile: stateFile}, true
+}
+
 // configureAuthAPI wires the interactive login control plane when the browser
 // worker is configured. The credential writer runs with Force enabled because
 // the CLI enforces the explicit --force decision before creating a session.
-func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store) (*httpapi.AuthAPI, error) {
+func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store, drafts *workflow.ProfileDraftWorkflow) (*httpapi.AuthAPI, error) {
 	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
 	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
 	if baseURL == "" || token == "" {
@@ -1343,13 +1402,13 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 		})
 	}
 	if len(settings) == 0 {
-		logf("browser worker is configured but no HH profile has a state file; interactive auth API is disabled")
-		return nil, nil
+		logf("browser worker is configured but no HH profile has a state file yet; only profile drafts can log in")
 	}
 	driver, err := hh.NewLoginDriver(client, settings)
 	if err != nil {
 		return nil, err
 	}
+	driver.SetProfileResolver(draftLoginSettings{drafts: drafts})
 	service, err := auth.NewService(
 		store, auth.NewMemoryChallengeStore(), driver,
 		&auth.FileCredentialWriter{Force: true}, &auth.FileBrowserStateWriter{},
@@ -1358,10 +1417,12 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	if err != nil {
 		return nil, err
 	}
+	service.SetCompletionHook(drafts)
 	authAPI, err := httpapi.NewAuthAPI(service, profileStateFiles(cfg))
 	if err != nil {
 		return nil, err
 	}
+	authAPI.ConfigureStateResolver(drafts)
 	logoutTargets := make(map[core.ProfileID]auth.LogoutTarget)
 	for _, profile := range cfg.Profiles {
 		if strings.TrimSpace(profile.CredentialsRef) == "" && strings.TrimSpace(profile.StateFile) == "" {
@@ -1617,13 +1678,6 @@ func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (strin
 	return nil
 }
 
-const (
-	contactFirstNamePath      = "/web_profile/firstName"
-	contactLastNamePath       = "/web_profile/lastName"
-	contactEmailPath          = "/web/email"
-	contactCommunicationsPath = "/web_profile/communicationMethods"
-)
-
 // resolveProfileContacts reads the sender name and contacts from the platform
 // profile once at startup, then lets the optional config block fill the gaps.
 // The platform stays the source of truth for the name; config remains a
@@ -1680,16 +1734,6 @@ func resolveProfileContacts(cfg appconfig.Config, instances map[string]adapter.A
 	return resolved
 }
 
-func profileContactPaths(resumeID string) []string {
-	prefix := "/resumes/" + resumeID
-	return []string{
-		prefix + contactEmailPath,
-		prefix + contactFirstNamePath,
-		prefix + contactLastNamePath,
-		prefix + contactCommunicationsPath,
-	}
-}
-
 func configProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
 	if profile.Contacts == nil {
 		return applicationoperator.ApplicationProfileContext{}
@@ -1700,54 +1744,19 @@ func configProfileContacts(profile appconfig.Profile) applicationoperator.Applic
 	}
 }
 
-// profileContactsFromObservation extracts the first non-empty value from the
-// observed contact fields. HH wraps most scalar fields in arrays and objects.
-func profileContactsFromObservation(observation core.ProfileStateObservation, resumeID string) applicationoperator.ApplicationProfileContext {
-	prefix := "/resumes/" + resumeID
-	read := func(path string, extract func(any) string) string {
-		raw, exists, err := observation.ValueAt(path)
-		if err != nil || !exists || string(raw) == "null" {
-			return ""
-		}
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return ""
-		}
-		return extract(value)
-	}
-	return applicationoperator.ApplicationProfileContext{
-		FirstName: read(prefix+contactFirstNamePath, firstObservedContactValue("string", "name", "value")),
-		LastName:  read(prefix+contactLastNamePath, firstObservedContactValue("string", "name", "value")),
-		Email:     read(prefix+contactEmailPath, firstObservedContactValue("string", "value", "email")),
-		Telegram:  read(prefix+contactCommunicationsPath, firstObservedContactValue("telegram")),
-	}
+func profileContactPaths(resumeID string) []string {
+	return hh.ProfileContactPaths(resumeID)
 }
 
-func firstObservedContactValue(keys ...string) func(any) string {
-	return func(value any) string {
-		switch item := value.(type) {
-		case string:
-			return strings.TrimSpace(item)
-		case []any:
-			for _, child := range item {
-				if found := firstObservedContactValue(keys...)(child); found != "" {
-					return found
-				}
-			}
-		case map[string]any:
-			for _, key := range keys {
-				raw, exists := item[key]
-				if !exists {
-					continue
-				}
-				if text, ok := raw.(string); ok {
-					if text = strings.TrimSpace(text); text != "" {
-						return text
-					}
-				}
-			}
-		}
-		return ""
+// profileContactsFromObservation maps the HH profile document onto the letter
+// context; the HH field layout lives in the adapter.
+func profileContactsFromObservation(observation core.ProfileStateObservation, resumeID string) applicationoperator.ApplicationProfileContext {
+	contacts := hh.ContactsFromProfileState(observation, resumeID)
+	return applicationoperator.ApplicationProfileContext{
+		FirstName: contacts.FirstName,
+		LastName:  contacts.LastName,
+		Email:     contacts.Email,
+		Telegram:  contacts.Telegram,
 	}
 }
 

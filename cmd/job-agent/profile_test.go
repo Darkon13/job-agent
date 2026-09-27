@@ -67,3 +67,86 @@ func TestRunProfileListAndShow(t *testing.T) {
 		t.Fatal("expected an unknown subcommand to fail")
 	}
 }
+
+func TestRunProfileAddDrivesDraftOnboarding(t *testing.T) {
+	var created map[string]string
+	applied := ""
+	inputs := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/version", func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]string{"api_version": "v1"})
+	})
+	mux.HandleFunc("POST /api/v1/profile-drafts", func(response http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&created); err != nil {
+			t.Errorf("decode draft request: %v", err)
+		}
+		response.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"tag": "secondary", "platform": "hh", "adapter": "hh-main",
+			"state_file": "/store/secondary/state.json", "status": "pending",
+		})
+	})
+	mux.HandleFunc("POST /api/v1/auth/sessions", func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"id": "auth-1", "platform": "hh", "profile_id": "secondary", "status": "waiting_identifier",
+		})
+	})
+	mux.HandleFunc("POST /api/v1/auth/sessions/{id}/inputs", func(response http.ResponseWriter, _ *http.Request) {
+		inputs++
+		status := "waiting_otp"
+		if inputs > 1 {
+			status = "completed"
+		}
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"id": "auth-1", "platform": "hh", "profile_id": "secondary", "status": status,
+		})
+	})
+	mux.HandleFunc("POST /api/v1/profile-drafts/secondary/refresh", func(response http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"tag": "secondary", "platform": "hh", "adapter": "hh-main",
+			"state_file": "/store/secondary/state.json", "status": "ready",
+			"identity": map[string]any{"display_name": "Антон Шумаков", "email": "u***@example.test"},
+			"resumes": []map[string]any{
+				{"id": "resume-9", "title": "Go developer"},
+				{"id": "resume-8"},
+			},
+		})
+	})
+	mux.HandleFunc("POST /api/v1/profile-drafts/secondary/apply", func(response http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Primary string `json:"primary_resume"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode apply request: %v", err)
+		}
+		applied = body.Primary
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"tag": "secondary", "platform": "hh", "adapter": "hh-main",
+			"state_file": "/store/secondary/state.json", "status": "applied",
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	prompts := []string{"user@example.test", "1234", "2"}
+	prompt := func(string) (string, error) {
+		value := prompts[0]
+		prompts = prompts[1:]
+		return value, nil
+	}
+	var output strings.Builder
+	if err := runProfileAddWith(context.Background(), []string{"secondary", "--api", server.URL}, &output, server.Client(), prompt); err != nil {
+		t.Fatalf("profile add: %v", err)
+	}
+	if created["tag"] != "secondary" {
+		t.Fatalf("draft request = %#v", created)
+	}
+	if applied != "resume-8" {
+		t.Fatalf("applied primary = %q", applied)
+	}
+	for _, want := range []string{"DRAFT tag=secondary", "IDENTITY Антон Шумаков", "RESUME Go developer (resume-9)", "APPLIED tag=secondary status=applied"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("output misses %q:\n%s", want, output.String())
+		}
+	}
+}

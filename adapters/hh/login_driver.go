@@ -43,12 +43,20 @@ type LoginSettings struct {
 	Headless  *bool
 }
 
+// LoginSettingsResolver resolves profiles that are not in the static settings,
+// for example a profile draft created from the dashboard before it is declared
+// in the config.
+type LoginSettingsResolver interface {
+	LoginSettings(profileID core.ProfileID) (LoginSettings, bool)
+}
+
 // LoginDriver performs the interactive HH browser login through the thin
 // browser worker. It supports the applicant e-mail and one-time-code flow plus
 // image captcha; the password branch stays a manual decision.
 type LoginDriver struct {
 	client   browser.Client
 	settings map[core.ProfileID]LoginSettings
+	resolver LoginSettingsResolver
 	sleep    func(context.Context, time.Duration) error
 }
 
@@ -74,8 +82,27 @@ func NewLoginDriver(client browser.Client, settings []LoginSettings) (*LoginDriv
 	return &LoginDriver{client: client, settings: configured, sleep: sleepContext}, nil
 }
 
+// SetProfileResolver attaches a fallback used when a profile has no static
+// settings.
+func (driver *LoginDriver) SetProfileResolver(resolver LoginSettingsResolver) {
+	if driver == nil {
+		return
+	}
+	driver.resolver = resolver
+}
+
+func (driver *LoginDriver) setting(profileID core.ProfileID) (LoginSettings, bool) {
+	if setting, ok := driver.settings[profileID]; ok {
+		return setting, true
+	}
+	if driver.resolver != nil {
+		return driver.resolver.LoginSettings(profileID)
+	}
+	return LoginSettings{}, false
+}
+
 func (driver *LoginDriver) Start(ctx context.Context, profileID core.ProfileID) (auth.Outcome, error) {
-	setting, ok := driver.settings[profileID]
+	setting, ok := driver.setting(profileID)
 	if !ok {
 		return auth.Outcome{}, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "auth.login.start",
@@ -94,7 +121,7 @@ func (driver *LoginDriver) Start(ctx context.Context, profileID core.ProfileID) 
 }
 
 func (driver *LoginDriver) Continue(ctx context.Context, session core.AuthSession, input auth.Input) (auth.Outcome, error) {
-	setting, ok := driver.settings[session.ProfileID]
+	setting, ok := driver.setting(session.ProfileID)
 	if !ok {
 		return auth.Outcome{}, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "auth.login.step",

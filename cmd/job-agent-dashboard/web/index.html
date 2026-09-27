@@ -54,6 +54,28 @@
         <p id="auth-result" class="auth-result" hidden></p>
       </article>
     </section>
+    <section id="profiles-section" aria-labelledby="profiles-title">
+      <div class="section-title">
+        <div><p class="eyebrow">ПРОФИЛИ</p><h2 id="profiles-title">Профили и добавление</h2></div>
+        <span id="profiles-state" class="muted"></span>
+      </div>
+      <article class="panel">
+        <div class="panel-title"><h3>Объявленные профили</h3><button id="profiles-refresh" class="secondary compact" type="button">Обновить</button></div>
+        <p class="panel-description">Что это за аккаунт, видно до входа: имя, маскированные контакты, список резюме и состояние файла сессии. Правки в основном конфиге не нужны.</p>
+        <div id="profile-catalog" class="profile-catalog muted">загрузка…</div>
+      </article>
+      <article class="panel">
+        <div class="panel-title"><h3>Добавить профиль</h3></div>
+        <p class="panel-description">Введите короткий тег, войдите в аккаунт и сохраните профиль: сервис сам создаст файл в profile-store и запишет сессию. После сохранения backend нужно перезапустить, чтобы новый профиль подключился.</p>
+        <div class="auth-controls">
+          <label>Тег <input id="draft-tag" type="text" placeholder="secondary" autocomplete="off"></label>
+          <label id="draft-adapter-row" hidden>Адаптер <select id="draft-adapter"></select></label>
+          <button id="draft-start" type="button">Создать и войти</button>
+        </div>
+        <p id="draft-step" class="auth-step muted">Тег: строчные латинские буквы, цифры, дефис или подчёркивание.</p>
+        <div id="draft-list"></div>
+      </article>
+    </section>
     <section aria-labelledby="overview-title">
       <div class="section-title">
         <div><p class="eyebrow">СОСТОЯНИЕ</p><h2 id="overview-title">Обзор runtime</h2></div>

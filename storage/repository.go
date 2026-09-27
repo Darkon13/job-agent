@@ -15,7 +15,21 @@ var (
 	ErrAuthSessionNotFound          = errors.New("auth session not found")
 	ErrApplicationRemoved           = errors.New("application was removed from the working set")
 	ErrConversationNotFound         = errors.New("conversation not found")
+	ErrProfileDraftNotFound         = errors.New("profile draft not found")
 )
+
+// ProfileDraftRepository stores dashboard-managed profiles before they become
+// config fragments in the profile store.
+type ProfileDraftRepository interface {
+	// CreateProfileDraft inserts a draft unless the tag is already taken; the
+	// boolean reports whether a new row was created.
+	CreateProfileDraft(ctx context.Context, draft core.ProfileDraft) (core.ProfileDraft, bool, error)
+	// SaveProfileDraft replaces a draft using compare-and-swap on its revision.
+	SaveProfileDraft(ctx context.Context, draft core.ProfileDraft, expectedRevision uint64) error
+	ProfileDraft(ctx context.Context, tag string) (core.ProfileDraft, error)
+	ProfileDrafts(ctx context.Context) ([]core.ProfileDraft, error)
+	DeleteProfileDraft(ctx context.Context, tag string) error
+}
 
 // RuntimeStats is an aggregate view intended for health checks and operator
 // dashboards. It deliberately contains counts only and never task payloads,

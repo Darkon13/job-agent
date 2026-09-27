@@ -32,6 +32,7 @@
 | Команда | Назначение |
 |---|---|
 | `job-agent profile list [--api URL]` | профили: резюме, identity и состояние сессии |
+| `job-agent profile add <tag> [--adapter tag] [--primary resume-id]` | добавить профиль: черновик, вход, сохранение фрагмента |
 | `job-agent profile show <tag> [--api URL]` | подробности одного профиля |
 | `job-agent auth login --profile <tag> [--state-output FILE]` | вход в HH с сохранением browser state |
 | `job-agent auth import --source export.json --state-output FILE [--force]` | импорт сохранённого состояния |

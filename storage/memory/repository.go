@@ -32,6 +32,7 @@ var (
 	_ storage.ProfileStateProposalRepository     = (*Repository)(nil)
 	_ storage.ProfileActivityRepository          = (*Repository)(nil)
 	_ storage.ProfileActivitySnapshotRepository  = (*Repository)(nil)
+	_ storage.ProfileDraftRepository             = (*Repository)(nil)
 )
 
 type discoveryKey struct {
@@ -72,6 +73,7 @@ type Repository struct {
 	qualificationBest      map[qualificationKey]core.QualificationResult
 	qualificationOfferings map[qualificationOfferingKey]core.QualificationOffering
 	conversations          map[core.ConversationID]core.Conversation
+	profileDrafts          map[string]core.ProfileDraft
 	conversationExternal   map[conversationExternalKey]core.ConversationID
 	messages               map[core.ConversationID]map[core.MessageID]core.ConversationMessage
 	followUps              map[core.FollowUpID]core.FollowUp
@@ -109,6 +111,7 @@ func NewRepository() *Repository {
 		qualificationBest:      make(map[qualificationKey]core.QualificationResult),
 		qualificationOfferings: make(map[qualificationOfferingKey]core.QualificationOffering),
 		conversations:          make(map[core.ConversationID]core.Conversation),
+		profileDrafts:          make(map[string]core.ProfileDraft),
 		conversationExternal:   make(map[conversationExternalKey]core.ConversationID),
 		messages:               make(map[core.ConversationID]map[core.MessageID]core.ConversationMessage),
 		followUps:              make(map[core.FollowUpID]core.FollowUp),

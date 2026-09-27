@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,13 @@ type BrowserStateWriter interface {
 	Store(ctx context.Context, reference string, data json.RawMessage) (string, error)
 }
 
+// CompletionHook observes a completed login after its artifacts are stored. It
+// runs asynchronously and must not change the session: a capture failure is
+// retried from the profile draft instead.
+type CompletionHook interface {
+	AuthCompleted(ctx context.Context, profileID core.ProfileID, browserStateReference string) error
+}
+
 type StartRequest struct {
 	Platform              core.Platform
 	ProfileID             core.ProfileID
@@ -117,6 +125,7 @@ type Service struct {
 	states     BrowserStateWriter
 	clock      Clock
 	ids        IDGenerator
+	completed  CompletionHook
 }
 
 func NewService(sessions storage.AuthSessionRepository, challenges ChallengeStore, driver Driver, writer CredentialWriter, states BrowserStateWriter, clock Clock, ids IDGenerator) (*Service, error) {
@@ -349,7 +358,33 @@ func (service *Service) store(ctx context.Context, session core.AuthSession, out
 	if err := session.Complete(credentialRevision, browserStateDigest, now); err != nil {
 		return core.AuthSession{}, err
 	}
+	if service.completed != nil {
+		// The hook reads the fresh session and can take seconds; the auth call
+		// must return without waiting for it. A detached context keeps the work
+		// alive after the HTTP request is answered.
+		profileID := session.ProfileID
+		reference := session.BrowserStateReference
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), completionHookTimeout)
+		go func() {
+			defer cancel()
+			if err := service.completed.AuthCompleted(hookCtx, profileID, reference); err != nil {
+				slog.Default().Warn("auth completion hook failed", "profile", profileID, "error", err)
+			}
+		}()
+	}
 	return session, nil
+}
+
+// completionHookTimeout bounds one post-login capture.
+const completionHookTimeout = 2 * time.Minute
+
+// SetCompletionHook attaches an optional post-login observer, for example the
+// profile draft identity capture.
+func (service *Service) SetCompletionHook(hook CompletionHook) {
+	if service == nil {
+		return
+	}
+	service.completed = hook
 }
 
 // failStorage settles the session because the exchanged one-time artifacts
