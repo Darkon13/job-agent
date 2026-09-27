@@ -16,7 +16,7 @@ const state = {
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
-  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
@@ -377,12 +377,40 @@ async function refreshApplications({ append = false } = {}) {
 function changeApplicationQuery() {
   state.applicationOffset = 0; state.selectedApplications.clear(); state.applicationActionMessage = ""; return refreshApplications();
 }
-// The bulk toolbar is gone: removal runs per row, so this helper only keeps the
-// action message visible for the filter state.
-function updateApplicationSelection() {
-  if (!elements.applicationSelectionState) return;
-  elements.applicationSelectionState.textContent = state.applicationActionMessage || "";
+// updateApplicationSelection keeps the compact selection bar and the row
+// highlight in sync with the selected set.
+function updateApplicationSelection(items = visibleApplicationObjects()) {
+  const known = new Set(items.map((item) => item.id));
+  for (const id of [...state.selectedApplications]) if (!known.has(id)) state.selectedApplications.delete(id);
+  const count = state.selectedApplications.size;
+  if (elements.applicationSelectionBar) elements.applicationSelectionBar.hidden = count === 0;
+  if (elements.applicationSelectionState) elements.applicationSelectionState.textContent = count ? `Выбрано: ${count}` : "Ничего не выбрано";
+  if (elements.applicationRemoveSelected) elements.applicationRemoveSelected.disabled = count === 0 || state.applicationActionBusy;
 }
+
+async function removeSelectedApplications() {
+  const ids = [...state.selectedApplications];
+  if (!ids.length || state.applicationActionBusy) return;
+  if (!globalThis.confirm(`Убрать выбранные отклики (${ids.length})? Локальные записи и чаты будут удалены.`)) return;
+  state.applicationActionBusy = true;
+  updateApplicationSelection();
+  try {
+    const result = await enqueue("/api/v1/applications/remove", { application_ids: ids });
+    const failures = (result.results || []).filter((entry) => entry.error);
+    state.applicationActionMessage = failures.length
+      ? `Не удалось убрать: ${failures.length}`
+      : `Создано задач: ${result.created}.`;
+    state.selectedApplications.clear();
+    await refreshSummary();
+    await refreshApplications();
+  } catch (error) {
+    state.applicationActionMessage = error.message;
+  } finally {
+    state.applicationActionBusy = false;
+    updateApplicationSelection();
+  }
+}
+
 function renderApplicationObjects() {
   const items = visibleApplicationObjects();
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
@@ -396,6 +424,7 @@ function renderApplicationObjects() {
     return;
   }
   elements.applicationItems.replaceChildren(...items.map((item) => renderApplicationRow(item)));
+  updateApplicationSelection(items);
 }
 
 function applicationNeedsInput(item) {
@@ -408,59 +437,82 @@ function applicationCanRetry(item) {
   return ["waiting_validation", "failed"].includes(item.status) || validationSkipped;
 }
 
-// applicationRowActions collects the per-row buttons: the questionnaire call to
-// action is explicit, retry and removal stay secondary.
-function applicationRowActions(item, url) {
-  const actions = [];
+// rowIcon renders a small square icon button for row actions.
+function rowIcon(kind, title, handler) {
+  const button = text("button", "", `row-icon ${kind}`);
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.disabled = state.applicationActionBusy;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("d", kind === "retry"
+    ? "M13.2 8a5.2 5.2 0 1 1-1.7-3.9M13.4 2v3.2h-3.2"
+    : "M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); handler(); });
+  return button;
+}
+
+// applicationStatusCell renders the status; a questionnaire that needs the
+// operator becomes the call to action itself.
+function applicationStatusCell(item) {
+  const group = applicationGroup(item);
+  const cell = document.createElement("td");
+  cell.className = "application-state";
   if (applicationNeedsInput(item) && item.platform === "hh") {
-    const questionnaire = text("button", "Заполнить анкету");
-    questionnaire.type = "button";
-    questionnaire.disabled = state.applicationActionBusy;
-    questionnaire.title = "Открыть анкету и ответить на вопросы";
-    questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
-    actions.push(questionnaire);
+    const button = text("button", "", `status status-${group} status-action`);
+    button.type = "button";
+    button.disabled = state.applicationActionBusy;
+    button.title = "Открыть анкету и ответить на вопросы";
+    button.append(text("span", applicationGroupLabels[group]), text("small", "анкета", "status-hint"));
+    button.addEventListener("click", (event) => { event.stopPropagation(); captureQuestionnaire(item, button); });
+    cell.append(button);
+  } else {
+    cell.append(text("span", applicationGroupLabels[group], `status status-${group}`));
   }
+  const reason = applicationReason(item);
+  if (reason) cell.append(text("div", reason, "muted application-reason"));
+  return cell;
+}
+
+function applicationRowActions(item) {
+  const actions = [];
   if (applicationCanRetry(item)) {
-    const retry = text("button", "Повторить", "secondary compact");
-    retry.type = "button";
-    retry.disabled = state.applicationActionBusy;
-    retry.title = "Повторить подготовку и отправку отклика";
-    retry.addEventListener("click", () => retryApplication(item, retry));
-    actions.push(retry);
+    actions.push(rowIcon("retry", "Повторить подготовку и отправку отклика", () => retryApplication(item)));
   }
   if (applicationCanRemove(item)) {
-    const remove = text("button", "Убрать", "secondary compact");
-    remove.type = "button";
-    remove.disabled = state.applicationActionBusy;
-    remove.title = "Убрать отклик из рабочего списка";
-    remove.addEventListener("click", () => removeApplication(item));
-    actions.push(remove);
-  }
-  if (!actions.length && url) {
-    const open = text("a", "Открыть ↗", "table-link");
-    open.href = url;
-    open.target = "_blank";
-    open.rel = "noopener noreferrer";
-    actions.push(open);
+    actions.push(rowIcon("remove", "Убрать отклик из рабочего списка", () => removeApplication(item)));
   }
   return actions;
 }
 
 // renderApplicationRow keeps the row narrow: the vacancy link and company share
-// one cell, the status carries the reason, and the whole row opens the vacancy.
+// one cell, the status carries the reason, and clicking the row toggles its
+// selection for the bulk actions.
 function renderApplicationRow(item) {
   const row = document.createElement("tr");
   row.className = "application-row";
-  const url = safeExternalURL(item.vacancy_url);
-  row.title = url ? "Открыть вакансию" : "";
-  if (url) {
-    row.classList.add("clickable-row");
-    row.addEventListener("click", (event) => {
-      if (event.target.closest("a, button, input, label, select")) return;
-      globalThis.open(url, "_blank", "noopener");
-    });
-  }
+  if (state.selectedApplications.has(item.id)) row.classList.add("selected");
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, input, label, select")) return;
+    if (state.selectedApplications.has(item.id)) state.selectedApplications.delete(item.id);
+    else state.selectedApplications.add(item.id);
+    row.classList.toggle("selected", state.selectedApplications.has(item.id));
+    updateApplicationSelection();
+  });
 
+  const url = safeExternalURL(item.vacancy_url);
   const vacancy = document.createElement("td");
   vacancy.className = "application-vacancy";
   if (url) {
@@ -474,14 +526,6 @@ function renderApplicationRow(item) {
   }
   vacancy.append(text("div", item.employer || "Компания не определена", "muted"));
 
-  const group = applicationGroup(item);
-  const state = document.createElement("td");
-  state.className = "application-state";
-  const chip = statusCell(applicationGroupLabels[group], `status-${group}`).firstChild;
-  if (chip) state.append(chip);
-  const reason = applicationReason(item);
-  if (reason) state.append(text("div", reason, "muted application-reason"));
-
   const profileCell = document.createElement("td");
   profileCell.className = "application-profile";
   profileCell.append(text("strong", profileDisplayName(item.profile_id)));
@@ -489,17 +533,18 @@ function renderApplicationRow(item) {
 
   const actions = document.createElement("td");
   actions.className = "task-actions";
-  const buttons = applicationRowActions(item, url);
+  const buttons = applicationRowActions(item);
   if (buttons.length) actions.append(...buttons);
   else actions.textContent = "—";
 
-  row.append(vacancy, profileCell, state, text("td", formatDate(item.updated_at)), actions);
+  row.append(vacancy, profileCell, applicationStatusCell(item), text("td", formatDate(item.updated_at)), actions);
   return row;
 }
 
 async function removeApplication(item) {
   const title = item.vacancy_title || item.employer || item.id;
   if (!globalThis.confirm(`Убрать «${title}» из рабочего списка? Локальная запись и чат будут удалены.`)) return;
+  state.selectedApplications.delete(item.id);
   state.applicationActionBusy = true;
   renderApplicationObjects();
   try {
@@ -2110,6 +2155,8 @@ elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
 elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
 elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
 elements.browserCheckCancel.addEventListener("click", cancelBrowserCheck);
+elements.applicationRemoveSelected?.addEventListener("click", removeSelectedApplications);
+elements.applicationClearSelection?.addEventListener("click", () => { state.selectedApplications.clear(); updateApplicationSelection(); renderApplicationObjects(); });
 elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; changeApplicationQuery(); });
 elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; clearTimeout(state.conversationSearchTimer); state.conversationSearchTimer = setTimeout(() => refreshConversations(), 250); });
 elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; refreshConversations(); });
