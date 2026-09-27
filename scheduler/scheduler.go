@@ -18,15 +18,18 @@ import (
 type Definition struct {
 	JobTag       string
 	TriggerIndex int
-	Expression   string
-	Timezone     string
-	ActionType   core.TaskType
-	Platform     core.Platform
-	ProfileID    core.ProfileID
-	Payload      json.RawMessage
-	Priority     core.TaskPriority
-	JitterMin    time.Duration
-	JitterMax    time.Duration
+	// Expression and Timezone describe a cron schedule; Interval describes a
+	// timer schedule. Exactly one of the two forms must be set.
+	Expression string
+	Timezone   string
+	Interval   time.Duration
+	ActionType core.TaskType
+	Platform   core.Platform
+	ProfileID  core.ProfileID
+	Payload    json.RawMessage
+	Priority   core.TaskPriority
+	JitterMin  time.Duration
+	JitterMax  time.Duration
 }
 
 type Entry struct {
@@ -159,9 +162,15 @@ func (scheduler *Scheduler) enqueue(ctx context.Context, entry Entry, now time.T
 }
 
 func (definition Definition) Validate() error {
-	if definition.JobTag == "" || definition.TriggerIndex < 0 || definition.Expression == "" || definition.Timezone == "" ||
+	if definition.JobTag == "" || definition.TriggerIndex < 0 ||
 		definition.ActionType == "" || definition.Platform == "" || definition.ProfileID == "" || len(definition.Payload) == 0 || !json.Valid(definition.Payload) {
 		return errors.New("scheduled job definition is incomplete")
+	}
+	switch {
+	case definition.Interval > 0 && definition.Expression == "":
+	case definition.Interval == 0 && definition.Expression != "" && definition.Timezone != "":
+	default:
+		return errors.New("scheduled job requires either a cron expression with timezone or an interval")
 	}
 	if definition.JitterMin < 0 || definition.JitterMax < definition.JitterMin {
 		return errors.New("scheduled job has invalid jitter bounds")
@@ -173,7 +182,19 @@ func (definition Definition) Validate() error {
 	return err
 }
 
+// intervalSchedule implements cron.Schedule for timer jobs: the next run is one
+// interval after the moment the scheduler asks, so the cadence does not depend
+// on calendar boundaries.
+type intervalSchedule struct{ every time.Duration }
+
+func (schedule intervalSchedule) Next(now time.Time) time.Time {
+	return now.Add(schedule.every)
+}
+
 func parseSchedule(definition Definition) (cron.Schedule, error) {
+	if definition.Interval > 0 {
+		return intervalSchedule{every: definition.Interval}, nil
+	}
 	if _, err := time.LoadLocation(definition.Timezone); err != nil {
 		return nil, fmt.Errorf("job %s timezone: %w", definition.JobTag, err)
 	}

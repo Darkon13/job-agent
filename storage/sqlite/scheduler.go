@@ -27,24 +27,26 @@ func (store *Store) SyncSchedules(ctx context.Context, entries []scheduler.Entry
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO scheduled_jobs
-			(job_tag, trigger_index, expression, timezone, action_type, platform, profile_id, payload,
+			(job_tag, trigger_index, expression, timezone, interval_ns, action_type, platform, profile_id, payload,
 			 priority, jitter_min_ns, jitter_max_ns, next_run_at, enabled, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 			ON CONFLICT(job_tag, trigger_index) DO UPDATE SET
 			 next_run_at = CASE WHEN
 				scheduled_jobs.expression != excluded.expression OR scheduled_jobs.timezone != excluded.timezone OR
+				scheduled_jobs.interval_ns != excluded.interval_ns OR
 				scheduled_jobs.action_type != excluded.action_type OR scheduled_jobs.platform != excluded.platform OR
 				scheduled_jobs.profile_id != excluded.profile_id OR scheduled_jobs.payload != excluded.payload OR
 				scheduled_jobs.priority != excluded.priority OR
 				scheduled_jobs.jitter_min_ns != excluded.jitter_min_ns OR scheduled_jobs.jitter_max_ns != excluded.jitter_max_ns
 			 THEN excluded.next_run_at ELSE scheduled_jobs.next_run_at END,
-			 expression = excluded.expression, timezone = excluded.timezone, action_type = excluded.action_type,
+			 expression = excluded.expression, timezone = excluded.timezone, interval_ns = excluded.interval_ns,
+			 action_type = excluded.action_type,
 			 platform = excluded.platform, profile_id = excluded.profile_id, payload = excluded.payload,
 			 priority = excluded.priority,
 			 jitter_min_ns = excluded.jitter_min_ns, jitter_max_ns = excluded.jitter_max_ns,
 			 enabled = 1, updated_at = excluded.updated_at`,
-			entry.JobTag, entry.TriggerIndex, entry.Expression, entry.Timezone, entry.ActionType,
-			entry.Platform, entry.ProfileID, []byte(entry.Payload), entry.Priority,
+			entry.JobTag, entry.TriggerIndex, entry.Expression, entry.Timezone, entry.Interval.Nanoseconds(),
+			entry.ActionType, entry.Platform, entry.ProfileID, []byte(entry.Payload), entry.Priority,
 			entry.JitterMin.Nanoseconds(), entry.JitterMax.Nanoseconds(),
 			entry.NextRunAt.UnixNano(), now.UnixNano())
 		if err != nil {
@@ -61,7 +63,7 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 	if limit <= 0 {
 		return nil, fmt.Errorf("due schedule limit must be positive")
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone,
+	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone, interval_ns,
 		action_type, platform, profile_id, payload, priority, jitter_min_ns, jitter_max_ns, next_run_at
 		FROM scheduled_jobs WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at, job_tag, trigger_index LIMIT ?`,
 		now.UnixNano(), limit)
@@ -76,7 +78,7 @@ func (store *Store) DueSchedules(ctx context.Context, now time.Time, limit int) 
 // whether the run is due. The dashboard joins it with the runnable jobs from
 // the configuration to show the countdown before enqueue.
 func (store *Store) Schedules(ctx context.Context) ([]scheduler.Entry, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone,
+	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, trigger_index, expression, timezone, interval_ns,
 		action_type, platform, profile_id, payload, priority, jitter_min_ns, jitter_max_ns, next_run_at
 		FROM scheduled_jobs WHERE enabled = 1 ORDER BY job_tag, trigger_index`)
 	if err != nil {
@@ -91,13 +93,14 @@ func scanScheduledEntries(rows *sql.Rows) ([]scheduler.Entry, error) {
 	for rows.Next() {
 		var entry scheduler.Entry
 		var payload []byte
-		var jitterMin, jitterMax, nextRunAt int64
-		if err := rows.Scan(&entry.JobTag, &entry.TriggerIndex, &entry.Expression, &entry.Timezone,
+		var jitterMin, jitterMax, interval, nextRunAt int64
+		if err := rows.Scan(&entry.JobTag, &entry.TriggerIndex, &entry.Expression, &entry.Timezone, &interval,
 			&entry.ActionType, &entry.Platform, &entry.ProfileID, &payload, &entry.Priority,
 			&jitterMin, &jitterMax, &nextRunAt); err != nil {
 			return nil, fmt.Errorf("scan scheduled entry: %w", err)
 		}
 		entry.Payload = bytes.Clone(payload)
+		entry.Interval = time.Duration(interval)
 		entry.JitterMin = time.Duration(jitterMin)
 		entry.JitterMax = time.Duration(jitterMax)
 		entry.NextRunAt = time.Unix(0, nextRunAt).UTC()

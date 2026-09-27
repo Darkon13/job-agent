@@ -1,0 +1,1 @@
+ALTER TABLE scheduled_jobs ADD COLUMN interval_ns INTEGER NOT NULL DEFAULT 0;

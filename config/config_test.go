@@ -36,6 +36,32 @@ func TestExampleConfigIsValid(t *testing.T) {
 	}
 }
 
+func TestProfileStateHarvestValidatesInterval(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+			Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+			Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true}},
+		}
+	}
+	disabled := false
+	config := base()
+	config.Profiles[0].StateHarvest = StateHarvestPolicy{Enabled: &disabled}
+	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.HarvestEnabled() {
+		t.Fatalf("disabled harvest: err=%v", err)
+	}
+	config = base()
+	config.Profiles[0].StateHarvest = StateHarvestPolicy{Interval: core.Duration(30 * time.Second)}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected a too short harvest interval to fail")
+	}
+	config = base()
+	config.Profiles[0].StateHarvest = StateHarvestPolicy{Interval: core.Duration(90 * time.Minute)}
+	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.HarvestInterval() != 90*time.Minute {
+		t.Fatalf("harvest interval = %v err=%v", config.Profiles[0].StateHarvest.HarvestInterval(), err)
+	}
+}
+
 func TestProfileCredentialsReferenceIsLoadedWithoutReadingSecret(t *testing.T) {
 	var profile Profile
 	if err := json.Unmarshal([]byte(`{"tag":"primary","adapter":"hh-main","credentials_ref":"file:/run/secrets/hh-primary.json","enabled":true}`), &profile); err != nil {
