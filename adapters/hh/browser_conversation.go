@@ -660,16 +660,20 @@ func hhChatQuestionPrompt(text string) bool {
 	for _, excluded := range []string{
 		"спасибо за интерес", "большое спасибо", "к сожалению", "не готовы пригласить",
 		"закрыли эту позицию", "уже закрыта", "я ии-помощник", "откликнулись на вакансию",
+		// Cold-call and job-spam messages ask rhetorical questions, they do not
+		// screen the applicant.
+		"позвоните", "звоните", "по телефону", "whatsapp", "ватсап", "телеграм", "telegram",
+		"вахта", "подработк", "заработок", "без опыта", "бронирован",
 	} {
 		if strings.Contains(normalized, excluded) {
 			return false
 		}
 	}
-	if strings.Contains(normalized, "?") {
+	if strings.HasSuffix(strings.TrimRight(normalized, " \t\n\r.!…)\"'»"), "?") {
 		return true
 	}
 	for _, prompt := range []string{
-		"укажите", "уточните", "ответьте", "подскажите", "напишите", "расскажите", "выберите",
+		"укажите", "уточните", "ответьте", "подскажите", "расскажите", "выберите",
 	} {
 		if strings.Contains(normalized, prompt) {
 			return true
