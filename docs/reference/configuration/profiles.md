@@ -52,12 +52,12 @@ browser context, data).
 файле один раз:
 
 ```json
-"profile_store": {"dir": "./data/profiles"}
+"profile_store": {"dir": "./data/profile-store"}
 ```
 
 | Поле | Тип | Обяз. | По умолчанию | Описание |
 |---|---|---|---|---|
-| `dir` | string | нет | `<каталог database.path>/profiles` | Каталог фрагментов. Относительный путь резолвится от файла конфига. |
+| `dir` | string | нет | `<каталог database.path>/profile-store` | Каталог фрагментов. Относительный путь резолвится от файла конфига. |
 
 Правила:
 

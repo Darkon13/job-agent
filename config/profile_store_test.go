@@ -15,8 +15,9 @@ func TestProfileStoreLoadsDashboardFragments(t *testing.T) {
 		"adapters":[{"tag":"hh-main","type":"hh"}],
 		"profiles":[{"tag":"primary","adapter":"hh-main","enabled":false,"resume":"resume-1"}]
 	}`)
-	// The default store lives next to the database file; a missing directory is
-	// not an error, so the same config works before the first fragment.
+	// The default store lives in a dedicated directory next to the database
+	// file; a missing directory is not an error, so the same config works
+	// before the first fragment.
 	loaded, err := Load(configPath)
 	if err != nil {
 		t.Fatalf("load without store: %v", err)
@@ -24,7 +25,7 @@ func TestProfileStoreLoadsDashboardFragments(t *testing.T) {
 	if loaded.Profiles[0].Source != ProfileSourceConfig {
 		t.Fatalf("config profile source = %q", loaded.Profiles[0].Source)
 	}
-	writeConfigTestFile(t, filepath.Join(directory, "data", "profiles", "secondary.json"), `{
+	writeConfigTestFile(t, filepath.Join(directory, "data", "profile-store", "secondary.json"), `{
 		"profiles":[{"tag":"secondary","adapter":"hh-main","enabled":true,
 			"resumes":[{"id":"resume-9","title":"Go","primary":true},{"id":"resume-8","primary":false}]}]
 	}`)
@@ -91,7 +92,7 @@ func TestProfileStoreDirectoryResolution(t *testing.T) {
 		t.Fatalf("absolute dir = %q", dir)
 	}
 	fallback := Config{Database: DatabaseConfig{Path: "./data/job-agent.db"}}
-	if dir := fallback.ProfileStoreDirectory("/etc/job-agent"); dir != "/etc/job-agent/data/profiles" {
+	if dir := fallback.ProfileStoreDirectory("/etc/job-agent"); dir != "/etc/job-agent/data/profile-store" {
 		t.Fatalf("default dir = %q", dir)
 	}
 }

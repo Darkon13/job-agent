@@ -399,8 +399,9 @@ type ProfileStoreConfig struct {
 }
 
 // ProfileStoreDirectory returns the effective profile store directory. An
-// explicit relative dir resolves against the main config file; otherwise the
-// store lives next to the database file.
+// explicit relative dir resolves against the main config file (or the fragment
+// itself when loading one); otherwise the store lives in a dedicated
+// `profile-store` directory next to the database file.
 func (c Config) ProfileStoreDirectory(mainDirectory string) string {
 	if dir := strings.TrimSpace(c.ProfileStore.Dir); dir != "" {
 		if !filepath.IsAbs(dir) {
@@ -415,7 +416,9 @@ func (c Config) ProfileStoreDirectory(mainDirectory string) string {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(mainDirectory, path)
 	}
-	return filepath.Join(filepath.Dir(path), "profiles")
+	// Fragments live in a dedicated directory: session files keep their own
+	// layout, for example <db dir>/profiles/<tag>.json.
+	return filepath.Join(filepath.Dir(path), "profile-store")
 }
 
 // ResumeIDs returns every declared resume id once in declaration order.
