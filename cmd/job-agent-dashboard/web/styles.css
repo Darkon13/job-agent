@@ -345,19 +345,15 @@ td.task-actions > * + * { margin-left: .35rem; }
   color: var(--green);
 }
 .job-run:hover:not(:disabled) { border-color: var(--green); filter: none; }
-.job-detail-row td { padding: 0 0 .7rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
-.job-detail-profile {
-  display: grid;
-  gap: .4rem;
-  margin: .45rem 0;
-  padding: .55rem .7rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.job-detail-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.job-detail-info { white-space: normal; }
-.job-detail-actions { display: flex; gap: .5rem; align-items: center; }
-.job-detail-schedule { padding: 0 .7rem; }
+.job-detail-row td { padding: .3rem .5rem .75rem; border-bottom: none; white-space: normal; text-align: left; }
+.job-detail-row.job-detail-last td { padding-bottom: .95rem; border-bottom: 1px solid var(--line); }
+.job-detail-info-cell { padding-left: 1.1rem; }
+.job-detail-info-cell strong { display: block; }
+.job-detail-info { white-space: normal; max-width: 42rem; }
+.job-detail-state-cell { text-align: left; white-space: nowrap; }
+.job-detail-schedule { color: var(--muted); }
+.job-lock { display: inline-flex; align-items: center; margin-left: .4rem; color: var(--muted); }
+.profile-detail-row td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
 
 /* Applications read as a document, not a wide grid: the vacancy cell carries
    the title link and the company, rows grow in height instead of width. */
@@ -428,3 +424,16 @@ td.task-actions > * + * { margin-left: .35rem; }
 .metric-value { display: flex; align-items: baseline; gap: .3rem; }
 .metric-value strong { color: var(--text); font: 700 1.15rem/1.1 ui-monospace, monospace; }
 .metric-delta { color: var(--green); font: 700 .72rem ui-monospace, monospace; }
+
+/* Rows that can be selected show it on hover. */
+.application-row { cursor: pointer; }
+.application-row:hover td { background: rgb(255 255 255 / 2.5%); }
+
+/* Fixed state and run columns keep the parent job row and its per-profile
+   detail rows on the same vertical grid. */
+.jobs-table th:nth-child(3), .jobs-table td:nth-child(3) { width: 9.5rem; }
+.jobs-table th:nth-child(4), .jobs-table td:nth-child(4) { width: 4.5rem; }
+
+/* The detail rows follow the parent grid: the run control stays in its column. */
+.job-detail-row td.job-run-cell { text-align: right; }
+.job-detail-row td.job-detail-state-cell { text-align: left; }
