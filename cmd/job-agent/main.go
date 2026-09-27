@@ -72,9 +72,50 @@ func dashboardProfiles(cfg appconfig.Config, contacts map[core.ProfileID]applica
 		profileID := core.ProfileID(profile.Tag)
 		resolved := contacts[profileID]
 		displayName := strings.TrimSpace(strings.TrimSpace(resolved.FirstName) + " " + strings.TrimSpace(resolved.LastName))
-		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName})
+		if displayName == "" && profile.Identity != nil {
+			// The cached identity keeps the account recognizable before the
+			// first live contact read after a restart.
+			displayName = strings.TrimSpace(profile.Identity.DisplayName)
+		}
+		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName, Resumes: len(profile.Resumes)})
 	}
 	return profiles
+}
+
+// profileCatalog builds the operator-facing profile list. It is derived from
+// the config (including dashboard-managed fragments) and never from a live
+// platform call, so the list is available without a login.
+func profileCatalog(cfg appconfig.Config, instances map[string]adapter.Adapter) []httpapi.ProfileCatalogEntry {
+	entries := make([]httpapi.ProfileCatalogEntry, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		platform := ""
+		if instance := instances[profile.Adapter]; instance != nil {
+			platform = instance.Name()
+		}
+		source := profile.Source
+		if source == "" {
+			source = appconfig.ProfileSourceConfig
+		}
+		entry := httpapi.ProfileCatalogEntry{
+			Tag: profile.Tag, Adapter: profile.Adapter, Platform: platform,
+			Enabled: profile.Enabled, Source: source,
+			Session: httpapi.ProfileCatalogSession{StateFile: profile.StateFile},
+		}
+		for _, resume := range profile.Resumes {
+			entry.Resumes = append(entry.Resumes, httpapi.ProfileCatalogResume{
+				ID: resume.ID, Title: resume.Title, Primary: resume.Primary,
+			})
+		}
+		if profile.Identity != nil {
+			entry.Identity = &httpapi.ProfileCatalogIdentity{
+				DisplayName: profile.Identity.DisplayName, Email: profile.Identity.Email,
+				Phone: profile.Identity.Phone, AccountHash: profile.Identity.AccountHash,
+				CapturedAt: profile.Identity.CapturedAt,
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 // liveConversationSync mirrors the durable conversation.sync worker for the
@@ -174,6 +215,7 @@ const mainUsage = `job-agent — сервис автоматизации пои�
   browser-state sanitize <state.json>         сжать browser storage state
   auth login|import|status|logout ...         вход в HeadHunter
   jobs list|pause|resume ...                  список джоб и пауза
+  profile list|show ...                       профили, резюме и состояние сессии
   captcha solve <application_id>              пройти проверку HH в браузере вручную
   captcha list                                отклики, ожидающие капчу
   db backup|restore ...                       обслуживание базы
@@ -233,6 +275,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "jobs" {
 		if err := runJobs(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "profile" {
+		if err := runProfile(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -378,6 +426,10 @@ func main() {
 		log.Fatalf("create resume update workflow: %v", err)
 	}
 	resumeAPI.ConfigureUpdate(resumeUpdateWorkflow)
+	profileCatalogAPI, err := httpapi.NewProfileCatalogAPI(profileCatalog(cfg, instances))
+	if err != nil {
+		log.Fatalf("create profile catalog API: %v", err)
+	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -1227,7 +1279,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create qualification API: %v", err)
 	}
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(profileCatalogAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler())))))))))
 	var authHandler func(http.Handler) http.Handler
 	if authAPI != nil {
 		authHandler = authAPI.Handler
@@ -2377,11 +2429,19 @@ func resumeQueryVariants(query json.RawMessage, profile appconfig.Profile) ([]js
 		(parsed.Resume != hh.ResumePlaceholderProfile && parsed.Resume != hh.ResumePlaceholderAll) {
 		return []json.RawMessage{query}, nil
 	}
-	resumes := make([]string, 0, 1+len(profile.ResumeAliases))
-	if strings.TrimSpace(profile.Resume) != "" {
-		resumes = append(resumes, profile.Resume)
+	// The normalized resume list is the source of truth; alias values cover a
+	// profile that was assembled without the config loader, for example in
+	// tests, where only the legacy fields are set.
+	resumes := make([]string, 0, len(profile.Resumes)+1)
+	if primary := strings.TrimSpace(profile.Resume); primary != "" {
+		resumes = append(resumes, primary)
 	}
 	if parsed.Resume == hh.ResumePlaceholderAll {
+		for _, id := range profile.ResumeIDs() {
+			if id != "" && !slices.Contains(resumes, id) {
+				resumes = append(resumes, id)
+			}
+		}
 		aliases := make([]string, 0, len(profile.ResumeAliases))
 		for _, value := range profile.ResumeAliases {
 			aliases = append(aliases, value)

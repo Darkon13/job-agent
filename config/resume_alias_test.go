@@ -35,12 +35,17 @@ func TestLoadResolvesResumeAliases(t *testing.T) {
 	if loaded.Jobs[0].Action.Resume != "resume-2" {
 		t.Fatalf("job resume = %q", loaded.Jobs[0].Action.Resume)
 	}
+	resumes := loaded.Profiles[0].ResumeIDs()
+	if len(resumes) != 2 || resumes[0] != "resume-1" || resumes[1] != "resume-2" {
+		t.Fatalf("normalized resumes = %#v", resumes)
+	}
+	// An alias is a name of the same resume, not a second catalog entry.
 	targets := loaded.ResumeTargets()[core.ProfileID("primary")]
-	if len(targets) != 3 || !targets[0].Primary || targets[0].ID != "resume-1" {
+	if len(targets) != 2 || !targets[0].Primary || targets[0].ID != "resume-1" || targets[0].Alias != "backend" {
 		t.Fatalf("targets = %#v", targets)
 	}
-	if targets[1].Alias != "backend" || targets[2].Alias != "front" {
-		t.Fatalf("aliases = %#v", targets)
+	if targets[1].ID != "resume-2" || targets[1].Alias != "front" || targets[1].Primary {
+		t.Fatalf("targets = %#v", targets)
 	}
 }
 

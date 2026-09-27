@@ -43,6 +43,7 @@ type RuntimeReadRepository interface {
 type ProfileSummary struct {
 	ID          core.ProfileID `json:"id"`
 	DisplayName string         `json:"display_name,omitempty"`
+	Resumes     int            `json:"resumes,omitempty"`
 }
 
 // QuestionnaireCapturer enqueues the read-only capture of a vacancy
