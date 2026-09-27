@@ -2783,7 +2783,7 @@ func profileSystemDefinitions(
 			{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval, true, nil},
 			{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval, true, nil},
 			{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval, true, nil},
-			{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval, true, nil},
+			{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: profile.Resume}, interval, true, nil},
 			{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval, false, canRefreshSession},
 			{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
 				ProfileID: profileID, Count: validationRefreshCount, MinAge: core.Duration(validationRefreshMinAge),
@@ -2791,6 +2791,10 @@ func profileSystemDefinitions(
 		}
 		for _, entry := range entries {
 			if entry.harvestOnly && !profile.StateHarvest.HarvestEnabled() {
+				continue
+			}
+			if entry.action == core.TaskProfileActivityObserve && strings.TrimSpace(profile.Resume) == "" {
+				logf("state harvest: profile %q has no resume, activity snapshots are skipped", profile.Tag)
 				continue
 			}
 			if entry.capable != nil && !entry.capable(profileID) {
