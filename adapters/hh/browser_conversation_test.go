@@ -276,6 +276,38 @@ func TestBrowserConversationDiscoverySkipsUnreadPassWithinWindow(t *testing.T) {
 	}
 }
 
+func TestBrowserConversationClassifiesFreeTextQuestionPrompts(t *testing.T) {
+	cases := []struct {
+		name        string
+		text        string
+		participant string
+		want        core.MessageKind
+	}{
+		{"free text question", "Расскажите, пожалуйста, как долго вы занимаетесь тестированием?", "employer", core.MessageQuestionnaire},
+		{"imperative prompt", "Укажите свой желаемый уровень дохода", "employer", core.MessageQuestionnaire},
+		{"question mark", "Формат работы офис/гибрид подходит ?", "employer", core.MessageQuestionnaire},
+		{"bot greeting", "Здравствуйте, Антон! Я ИИ-помощник hh. Спасибо, что откликнулись на вакансию.", "employer", core.MessageText},
+		{"refusal", "К сожалению, сейчас мы не готовы пригласить вас на следующий этап.", "employer", core.MessageText},
+		{"outgoing question", "Как дела?", "me", core.MessageText},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			var raw hhChatMessage
+			fixture := fmt.Sprintf(`{"id":21,"creationTime":"2026-09-27T09:00:00Z","text":%q,"type":"SIMPLE","participantId":%q}`, item.text, item.participant)
+			if err := json.Unmarshal([]byte(fixture), &raw); err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			observation, include, err := mapHHMessageObservation(raw, "me")
+			if err != nil || !include {
+				t.Fatalf("include=%v err=%v", include, err)
+			}
+			if observation.Kind != item.want {
+				t.Fatalf("kind=%s want=%s", observation.Kind, item.want)
+			}
+		})
+	}
+}
+
 func TestBrowserConversationTreatsDuplicateSendAsDelivered(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

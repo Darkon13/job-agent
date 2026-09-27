@@ -388,7 +388,7 @@ func TestConversationReadMarkerRoundTrips(t *testing.T) {
 	})
 }
 
-func TestOpenQuestionnaireTracksBotPresenceWithoutOptions(t *testing.T) {
+func TestOpenQuestionnaireTracksPromptsAndClosers(t *testing.T) {
 	gcStores(t, func(t *testing.T, repository gcStore) {
 		ctx := context.Background()
 		now := time.Date(2026, 9, 26, 13, 0, 0, 0, time.UTC)
@@ -399,22 +399,38 @@ func TestOpenQuestionnaireTracksBotPresenceWithoutOptions(t *testing.T) {
 		if _, _, err := repository.CreateConversation(ctx, conversation); err != nil {
 			t.Fatal(err)
 		}
-		appendMessage := func(id, text string, kind core.MessageKind, at time.Time) {
+		appendMessage := func(id, text string, kind core.MessageKind, direction core.MessageDirection, at time.Time) {
 			t.Helper()
+			status := core.MessageObserved
+			if direction == core.MessageOutgoing {
+				status = core.MessageSent
+			}
 			if _, _, err := repository.AppendConversationMessage(ctx, core.ConversationMessage{
-				ID: core.MessageID(id), ConversationID: "chat-bot", Direction: core.MessageIncoming,
-				Kind: kind, Status: core.MessageObserved, Text: text, OccurredAt: at,
+				ID: core.MessageID(id), ConversationID: "chat-bot", Direction: direction,
+				Kind: kind, Status: status, Text: text, OccurredAt: at,
 			}, at); err != nil {
 				t.Fatalf("append %s: %v", id, err)
 			}
 		}
-		appendMessage("m-join", "Событие переговоров HH (PARTICIPANT_JOINED)", core.MessageSystem, now.Add(time.Minute))
-		appendMessage("m-question", "Расскажите, пожалуйста, как долго вы занимаетесь тестированием?", core.MessageText, now.Add(2*time.Minute))
+		// The adapter classifies a free-text prompt as a questionnaire.
+		appendMessage("m-question", "Расскажите, пожалуйста, как долго вы занимаетесь тестированием?", core.MessageQuestionnaire, core.MessageIncoming, now.Add(time.Minute))
 		open, err := repository.OpenQuestionnaireConversationIDs(ctx)
 		if err != nil || len(open) != 1 || open[0] != "chat-bot" {
 			t.Fatalf("open=%#v err=%v", open, err)
 		}
-		appendMessage("m-refusal", "К сожалению, сейчас мы не готовы пригласить вас на следующий этап.", core.MessageText, now.Add(3*time.Minute))
+		// Sending an answer closes the running questionnaire.
+		appendMessage("m-answer", "Пять лет", core.MessageText, core.MessageOutgoing, now.Add(2*time.Minute))
+		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 0 {
+			t.Fatalf("open after answer=%#v err=%v", open, err)
+		}
+		// The next prompt reopens it, a refusal closes it again.
+		appendMessage("m-question-2", "Укажите ваш желаемый уровень дохода", core.MessageQuestionnaire, core.MessageIncoming, now.Add(3*time.Minute))
+		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
+		if err != nil || len(open) != 1 {
+			t.Fatalf("open after second prompt=%#v err=%v", open, err)
+		}
+		appendMessage("m-refusal", "К сожалению, сейчас мы не готовы пригласить вас на следующий этап.", core.MessageText, core.MessageIncoming, now.Add(4*time.Minute))
 		open, err = repository.OpenQuestionnaireConversationIDs(ctx)
 		if err != nil || len(open) != 0 {
 			t.Fatalf("open after refusal=%#v err=%v", open, err)
