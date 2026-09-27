@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -41,6 +42,10 @@ type Config struct {
 	// field is absent; unknown versions are rejected instead of guessed.
 	SchemaVersion        int `json:"schema_version,omitempty"`
 	resolvedAnswerBlocks []core.AnswerBlock
+	// ProfileStore points at the writable directory of dashboard-managed
+	// profile fragments; an absent setting keeps the default next to the
+	// database file.
+	ProfileStore ProfileStoreConfig `json:"profile_store,omitempty"`
 }
 
 // ResolvedAnswerBlocks returns the reviewed answer blocks loaded from
@@ -329,10 +334,17 @@ type AdapterConfig struct {
 }
 
 type Profile struct {
-	Tag                 string                   `json:"tag"`
-	Adapter             string                   `json:"adapter"`
-	Resume              string                   `json:"resume,omitempty"`
-	ResumeAliases       map[string]string        `json:"resume_aliases,omitempty"`
+	Tag           string            `json:"tag"`
+	Adapter       string            `json:"adapter"`
+	Resume        string            `json:"resume,omitempty"`
+	ResumeAliases map[string]string `json:"resume_aliases,omitempty"`
+	// Resumes is the account resume list; resume/resume_aliases stay accepted
+	// and normalize into it, so an old config keeps working unchanged.
+	Resumes  []ProfileResume  `json:"resumes,omitempty"`
+	Identity *ProfileIdentity `json:"identity,omitempty"`
+	// Source records where the profile was declared. It is loader metadata, not
+	// part of the file schema.
+	Source              string                   `json:"-"`
 	ResumeFactsFile     string                   `json:"resume_facts_file,omitempty"`
 	CredentialsRef      string                   `json:"credentials_ref,omitempty"`
 	StateFile           string                   `json:"state_file,omitempty"`
@@ -347,6 +359,84 @@ type Profile struct {
 	Answers             *AnswerPolicy            `json:"answers,omitempty"`
 	Contacts            *ProfileContacts         `json:"contacts,omitempty"`
 	resolvedResumeFacts *ApplicationResumeFacts
+}
+
+// ProfileResume is one resume of a platform account. A profile is an account,
+// not a resume: the list may be empty, and exactly one entry is the primary
+// default for jobs and searches that do not name a resume.
+type ProfileResume struct {
+	ID      string `json:"id"`
+	Title   string `json:"title,omitempty"`
+	Primary bool   `json:"primary,omitempty"`
+}
+
+// ProfileIdentity caches safe account facts so the dashboard can show which
+// profile is which before the next login. Contact values are masked at capture
+// time; no tokens, cookies or full personal data belong here.
+type ProfileIdentity struct {
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	AccountHash string `json:"account_hash,omitempty"`
+	CapturedAt  string `json:"captured_at,omitempty"`
+}
+
+const (
+	// ProfileSourceConfig marks a profile declared in the regular config.
+	ProfileSourceConfig = "config"
+	// ProfileSourceStore marks a profile loaded from the dashboard-managed
+	// profile store directory.
+	ProfileSourceStore = "profile_store"
+)
+
+// ProfileStoreConfig points at the writable directory that holds
+// dashboard-managed profile fragments. Every top-level *.json file there is
+// loaded like an include and may declare profiles and jobs with paths relative
+// to itself. The directory may be missing or empty: a fresh deployment needs no
+// placeholder files.
+type ProfileStoreConfig struct {
+	Dir string `json:"dir,omitempty"`
+}
+
+// ProfileStoreDirectory returns the effective profile store directory. An
+// explicit relative dir resolves against the main config file; otherwise the
+// store lives next to the database file.
+func (c Config) ProfileStoreDirectory(mainDirectory string) string {
+	if dir := strings.TrimSpace(c.ProfileStore.Dir); dir != "" {
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(mainDirectory, dir)
+		}
+		return filepath.Clean(dir)
+	}
+	path := strings.TrimSpace(c.Database.Path)
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(mainDirectory, path)
+	}
+	return filepath.Join(filepath.Dir(path), "profiles")
+}
+
+// ResumeIDs returns every declared resume id once in declaration order.
+func (profile Profile) ResumeIDs() []string {
+	ids := make([]string, 0, len(profile.Resumes))
+	for _, resume := range profile.Resumes {
+		if resume.ID != "" {
+			ids = append(ids, resume.ID)
+		}
+	}
+	return ids
+}
+
+// PrimaryResumeID returns the default resume of the profile.
+func (profile Profile) PrimaryResumeID() string {
+	for _, resume := range profile.Resumes {
+		if resume.Primary && resume.ID != "" {
+			return resume.ID
+		}
+	}
+	return strings.TrimSpace(profile.Resume)
 }
 
 // SystemJobPolicy enables one automatic per-profile job and sets its timer. An
@@ -760,10 +850,16 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	baseDirectory := filepath.Dir(absolute)
+	if err := cfg.loadProfileStore(cfg.ProfileStoreDirectory(baseDirectory)); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.resolveResumeAliases(); err != nil {
 		return Config{}, err
 	}
-	baseDirectory := filepath.Dir(absolute)
+	if err := cfg.normalizeResumes(); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.resolveApplicationMessageFiles(baseDirectory); err != nil {
 		return Config{}, err
 	}
@@ -826,25 +922,149 @@ func (c *Config) resolveResumeAliases() error {
 }
 
 // ResumeTargets builds the per-profile resume catalog for the control API.
+// Aliases are names of the listed resumes, not separate entries.
 func (c Config) ResumeTargets() map[core.ProfileID][]core.ResumeTarget {
 	targets := make(map[core.ProfileID][]core.ResumeTarget, len(c.Profiles))
 	for _, profile := range c.Profiles {
 		profileID := core.ProfileID(profile.Tag)
-		list := make([]core.ResumeTarget, 0, len(profile.ResumeAliases)+1)
-		if id := strings.TrimSpace(profile.Resume); id != "" {
-			list = append(list, core.ResumeTarget{ID: id, Primary: true})
-		}
+		list := make([]core.ResumeTarget, 0, len(profile.Resumes))
+		aliases := make(map[string]string, len(profile.ResumeAliases))
 		names := make([]string, 0, len(profile.ResumeAliases))
 		for alias := range profile.ResumeAliases {
 			names = append(names, alias)
 		}
 		sort.Strings(names)
 		for _, alias := range names {
-			list = append(list, core.ResumeTarget{ID: profile.ResumeAliases[alias], Alias: alias})
+			id := profile.ResumeAliases[alias]
+			if _, exists := aliases[id]; !exists {
+				aliases[id] = alias
+			}
+		}
+		for _, resume := range profile.Resumes {
+			list = append(list, core.ResumeTarget{
+				ID: resume.ID, Alias: aliases[resume.ID], Title: resume.Title, Primary: resume.Primary,
+			})
 		}
 		targets[profileID] = list
 	}
 	return targets
+}
+
+// loadProfileStore merges the dashboard-managed profile fragments. The
+// directory is optional: a missing or empty store contributes nothing, so the
+// same config works before and after the first profile is added.
+func (c *Config) loadProfileStore(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	info, err := os.Stat(directory)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("profile store %s: %w", directory, err)
+	case !info.IsDir():
+		return fmt.Errorf("profile store %s is not a directory", directory)
+	}
+	matches, err := filepath.Glob(filepath.Join(directory, "*.json"))
+	if err != nil {
+		return fmt.Errorf("profile store %s: %w", directory, err)
+	}
+	sort.Strings(matches)
+	visiting := make(map[string]bool)
+	for _, match := range matches {
+		fragment, err := loadConfigFile(match, visiting, 1)
+		if err != nil {
+			return err
+		}
+		for index := range fragment.Profiles {
+			fragment.Profiles[index].Source = ProfileSourceStore
+		}
+		*c = mergeConfigCollections(*c, fragment)
+	}
+	return nil
+}
+
+// normalizeResumes folds the legacy resume/resume_aliases fields and the
+// declared resume list into one canonical list. A declared list wins; legacy
+// fields are only derived when the list is empty, so removing a resume from the
+// list is never silently undone by an old alias. The primary resume also stays
+// in Profile.Resume for callers that still work with a single default.
+func (c *Config) normalizeResumes() error {
+	for index := range c.Profiles {
+		profile := &c.Profiles[index]
+		if profile.Source == "" {
+			profile.Source = ProfileSourceConfig
+		}
+		resolve := func(value string) string {
+			value = strings.TrimSpace(value)
+			if id, exists := profile.ResumeAliases[value]; exists {
+				return id
+			}
+			return value
+		}
+		aliasNames := make([]string, 0, len(profile.ResumeAliases))
+		for alias := range profile.ResumeAliases {
+			aliasNames = append(aliasNames, alias)
+		}
+		sort.Strings(aliasNames)
+
+		list := make([]ProfileResume, 0, len(profile.Resumes)+len(profile.ResumeAliases)+1)
+		if len(profile.Resumes) != 0 {
+			seen := make(map[string]struct{}, len(profile.Resumes))
+			primary := -1
+			for _, item := range profile.Resumes {
+				id := resolve(item.ID)
+				if id == "" {
+					return fmt.Errorf("profile %q resumes requires a non-empty id", profile.Tag)
+				}
+				if _, exists := seen[id]; exists {
+					return fmt.Errorf("profile %q resumes contains duplicate id %q", profile.Tag, id)
+				}
+				seen[id] = struct{}{}
+				if item.Primary {
+					if primary >= 0 {
+						return fmt.Errorf("profile %q resumes marks more than one primary resume", profile.Tag)
+					}
+					primary = len(list)
+				}
+				list = append(list, ProfileResume{ID: id, Title: strings.TrimSpace(item.Title), Primary: item.Primary})
+			}
+			if primary < 0 {
+				list[0].Primary = true
+			}
+			if legacy := resolve(profile.Resume); legacy != "" {
+				if _, exists := seen[legacy]; !exists {
+					return fmt.Errorf("profile %q resume %q is not listed in resumes", profile.Tag, legacy)
+				}
+			}
+			for _, alias := range aliasNames {
+				id := profile.ResumeAliases[alias]
+				if _, exists := seen[id]; !exists {
+					return fmt.Errorf("profile %q resume_aliases %q targets resume %q which is not listed in resumes", profile.Tag, alias, id)
+				}
+			}
+		} else {
+			seen := make(map[string]struct{}, len(profile.ResumeAliases)+1)
+			if id := resolve(profile.Resume); id != "" {
+				list = append(list, ProfileResume{ID: id, Primary: true})
+				seen[id] = struct{}{}
+			}
+			for _, alias := range aliasNames {
+				id := profile.ResumeAliases[alias]
+				if _, exists := seen[id]; exists {
+					continue
+				}
+				seen[id] = struct{}{}
+				list = append(list, ProfileResume{ID: id})
+			}
+		}
+		profile.Resumes = list
+		if primary := profile.PrimaryResumeID(); primary != "" {
+			profile.Resume = primary
+		}
+	}
+	return nil
 }
 
 // loadConfigFile reads one config file, merges its includes depth-first, and
@@ -881,10 +1101,16 @@ func loadConfigFile(path string, visiting map[string]bool, depth int) (Config, e
 		if _, exists := raw["schema_version"]; exists {
 			return Config{}, fmt.Errorf("config %s: schema_version is only allowed in the main file", path)
 		}
+		if _, exists := raw["profile_store"]; exists {
+			return Config{}, fmt.Errorf("config %s: profile_store is only allowed in the main file", path)
+		}
 	}
 	directory := filepath.Dir(path)
 	normalizeConfigFileReferences(&file, directory)
-	result := mergeConfigCollections(Config{Database: file.Database, Server: file.Server, SchemaVersion: file.SchemaVersion}, file)
+	result := mergeConfigCollections(Config{
+		Database: file.Database, Server: file.Server,
+		SchemaVersion: file.SchemaVersion, ProfileStore: file.ProfileStore,
+	}, file)
 	visiting[path] = true
 	defer delete(visiting, path)
 	for _, reference := range file.Include {
@@ -1425,6 +1651,9 @@ func (c Config) Validate() error {
 		}
 		if _, exists := profiles[profile.Tag]; exists {
 			return fmt.Errorf("duplicate profile tag %q", profile.Tag)
+		}
+		if err := validateProfileResumes(profile); err != nil {
+			return err
 		}
 		resumeFacts, hasResumeFacts := profile.ResolvedResumeFacts()
 		if strings.TrimSpace(profile.ResumeFactsFile) != "" && !hasResumeFacts {
@@ -2017,6 +2246,28 @@ func validateApplicationCampaignAction(job Job, profiles map[string]struct{}, se
 				return fmt.Errorf("job %q campaign route %q does not target profile %q", job.Tag, route, profile)
 			}
 		}
+	}
+	return nil
+}
+
+func validateProfileResumes(profile Profile) error {
+	seen := make(map[string]struct{}, len(profile.Resumes))
+	primary := 0
+	for _, resume := range profile.Resumes {
+		id := strings.TrimSpace(resume.ID)
+		if id == "" {
+			return fmt.Errorf("profile %q resumes requires a non-empty id", profile.Tag)
+		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("profile %q resumes contains duplicate id %q", profile.Tag, id)
+		}
+		seen[id] = struct{}{}
+		if resume.Primary {
+			primary++
+		}
+	}
+	if primary > 1 {
+		return fmt.Errorf("profile %q resumes marks more than one primary resume", profile.Tag)
 	}
 	return nil
 }

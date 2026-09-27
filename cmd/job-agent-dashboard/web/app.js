@@ -1087,7 +1087,11 @@ function renderConfigState(status) {
 function renderAccountSwitcher(profiles = []) {
   const labels = new Map();
   for (const item of profiles) {
-    if (item && item.id) labels.set(item.id, item.display_name || item.id);
+    if (!item || !item.id) continue;
+    // The resume count tells two accounts of the same person apart without
+    // opening the profile section.
+    const count = Number(item.resumes) || 0;
+    labels.set(item.id, `${item.display_name || item.id}${count ? ` · ${count} резюме` : ""}`);
   }
   for (const item of state.conversationItems || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
   for (const item of state.summary?.activity || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
