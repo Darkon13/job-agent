@@ -133,13 +133,21 @@ func (scheduler *Scheduler) ReconcileDue(ctx context.Context) (int, error) {
 	}
 	advanced := 0
 	for _, entry := range entries {
-		if _, isPaused := paused[entry.JobTag+"\x00"+string(entry.ProfileID)]; isPaused {
-			// Leave the schedule due: resuming fires it immediately.
-			continue
-		}
 		schedule, err := parseSchedule(entry.Definition)
 		if err != nil {
 			return advanced, err
+		}
+		if _, isPaused := paused[entry.JobTag+"\x00"+string(entry.ProfileID)]; isPaused {
+			// A paused schedule keeps its cadence instead of piling up in the
+			// due queue; resuming triggers the job explicitly.
+			changed, err := scheduler.store.AdvanceSchedule(ctx, entry.JobTag, entry.TriggerIndex, entry.NextRunAt, schedule.Next(now), now)
+			if err != nil {
+				return advanced, err
+			}
+			if changed {
+				advanced++
+			}
+			continue
 		}
 		next := schedule.Next(now)
 		active, err := scheduler.store.HasActiveScheduledTask(ctx, entry.JobTag, entry.ProfileID)
