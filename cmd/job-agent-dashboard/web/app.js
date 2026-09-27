@@ -563,7 +563,7 @@ function renderJobs(items = []) {
     } else {
       pauseCell.append(text("span", "работает", "muted"));
     }
-    const pauseToggle = text("button", paused ? "Запустить" : "Пауза", "secondary compact"); pauseToggle.type = "button";
+    const pauseToggle = text("button", paused ? "Снять паузу" : "Пауза", "secondary compact"); pauseToggle.type = "button";
     pauseToggle.disabled = state.jobBusy.has(item.tag);
     pauseToggle.addEventListener("click", () => toggleJobPause(item, !paused));
     pauseCell.append(text("div", "", "muted")); pauseCell.lastChild.append(pauseToggle);
