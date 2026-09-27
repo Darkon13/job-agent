@@ -117,7 +117,7 @@
     </section>
     <section aria-labelledby="jobs-title">
       <article class="panel">
-        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация</h2><p class="panel-description">Пользовательские джобы из конфигурации и системные (снятие состояния HH, обновление сессии, перепроверка анкет) срабатывают по cron или таймеру, либо вручную. Джобу можно поставить на паузу — по одной или всей группой; до снятия паузы она не запускается, после снятия запуск происходит сразу.</p></div><span class="tag">jobs</span></div>
+        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация</h2><p class="panel-description">Пользовательские джобы из конфигурации и системные (снятие состояния HH, обновление сессии, перепроверка анкет) срабатывают по cron или таймеру, либо вручную. Пользовательские джобы можно ставить на паузу по одной или всей группой; системные ставит на паузу сам сервис (например, при разлогине) — у оператора остаётся только снять её.</p></div><span class="tag">jobs</span></div>
         <div class="jobs-group">
           <div class="jobs-group-heading">
             <h3>Пользовательские</h3>
@@ -128,7 +128,7 @@
         <div class="jobs-group">
           <div class="jobs-group-heading">
             <h3>Системные</h3>
-            <button id="jobs-pause-system" class="secondary compact" type="button">Поставить все на паузу</button>
+            <button id="jobs-pause-system" class="secondary compact" type="button" hidden>Снять паузу со всех</button>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Job</th><th>Действие и параметры</th><th>Профиль</th><th>Расписание</th><th>Следующий запуск</th><th>Пауза</th><th>Запуск</th></tr></thead><tbody id="jobs-system"></tbody></table></div>
         </div>

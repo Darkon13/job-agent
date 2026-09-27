@@ -175,23 +175,27 @@ func TestJobAPIPausesEveryJobOfAGroup(t *testing.T) {
 	api.SetSystemTags([]string{"system.state.chats"})
 	handler := api.Handler(nil)
 
+	// System jobs are paused by the service, not by the operator.
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=system", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"affected":1`) {
-		t.Fatalf("pause system group: %d %s", response.Code, response.Body.String())
-	}
-	if len(pauses.items) != 1 || pauses.items[0].JobTag != "system.state.chats" {
-		t.Fatalf("wrong jobs paused: %#v", pauses.items)
+	if response.Code != http.StatusConflict || len(pauses.items) != 0 {
+		t.Fatalf("pause system group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/resume?group=system", nil))
-	if response.Code != http.StatusOK || len(pauses.items) != 0 {
-		t.Fatalf("resume system group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/system.state.chats/pause", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("pause system tag: %d %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=user", nil))
 	if response.Code != http.StatusOK || len(pauses.items) != 1 || pauses.items[0].JobTag != "daily-applications" {
 		t.Fatalf("pause user group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	}
+	// Resuming stays available as the recovery path.
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/resume?group=system", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resume system group: %d %s", response.Code, response.Body.String())
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=unknown", nil))
