@@ -501,15 +501,32 @@ function jobParameterSummary(item) {
   if (payload.resume_id || payload.resume) parts.push(`резюме: ${payload.resume_id || payload.resume}`);
   return parts.join(" · ");
 }
+// jobCronLabel turns the common cron shapes into a short human cadence, for
+// example "каждый час"; the raw expression stays in the tooltip.
+function jobCronLabel(expression) {
+  const parts = String(expression || "").trim().split(/\s+/);
+  if (parts.length !== 5) return "";
+  const [minute, hour, , , weekday] = parts;
+  if (minute === "0" && hour === "*") return "каждый час";
+  if (/^\*\/\d+$/.test(minute) && hour === "*") return `каждые ${minute.slice(2)} мин`;
+  if (/^\d+$/.test(minute) && hour === "*") return `каждый час в :${minute.padStart(2, "0")}`;
+  if (/^\d+$/.test(minute) && /^\*\/\d+$/.test(hour)) return `каждые ${hour.slice(2)} ч в :${minute.padStart(2, "0")}`;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+    const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+    return weekday === "*" ? `каждый день в ${time}` : `по дням недели ${weekday} в ${time}`;
+  }
+  return "";
+}
+
 function jobScheduleLines(item) {
   const seen = new Set();
   const lines = [];
   for (const schedule of item.schedules || []) {
-    // Interval schedules are timers ("каждые 30 мин"), cron schedules show
-    // their expression and timezone.
+    // Interval schedules are timers ("каждые 30 мин"); cron schedules get a
+    // human cadence plus the raw expression and timezone.
     const cadence = schedule.interval
       ? `каждые ${formatDuration(schedule.interval)}`
-      : `${schedule.expression} · ${schedule.timezone}`;
+      : [jobCronLabel(schedule.expression), schedule.expression, schedule.timezone].filter(Boolean).join(" · ");
     const parts = [cadence];
     if (schedule.jitter_min || schedule.jitter_max) {
       const min = schedule.jitter_min ? formatDuration(schedule.jitter_min) : "0 с";
@@ -523,16 +540,119 @@ function jobScheduleLines(item) {
   }
   return lines;
 }
-function jobNextRunCell(item) {
-  const cell = document.createElement("td");
+// jobCountdownNode shows only the remaining time; the schedule itself lives in
+// the tooltip behind the question mark.
+function jobCountdownNode(item) {
   const runs = (item.schedules || []).map((schedule) => schedule.next_run_at).filter(Boolean).sort();
-  if (!runs.length) { cell.append(text("span", "вручную", "muted")); return cell; }
+  if (!runs.length) return text("span", "вручную", "muted");
   const value = text("span", "", "countdown");
   value.dataset.nextRun = runs[0];
-  cell.append(value);
-  const first = (item.schedules || []).find((schedule) => schedule.next_run_at === runs[0]);
-  if (first && (first.jitter_min || first.jitter_max)) cell.append(text("span", " + jitter", "muted"));
-  return cell;
+  return value;
+}
+
+function jobScheduleTitle(item) {
+  const lines = jobScheduleLines(item);
+  return lines.length ? lines.join("; ") : "запускается только вручную";
+}
+
+function jobPausedProfiles(item) {
+  return new Set((item.pauses || []).map((entry) => entry.profile_id).filter(Boolean));
+}
+
+// jobActivityBadge counts bound profiles and how many of them are not paused,
+// for example 1/3 when one of three profiles is paused.
+function jobActivityBadge(item) {
+  const profiles = jobProfiles(item);
+  const paused = jobPausedProfiles(item);
+  const active = profiles.filter((profileID) => !paused.has(profileID)).length;
+  const badge = text("span", `${active}/${profiles.length}`, "job-badge");
+  badge.title = `активных профилей: ${active} из ${profiles.length}`;
+  if (profiles.length && active === 0) badge.classList.add("paused");
+  return badge;
+}
+
+function jobPauseNotes(item) {
+  const reasons = [...new Set((item.pauses || []).map((entry) => entry.reason === "auth_required" ? "требуется вход" : "пауза оператора"))];
+  const names = [...new Set((item.pauses || []).map((entry) => profileDisplayName(entry.profile_id)))];
+  return `${reasons.join(", ")}${names.length ? ` (${names.join(", ")})` : ""}`;
+}
+
+// jobStateButton renders OK/PAUSED and toggles the pause for one profile or for
+// the whole job when no profile is given.
+function jobStateButton(item, profileID = "") {
+  const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
+  const button = text("button", paused ? "PAUSED" : "OK", `job-state ${paused ? "paused" : "ok"}`);
+  button.type = "button";
+  if (item.system && !paused) {
+    button.disabled = true;
+    button.title = "системную джобу ставит на паузу сервис; снять паузу можно вручную";
+  } else {
+    button.disabled = state.jobBusy.has(item.tag);
+    button.title = paused
+      ? `снять паузу${profileID ? ` для ${profileDisplayName(profileID)}` : ""}`
+      : `поставить на паузу${profileID ? ` для ${profileDisplayName(profileID)}` : " для всех профилей"}`;
+    button.addEventListener("click", (event) => { event.stopPropagation(); toggleJobPause(item, !paused, profileID); });
+  }
+  if (!profileID && paused && item.pauses?.length) button.title += `: ${jobPauseNotes(item)}`;
+  return button;
+}
+
+const playIconPath = "M4.5 3.1v9.8l8.4-4.9z";
+
+function jobRunButton(item, profileID = "") {
+  const button = text("button", "", "job-run");
+  button.type = "button";
+  button.disabled = state.jobBusy.has(item.tag);
+  button.title = profileID ? `запустить для ${profileDisplayName(profileID)}` : "запустить для всех профилей";
+  button.setAttribute("aria-label", button.title);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", playIconPath);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); runJob(item, profileID); });
+  return button;
+}
+
+function toggleJobExpanded(tag) {
+  if (state.expandedJobs.has(tag)) state.expandedJobs.delete(tag);
+  else state.expandedJobs.add(tag);
+  renderJobs(state.jobs);
+}
+
+// renderJobDetailRow shows one line per bound profile with its parameters, run
+// action and per-profile pause state.
+function renderJobDetailRow(item) {
+  const row = document.createElement("tr");
+  row.className = "job-detail-row";
+  const cell = document.createElement("td");
+  cell.colSpan = 4;
+  const commands = Array.isArray(item.commands) ? item.commands : [];
+  for (const profileID of jobProfiles(item)) {
+    const line = document.createElement("div");
+    line.className = "job-detail-profile";
+    const info = document.createElement("div");
+    info.className = "job-detail-info";
+    info.append(text("strong", profileDisplayName(profileID)));
+    const command = commands.find((entry) => entry.profile_id === profileID);
+    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
+    info.append(text("div", summary || "без дополнительных параметров", "muted"));
+    const actions = document.createElement("div");
+    actions.className = "job-detail-actions";
+    actions.append(jobStateButton(item, profileID), jobRunButton(item, profileID));
+    line.append(info, actions);
+    cell.append(line);
+  }
+  if (!jobProfiles(item).length) cell.append(text("div", "нет привязанных профилей", "muted"));
+  const schedule = jobScheduleTitle(item);
+  cell.append(text("div", `расписание: ${schedule}`, "muted job-detail-schedule"));
+  row.append(cell);
+  return row;
 }
 // renderJobs splits the runnable jobs into the operator's own configuration and
 // the generated system jobs, so each group can be paused as a whole.
@@ -558,56 +678,53 @@ function renderJobs(items = []) {
       group.button.dataset.paused = pausedCount === groupItems.length && groupItems.length ? "1" : "";
     }
     if (!groupItems.length) {
-      const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell);
+      const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 4; row.append(cell);
       group.body.replaceChildren(row);
       continue;
     }
-    group.body.replaceChildren(...groupItems.map((item) => renderJobRow(item)));
+    group.body.replaceChildren(...groupItems.map((item) => renderJobRow(item)).flat());
   }
   updateCountdowns();
 }
+// renderJobRow renders the compact job line; clicking it reveals the
+// per-profile details. The returned slice holds the detail row when the job is
+// expanded.
 function renderJobRow(item) {
     const row = document.createElement("tr");
-    const action = document.createElement("td");
-    action.append(text("div", taskTypeLabel(item.task_type)));
-    for (const line of jobParameterLines(item)) action.append(text("div", line, "muted"));
-    const schedule = document.createElement("td");
-    const lines = jobScheduleLines(item);
-    if (lines.length) schedule.append(...lines.map((line) => text("div", line)));
-    else schedule.append(text("span", "вручную", "muted"));
-    const run = document.createElement("td");
-    const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
-    button.addEventListener("click", () => runJob(item)); run.append(button);
-    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
-    const names = jobProfiles(item).map(profileDisplayName);
-    if (names.length) profileCell.append(...names.map((name) => text("div", name)));
-    else profileCell.append(text("span", "—", "muted"));
-    const pauseCell = document.createElement("td");
-    const paused = Boolean(item.paused);
-    if (paused) {
-      const reasons = [...new Set((item.pauses || []).map((entry) => entry.reason === "auth_required" ? "требуется вход" : "пауза оператора"))];
-      const profiles = [...new Set((item.pauses || []).map((entry) => profileDisplayName(entry.profile_id)))];
-      pauseCell.append(text("div", `на паузе: ${reasons.join(", ")}`));
-      if (profiles.length) pauseCell.append(text("small", profiles.join(", "), "muted"));
-    } else {
-      pauseCell.append(text("span", "работает", "muted"));
-    }
-    // System jobs are paused by the service; the operator can only release them.
-    if (paused || !item.system) {
-      const pauseToggle = text("button", paused ? "Снять паузу" : "Пауза", "secondary compact"); pauseToggle.type = "button";
-      pauseToggle.disabled = state.jobBusy.has(item.tag);
-      pauseToggle.addEventListener("click", () => toggleJobPause(item, !paused));
-      pauseCell.append(text("div", "", "muted")); pauseCell.lastChild.append(pauseToggle);
-    }
+    const expanded = state.expandedJobs.has(item.tag);
+    row.className = expanded ? "job-row expanded" : "job-row";
+    row.setAttribute("aria-expanded", String(expanded));
+    row.addEventListener("click", () => toggleJobExpanded(item.tag));
+
     const jobCell = document.createElement("td");
-    if (item.description) {
-      jobCell.append(text("div", item.description));
-      jobCell.append(text("small", item.tag, "muted"));
-    } else {
-      jobCell.append(text("div", item.tag));
+    const title = document.createElement("div");
+    title.className = "job-title";
+    title.append(text("span", item.description || item.tag));
+    if (jobProfiles(item).length > 1) title.append(jobActivityBadge(item));
+    jobCell.append(title);
+    const subtitle = [item.description ? item.tag : "", taskTypeLabel(item.task_type)].filter(Boolean).join(" · ");
+    if (subtitle) jobCell.append(text("small", subtitle, "muted"));
+
+    const scheduleCell = document.createElement("td");
+    scheduleCell.className = "job-schedule-cell";
+    scheduleCell.append(jobCountdownNode(item));
+    if (jobScheduleLines(item).length) {
+      const help = text("span", "?", "job-help");
+      help.title = jobScheduleTitle(item);
+      help.setAttribute("aria-label", `расписание: ${jobScheduleTitle(item)}`);
+      scheduleCell.append(help);
     }
-    row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), pauseCell, run);
-    return row;
+
+    const stateCell = document.createElement("td");
+    stateCell.append(jobStateButton(item));
+
+    const runCell = document.createElement("td");
+    runCell.className = "job-run-cell";
+    runCell.append(jobRunButton(item));
+
+    row.append(jobCell, scheduleCell, stateCell, runCell);
+    if (!expanded) return [row];
+    return [row, renderJobDetailRow(item)];
 }
 function renderFailedTasks(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
@@ -1515,11 +1632,13 @@ async function toggleJobGroupPause(key, group, paused) {
 }
 elements.jobsPauseUser.addEventListener("click", () => toggleJobGroupPause("group:user", "user", !elements.jobsPauseUser.dataset.paused));
 elements.jobsPauseSystem.addEventListener("click", () => toggleJobGroupPause("group:system", "system", !elements.jobsPauseSystem.dataset.paused));
-async function toggleJobPause(job, paused) {
+async function toggleJobPause(job, paused, profileID = "") {
   state.jobBusy.add(job.tag); renderJobs(state.jobs);
   try {
-    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/${paused ? "pause" : "resume"}`);
-    elements.connectionState.textContent = `Job ${job.tag}: ${result.paused ? "на паузе" : "снова выполняется"}`;
+    const query = profileID ? `?profile_id=${encodeURIComponent(profileID)}` : "";
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/${paused ? "pause" : "resume"}${query}`);
+    const scope = result.profile_id ? ` (${profileDisplayName(result.profile_id)})` : "";
+    elements.connectionState.textContent = `Job ${job.tag}${scope}: ${result.paused ? "на паузе" : "снова выполняется"}`;
     await refreshSummary();
   } catch (error) {
     elements.connectionState.textContent = error.message;
@@ -1527,11 +1646,13 @@ async function toggleJobPause(job, paused) {
     state.jobBusy.delete(job.tag); renderJobs(state.jobs);
   }
 }
-async function runJob(job) {
+async function runJob(job, profileID = "") {
   state.jobBusy.add(job.tag); renderJobs(state.jobs);
   try {
-    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/runs`);
-    elements.connectionState.textContent = `Job ${job.tag}: задача ${result.task_id} поставлена в очередь`;
+    const query = profileID ? `?profile_id=${encodeURIComponent(profileID)}` : "";
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/runs${query}`);
+    const scope = profileID ? ` (${profileDisplayName(profileID)})` : "";
+    elements.connectionState.textContent = `Job ${job.tag}${scope}: задача ${result.task_id} поставлена в очередь`;
     await refreshSummary();
   } catch (error) {
     elements.connectionState.textContent = error.message;
@@ -1787,6 +1908,7 @@ if (!state.draftPrimary) state.draftPrimary = new Map();
 if (!state.drafts) state.drafts = [];
 if (!state.activeDraft) state.activeDraft = "";
 if (!state.profileCatalog) state.profileCatalog = [];
+if (!state.expandedJobs) state.expandedJobs = new Set();
 
 function renderAuthProfileOptions(profiles = []) {
   const select = document.getElementById("auth-profile");

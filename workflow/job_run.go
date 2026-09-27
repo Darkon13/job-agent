@@ -106,7 +106,21 @@ func (workflow *JobRunWorkflow) Definitions() []JobRunDescriptor {
 	return append([]JobRunDescriptor(nil), workflow.descriptors...)
 }
 
+// Run enqueues every command of the job.
 func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string) (core.Task, bool, error) {
+	return workflow.run(ctx, tag, "", requestKey)
+}
+
+// RunProfile runs only the commands of one profile, so the dashboard can start
+// a job for a single account.
+func (workflow *JobRunWorkflow) RunProfile(ctx context.Context, tag string, profileID core.ProfileID, requestKey string) (core.Task, bool, error) {
+	if strings.TrimSpace(string(profileID)) == "" {
+		return core.Task{}, false, errors.New("job run requires a profile")
+	}
+	return workflow.run(ctx, tag, profileID, requestKey)
+}
+
+func (workflow *JobRunWorkflow) run(ctx context.Context, tag string, profileID core.ProfileID, requestKey string) (core.Task, bool, error) {
 	if workflow == nil {
 		return core.Task{}, false, errors.New("job run requires workflow")
 	}
@@ -121,7 +135,14 @@ func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string)
 	}
 	var first core.Task
 	anyCreated := false
+	matched := 0
 	for index, command := range definition.Commands {
+		// A profile-scoped run keeps the original command index in the
+		// idempotency key, so it cannot collide with another profile's command.
+		if profileID != "" && command.ProfileID != profileID {
+			continue
+		}
+		matched++
 		taskID, err := workflow.ids.NewID("task")
 		if err != nil {
 			return core.Task{}, false, err
@@ -150,10 +171,13 @@ func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string)
 				return core.Task{}, false, fmt.Errorf("load idempotent job run: %w", err)
 			}
 		}
-		if index == 0 {
+		if matched == 1 {
 			first = task
 		}
 		anyCreated = anyCreated || created
+	}
+	if profileID != "" && matched == 0 {
+		return core.Task{}, false, fmt.Errorf("%w: %s has no command for profile %s", ErrJobRunNotFound, tag, profileID)
 	}
 	return first, anyCreated, nil
 }

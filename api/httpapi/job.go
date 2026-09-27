@@ -292,7 +292,18 @@ func (api *JobAPI) run(response http.ResponseWriter, request *http.Request) {
 	if !ok || !emptyRequestBody(response, request) {
 		return
 	}
-	task, created, err := api.workflow.Run(request.Context(), strings.TrimSpace(request.PathValue("job_tag")), key)
+	tag := strings.TrimSpace(request.PathValue("job_tag"))
+	profileID := core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id")))
+	var (
+		task    core.Task
+		created bool
+		err     error
+	)
+	if profileID == "" {
+		task, created, err = api.workflow.Run(request.Context(), tag, key)
+	} else {
+		task, created, err = api.workflow.RunProfile(request.Context(), tag, profileID, key)
+	}
 	if errors.Is(err, workflow.ErrJobRunNotFound) {
 		writeProblem(response, http.StatusNotFound, err.Error())
 		return

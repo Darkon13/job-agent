@@ -80,3 +80,45 @@ func TestJobRunWorkflowRejectsUnknownAndIncompleteJobs(t *testing.T) {
 		t.Fatal("expected a job without commands to fail")
 	}
 }
+
+func TestJobRunWorkflowRunsOneProfileOfAMultiProfileJob(t *testing.T) {
+	queue := brokermemory.NewQueue()
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock{now: now}
+	workflow, err := NewJobRunWorkflow(queue, clock, &sequentialIDs{}, []JobRunDefinition{{
+		Tag: "apply",
+		Commands: []JobRunCommand{
+			{TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary", Payload: json.RawMessage(`{"profiles":["primary"]}`)},
+			{TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "secondary", Payload: json.RawMessage(`{"profiles":["secondary"]}`)},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	task, created, err := workflow.RunProfile(context.Background(), "apply", "secondary", "request-1")
+	if err != nil || !created || task.ProfileID != "secondary" {
+		t.Fatalf("profile run: task=%#v created=%t err=%v", task, created, err)
+	}
+	if len(queue.Tasks()) != 1 || queue.Tasks()[0].ProfileID != "secondary" {
+		t.Fatalf("queued tasks = %#v", queue.Tasks())
+	}
+	// Repeating the same request key is idempotent per command.
+	again, created, err := workflow.RunProfile(context.Background(), "apply", "secondary", "request-1")
+	if err != nil || created || again.ID != task.ID {
+		t.Fatalf("idempotent profile run: task=%#v created=%t err=%v", again, created, err)
+	}
+	// The same request key identifies the same run: the full run adds the other
+	// profile and reuses the already queued secondary task.
+	if _, created, err := workflow.Run(context.Background(), "apply", "request-1"); err != nil || !created {
+		t.Fatalf("full run after profile run: created=%t err=%v", created, err)
+	}
+	if len(queue.Tasks()) != 2 {
+		t.Fatalf("queued tasks after full run = %#v", queue.Tasks())
+	}
+	if _, _, err := workflow.RunProfile(context.Background(), "apply", "missing", "request-2"); !errors.Is(err, ErrJobRunNotFound) {
+		t.Fatalf("unknown profile error = %v", err)
+	}
+	if _, _, err := workflow.RunProfile(context.Background(), "apply", "", "request-3"); err == nil {
+		t.Fatal("expected an empty profile to fail")
+	}
+}

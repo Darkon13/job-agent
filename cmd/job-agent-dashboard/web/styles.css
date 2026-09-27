@@ -321,3 +321,70 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+.jobs-table td { vertical-align: middle; }
+.job-row { cursor: pointer; }
+.job-row:hover td { background: rgb(255 255 255 / 2.5%); }
+.job-row.expanded td { background: rgb(255 255 255 / 4%); }
+.job-title { display: flex; gap: .55rem; align-items: center; }
+.job-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .1rem .5rem;
+  color: var(--muted);
+  font: 700 .7rem ui-monospace, monospace;
+}
+.job-badge.paused { color: var(--orange); border-color: rgb(255 204 102 / 35%); }
+.job-schedule-cell { white-space: nowrap; }
+.job-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-left: .45rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  font: 700 .7rem/1 ui-monospace, monospace;
+  cursor: help;
+}
+.job-help:hover { color: var(--cyan); border-color: var(--cyan); }
+.job-state {
+  padding: .22rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  font: 700 .72rem ui-monospace, monospace;
+}
+.job-state.ok { color: var(--green); border-color: rgb(186 230 126 / 35%); }
+.job-state.paused { color: var(--orange); border-color: rgb(255 204 102 / 35%); }
+.job-state:disabled { opacity: .7; }
+.job-run-cell { width: 3.5rem; text-align: right; }
+.job-run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--green);
+}
+.job-run:hover:not(:disabled) { border-color: var(--green); filter: none; }
+.job-detail-row td { padding: 0 0 .7rem; border-bottom: 1px solid var(--line); }
+.job-detail-profile {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin: .45rem 0;
+  padding: .55rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.job-detail-info { display: grid; gap: .18rem; }
+.job-detail-actions { display: flex; gap: .5rem; align-items: center; }
+.job-detail-schedule { padding: 0 .7rem; }
