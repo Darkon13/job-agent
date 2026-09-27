@@ -1080,14 +1080,19 @@ func main() {
 			return nil, fmt.Errorf("build conversation sync jobs: %w", err)
 		}
 		definitions = append(definitions, conversationDefinitions...)
-		systemDefinitions, err := profileSystemDefinitions(
-			cfg,
-			sessionRefreshers.Has,
-			func(profileID core.ProfileID) bool {
+		systemDefinitions, err := profileSystemDefinitions(cfg, profileSystemCapabilities{
+			sessionRefresh:     sessionRefreshers.Has,
+			resumeTouch:        resumeTouchers.Has,
+			applicationCleanup: applicationStateObservers.Has,
+			validationCheck: func(profileID core.ProfileID) bool {
 				_, resolveErr := applicationTransports.ResolveVacancyReader(profileID)
 				return resolveErr == nil
 			},
-		)
+			activityMaintain: func(profileID core.ProfileID) bool {
+				_, resolveErr := applicationTransports.ResolveVacancyReader(profileID)
+				return resolveErr == nil
+			},
+		})
 		if err != nil {
 			return nil, fmt.Errorf("build system profile jobs: %w", err)
 		}
@@ -2730,6 +2735,15 @@ const (
 	validationRefreshInterval = 24 * time.Hour
 	validationRefreshCount    = 25
 	validationRefreshMinAge   = 24 * time.Hour
+	// defaultResumeTouchInterval raises the resume to keep it visible.
+	defaultResumeTouchInterval = 4 * time.Hour
+	// defaultActivityMaintainInterval browses candidate vacancies for activity.
+	defaultActivityMaintainInterval = time.Hour
+	activityMaintainCount           = 5
+	activityMaintainPause           = 20 * time.Second
+	// defaultApplicationCleanupInterval rechecks rejected and stale
+	// applications; the cleanup job itself stays opt-in.
+	defaultApplicationCleanupInterval = 3 * time.Hour
 )
 
 // systemJobDescriptions are the built-in names of the generated system jobs.
@@ -2740,6 +2754,9 @@ var systemJobDescriptions = map[string]string{
 	systemJobPrefix + ".state.activity":     "Снятие состояния HH: активность и метрики",
 	systemJobPrefix + ".session":            "Обновление сессии HH",
 	systemJobPrefix + ".validation":         "Перепроверка вакансий с анкетами и тестами",
+	systemJobPrefix + ".resume-touch":       "Подъём резюме",
+	systemJobPrefix + ".activity-maintain":  "Просмотр вакансий-кандидатов для активности",
+	systemJobPrefix + ".cleanup":            "Очистка отказов и устаревших откликов",
 }
 
 // systemJobTags lists every generated system job. The dashboard groups them
@@ -2753,53 +2770,77 @@ func systemJobTags() []string {
 	return tags
 }
 
+// profileSystemCapabilities reports which generated jobs a profile can run.
+// A nil check means the capability was not evaluated by the caller.
+type profileSystemCapabilities struct {
+	sessionRefresh     func(core.ProfileID) bool
+	validationCheck    func(core.ProfileID) bool
+	resumeTouch        func(core.ProfileID) bool
+	activityMaintain   func(core.ProfileID) bool
+	applicationCleanup func(core.ProfileID) bool
+}
+
+func capabilityAllows(check func(core.ProfileID) bool, profileID core.ProfileID) bool {
+	return check == nil || check(profileID)
+}
+
 // profileSystemDefinitions turns the per-profile policies into the system
-// schedules that keep an account fresh: the state harvest (conversations,
-// application states, activity) plus the HH session refresh and the recheck of
-// vacancies with pending questionnaires or tests. Operators configure only the
-// harvest cadence; these jobs are never declared in the config themselves.
-func profileSystemDefinitions(
-	cfg appconfig.Config,
-	canRefreshSession func(core.ProfileID) bool,
-	canCheckValidation func(core.ProfileID) bool,
-) ([]jobscheduler.Definition, error) {
+// schedules that keep an account fresh and healthy: the state harvest
+// (conversations, application states, activity), the HH session refresh, the
+// recheck of vacancies with pending questionnaires or tests, the resume touch,
+// activity maintenance and the opt-in application cleanup. Operators configure
+// only the policies; these jobs are never declared in the config themselves.
+func profileSystemDefinitions(cfg appconfig.Config, capabilities profileSystemCapabilities) ([]jobscheduler.Definition, error) {
 	definitions := make([]jobscheduler.Definition, 0)
 	for profileIndex, profile := range cfg.Profiles {
 		if !profile.Enabled {
 			continue
 		}
 		profileID := core.ProfileID(profile.Tag)
-		interval := profile.StateHarvest.HarvestInterval()
-		// A runnable job may not mix task types, so each task type becomes its
-		// own sub-job under the shared "system" prefix.
-		entries := []struct {
-			suffix      string
-			action      core.TaskType
-			payload     any
-			every       time.Duration
-			harvestOnly bool
-			capable     func(core.ProfileID) bool
-		}{
-			{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval, true, nil},
-			{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval, true, nil},
-			{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval, true, nil},
-			{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: profile.Resume}, interval, true, nil},
-			{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval, false, canRefreshSession},
-			{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
+		resumeID := strings.TrimSpace(profile.Resume)
+		harvestInterval := profile.StateHarvest.JobInterval(time.Hour)
+		type systemEntry struct {
+			suffix  string
+			action  core.TaskType
+			payload any
+			every   time.Duration
+		}
+		entries := make([]systemEntry, 0, 8)
+		if profile.StateHarvest.JobEnabled(true) {
+			entries = append(entries,
+				systemEntry{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, harvestInterval},
+				systemEntry{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
+				systemEntry{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, harvestInterval},
+			)
+			if resumeID != "" {
+				entries = append(entries, systemEntry{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID}, harvestInterval})
+			} else {
+				logf("system jobs: profile %q has no resume, activity snapshots are skipped", profile.Tag)
+			}
+		}
+		if capabilityAllows(capabilities.sessionRefresh, profileID) {
+			entries = append(entries, systemEntry{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval})
+		}
+		if capabilityAllows(capabilities.validationCheck, profileID) {
+			entries = append(entries, systemEntry{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
 				ProfileID: profileID, Count: validationRefreshCount, MinAge: core.Duration(validationRefreshMinAge),
-			}, validationRefreshInterval, false, canCheckValidation},
+			}, validationRefreshInterval})
+		}
+		if profile.ResumeTouch.JobEnabled(true) && resumeID != "" && capabilityAllows(capabilities.resumeTouch, profileID) {
+			entries = append(entries, systemEntry{"resume-touch", core.TaskResumeTouch, core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID}, profile.ResumeTouch.JobInterval(defaultResumeTouchInterval)})
+		}
+		if profile.ActivityMaintain.JobEnabled(true) && capabilityAllows(capabilities.activityMaintain, profileID) {
+			entries = append(entries, systemEntry{"activity-maintain", core.TaskProfileActivityMaintain, core.ProfileActivityMaintainPayload{
+				ProfileID: profileID, Count: activityMaintainCount, Pause: core.Duration(activityMaintainPause),
+			}, profile.ActivityMaintain.JobInterval(defaultActivityMaintainInterval)})
+		}
+		if profile.ApplicationCleanup.JobEnabled(false) && capabilityAllows(capabilities.applicationCleanup, profileID) {
+			entries = append(entries, systemEntry{
+				"cleanup", core.TaskApplicationRetention, profile.ApplicationCleanup.Retention.Payload(profileID),
+				profile.ApplicationCleanup.JobInterval(defaultApplicationCleanupInterval),
+			})
 		}
 		for _, entry := range entries {
-			if entry.harvestOnly && !profile.StateHarvest.HarvestEnabled() {
-				continue
-			}
-			if entry.action == core.TaskProfileActivityObserve && strings.TrimSpace(profile.Resume) == "" {
-				logf("state harvest: profile %q has no resume, activity snapshots are skipped", profile.Tag)
-				continue
-			}
-			if entry.capable != nil && !entry.capable(profileID) {
-				continue
-			}
 			payload, err := json.Marshal(entry.payload)
 			if err != nil {
 				return nil, fmt.Errorf("encode system job payload for profile %q: %w", profile.Tag, err)

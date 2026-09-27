@@ -133,6 +133,74 @@ func TestApplicationCampaignHandlerLimitsInFlightAndStopsAtTarget(t *testing.T) 
 	}
 }
 
+func TestApplicationCampaignHandlerResumesCoveredQuestionnaires(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	handler, err := NewApplicationCampaignHandler(repository, repository, repository, queue, fixedClock{now}, &sequentialIDs{}, time.Second)
+	if err != nil {
+		t.Fatalf("new campaign handler: %v", err)
+	}
+	if err := handler.Register(ApplicationCampaignRoute{
+		SearchID: "primary", Platform: "hh", SearchProfileID: "profile",
+		Query: json.RawMessage(`{"source":"global"}`), Searcher: &fakeSearcher{page: core.SearchPage{Done: true}},
+	}); err != nil {
+		t.Fatalf("register route: %v", err)
+	}
+	payload, err := json.Marshal(core.NewApplicationCampaignStartPayload("daily", []core.ProfileID{"profile"}, []core.SearchID{"primary"}, 1, 1))
+	if err != nil {
+		t.Fatalf("encode campaign start: %v", err)
+	}
+	start, err := core.NewTask(core.NewTaskParams{
+		ID: "start-covered", Type: core.TaskApplicationCampaign, IdempotencyKey: "cron-covered",
+		Source: "cron:daily", Platform: "hh", ProfileID: "profile",
+		CorrelationID: "correlation-covered", Payload: payload, Priority: 125,
+	}, now)
+	if err != nil {
+		t.Fatalf("new campaign start task: %v", err)
+	}
+	if err := handler.Handle(ctx, start); err != nil {
+		t.Fatalf("start campaign: %v", err)
+	}
+	coveredTasks := func() []core.Task {
+		result := make([]core.Task, 0)
+		for _, task := range queue.Tasks() {
+			if task.Type == core.TaskApplicationAnswerCovered {
+				result = append(result, task)
+			}
+		}
+		return result
+	}
+	if tasks := coveredTasks(); len(tasks) != 1 || tasks[0].ProfileID != "profile" || tasks[0].Platform != "hh" {
+		t.Fatalf("covered questionnaire sweep was not enqueued: %#v", tasks)
+	}
+	// A repeated tick must not enqueue the sweep again.
+	campaignID := core.ApplicationCampaignID("campaign-" + string(start.ID))
+	campaign, err := repository.ApplicationCampaign(ctx, campaignID)
+	if err != nil {
+		t.Fatalf("load campaign: %v", err)
+	}
+	tickPayload, err := json.Marshal(core.ApplicationCampaignPayload{CampaignID: campaignID, ExpectedRevision: campaign.Revision})
+	if err != nil {
+		t.Fatalf("encode campaign tick: %v", err)
+	}
+	tick, err := core.NewTask(core.NewTaskParams{
+		ID: "tick-covered", Type: core.TaskApplicationCampaign, IdempotencyKey: "tick-covered",
+		Source: "cron:daily", Platform: "hh", ProfileID: "profile",
+		CorrelationID: "correlation-covered", Payload: tickPayload, Priority: 125,
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("new campaign tick: %v", err)
+	}
+	if err := handler.Handle(ctx, tick); err != nil {
+		t.Fatalf("campaign tick: %v", err)
+	}
+	if tasks := coveredTasks(); len(tasks) != 1 {
+		t.Fatalf("covered questionnaire sweep was duplicated: %#v", tasks)
+	}
+}
+
 func TestApplicationCampaignHandlerSchedulesFreshestCandidateFirst(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
