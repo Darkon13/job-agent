@@ -281,37 +281,6 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .review-profile small { color: var(--muted); }
 .review-vacancy .review-cancel { justify-self: end; }
 
-.profile-catalog,
-#draft-list {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.profile-card {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-
-.profile-card-title {
-  display: flex;
-  gap: 0.75rem;
-  align-items: baseline;
-}
-
-.draft-resumes {
-  display: grid;
-  gap: 0.25rem;
-  margin-bottom: 0.5rem;
-}
-
-.draft-resumes label {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
 
 .draft-restart {
   display: flex;
@@ -398,3 +367,20 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .application-reason { margin-top: .18rem; max-width: 22rem; }
 .clickable-row { cursor: pointer; }
 .clickable-row:hover td { background: rgb(255 255 255 / 2.5%); }
+
+/* Profiles: one expandable row per account with the collected metrics. */
+#profile-table td, #draft-table td { white-space: normal; vertical-align: top; }
+.profile-row { cursor: pointer; }
+.profile-row:hover td { background: rgb(255 255 255 / 2.5%); }
+.profile-row.expanded td { background: rgb(255 255 255 / 4%); }
+.profile-metrics { max-width: 26rem; }
+.profile-resumes { max-width: 16rem; }
+.profile-detail-line { display: grid; gap: .22rem; margin: .5rem 0; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 6px; }
+.profile-detail-line > strong { font-size: .78rem; letter-spacing: .02em; }
+.profile-detail-jobs { display: grid; gap: .3rem; }
+.profile-detail-job { display: flex; gap: .6rem; align-items: center; }
+.profile-detail-job .countdown { color: var(--muted); font-size: .8rem; }
+.job-state-static { display: inline-block; cursor: default; }
+.draft-row td { border-bottom: none; }
+.draft-detail-row td { padding-bottom: .7rem; }
+.draft-resume { display: inline-flex; gap: .35rem; align-items: center; margin-right: 1rem; }

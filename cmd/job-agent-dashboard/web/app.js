@@ -669,13 +669,30 @@ function jobPauseNotes(item) {
 
 // jobStateButton renders OK/PAUSED and toggles the pause for one profile or for
 // the whole job when no profile is given.
+const lockIconPath = "M5.2 7V5.6a2.8 2.8 0 0 1 5.6 0V7h.6c.6 0 1 .4 1 1v4.4c0 .6-.4 1-1 1H4.6c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1h.6zm1.4 0h2.8V5.6a1.4 1.4 0 0 0-2.8 0V7z";
+
+function lockIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "11");
+  svg.setAttribute("height", "11");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", lockIconPath);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+
 function jobStateButton(item, profileID = "") {
   const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
   const button = text("button", paused ? "PAUSED" : "OK", `job-state ${paused ? "paused" : "ok"}`);
   button.type = "button";
   if (item.system && !paused) {
     button.disabled = true;
-    button.title = "системную джобу ставит на паузу сервис; снять паузу можно вручную";
+    button.title = "состояние задаёт сервис: системная джоба встаёт на паузу сама (например, при разлогине)";
+    button.setAttribute("aria-label", "OK, переключение недоступно");
+    button.append(lockIcon());
   } else {
     button.disabled = state.jobBusy.has(item.tag);
     button.title = paused
@@ -735,9 +752,10 @@ function renderJobDetailRow(item) {
     heading.append(actions);
     const command = commands.find((entry) => entry.profile_id === profileID);
     const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
-    // The description wraps over the full width: the profile name never squeezes
-    // it into one long line.
-    line.append(heading, text("div", summary || "без дополнительных параметров", "muted job-detail-info"));
+    // The description wraps over the full width; a job without parameters shows
+    // only the profile name.
+    line.append(heading);
+    if (summary) line.append(text("div", summary, "muted job-detail-info"));
     cell.append(line);
   }
   if (!jobProfiles(item).length) cell.append(text("div", "нет привязанных профилей", "muted"));
@@ -836,7 +854,9 @@ function renderFailedTasks(items = []) {
 }
 function renderCampaigns(items = []) {
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
-  elements.campaigns.replaceChildren(...items.map((item) => {
+  // The panel is informational: only the last few runs stay on the main page.
+  const visible = items.slice(0, 5);
+  elements.campaigns.replaceChildren(...visible.map((item) => {
     const row = document.createElement("tr");
     const grouped = new Map();
     for (const entry of item.applications || []) { const group = applicationGroup(entry); grouped.set(group, (grouped.get(group) || 0) + Number(entry.count || 0)); }
@@ -846,41 +866,210 @@ function renderCampaigns(items = []) {
     return row;
   }));
 }
-function renderActivity(items = []) {
-  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
-  elements.activity.replaceChildren(...items.map((item) => {
+// profileCatalogIdentity renders the cached account facts of a profile.
+function profileCatalogIdentity(entry) {
+  const identity = entry.identity;
+  if (!identity) return "аккаунт ещё не входил";
+  const parts = [identity.display_name, identity.email, identity.phone].map(plainText).filter(Boolean);
+  if (identity.account_hash) parts.push(`аккаунт ${identity.account_hash}`);
+  return parts.length ? parts.join(" · ") : "данные аккаунта пусты";
+}
+
+// profileCatalogResumes renders the declared resume list of a profile.
+function profileCatalogResumes(entry) {
+  const resumes = entry.resumes || [];
+  if (!resumes.length) return "резюме нет";
+  return resumes.map((resume) => {
+    const label = resume.title ? `${resume.title} (${compactID(resume.id)})` : compactID(resume.id);
+    return resume.primary ? `${label} — основное` : label;
+  }).join(", ");
+}
+
+// profileSnapshots returns the activity snapshots of one profile, newest first.
+function profileSnapshots(profileID) {
+  return (state.summary?.activity_snapshots || [])
+    .filter((item) => item.profile_id === profileID)
+    .sort((left, right) => String(right.observed_at || "").localeCompare(String(left.observed_at || "")));
+}
+
+function profileFacts(profileID) {
+  return (state.summary?.activity || []).filter((item) => item.profile_id === profileID);
+}
+
+function profileLatestSnapshot(profileID) {
+  return profileSnapshots(profileID)[0] || null;
+}
+
+// profileMetricsSummary packs the collected gauges into one short line; the
+// detailed snapshots live in the expanded row.
+function profileMetricsSummary(profileID) {
+  const snapshot = profileLatestSnapshot(profileID);
+  if (!snapshot) return "нет данных";
+  const parts = [];
+  if (typeof snapshot.score === "number") parts.push(`активность ${snapshot.score}%`);
+  parts.push(`просмотры ${counter(snapshot.views)}`);
+  parts.push(`приглашения ${counter(snapshot.invitations)}`);
+  if (snapshot.search_shows !== null && snapshot.search_shows !== undefined) parts.push(`показы ${snapshot.search_shows}`);
+  return parts.join(" · ");
+}
+
+function profileRowSession(session) {
+  if (!session || !session.present) return "нет";
+  return session.modified_at ? `есть (${formatDate(session.modified_at)})` : "есть";
+}
+
+function profileResumesSummary(entry) {
+  const resumes = entry.resumes || [];
+  if (!resumes.length) return "нет";
+  const primary = resumes.find((resume) => resume.primary) || resumes[0];
+  const label = primary.title || compactID(primary.id);
+  return resumes.length > 1 ? `${label} +${resumes.length - 1}` : label;
+}
+
+// renderProfiles merges the config catalog, the collected metrics and the
+// activity facts into one expandable row per profile.
+function renderProfiles() {
+  const container = document.getElementById("profile-rows");
+  if (!container) return;
+  let entries = state.profileCatalog || [];
+  if (state.account) entries = entries.filter((entry) => entry.tag === state.account);
+  const stateLabel = document.getElementById("profiles-state");
+  if (stateLabel) stateLabel.textContent = entries.length ? `Профилей: ${entries.length}` : "Профилей нет";
+  if (!entries.length) {
     const row = document.createElement("tr");
-    row.append(text("td", profileDisplayName(item.profile_id)), text("td", item.platform), text("td", activityKindLabels[item.kind] || item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
-    return row;
-  }));
+    const cell = text("td", "Профили не объявлены. Добавьте первый в блоке ниже.", "muted");
+    cell.colSpan = 5;
+    row.append(cell);
+    container.replaceChildren(row);
+    return;
+  }
+  container.replaceChildren(...entries.map((entry) => renderProfileRow(entry)).flat());
+}
+
+function renderProfileRow(entry) {
+  const row = document.createElement("tr");
+  const expanded = state.expandedProfiles.has(entry.tag);
+  row.className = expanded ? "profile-row expanded" : "profile-row";
+  row.setAttribute("aria-expanded", String(expanded));
+  row.addEventListener("click", () => toggleProfileExpanded(entry.tag));
+
+  const profile = document.createElement("td");
+  const heading = document.createElement("div");
+  heading.className = "job-title";
+  heading.append(text("span", profileDisplayName(entry.tag)));
+  if (!entry.enabled) heading.append(text("span", "выключен", "job-badge"));
+  profile.append(heading);
+  profile.append(text("small", `${entry.tag} · ${entry.adapter || "—"}/${entry.platform || "—"}`, "muted"));
+
+  const resumes = document.createElement("td");
+  resumes.className = "profile-resumes";
+  resumes.append(text("span", profileResumesSummary(entry)));
+
+  const metrics = document.createElement("td");
+  metrics.className = "profile-metrics";
+  metrics.append(text("span", profileMetricsSummary(entry.tag)));
+
+  const session = document.createElement("td");
+  session.append(text("span", profileRowSession(entry.session)));
+
+  const source = document.createElement("td");
+  source.append(text("span", entry.source || "config", "muted"));
+
+  row.append(profile, resumes, metrics, session, source);
+  if (!expanded) return [row];
+  return [row, renderProfileDetail(entry)];
+}
+
+function renderProfileDetail(entry) {
+  const row = document.createElement("tr");
+  row.className = "job-detail-row";
+  const cell = document.createElement("td");
+  cell.colSpan = 5;
+
+  const identity = document.createElement("div");
+  identity.className = "profile-detail-line";
+  identity.append(text("strong", "Аккаунт"));
+  identity.append(text("div", profileCatalogIdentity(entry), "muted"));
+  cell.append(identity);
+
+  const resumes = document.createElement("div");
+  resumes.className = "profile-detail-line";
+  resumes.append(text("strong", "Резюме"));
+  resumes.append(text("div", profileCatalogResumes(entry), "muted"));
+  cell.append(resumes);
+
+  const snapshots = profileSnapshots(entry.tag);
+  if (snapshots.length) {
+    cell.append(profileDetailTable("Снимки HH", ["Снято", "Окно", "Активность", "Показы", "Просмотры", "Приглашения"],
+      snapshots.map((item) => [
+        formatDate(item.observed_at),
+        item.period_days === undefined || item.period_days === null ? "—" : `${item.period_days} д`,
+        item.score === undefined || item.score === null ? "—" : `${item.score}%`,
+        counter(item.search_shows),
+        item.new_views ? `${counter(item.views)} (+${item.new_views})` : counter(item.views),
+        item.new_invitations ? `${counter(item.invitations)} (+${item.new_invitations})` : counter(item.invitations),
+      ])));
+  }
+
+  const facts = profileFacts(entry.tag);
+  if (facts.length) {
+    cell.append(profileDetailTable("Подтверждённые действия профиля", ["Действие", "Платформа", "Количество", "Последнее"],
+      facts.map((item) => [activityKindLabels[item.kind] || item.kind, item.platform, String(item.count), formatDate(item.last_occurred_at)])));
+  }
+
+  const jobs = (state.jobs || []).filter((item) => jobProfiles(item).includes(entry.tag));
+  if (jobs.length) {
+    const line = document.createElement("div");
+    line.className = "profile-detail-line";
+    line.append(text("strong", "Джобы профиля"));
+    const list = document.createElement("div");
+    list.className = "profile-detail-jobs";
+    for (const job of jobs) {
+      const item = document.createElement("div");
+      item.className = "profile-detail-job";
+      item.append(text("span", job.description || job.tag));
+      const paused = jobPausedProfiles(job).has(entry.tag);
+      item.append(text("span", paused ? "PAUSED" : "OK", `job-state job-state-static ${paused ? "paused" : "ok"}`));
+      item.append(jobCountdownNode(job));
+      list.append(item);
+    }
+    line.append(list);
+    cell.append(line);
+  }
+
+  row.append(cell);
+  return row;
+}
+
+function profileDetailTable(caption, headers, rows) {
+  const block = document.createElement("div");
+  block.className = "profile-detail-line";
+  block.append(text("strong", caption));
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.append(...headers.map((label) => text("th", label)));
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  for (const values of rows) {
+    const tr = document.createElement("tr");
+    tr.append(...values.map((value) => text("td", String(value ?? "—"))));
+    body.append(tr);
+  }
+  table.append(head, body);
+  wrap.append(table);
+  block.append(wrap);
+  return block;
+}
+
+function toggleProfileExpanded(tag) {
+  if (state.expandedProfiles.has(tag)) state.expandedProfiles.delete(tag);
+  else state.expandedProfiles.add(tag);
+  renderProfiles();
 }
 function counter(value) { return value === null || value === undefined ? "—" : String(value); }
-function renderActivityObservations(items = []) {
-  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  const latest = [];
-  const seen = new Set();
-  for (const item of items) {
-    const key = `${item.platform}\u0000${item.profile_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key); latest.push(item);
-  }
-  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Метрики ещё не снимались. Запустите job «Обновить метрики резюме».", "empty panel")); return; }
-  elements.activityObservations.replaceChildren(...latest.map((item) => {
-    const card = document.createElement("article"); card.className = "panel activity-card";
-    const heading = document.createElement("div"); heading.className = "panel-heading";
-    const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", profileDisplayName(item.profile_id)), resume);
-    heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
-    const metrics = document.createElement("div"); metrics.className = "activity-metrics";
-    const cards = [];
-    if (typeof item.score === "number") cards.push(["Активность", `${item.score}%`, ""]);
-    cards.push(["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]);
-    cards.forEach(([label, value, delta]) => {
-      const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
-    });
-    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}`, "muted")); return card;
-  }));
-}
 // visibleConversations sorts the server-filtered page. The open conversation
 // stays pinned at the top even when a filter no longer matches it: reading a
 // chat must not yank it out of sight until the operator selects another one.
@@ -1765,7 +1954,7 @@ async function refreshSummary({ background = false } = {}) {
     state.summary = state.cache.summary;
     renderAccountSwitcher(state.summary.profiles || []);
     renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.summary.tasks || []);
-    renderCampaigns(state.summary.campaigns || []); renderActivity(state.summary.activity || []); renderActivityObservations(state.summary.activity_snapshots || []);
+    renderCampaigns(state.summary.campaigns || []); renderProfiles();
   }
   try {
     const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
@@ -1776,7 +1965,7 @@ async function refreshSummary({ background = false } = {}) {
     refreshDrafts();
     updateCaptchaWarning();
     updateAuthWarning();
-    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
+    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { if (!background) elements.refresh.disabled = false; }
@@ -1997,6 +2186,7 @@ if (!state.drafts) state.drafts = [];
 if (!state.activeDraft) state.activeDraft = "";
 if (!state.profileCatalog) state.profileCatalog = [];
 if (!state.expandedJobs) state.expandedJobs = new Set();
+if (!state.expandedProfiles) state.expandedProfiles = new Set();
 
 function renderAuthProfileOptions(profiles = []) {
   const select = document.getElementById("auth-profile");
@@ -2203,53 +2393,6 @@ function renderAuthProfileOptions(profiles = []) {
 
 // --- профили: каталог и онбординг через черновики -------------------------
 
-function profileSessionLabel(session) {
-  if (!session || !session.present) return "сессия: нет";
-  return `сессия: есть${session.modified_at ? ` (${formatDate(session.modified_at)})` : ""}`;
-}
-
-function profileCatalogIdentity(entry) {
-  const identity = entry.identity;
-  if (!identity) return "аккаунт ещё не входил";
-  const parts = [identity.display_name, identity.email, identity.phone].map(plainText).filter(Boolean);
-  if (identity.account_hash) parts.push(`аккаунт ${identity.account_hash}`);
-  return parts.length ? parts.join(" · ") : "данные аккаунта пусты";
-}
-
-function profileCatalogResumes(entry) {
-  const resumes = entry.resumes || [];
-  if (!resumes.length) return "резюме нет";
-  return resumes.map((resume) => {
-    const label = resume.title ? `${resume.title} (${compactID(resume.id)})` : compactID(resume.id);
-    return resume.primary ? `${label} — основное` : label;
-  }).join(", ");
-}
-
-function renderProfileCatalog(entries = []) {
-  const container = document.getElementById("profile-catalog");
-  if (!container) return;
-  if (!entries.length) {
-    container.replaceChildren(text("p", "Профили не объявлены. Добавьте первый ниже.", "muted"));
-    return;
-  }
-  const rows = entries.map((entry) => {
-    const card = document.createElement("div");
-    card.className = "profile-card";
-    const title = document.createElement("div");
-    title.className = "profile-card-title";
-    title.append(
-      text("strong", entry.tag || "—"),
-      text("span", `${entry.adapter || "—"}/${entry.platform || "—"}${entry.enabled ? "" : " · выключен"} · источник: ${entry.source || "config"}`, "muted"),
-    );
-    card.append(title);
-    card.append(text("div", profileCatalogIdentity(entry), "muted"));
-    card.append(text("div", `резюме: ${profileCatalogResumes(entry)}`, "muted"));
-    card.append(text("div", profileSessionLabel(entry.session), "muted"));
-    return card;
-  });
-  container.replaceChildren(...rows);
-}
-
 async function refreshProfileCatalog() {
   try {
     const payload = await request("/api/v1/profiles");
@@ -2257,7 +2400,7 @@ async function refreshProfileCatalog() {
   } catch (_) {
     return;
   }
-  renderProfileCatalog(state.profileCatalog);
+  renderProfiles();
 }
 
 function draftIdentityLabel(draft) {
@@ -2272,27 +2415,67 @@ function draftStatusLabel(status) {
 }
 
 function renderDrafts() {
-  const container = document.getElementById("draft-list");
+  const container = document.getElementById("draft-rows");
   if (!container) return;
   const drafts = state.drafts || [];
   if (!drafts.length) {
-    container.replaceChildren(text("p", "Черновиков нет.", "muted"));
+    const row = document.createElement("tr");
+    const cell = text("td", "Черновиков нет.", "muted");
+    cell.colSpan = 4;
+    row.append(cell);
+    container.replaceChildren(row);
     return;
   }
-  container.replaceChildren(...drafts.map((draft) => {
-    const card = document.createElement("div");
-    card.className = "profile-card";
-    const title = document.createElement("div");
-    title.className = "profile-card-title";
-    title.append(text("strong", draft.tag), text("span", draftStatusLabel(draft.status), "muted"));
-    card.append(title);
-    if (draft.identity) card.append(text("div", draftIdentityLabel(draft) || "данные аккаунта пусты", "muted"));
+  const rows = [];
+  for (const draft of drafts) {
+    const row = document.createElement("tr");
+    row.className = "draft-row";
+    row.append(text("td", draft.tag));
+    row.append(text("td", draftStatusLabel(draft.status)));
+    row.append(text("td", draft.identity ? draftIdentityLabel(draft) || "данные пусты" : "—"));
+    const actions = document.createElement("td");
+    actions.className = "task-actions";
+    if (draft.status !== "applied") {
+      const login = text("button", draft.status === "pending" ? "Продолжить вход" : "Войти заново", "secondary compact");
+      login.type = "button";
+      login.addEventListener("click", (event) => { event.stopPropagation(); startDraftSession(draft.tag); });
+      actions.append(login);
+      const refresh = text("button", "Снять данные", "secondary compact");
+      refresh.type = "button";
+      refresh.addEventListener("click", (event) => { event.stopPropagation(); captureDraft(draft.tag); });
+      actions.append(refresh);
+    }
+    if (draft.status === "ready") {
+      const save = text("button", "Сохранить профиль");
+      save.type = "button";
+      save.addEventListener("click", (event) => { event.stopPropagation(); applyDraft(draft.tag); });
+      actions.append(save);
+    }
+    const remove = text("button", "Удалить", "secondary compact");
+    remove.type = "button";
+    remove.addEventListener("click", (event) => { event.stopPropagation(); deleteDraft(draft.tag); });
+    actions.append(remove);
+    row.append(actions);
+    rows.push(row);
+
     const resumes = draft.resumes || [];
     if (draft.status === "ready" && resumes.length) {
-      const list = document.createElement("div");
-      list.className = "draft-resumes";
+      const detail = document.createElement("tr");
+      detail.className = "draft-detail-row";
+      const cell = document.createElement("td");
+      cell.colSpan = 4;
+      const restartLabel = document.createElement("label");
+      restartLabel.className = "draft-restart";
+      const restartBox = document.createElement("input");
+      restartBox.type = "checkbox";
+      restartBox.id = `draft-restart-${draft.tag}`;
+      restartBox.checked = true;
+      restartLabel.append(restartBox, text("span", "перезапустить сервис после сохранения (профиль подключится сразу)"));
+      cell.append(restartLabel);
+      cell.append(text("span", "Основное резюме: ", "muted"));
       for (const resume of resumes) {
         const label = document.createElement("label");
+        label.className = "draft-resume";
         const radio = document.createElement("input");
         radio.type = "radio";
         radio.name = `draft-primary-${draft.tag}`;
@@ -2300,45 +2483,13 @@ function renderDrafts() {
         radio.checked = (state.draftPrimary.get(draft.tag) || resumes[0].id) === resume.id;
         radio.addEventListener("change", () => state.draftPrimary.set(draft.tag, resume.id));
         label.append(radio, text("span", resume.title ? `${resume.title} (${resume.id})` : resume.id));
-        list.append(label);
+        cell.append(label);
       }
-      card.append(text("div", "Основное резюме:", "muted"), list);
-    } else if (draft.status === "ready") {
-      card.append(text("div", "У аккаунта нет резюме — профиль сохранится без резюме.", "muted"));
+      detail.append(cell);
+      rows.push(detail);
     }
-    const actions = document.createElement("div");
-    actions.className = "auth-controls";
-    if (draft.status !== "applied") {
-      const login = text("button", draft.status === "pending" ? "Продолжить вход" : "Войти заново", "secondary compact");
-      login.type = "button";
-      login.addEventListener("click", () => startDraftSession(draft.tag));
-      actions.append(login);
-      const refresh = text("button", "Снять данные", "secondary compact");
-      refresh.type = "button";
-      refresh.addEventListener("click", () => captureDraft(draft.tag));
-      actions.append(refresh);
-    }
-    if (draft.status === "ready") {
-      const save = text("button", "Сохранить профиль");
-      save.type = "button";
-      save.addEventListener("click", () => applyDraft(draft.tag));
-      actions.append(save);
-      const restartLabel = document.createElement("label");
-      restartLabel.className = "draft-restart";
-      const restartBox = document.createElement("input");
-      restartBox.type = "checkbox";
-      restartBox.id = `draft-restart-${draft.tag}`;
-      restartBox.checked = true;
-      restartLabel.append(restartBox, text("span", "перезапустить сервис (профиль подключится сразу)"));
-      card.append(restartLabel);
-    }
-    const remove = text("button", "Удалить", "secondary compact");
-    remove.type = "button";
-    remove.addEventListener("click", () => deleteDraft(draft.tag));
-    actions.append(remove);
-    card.append(actions);
-    return card;
-  }));
+  }
+  container.replaceChildren(...rows);
 }
 
 function setDraftStep(message) {
@@ -2400,7 +2551,7 @@ async function finishDraftSession(tag) {
     setDraftStep(`вход выполнен, но данные аккаунта не снялись: ${error.message}. Нажмите «Снять данные» в черновике.`);
   }
   await refreshDrafts();
-  const container = document.getElementById("draft-list");
+  const container = document.getElementById("draft-rows");
   if (container) container.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
