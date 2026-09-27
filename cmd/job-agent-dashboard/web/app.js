@@ -1000,8 +1000,10 @@ function renderProfileDetail(entry) {
 
   const snapshots = profileSnapshots(entry.tag);
   if (snapshots.length) {
+    // The history is long; the row shows the recent trend, not every sample.
+    const recent = snapshots.slice(0, 10);
     cell.append(profileDetailTable("Снимки HH", ["Снято", "Окно", "Активность", "Показы", "Просмотры", "Приглашения"],
-      snapshots.map((item) => [
+      recent.map((item) => [
         formatDate(item.observed_at),
         item.period_days === undefined || item.period_days === null ? "—" : `${item.period_days} д`,
         item.score === undefined || item.score === null ? "—" : `${item.score}%`,
@@ -1009,6 +1011,9 @@ function renderProfileDetail(entry) {
         item.new_views ? `${counter(item.views)} (+${item.new_views})` : counter(item.views),
         item.new_invitations ? `${counter(item.invitations)} (+${item.new_invitations})` : counter(item.invitations),
       ])));
+    if (snapshots.length > recent.length) {
+      cell.append(text("div", `показаны последние ${recent.length} из ${snapshots.length} снимков`, "muted profile-detail-note"));
+    }
   }
 
   const facts = profileFacts(entry.tag);

@@ -384,3 +384,5 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .draft-row td { border-bottom: none; }
 .draft-detail-row td { padding-bottom: .7rem; }
 .draft-resume { display: inline-flex; gap: .35rem; align-items: center; margin-right: 1rem; }
+
+.profile-detail-note { padding: 0 .7rem; }
