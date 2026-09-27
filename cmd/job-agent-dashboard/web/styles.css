@@ -56,7 +56,9 @@ td:last-child, th:last-child { text-align: right; }
 .tailoring-reason { display: block; margin-top: .2rem; color: var(--muted); font-size: .72rem; }
 .task-id { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; font: .72rem ui-monospace, monospace; }
 .task-error { min-width: 16rem; max-width: 34rem; white-space: normal; overflow-wrap: anywhere; color: var(--orange); }
-.task-actions { display: flex; justify-content: flex-end; gap: .4rem; }
+th.task-actions { text-align: right; }
+td.task-actions { display: table-cell; text-align: right; vertical-align: middle; white-space: normal; }
+td.task-actions > * + * { margin-left: .35rem; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .65rem; margin-bottom: .8rem; }
 .filter-card { min-height: 68px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: .7rem .8rem; border-color: var(--line); border-radius: 10px; background: var(--surface); color: var(--text); text-align: left; }
 .filter-card:hover, .filter-card.active { border-color: var(--cyan); background: #24313b; filter: none; }
@@ -214,8 +216,8 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 
 .table-wrap { overflow-x: auto; }
 .table-wrap table { min-width: 1080px; }
-.task-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .35rem; white-space: nowrap; }
-.task-actions > * + * { margin-left: 0; }
+td.task-actions { display: table-cell; text-align: right; vertical-align: middle; white-space: normal; }
+td.task-actions > * + * { margin-left: .35rem; }
 #application-table.profile-hidden .application-profile { display: none; }
 
 .message-system {
@@ -386,3 +388,31 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 .draft-resume { display: inline-flex; gap: .35rem; align-items: center; margin-right: 1rem; }
 
 .profile-detail-note { padding: 0 .7rem; }
+
+/* Applications: the row selects like the old checkboxes, icons carry retry and
+   removal, and the questionnaire status itself is the call to action. */
+.application-row.selected td { background: rgb(92 207 230 / 10%); }
+.application-row.selected:hover td { background: rgb(92 207 230 / 14%); }
+.status-action { border: 1px solid rgb(255 204 102 / 35%); cursor: pointer; }
+.status-action:hover:not(:disabled) { border-color: var(--orange); filter: none; }
+.status-hint { display: block; color: var(--muted); font-size: .62rem; letter-spacing: .04em; text-transform: uppercase; }
+.row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.row-icon:hover:not(:disabled) { color: var(--cyan); border-color: var(--cyan); filter: none; }
+.row-icon.remove:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
+.row-icon.retry:hover:not(:disabled) { color: var(--green); border-color: var(--green); }
+.application-selection-bar { display: flex; align-items: center; gap: .6rem; margin-bottom: .6rem; }
+
+/* The profile tag is a second muted line, never glued to the name. */
+#application-table .application-profile strong { display: block; }
+#application-table .application-profile small { display: block; }

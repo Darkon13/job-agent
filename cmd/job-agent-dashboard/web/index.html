@@ -104,6 +104,11 @@
           </select>
           <button id="application-reset" class="secondary compact" type="button">Сбросить</button>
         </div>
+        <div id="application-selection-bar" class="application-selection-bar" hidden>
+          <span id="application-selection-state" class="muted">Ничего не выбрано</span>
+          <button id="application-remove-selected" class="secondary compact" type="button" disabled>Убрать выбранные</button>
+          <button id="application-clear-selection" class="secondary compact" type="button">Снять выбор</button>
+        </div>
         <div class="table-wrap"><table id="application-table"><thead><tr><th>Вакансия</th><th class="application-profile">Профиль</th><th>Состояние</th><th>Обновлён</th><th class="task-actions">Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
       </article>
       <article id="browser-check" class="panel browser-check" hidden>
