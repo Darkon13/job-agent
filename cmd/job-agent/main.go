@@ -2389,7 +2389,9 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			routeIDs = append(routeIDs, routeID)
 			ownedRoutes[routeID] = struct{}{}
 		}
-		targetSuccessful := job.Action.TargetSuccessful
+		// The daily limit caps the target per profile: one account's limit must not
+		// lower another account's campaign.
+		targets := make(map[core.ProfileID]int, len(profileIDs))
 		for _, value := range job.Action.Profiles {
 			var configured appconfig.Profile
 			for _, candidate := range cfg.Profiles {
@@ -2402,26 +2404,37 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			if configured.Tag == "" || instance == nil {
 				continue
 			}
-			limit := configured.Applications.EffectiveDailyLimit(instance.Name())
-			if limit > 0 && targetSuccessful > limit {
+			target := job.Action.TargetSuccessful
+			if limit := configured.Applications.EffectiveDailyLimit(instance.Name()); limit > 0 && target > limit {
 				logf("campaign %q target %d is capped to the daily limit %d of profile %q",
-					job.Tag, targetSuccessful, limit, configured.Tag)
-				targetSuccessful = limit
+					job.Tag, target, limit, configured.Tag)
+				target = limit
 			}
+			targets[core.ProfileID(configured.Tag)] = target
 		}
-		payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
-			job.Tag, profileIDs, routeIDs, targetSuccessful, job.Action.MaxInFlight,
-		))
-		if err != nil {
-			return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q: %w", job.Tag, err)
-		}
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileIDs[0],
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		// One schedule per profile, like every other multi-profile job: each
+		// account gets its own campaign run, pause and budget gate, so the
+		// dashboard can count and control profiles separately.
+		for profileIndex, profileID := range profileIDs {
+			target := job.Action.TargetSuccessful
+			if capped, exists := targets[profileID]; exists {
+				target = capped
+			}
+			payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
+				job.Tag, []core.ProfileID{profileID}, routeIDs, target, job.Action.MaxInFlight,
+			))
+			if err != nil {
+				return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q for profile %q: %w", job.Tag, profileID, err)
+			}
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 		configuredJobs++
 	}
