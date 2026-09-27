@@ -570,6 +570,38 @@ func (store *Store) AuthWarningProfiles(ctx context.Context, since time.Time) ([
 	return warnings, nil
 }
 
+// ListQueuedTasks returns the tasks that have not started yet, oldest first, so
+// the operator can cancel a specific one.
+func (store *Store) ListQueuedTasks(ctx context.Context, limit int) ([]storage.QueuedTaskSummary, error) {
+	if limit < 1 || limit > 200 {
+		return nil, errors.New("queued task limit must be between 1 and 200")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, type, status, profile_id, priority, attempts,
+		available_at, created_at
+		FROM tasks WHERE status IN (?, ?) ORDER BY available_at, created_at, id LIMIT ?`,
+		core.TaskNew, core.TaskRetryScheduled, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list queued tasks: %w", err)
+	}
+	defer rows.Close()
+	items := make([]storage.QueuedTaskSummary, 0)
+	for rows.Next() {
+		var item storage.QueuedTaskSummary
+		var availableAt, createdAt int64
+		if err := rows.Scan(&item.ID, &item.Type, &item.Status, &item.ProfileID, &item.Priority,
+			&item.Attempts, &availableAt, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan queued task: %w", err)
+		}
+		item.AvailableAt = time.Unix(0, availableAt).UTC()
+		item.CreatedAt = time.Unix(0, createdAt).UTC()
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued tasks: %w", err)
+	}
+	return items, nil
+}
+
 func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.FailedTaskSummary, error) {
 	if limit < 1 || limit > 200 {
 		return nil, errors.New("failed task limit must be between 1 and 200")

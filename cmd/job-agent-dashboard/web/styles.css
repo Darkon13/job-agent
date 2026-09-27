@@ -345,15 +345,6 @@ td.task-actions > * + * { margin-left: .35rem; }
   color: var(--green);
 }
 .job-run:hover:not(:disabled) { border-color: var(--green); filter: none; }
-.job-detail-row td { padding: .3rem .5rem .75rem; border-bottom: none; white-space: normal; text-align: left; }
-.job-detail-row.job-detail-last td { padding-bottom: .95rem; border-bottom: 1px solid var(--line); }
-.job-detail-info-cell { padding-left: 1.1rem; }
-.job-detail-info-cell strong { display: block; }
-.job-detail-info { white-space: normal; max-width: 42rem; }
-.job-detail-state-cell { text-align: left; white-space: nowrap; }
-.job-detail-schedule { color: var(--muted); }
-.job-lock { display: inline-flex; align-items: center; margin-left: .4rem; color: var(--muted); }
-.profile-detail-row td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
 
 /* Applications read as a document, not a wide grid: the vacancy cell carries
    the title link and the company, rows grow in height instead of width. */
@@ -429,11 +420,29 @@ td.task-actions > * + * { margin-left: .35rem; }
 .application-row { cursor: pointer; }
 .application-row:hover td { background: rgb(255 255 255 / 2.5%); }
 
-/* Fixed state and run columns keep the parent job row and its per-profile
-   detail rows on the same vertical grid. */
-.jobs-table th:nth-child(3), .jobs-table td:nth-child(3) { width: 9.5rem; }
-.jobs-table th:nth-child(4), .jobs-table td:nth-child(4) { width: 4.5rem; }
 
-/* The detail rows follow the parent grid: the run control stays in its column. */
-.job-detail-row td.job-run-cell { text-align: right; }
-.job-detail-row td.job-detail-state-cell { text-align: left; }
+
+/* Empty table states and detail cells read from the left, never from the
+   right-aligned last column. */
+td[colspan] { text-align: left; }
+
+/* Sub-jobs live in one cell under the parent row: info on the left, the state
+   and run controls on the right, a left accent to show the nesting. */
+.job-detail-row td { padding: 0 0 .8rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
+.job-detail-list { display: grid; gap: .45rem; }
+.job-detail-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: .5rem .7rem .5rem .9rem;
+  border-left: 2px solid var(--line);
+  border-radius: 0 6px 6px 0;
+  background: rgb(255 255 255 / 1.5%);
+}
+.job-detail-info-cell { display: grid; gap: .2rem; min-width: 0; }
+.job-detail-info { white-space: normal; max-width: 46rem; }
+.job-detail-actions { display: flex; gap: .5rem; align-items: center; flex: none; }
+.job-detail-schedule { padding-left: .9rem; color: var(--muted); }
+.job-lock { display: inline-flex; align-items: center; margin-left: .1rem; color: var(--muted); }
+.profile-detail-row td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }

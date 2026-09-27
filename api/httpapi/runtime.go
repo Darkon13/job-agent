@@ -364,7 +364,7 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load profile activity observations")
 		return
 	}
-	conversationCounts, err := api.repository.CountConversations(request.Context(), storage.ConversationFilter{})
+	conversationCounts, err := api.repository.CountConversations(request.Context(), storage.ConversationFilter{LinkedOnly: true})
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load conversation counters")
 		return

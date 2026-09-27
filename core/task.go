@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -245,6 +246,31 @@ func (task *Task) RestartFailed(now time.Time) error {
 	task.AvailableAt = now
 	task.UpdatedAt = now
 	task.Failure = nil
+	return nil
+}
+
+// CancelQueued records an explicit operator decision to remove a task that has
+// not started from the queue. The reason stays in the failure fields for
+// diagnostics; a task that already runs or is settled cannot be cancelled.
+func (task *Task) CancelQueued(reason string, now time.Time) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	switch task.Status {
+	case TaskNew, TaskRetryScheduled:
+	default:
+		return fmt.Errorf("only a queued task can be cancelled, not %s", task.Status)
+	}
+	if now.IsZero() || now.Before(task.UpdatedAt) {
+		return errors.New("task cancellation time must not move backwards")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "cancelled by the operator"
+	}
+	task.Status = TaskDismissed
+	task.Failure = &TaskFailure{Category: ErrorPermanentFailure, Message: reason}
+	task.UpdatedAt = now
 	return nil
 }
 

@@ -112,6 +112,31 @@ func (queue *Queue) RestartFailedTask(ctx context.Context, key string, now time.
 	})
 }
 
+func (queue *Queue) CancelQueuedTask(ctx context.Context, key, reason string, now time.Time) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if key == "" || now.IsZero() {
+		return core.Task{}, errors.New("queued task cancellation requires idempotency key and current time")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	task, exists := queue.tasks[key]
+	if !exists {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	switch task.Status {
+	case core.TaskNew, core.TaskRetryScheduled:
+	default:
+		return core.Task{}, broker.ErrTaskNotCancellable
+	}
+	if err := task.CancelQueued(reason, now); err != nil {
+		return core.Task{}, err
+	}
+	queue.tasks[key] = task
+	return cloneTask(task), nil
+}
+
 func (queue *Queue) DismissFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
 	return queue.controlFailedTask(ctx, key, now, func(task *core.Task) error {
 		return task.DismissFailure(now)

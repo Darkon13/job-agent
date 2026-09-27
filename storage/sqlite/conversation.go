@@ -254,6 +254,9 @@ func conversationFilterQuery(filter storage.ConversationFilter) (string, []any) 
 		query += ` AND (vacancy_title LIKE ? OR employer LIKE ? OR external_id LIKE ?)`
 		args = append(args, like, like, like)
 	}
+	if filter.LinkedOnly {
+		query += ` AND application_id <> ''`
+	}
 	if filter.UnreadOnly {
 		query += ` AND unread_count > 0`
 	}

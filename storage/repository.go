@@ -94,6 +94,23 @@ type FailedTaskRepository interface {
 	ListFailedTasks(ctx context.Context, limit int) ([]FailedTaskSummary, error)
 }
 
+// QueuedTaskSummary is one task that has not started yet. The operator sees the
+// public id, so a single queued task can be cancelled.
+type QueuedTaskSummary struct {
+	ID          core.TaskID       `json:"id"`
+	Type        core.TaskType     `json:"type"`
+	Status      core.TaskStatus   `json:"status"`
+	ProfileID   core.ProfileID    `json:"profile_id,omitempty"`
+	Priority    core.TaskPriority `json:"priority"`
+	Attempts    int               `json:"attempts"`
+	AvailableAt time.Time         `json:"available_at"`
+	CreatedAt   time.Time         `json:"created_at"`
+}
+
+type QueuedTaskRepository interface {
+	ListQueuedTasks(ctx context.Context, limit int) ([]QueuedTaskSummary, error)
+}
+
 type ApplicationCount struct {
 	ProfileID    core.ProfileID         `json:"profile_id,omitempty"`
 	Status       core.ApplicationStatus `json:"status"`
@@ -314,8 +331,13 @@ type ConversationFilter struct {
 	// UnreadOnly and QuestionnaireOnly mirror the dashboard filters.
 	UnreadOnly        bool
 	QuestionnaireOnly bool
-	Limit             int
-	Offset            int
+	// LinkedOnly keeps the conversations that belong to the working set, that
+	// is the chats linked to one of our applications. HH returns the whole
+	// account history in its catalog, so a plain count is not comparable with
+	// the applications count.
+	LinkedOnly bool
+	Limit      int
+	Offset     int
 }
 
 // ConversationCounts summarizes a filtered conversation set without loading it.

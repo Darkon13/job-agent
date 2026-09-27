@@ -258,6 +258,9 @@ func (repository *Repository) conversationMatchesFilter(conversation core.Conver
 		filter.Status != "" && conversation.Status != filter.Status {
 		return false
 	}
+	if filter.LinkedOnly && conversation.ApplicationID == "" {
+		return false
+	}
 	if filter.UnreadOnly && conversation.UnreadCount == 0 {
 		return false
 	}

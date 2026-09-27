@@ -42,6 +42,45 @@ func (store *Store) RestartFailedTask(ctx context.Context, key string, now time.
 	return task, nil
 }
 
+// CancelQueuedTask removes a task that has not started from the queue: it never
+// runs and keeps the operator's reason in the failure fields. A task that is
+// already running or settled cannot be cancelled.
+func (store *Store) CancelQueuedTask(ctx context.Context, key, reason string, now time.Time) (core.Task, error) {
+	if key == "" || now.IsZero() {
+		return core.Task{}, errors.New("queued task cancellation requires idempotency key and current time")
+	}
+	task, err := store.TaskByIdempotencyKey(ctx, key)
+	if err != nil {
+		return core.Task{}, err
+	}
+	switch task.Status {
+	case core.TaskNew, core.TaskRetryScheduled:
+	default:
+		return core.Task{}, broker.ErrTaskNotCancellable
+	}
+	previousUpdatedAt := task.UpdatedAt
+	if err := task.CancelQueued(reason, now); err != nil {
+		return core.Task{}, err
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE tasks SET
+		status = ?, failure_category = ?, failure_message = ?, updated_at = ?,
+		lease_owner = NULL, lease_token = NULL, lease_until = NULL
+		WHERE idempotency_key = ? AND status IN (?, ?) AND updated_at = ?`,
+		task.Status, task.Failure.Category, task.Failure.Message, task.UpdatedAt.UnixNano(),
+		key, core.TaskNew, core.TaskRetryScheduled, previousUpdatedAt.UnixNano())
+	if err != nil {
+		return core.Task{}, fmt.Errorf("cancel queued task: %w", err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return core.Task{}, err
+	}
+	if !updated {
+		return core.Task{}, broker.ErrTaskControlConflict
+	}
+	return task, nil
+}
+
 func (store *Store) DismissFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
 	task, err := store.failedTaskForControl(ctx, key, now)
 	if err != nil {

@@ -143,8 +143,8 @@
     </section>
     <section aria-labelledby="tasks-title">
       <article class="panel">
-        <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Это сгруппированные экземпляры задач, а не статистика jobs: job или действие пользователя создаёт task, worker забирает его и меняет состояние.</p></div><span class="tag">durable</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Действие</th><th>Состояние</th><th>Приоритет</th><th>Количество экземпляров</th></tr></thead><tbody id="tasks"></tbody></table></div>
+        <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Отдельные задачи, которые ещё не стартовали: job или действие пользователя создаёт task, worker забирает его и меняет состояние. Ненужную задачу можно отменить крестиком — она не будет выполнена.</p></div><span class="tag">durable</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Состояние</th><th>Профиль</th><th>До запуска</th><th>Попытки</th><th class="task-actions">Управление</th></tr></thead><tbody id="tasks"></tbody></table></div>
       </article>
     </section>
     <section aria-labelledby="campaigns-title">
@@ -179,12 +179,11 @@
           <span id="review-state" class="muted">Загрузка…</span>
           <input id="review-search" type="search" placeholder="Вопрос, вакансия или определение">
           <select id="review-filter">
-            <option value="">Все сессии</option>
+            <option value="">Все анкеты</option>
             <option value="waiting_answer">Ожидают ответа</option>
             <option value="answer_recorded">Ответ записан</option>
             <option value="cancelled">Скрытые</option>
           </select>
-          <button id="review-more" class="secondary compact" type="button" hidden>Показать ещё</button>
           <button id="review-refresh" class="secondary compact" type="button">Обновить</button>
         </div>
       </div>
