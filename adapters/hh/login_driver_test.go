@@ -389,3 +389,40 @@ func TestLoginDriverPasswordBranchIsUnsupported(t *testing.T) {
 		t.Fatal("expected password continuation to be unsupported")
 	}
 }
+
+// draftLoginResolver stands in for the backend resolver that answers for a
+// profile draft with only the state file known.
+type draftLoginResolver struct {
+	stateFile string
+}
+
+func (resolver draftLoginResolver) LoginSettings(profileID core.ProfileID) (LoginSettings, bool) {
+	if profileID != "secondary" {
+		return LoginSettings{}, false
+	}
+	return LoginSettings{ProfileID: profileID, StateFile: resolver.stateFile}, true
+}
+
+func TestLoginDriverResolverFillsLoginURLForDrafts(t *testing.T) {
+	fake := browsertest.New()
+	driver, err := NewLoginDriver(fake, nil)
+	if err != nil {
+		t.Fatalf("new login driver: %v", err)
+	}
+	driver.sleep = func(context.Context, time.Duration) error { return nil }
+	driver.SetProfileResolver(draftLoginResolver{stateFile: "/tmp/draft.json"})
+	if _, err := driver.Start(context.Background(), "secondary"); err != nil {
+		t.Fatalf("draft start: %v", err)
+	}
+	gotoCalls := fake.CallsOf("goto")
+	if len(gotoCalls) != 1 {
+		t.Fatalf("goto calls = %#v", gotoCalls)
+	}
+	request, ok := gotoCalls[0].Request.(browser.GotoRequest)
+	if !ok || request.URL != defaultLoginURL {
+		t.Fatalf("goto request = %#v", gotoCalls[0].Request)
+	}
+	if _, err := driver.Start(context.Background(), "unknown"); err == nil {
+		t.Fatal("expected an unknown profile to fail")
+	}
+}

@@ -95,10 +95,17 @@ func (driver *LoginDriver) setting(profileID core.ProfileID) (LoginSettings, boo
 	if setting, ok := driver.settings[profileID]; ok {
 		return setting, true
 	}
-	if driver.resolver != nil {
-		return driver.resolver.LoginSettings(profileID)
+	if driver.resolver == nil {
+		return LoginSettings{}, false
 	}
-	return LoginSettings{}, false
+	setting, ok := driver.resolver.LoginSettings(profileID)
+	if !ok {
+		return LoginSettings{}, false
+	}
+	if strings.TrimSpace(setting.LoginURL) == "" {
+		setting.LoginURL = defaultLoginURL
+	}
+	return setting, true
 }
 
 func (driver *LoginDriver) Start(ctx context.Context, profileID core.ProfileID) (auth.Outcome, error) {
