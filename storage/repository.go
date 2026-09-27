@@ -47,6 +47,15 @@ type TaskCount struct {
 	Count    int               `json:"count"`
 }
 
+// JobPause is one paused (job, profile) pair. Manual pauses use the operator
+// reason; the deauthorization sweep records auth_required.
+type JobPause struct {
+	JobTag    string         `json:"job_tag"`
+	ProfileID core.ProfileID `json:"profile_id"`
+	Reason    string         `json:"reason,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
 // AuthWarning reports profiles whose tasks recently failed because the platform
 // rejected the stored session. The dashboard shows it as a sign-in banner.
 type AuthWarning struct {

@@ -553,6 +553,20 @@ function renderJobs(items = []) {
     const names = jobProfiles(item).map(profileDisplayName);
     if (names.length) profileCell.append(...names.map((name) => text("div", name)));
     else profileCell.append(text("span", "—", "muted"));
+    const pauseCell = document.createElement("td");
+    const paused = Boolean(item.paused);
+    if (paused) {
+      const reasons = [...new Set((item.pauses || []).map((entry) => entry.reason === "auth_required" ? "требуется вход" : "пауза оператора"))];
+      const profiles = [...new Set((item.pauses || []).map((entry) => profileDisplayName(entry.profile_id)))];
+      pauseCell.append(text("div", `на паузе: ${reasons.join(", ")}`));
+      if (profiles.length) pauseCell.append(text("small", profiles.join(", "), "muted"));
+    } else {
+      pauseCell.append(text("span", "работает", "muted"));
+    }
+    const pauseToggle = text("button", paused ? "Запустить" : "Пауза", "secondary compact"); pauseToggle.type = "button";
+    pauseToggle.disabled = state.jobBusy.has(item.tag);
+    pauseToggle.addEventListener("click", () => toggleJobPause(item, !paused));
+    pauseCell.append(text("div", "", "muted")); pauseCell.lastChild.append(pauseToggle);
     const jobCell = document.createElement("td");
     if (item.description) {
       jobCell.append(text("div", item.description));
@@ -560,7 +574,7 @@ function renderJobs(items = []) {
     } else {
       jobCell.append(text("div", item.tag));
     }
-    row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), run);
+    row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), pauseCell, run);
     return row;
   }));
   updateCountdowns();
@@ -1441,6 +1455,20 @@ async function controlFailedTask(task, action) {
   }
 }
 
+// toggleJobPause pauses or resumes a job: paused schedules stop creating tasks
+// and resume with an immediate run.
+async function toggleJobPause(job, paused) {
+  state.jobBusy.add(job.tag); renderJobs(state.jobs);
+  try {
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/${paused ? "pause" : "resume"}`);
+    elements.connectionState.textContent = `Job ${job.tag}: ${result.paused ? "на паузе" : "снова выполняется"}`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  } finally {
+    state.jobBusy.delete(job.tag); renderJobs(state.jobs);
+  }
+}
 async function runJob(job) {
   state.jobBusy.add(job.tag); renderJobs(state.jobs);
   try {
