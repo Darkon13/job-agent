@@ -377,57 +377,147 @@ async function refreshApplications({ append = false } = {}) {
 function changeApplicationQuery() {
   state.applicationOffset = 0; state.selectedApplications.clear(); state.applicationActionMessage = ""; return refreshApplications();
 }
-function updateApplicationSelection(items = visibleApplicationObjects()) {
-  const visibleIDs = items.filter(applicationCanRemove).map((item) => item.id);
-  elements.applicationSelectAll.disabled = state.applicationActionBusy || !visibleIDs.length;
-  const selectedVisible = visibleIDs.filter((id) => state.selectedApplications.has(id)).length;
-  elements.applicationSelectAll.checked = visibleIDs.length > 0 && selectedVisible === visibleIDs.length;
-  elements.applicationSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIDs.length;
-  elements.applicationSelectionState.textContent = state.applicationActionMessage || (state.selectedApplications.size ? `Выбрано: ${state.selectedApplications.size}` : "Ничего не выбрано");
-  elements.applicationBulkAction.disabled = state.applicationActionBusy;
-  elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy;
+// The bulk toolbar is gone: removal runs per row, so this helper only keeps the
+// action message visible for the filter state.
+function updateApplicationSelection() {
+  if (!elements.applicationSelectionState) return;
+  elements.applicationSelectionState.textContent = state.applicationActionMessage || "";
 }
 function renderApplicationObjects() {
-  const existingIDs = new Set(state.applicationObjects.map((item) => item.id));
-  for (const id of state.selectedApplications) if (!existingIDs.has(id)) state.selectedApplications.delete(id);
   const items = visibleApplicationObjects();
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
   updateApplicationProfileColumn();
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
-  elements.applicationItems.replaceChildren(...items.map((item) => {
+  if (!items.length) {
     const row = document.createElement("tr");
-    const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
-    checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
-    const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
-    const action = document.createElement("td"); action.className = "task-actions"; const url = safeExternalURL(item.vacancy_url);
-    const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
-    const needsInput = validationSkipped || item.status === "waiting_validation";
-    const vacancyID = (url || "").match(/\/vacancy\/(\d+)/)?.[1];
-    if (needsInput && item.platform === "hh") {
-      const questionnaire = text("button", "Анкета", "secondary compact"); questionnaire.type = "button";
-      questionnaire.disabled = state.applicationActionBusy;
-      questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
-      action.append(questionnaire);
-    }
-    if (url) {
-      if (action.childNodes.length) action.append(document.createTextNode(" "));
-      const link = text("a", needsInput ? "Вакансия ↗" : "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link);
-    }
-    if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
-      if (action.childNodes.length) action.append(document.createTextNode(" "));
-      const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
-      retry.addEventListener("click", () => retryApplication(item, retry)); action.append(retry);
-    }
-    if (!action.childNodes.length) action.textContent = "—";
-    const group = applicationGroup(item);
-    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
-    profileCell.append(text("strong", profileDisplayName(item.profile_id)));
-    const profileTag = text("small", item.profile_id, "muted"); profileTag.style.display = "block"; profileCell.append(profileTag);
-    row.append(selection, vacancy, text("td", item.employer || "—"), profileCell, statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
-    return row;
-  }));
-  updateApplicationSelection(items);
+    const cell = text("td", "Под этот фильтр откликов нет");
+    cell.colSpan = 5;
+    row.append(cell);
+    elements.applicationItems.replaceChildren(row);
+    return;
+  }
+  elements.applicationItems.replaceChildren(...items.map((item) => renderApplicationRow(item)));
 }
+
+function applicationNeedsInput(item) {
+  const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
+  return validationSkipped || item.status === "waiting_validation";
+}
+
+function applicationCanRetry(item) {
+  const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
+  return ["waiting_validation", "failed"].includes(item.status) || validationSkipped;
+}
+
+// applicationRowActions collects the per-row buttons: the questionnaire call to
+// action is explicit, retry and removal stay secondary.
+function applicationRowActions(item, url) {
+  const actions = [];
+  if (applicationNeedsInput(item) && item.platform === "hh") {
+    const questionnaire = text("button", "Заполнить анкету");
+    questionnaire.type = "button";
+    questionnaire.disabled = state.applicationActionBusy;
+    questionnaire.title = "Открыть анкету и ответить на вопросы";
+    questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
+    actions.push(questionnaire);
+  }
+  if (applicationCanRetry(item)) {
+    const retry = text("button", "Повторить", "secondary compact");
+    retry.type = "button";
+    retry.disabled = state.applicationActionBusy;
+    retry.title = "Повторить подготовку и отправку отклика";
+    retry.addEventListener("click", () => retryApplication(item, retry));
+    actions.push(retry);
+  }
+  if (applicationCanRemove(item)) {
+    const remove = text("button", "Убрать", "secondary compact");
+    remove.type = "button";
+    remove.disabled = state.applicationActionBusy;
+    remove.title = "Убрать отклик из рабочего списка";
+    remove.addEventListener("click", () => removeApplication(item));
+    actions.push(remove);
+  }
+  if (!actions.length && url) {
+    const open = text("a", "Открыть ↗", "table-link");
+    open.href = url;
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    actions.push(open);
+  }
+  return actions;
+}
+
+// renderApplicationRow keeps the row narrow: the vacancy link and company share
+// one cell, the status carries the reason, and the whole row opens the vacancy.
+function renderApplicationRow(item) {
+  const row = document.createElement("tr");
+  row.className = "application-row";
+  const url = safeExternalURL(item.vacancy_url);
+  row.title = url ? "Открыть вакансию" : "";
+  if (url) {
+    row.classList.add("clickable-row");
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a, button, input, label, select")) return;
+      globalThis.open(url, "_blank", "noopener");
+    });
+  }
+
+  const vacancy = document.createElement("td");
+  vacancy.className = "application-vacancy";
+  if (url) {
+    const link = text("a", item.vacancy_title || "Без названия", "application-vacancy-link");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    vacancy.append(link);
+  } else {
+    vacancy.append(text("strong", item.vacancy_title || "Без названия"));
+  }
+  vacancy.append(text("div", item.employer || "Компания не определена", "muted"));
+
+  const group = applicationGroup(item);
+  const state = document.createElement("td");
+  state.className = "application-state";
+  const chip = statusCell(applicationGroupLabels[group], `status-${group}`).firstChild;
+  if (chip) state.append(chip);
+  const reason = applicationReason(item);
+  if (reason) state.append(text("div", reason, "muted application-reason"));
+
+  const profileCell = document.createElement("td");
+  profileCell.className = "application-profile";
+  profileCell.append(text("strong", profileDisplayName(item.profile_id)));
+  profileCell.append(text("small", item.profile_id, "muted"));
+
+  const actions = document.createElement("td");
+  actions.className = "task-actions";
+  const buttons = applicationRowActions(item, url);
+  if (buttons.length) actions.append(...buttons);
+  else actions.textContent = "—";
+
+  row.append(vacancy, profileCell, state, text("td", formatDate(item.updated_at)), actions);
+  return row;
+}
+
+async function removeApplication(item) {
+  const title = item.vacancy_title || item.employer || item.id;
+  if (!globalThis.confirm(`Убрать «${title}» из рабочего списка? Локальная запись и чат будут удалены.`)) return;
+  state.applicationActionBusy = true;
+  renderApplicationObjects();
+  try {
+    const result = await enqueue("/api/v1/applications/remove", { application_ids: [item.id] });
+    const failures = (result.results || []).filter((entry) => entry.error);
+    state.applicationActionMessage = failures.length
+      ? `Не удалось убрать: ${failures[0].error}`
+      : `Задача на удаление создана (${result.created}).`;
+    await refreshSummary();
+    await refreshApplications();
+  } catch (error) {
+    state.applicationActionMessage = error.message;
+  } finally {
+    state.applicationActionBusy = false;
+    renderApplicationObjects();
+  }
+}
+
 // The profile column is redundant while one account is selected: every row
 // belongs to it. It returns with the combined "all profiles" view.
 function updateApplicationProfileColumn() {
@@ -636,16 +726,18 @@ function renderJobDetailRow(item) {
   for (const profileID of jobProfiles(item)) {
     const line = document.createElement("div");
     line.className = "job-detail-profile";
-    const info = document.createElement("div");
-    info.className = "job-detail-info";
-    info.append(text("strong", profileDisplayName(profileID)));
-    const command = commands.find((entry) => entry.profile_id === profileID);
-    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
-    info.append(text("div", summary || "без дополнительных параметров", "muted"));
+    const heading = document.createElement("div");
+    heading.className = "job-detail-heading";
+    heading.append(text("strong", profileDisplayName(profileID)));
     const actions = document.createElement("div");
     actions.className = "job-detail-actions";
     actions.append(jobStateButton(item, profileID), jobRunButton(item, profileID));
-    line.append(info, actions);
+    heading.append(actions);
+    const command = commands.find((entry) => entry.profile_id === profileID);
+    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
+    // The description wraps over the full width: the profile name never squeezes
+    // it into one long line.
+    line.append(heading, text("div", summary || "без дополнительных параметров", "muted job-detail-info"));
     cell.append(line);
   }
   if (!jobProfiles(item).length) cell.append(text("div", "нет привязанных профилей", "muted"));
@@ -1233,6 +1325,8 @@ const reviewPageSize = 50;
 
 async function refreshReviewSessions(options = {}) {
   const append = options.append === true;
+  if (state.reviewLoading) return;
+  state.reviewLoading = true;
   const parameters = new URLSearchParams({ limit: String(reviewPageSize), offset: String(append ? state.reviewSessions.length : 0) });
   if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
   if (state.account) parameters.set("profile_id", state.account);
@@ -1256,6 +1350,8 @@ async function refreshReviewSessions(options = {}) {
   } catch (error) {
     elements.reviewState.textContent = error.message;
     elements.reviewSessions.replaceChildren(text("p", "Не удалось загрузить проверки.", "empty panel"));
+  } finally {
+    state.reviewLoading = false;
   }
 }
 
@@ -1815,22 +1911,6 @@ elements.markAllRead.addEventListener("click", async () => {
 let applicationSearchTimer;
 elements.applicationSearch.addEventListener("input", () => { clearTimeout(applicationSearchTimer); state.applicationQuery = elements.applicationSearch.value; state.applicationRequest++; state.applicationLoading = true; updateApplicationSelection(); applicationSearchTimer = setTimeout(changeApplicationQuery, 250); });
 elements.applicationSort.addEventListener("change", () => { state.applicationSort = elements.applicationSort.value; changeApplicationQuery(); });
-elements.applicationSelectAll.addEventListener("change", () => { for (const item of visibleApplicationObjects().filter(applicationCanRemove)) { if (elements.applicationSelectAll.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); } renderApplicationObjects(); });
-elements.applicationBulkAction.addEventListener("change", () => updateApplicationSelection());
-elements.applicationRunAction.addEventListener("click", async () => {
-  const ids = [...state.selectedApplications];
-  if (!ids.length || elements.applicationBulkAction.value !== "remove" || state.applicationActionBusy) return;
-  state.applicationActionBusy = true; updateApplicationSelection();
-  elements.applicationSelectionState.textContent = `Создаю задачи: ${ids.length}…`;
-  try {
-    const result = await enqueue("/api/v1/applications/remove", { application_ids: ids });
-    state.selectedApplications.clear(); elements.applicationBulkAction.value = "";
-    const failures = (result.results || []).filter((item) => item.error);
-    state.applicationActionMessage = `Создано задач: ${result.created}. Уже в очереди: ${(result.tasks || []).length - result.created}.${failures.length ? ` Не поставлены: ${failures.length} — объекты недоступны или ещё обрабатываются.` : ""}`;
-    await refreshSummary();
-  } catch (error) { state.applicationActionMessage = error.message; }
-  finally { state.applicationActionBusy = false; updateApplicationSelection(); }
-});
 elements.accountCaptchaButton.addEventListener("click", () => startCaptchaCheck(elements.accountCaptcha.dataset.profile || state.account));
 elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
 elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
@@ -1845,6 +1925,14 @@ if (applicationTableScroll) applicationTableScroll.addEventListener("scroll", ()
   if (state.applicationLoading || applicationTableScroll.scrollTop + applicationTableScroll.clientHeight < applicationTableScroll.scrollHeight - 240) return;
   if (state.applicationObjects.length >= state.applicationTotal) return;
   refreshApplications({ append: true });
+});
+// The review list loads the next page when the operator scrolls to the bottom,
+// the same way the applications and conversations lists do.
+elements.reviewSessions.addEventListener("scroll", () => {
+  const list = elements.reviewSessions;
+  if (!state.reviewHasMore || state.reviewLoading) return;
+  if (list.scrollTop + list.clientHeight < list.scrollHeight - 240) return;
+  refreshReviewSessions({ append: true });
 });
 elements.conversations.addEventListener("scroll", () => {
   const list = elements.conversations;
