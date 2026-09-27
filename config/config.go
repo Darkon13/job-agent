@@ -171,6 +171,33 @@ func (jitter JitterConfig) Durations() (time.Duration, time.Duration) {
 	return minimum, maximum
 }
 
+// Configured reports whether the operator set explicit jitter bounds. An
+// explicit zero spread keeps a schedule unpaced and wins over the default.
+func (jitter JitterConfig) Configured() bool {
+	return strings.TrimSpace(jitter.Min) != "" || strings.TrimSpace(jitter.Max) != ""
+}
+
+func (jitter JitterConfig) validate() error {
+	minimum, maximum := jitter.Durations()
+	if (jitter.Min != "" && minimum < 0) || (jitter.Max != "" && maximum < 0) {
+		return errors.New("jitter durations must not be negative")
+	}
+	if jitter.Min != "" {
+		if _, err := time.ParseDuration(jitter.Min); err != nil {
+			return fmt.Errorf("invalid jitter min: %w", err)
+		}
+	}
+	if jitter.Max != "" {
+		if _, err := time.ParseDuration(jitter.Max); err != nil {
+			return fmt.Errorf("invalid jitter max: %w", err)
+		}
+	}
+	if maximum < minimum {
+		return errors.New("jitter max must be greater than or equal to min")
+	}
+	return nil
+}
+
 type JobAction struct {
 	Type             string                               `json:"type"`
 	Resource         string                               `json:"resource,omitempty"`
@@ -327,9 +354,40 @@ type Profile struct {
 type SystemJobPolicy struct {
 	Enabled  *bool         `json:"enabled,omitempty"`
 	Interval core.Duration `json:"interval,omitempty"`
+	Jitter   JitterConfig  `json:"jitter,omitempty"`
 }
 
 // JobEnabled reports the configured state or the provided default.
+// Job trigger defaults keep a config short: an operator writes the cron
+// expression and lets the service fill the timezone, the misfire mode and a
+// bounded start spread. Explicit values always win, and an explicit zero
+// jitter turns the delay off.
+const (
+	defaultJobTimezone  = "Europe/Moscow"
+	defaultJobMisfire   = "run_once"
+	defaultJobJitterMin = 1 * time.Minute
+	defaultJobJitterMax = 10 * time.Minute
+	systemJobJitterCap  = 5 * time.Minute
+)
+
+// applyJobDefaults fills the trigger fields an operator may omit.
+func (c *Config) applyJobDefaults() {
+	for jobIndex := range c.Jobs {
+		for triggerIndex := range c.Jobs[jobIndex].Triggers {
+			trigger := &c.Jobs[jobIndex].Triggers[triggerIndex]
+			if strings.TrimSpace(trigger.Timezone) == "" {
+				trigger.Timezone = defaultJobTimezone
+			}
+			if strings.TrimSpace(trigger.Misfire) == "" {
+				trigger.Misfire = defaultJobMisfire
+			}
+			if !trigger.Jitter.Configured() {
+				trigger.Jitter = JitterConfig{Min: defaultJobJitterMin.String(), Max: defaultJobJitterMax.String()}
+			}
+		}
+	}
+}
+
 func (policy SystemJobPolicy) JobEnabled(fallback bool) bool {
 	if policy.Enabled == nil {
 		return fallback
@@ -343,6 +401,23 @@ func (policy SystemJobPolicy) JobInterval(fallback time.Duration) time.Duration 
 		return interval
 	}
 	return fallback
+}
+
+// JobJitter returns the start spread of one occurrence. An explicit jitter
+// wins; otherwise the spread is derived from the cadence and never exceeds a
+// tenth of it or systemJobJitterCap, so a frequent poll stays punctual.
+func (policy SystemJobPolicy) JobJitter(interval time.Duration) (time.Duration, time.Duration) {
+	if policy.Jitter.Configured() {
+		return policy.Jitter.Durations()
+	}
+	if interval <= 0 {
+		return 0, 0
+	}
+	maximum := interval / 10
+	if maximum > systemJobJitterCap {
+		maximum = systemJobJitterCap
+	}
+	return maximum / 5, maximum
 }
 
 // ApplicationCleanupPolicy configures the retention job. It stays disabled by
@@ -701,6 +776,7 @@ func Load(path string) (Config, error) {
 	if err := cfg.resolveAnswerSets(baseDirectory); err != nil {
 		return Config{}, err
 	}
+	cfg.applyJobDefaults()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config %s: %w", absolute, err)
 	}
@@ -1612,6 +1688,16 @@ func (c Config) Validate() error {
 				return fmt.Errorf("profile %q %s interval must be at least 1m", profile.Tag, name)
 			}
 		}
+		for name, policy := range map[string]SystemJobPolicy{
+			"state_harvest":       profile.StateHarvest,
+			"resume_touch":        profile.ResumeTouch,
+			"activity_maintain":   profile.ActivityMaintain,
+			"application_cleanup": profile.ApplicationCleanup.SystemJobPolicy,
+		} {
+			if err := policy.Jitter.validate(); err != nil {
+				return fmt.Errorf("profile %q %s %w", profile.Tag, name, err)
+			}
+		}
 		profiles[profile.Tag] = struct{}{}
 		profileConfigs[profile.Tag] = profile
 	}
@@ -1949,22 +2035,5 @@ func validateJobTrigger(trigger JobTrigger) error {
 	if trigger.Misfire != "run_once" {
 		return fmt.Errorf("misfire must be %q", "run_once")
 	}
-	minimum, maximum := trigger.Jitter.Durations()
-	if (trigger.Jitter.Min != "" && minimum < 0) || (trigger.Jitter.Max != "" && maximum < 0) {
-		return errors.New("jitter durations must not be negative")
-	}
-	if trigger.Jitter.Min != "" {
-		if _, err := time.ParseDuration(trigger.Jitter.Min); err != nil {
-			return fmt.Errorf("invalid jitter min: %w", err)
-		}
-	}
-	if trigger.Jitter.Max != "" {
-		if _, err := time.ParseDuration(trigger.Jitter.Max); err != nil {
-			return fmt.Errorf("invalid jitter max: %w", err)
-		}
-	}
-	if maximum < minimum {
-		return errors.New("jitter max must be greater than or equal to min")
-	}
-	return nil
+	return trigger.Jitter.validate()
 }
