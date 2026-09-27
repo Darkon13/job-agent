@@ -794,14 +794,10 @@ func TestResumeQueryVariantsExpandsPlaceholders(t *testing.T) {
 	}
 }
 
-func TestActivityMaintainDefinitionsCarryTheGlobalSearch(t *testing.T) {
+func TestActivityMaintainDefinitionsUseTheFilterlessSearchByDefault(t *testing.T) {
 	cfg := appconfig.Config{
 		Adapters: []appconfig.AdapterConfig{{Tag: "platform", Type: "platform"}},
 		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
-		Searches: []appconfig.Search{
-			{Tag: "similar", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{"source":"similar_resume","resume":"resume-1"}`)},
-			{Tag: "global-go", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{"source":"global","text":"Golang"}`)},
-		},
 	}
 	definitions, err := profileSystemDefinitions(cfg, profileSystemCapabilities{})
 	if err != nil {
@@ -820,23 +816,27 @@ func TestActivityMaintainDefinitionsCarryTheGlobalSearch(t *testing.T) {
 	if err := json.Unmarshal(maintain.Payload, &payload); err != nil {
 		t.Fatalf("payload: %v", err)
 	}
-	if string(payload.Query) != `{"source":"global","text":"Golang"}` {
-		t.Fatalf("activity-maintain query = %s", payload.Query)
+	// The default opens any vacancies: the metric only needs cards to view.
+	if string(payload.Query) != `{"source":"global"}` {
+		t.Fatalf("default activity-maintain query = %s", payload.Query)
 	}
 
-	// A profile without a global search keeps an empty query instead of failing.
-	cfg.Searches = cfg.Searches[:1]
+	// An explicit policy query wins.
+	cfg.Profiles[0].ActivityMaintain = appconfig.SystemJobPolicy{Query: json.RawMessage(`{"source":"global","text":"Golang"}`)}
 	definitions, err = profileSystemDefinitions(cfg, profileSystemCapabilities{})
 	if err != nil {
-		t.Fatalf("definitions without a global search: %v", err)
+		t.Fatalf("definitions with an override: %v", err)
 	}
 	for index := range definitions {
 		if definitions[index].JobTag != "system.activity-maintain" {
 			continue
 		}
 		payload = core.ProfileActivityMaintainPayload{}
-		if err := json.Unmarshal(definitions[index].Payload, &payload); err != nil || len(payload.Query) != 0 {
-			t.Fatalf("empty query payload = %s err=%v", definitions[index].Payload, err)
+		if err := json.Unmarshal(definitions[index].Payload, &payload); err != nil {
+			t.Fatalf("override payload: %v", err)
+		}
+		if string(payload.Query) != `{"source":"global","text":"Golang"}` {
+			t.Fatalf("override activity-maintain query = %s", payload.Query)
 		}
 	}
 }

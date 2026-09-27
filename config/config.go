@@ -447,6 +447,10 @@ type SystemJobPolicy struct {
 	Enabled  *bool         `json:"enabled,omitempty"`
 	Interval core.Duration `json:"interval,omitempty"`
 	Jitter   JitterConfig  `json:"jitter,omitempty"`
+	// Query overrides the vacancy source of the activity maintenance job. By
+	// default the job opens any vacancies from the platform feed, because the
+	// goal is to keep the account warm rather than to serve one search.
+	Query json.RawMessage `json:"query,omitempty"`
 }
 
 // JobEnabled reports the configured state or the provided default.
@@ -1927,6 +1931,9 @@ func (c Config) Validate() error {
 		} {
 			if err := policy.Jitter.validate(); err != nil {
 				return fmt.Errorf("profile %q %s %w", profile.Tag, name, err)
+			}
+			if len(policy.Query) != 0 && !json.Valid(policy.Query) {
+				return fmt.Errorf("profile %q %s query must be valid JSON", profile.Tag, name)
 			}
 		}
 		profiles[profile.Tag] = struct{}{}
