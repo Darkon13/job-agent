@@ -729,6 +729,19 @@ function lockIcon() {
   return svg;
 }
 
+// jobStateControl returns the state button and, for a read-only system state, a
+// separate lock icon next to it.
+function jobStateControl(item, profileID = "") {
+  const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
+  const button = jobStateButton(item, profileID);
+  if (!item.system || paused) return [button];
+  const lock = text("span", "", "job-lock");
+  lock.title = "состояние задаёт сервис: системная джоба встаёт на паузу сама (например, при разлогине)";
+  lock.setAttribute("aria-label", "переключение недоступно");
+  lock.append(lockIcon());
+  return [button, lock];
+}
+
 function jobStateButton(item, profileID = "") {
   const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
   const button = text("button", paused ? "PAUSED" : "OK", `job-state ${paused ? "paused" : "ok"}`);
@@ -737,7 +750,6 @@ function jobStateButton(item, profileID = "") {
     button.disabled = true;
     button.title = "состояние задаёт сервис: системная джоба встаёт на паузу сама (например, при разлогине)";
     button.setAttribute("aria-label", "OK, переключение недоступно");
-    button.append(lockIcon());
   } else {
     button.disabled = state.jobBusy.has(item.tag);
     button.title = paused
@@ -777,40 +789,6 @@ function toggleJobExpanded(tag) {
   renderJobs(state.jobs);
 }
 
-// renderJobDetailRow shows one line per bound profile with its parameters, run
-// action and per-profile pause state.
-function renderJobDetailRow(item) {
-  const row = document.createElement("tr");
-  row.className = "job-detail-row";
-  const cell = document.createElement("td");
-  cell.colSpan = 4;
-  const commands = Array.isArray(item.commands) ? item.commands : [];
-  for (const profileID of jobProfiles(item)) {
-    const line = document.createElement("div");
-    line.className = "job-detail-profile";
-    const heading = document.createElement("div");
-    heading.className = "job-detail-heading";
-    heading.append(text("strong", profileDisplayName(profileID)));
-    const actions = document.createElement("div");
-    actions.className = "job-detail-actions";
-    actions.append(jobStateButton(item, profileID), jobRunButton(item, profileID));
-    heading.append(actions);
-    const command = commands.find((entry) => entry.profile_id === profileID);
-    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
-    // The description wraps over the full width; a job without parameters shows
-    // only the profile name.
-    line.append(heading);
-    if (summary) line.append(text("div", summary, "muted job-detail-info"));
-    cell.append(line);
-  }
-  if (!jobProfiles(item).length) cell.append(text("div", "нет привязанных профилей", "muted"));
-  const schedule = jobScheduleTitle(item);
-  cell.append(text("div", `расписание: ${schedule}`, "muted job-detail-schedule"));
-  row.append(cell);
-  return row;
-}
-// renderJobs splits the runnable jobs into the operator's own configuration and
-// the generated system jobs, so each group can be paused as a whole.
 function renderJobs(items = []) {
   items = state.account ? items.filter((item) => jobProfiles(item).includes(state.account)) : items;
   const groups = [
@@ -871,7 +849,7 @@ function renderJobRow(item) {
     }
 
     const stateCell = document.createElement("td");
-    stateCell.append(jobStateButton(item));
+    stateCell.append(...jobStateControl(item));
 
     const runCell = document.createElement("td");
     runCell.className = "job-run-cell";
@@ -879,8 +857,51 @@ function renderJobRow(item) {
 
     row.append(jobCell, scheduleCell, stateCell, runCell);
     if (!expanded) return [row];
-    return [row, renderJobDetailRow(item)];
+    return [row, ...renderJobDetailRows(item)];
 }
+// renderJobDetailRows shows one line per bound profile as real table rows, so
+// the state and run controls stay in the same columns as the parent job row.
+function renderJobDetailRows(item) {
+  const commands = Array.isArray(item.commands) ? item.commands : [];
+  const profiles = jobProfiles(item);
+  const rows = [];
+  if (!profiles.length) {
+    const row = document.createElement("tr");
+    row.className = "job-detail-row job-detail-last";
+    const cell = text("td", "нет привязанных профилей", "muted");
+    cell.colSpan = 4;
+    row.append(cell);
+    rows.push(row);
+    return rows;
+  }
+  for (const profileID of profiles) {
+    const row = document.createElement("tr");
+    row.className = "job-detail-row";
+    const info = document.createElement("td");
+    info.className = "job-detail-info-cell";
+    info.append(text("strong", profileDisplayName(profileID)));
+    const command = commands.find((entry) => entry.profile_id === profileID);
+    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
+    if (summary) info.append(text("div", summary, "muted job-detail-info"));
+    const state = document.createElement("td");
+    state.className = "job-detail-state-cell";
+    state.append(...jobStateControl(item, profileID));
+    const run = document.createElement("td");
+    run.className = "job-run-cell";
+    run.append(jobRunButton(item, profileID));
+    row.append(info, document.createElement("td"), state, run);
+    rows.push(row);
+  }
+  const scheduleRow = document.createElement("tr");
+  scheduleRow.className = "job-detail-row job-detail-last";
+  const scheduleCell = document.createElement("td");
+  scheduleCell.colSpan = 2;
+  scheduleCell.append(text("span", `расписание: ${jobScheduleTitle(item)}`, "muted"));
+  scheduleRow.append(scheduleCell, document.createElement("td"), document.createElement("td"));
+  rows.push(scheduleRow);
+  return rows;
+}
+
 function renderFailedTasks(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
@@ -1053,7 +1074,7 @@ function renderProfileRow(entry) {
 
 function renderProfileDetail(entry) {
   const row = document.createElement("tr");
-  row.className = "job-detail-row";
+  row.className = "profile-detail-row";
   const cell = document.createElement("td");
   cell.colSpan = 5;
 
