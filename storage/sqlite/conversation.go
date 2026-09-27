@@ -58,7 +58,11 @@ func (store *Store) Conversation(ctx context.Context, id core.ConversationID) (c
 	if id == "" {
 		return core.Conversation{}, errors.New("conversation id is required")
 	}
-	return scanConversation(store.db.QueryRowContext(ctx, conversationSelect+` WHERE id = ?`, id))
+	conversation, err := scanConversation(store.db.QueryRowContext(ctx, conversationSelect+` WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Conversation{}, storage.ErrConversationNotFound
+	}
+	return conversation, err
 }
 
 func (store *Store) SaveConversation(ctx context.Context, candidate core.Conversation, expectedRevision uint64) error {

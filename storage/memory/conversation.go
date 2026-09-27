@@ -53,7 +53,7 @@ func (repository *Repository) Conversation(ctx context.Context, id core.Conversa
 	defer repository.mu.RUnlock()
 	conversation, exists := repository.conversations[id]
 	if !exists {
-		return core.Conversation{}, errors.New("conversation not found")
+		return core.Conversation{}, storage.ErrConversationNotFound
 	}
 	return cloneConversation(conversation), nil
 }
