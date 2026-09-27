@@ -72,6 +72,24 @@
       "state_harvest": {
         "enabled": true,
         "interval": "1h"
+      },
+      "resume_touch": {
+        "enabled": true,
+        "interval": "4h"
+      },
+      "activity_maintain": {
+        "enabled": true,
+        "interval": "1h"
+      },
+      "application_cleanup": {
+        "enabled": false,
+        "interval": "3h",
+        "retention": {
+          "stale_after": "720h",
+          "remove_rejected": true,
+          "remove_waiting_validation": true,
+          "validation_stale_after": "168h"
+        }
       }
     },
     {
@@ -101,27 +119,6 @@
     }
   ],
   "jobs": [
-    {
-      "tag": "cleanup-primary-applications",
-      "enabled": false,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "0 3 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once"
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "application.retention",
-        "profile": "primary",
-        "retention": {
-          "stale_after": "336h",
-          "remove_rejected": true
-        }
-      }
-    },
     {
       "tag": "reconcile-primary-about",
       "enabled": false,
@@ -156,27 +153,6 @@
         "profile": "primary",
         "resource": "primary-backend-about",
         "publish": false
-      }
-    },
-    {
-      "tag": "touch-primary-resume",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "15 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "resume.touch",
-        "profile": "primary"
       }
     },
     {

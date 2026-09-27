@@ -302,43 +302,54 @@ type AdapterConfig struct {
 }
 
 type Profile struct {
-	Tag                 string             `json:"tag"`
-	Adapter             string             `json:"adapter"`
-	Resume              string             `json:"resume,omitempty"`
-	ResumeAliases       map[string]string  `json:"resume_aliases,omitempty"`
-	ResumeFactsFile     string             `json:"resume_facts_file,omitempty"`
-	CredentialsRef      string             `json:"credentials_ref,omitempty"`
-	StateFile           string             `json:"state_file,omitempty"`
-	Enabled             bool               `json:"enabled"`
-	Bootstrap           *ProfileBootstrap  `json:"bootstrap,omitempty"`
-	Applications        ApplicationPolicy  `json:"applications,omitempty"`
-	Conversations       ConversationPolicy `json:"conversations,omitempty"`
-	StateHarvest        StateHarvestPolicy `json:"state_harvest,omitempty"`
-	Answers             *AnswerPolicy      `json:"answers,omitempty"`
-	Contacts            *ProfileContacts   `json:"contacts,omitempty"`
+	Tag                 string                   `json:"tag"`
+	Adapter             string                   `json:"adapter"`
+	Resume              string                   `json:"resume,omitempty"`
+	ResumeAliases       map[string]string        `json:"resume_aliases,omitempty"`
+	ResumeFactsFile     string                   `json:"resume_facts_file,omitempty"`
+	CredentialsRef      string                   `json:"credentials_ref,omitempty"`
+	StateFile           string                   `json:"state_file,omitempty"`
+	Enabled             bool                     `json:"enabled"`
+	Bootstrap           *ProfileBootstrap        `json:"bootstrap,omitempty"`
+	Applications        ApplicationPolicy        `json:"applications,omitempty"`
+	Conversations       ConversationPolicy       `json:"conversations,omitempty"`
+	StateHarvest        SystemJobPolicy          `json:"state_harvest,omitempty"`
+	ResumeTouch         SystemJobPolicy          `json:"resume_touch,omitempty"`
+	ActivityMaintain    SystemJobPolicy          `json:"activity_maintain,omitempty"`
+	ApplicationCleanup  ApplicationCleanupPolicy `json:"application_cleanup,omitempty"`
+	Answers             *AnswerPolicy            `json:"answers,omitempty"`
+	Contacts            *ProfileContacts         `json:"contacts,omitempty"`
 	resolvedResumeFacts *ApplicationResumeFacts
 }
 
-// StateHarvestPolicy is the per-profile system schedule that collects the
-// account state: conversations, application states and activity. It is enabled
-// by default, so a profile only opts out or changes the cadence.
-type StateHarvestPolicy struct {
+// SystemJobPolicy enables one automatic per-profile job and sets its timer. An
+// absent setting keeps the job default, so a profile only opts out explicitly.
+type SystemJobPolicy struct {
 	Enabled  *bool         `json:"enabled,omitempty"`
 	Interval core.Duration `json:"interval,omitempty"`
 }
 
-// HarvestEnabled reports whether the system state collection runs for the
-// profile. An absent setting means enabled.
-func (policy StateHarvestPolicy) HarvestEnabled() bool {
-	return policy.Enabled == nil || *policy.Enabled
+// JobEnabled reports the configured state or the provided default.
+func (policy SystemJobPolicy) JobEnabled(fallback bool) bool {
+	if policy.Enabled == nil {
+		return fallback
+	}
+	return *policy.Enabled
 }
 
-// HarvestInterval returns the configured cadence, defaulting to one hour.
-func (policy StateHarvestPolicy) HarvestInterval() time.Duration {
+// JobInterval returns the configured cadence or the provided default.
+func (policy SystemJobPolicy) JobInterval(fallback time.Duration) time.Duration {
 	if interval := policy.Interval.Value(); interval > 0 {
 		return interval
 	}
-	return time.Hour
+	return fallback
+}
+
+// ApplicationCleanupPolicy configures the retention job. It stays disabled by
+// default because it removes applications from the platform.
+type ApplicationCleanupPolicy struct {
+	SystemJobPolicy
+	Retention ApplicationRetentionConfig `json:"retention,omitempty"`
 }
 
 // ProfileContacts are sender contacts rendered into letters and masked for
@@ -1591,8 +1602,15 @@ func (c Config) Validate() error {
 				seen[term] = struct{}{}
 			}
 		}
-		if interval := profile.StateHarvest.Interval.Value(); interval > 0 && interval < time.Minute {
-			return fmt.Errorf("profile %q state_harvest interval must be at least 1m", profile.Tag)
+		for name, interval := range map[string]core.Duration{
+			"state_harvest":       profile.StateHarvest.Interval,
+			"resume_touch":        profile.ResumeTouch.Interval,
+			"activity_maintain":   profile.ActivityMaintain.Interval,
+			"application_cleanup": profile.ApplicationCleanup.Interval,
+		} {
+			if value := interval.Value(); value > 0 && value < time.Minute {
+				return fmt.Errorf("profile %q %s interval must be at least 1m", profile.Tag, name)
+			}
 		}
 		profiles[profile.Tag] = struct{}{}
 		profileConfigs[profile.Tag] = profile

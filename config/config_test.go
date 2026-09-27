@@ -46,19 +46,28 @@ func TestProfileStateHarvestValidatesInterval(t *testing.T) {
 	}
 	disabled := false
 	config := base()
-	config.Profiles[0].StateHarvest = StateHarvestPolicy{Enabled: &disabled}
-	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.HarvestEnabled() {
+	config.Profiles[0].StateHarvest = SystemJobPolicy{Enabled: &disabled}
+	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.JobEnabled(true) {
 		t.Fatalf("disabled harvest: err=%v", err)
 	}
 	config = base()
-	config.Profiles[0].StateHarvest = StateHarvestPolicy{Interval: core.Duration(30 * time.Second)}
+	config.Profiles[0].StateHarvest = SystemJobPolicy{Interval: core.Duration(30 * time.Second)}
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected a too short harvest interval to fail")
 	}
 	config = base()
-	config.Profiles[0].StateHarvest = StateHarvestPolicy{Interval: core.Duration(90 * time.Minute)}
-	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.HarvestInterval() != 90*time.Minute {
-		t.Fatalf("harvest interval = %v err=%v", config.Profiles[0].StateHarvest.HarvestInterval(), err)
+	config.Profiles[0].StateHarvest = SystemJobPolicy{Interval: core.Duration(90 * time.Minute)}
+	if err := config.Validate(); err != nil || config.Profiles[0].StateHarvest.JobInterval(time.Hour) != 90*time.Minute {
+		t.Fatalf("harvest interval = %v err=%v", config.Profiles[0].StateHarvest.JobInterval(time.Hour), err)
+	}
+	// Application cleanup is opt-in: an absent setting means disabled.
+	config = base()
+	if config.Profiles[0].ApplicationCleanup.JobEnabled(false) {
+		t.Fatal("application cleanup must stay disabled by default")
+	}
+	config.Profiles[0].ApplicationCleanup = ApplicationCleanupPolicy{SystemJobPolicy: SystemJobPolicy{Enabled: &disabled}}
+	if err := config.Validate(); err != nil || config.Profiles[0].ApplicationCleanup.JobEnabled(false) {
+		t.Fatalf("cleanup toggle: err=%v", err)
 	}
 }
 
