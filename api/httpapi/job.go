@@ -5,8 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/scheduler"
+	"github.com/Darkon13/job-agent/storage"
 	"github.com/Darkon13/job-agent/workflow"
 )
 
@@ -17,10 +20,32 @@ type ScheduleReader interface {
 	Schedules(ctx context.Context) ([]scheduler.Entry, error)
 }
 
+// JobPauseRepository stores paused (job, profile) pairs for the dashboard and
+// CLI. Without it the pause endpoints answer 503.
+type JobPauseRepository interface {
+	PauseJob(ctx context.Context, jobTag string, profileID core.ProfileID, reason string, now time.Time) error
+	PauseJobs(ctx context.Context, jobTag string, reason string, now time.Time) (int, error)
+	ResumeJob(ctx context.Context, jobTag string, profileID core.ProfileID) (int, error)
+	ListJobPauses(ctx context.Context) ([]storage.JobPause, error)
+}
+
 type JobAPI struct {
 	workflow     *workflow.JobRunWorkflow
 	schedules    ScheduleReader
 	descriptions map[string]string
+	pauses       JobPauseRepository
+}
+
+// SetPauses attaches the pause storage so jobs can be paused and resumed.
+func (api *JobAPI) SetPauses(repository JobPauseRepository) {
+	api.pauses = repository
+}
+
+// jobListView is a runnable job plus its pause state.
+type jobListView struct {
+	workflow.JobRunDescriptor
+	Paused bool               `json:"paused"`
+	Pauses []storage.JobPause `json:"pauses,omitempty"`
 }
 
 // SetDescriptions attaches optional per-job descriptions from the config so the
@@ -43,6 +68,8 @@ func (api *JobAPI) Handler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/jobs", api.list)
 	mux.HandleFunc("POST /api/v1/jobs/{job_tag}/runs", api.run)
+	mux.HandleFunc("POST /api/v1/jobs/{job_tag}/pause", api.pause)
+	mux.HandleFunc("POST /api/v1/jobs/{job_tag}/resume", api.resume)
 	mux.Handle("/", next)
 	return mux
 }
@@ -80,7 +107,92 @@ func (api *JobAPI) list(response http.ResponseWriter, request *http.Request) {
 			items[index].Description = description
 		}
 	}
-	writeJSON(response, http.StatusOK, listResponse[workflow.JobRunDescriptor]{Items: items})
+	pauses, err := api.listPauses(request.Context())
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	notes := make(map[string][]storage.JobPause, len(pauses))
+	for _, pause := range pauses {
+		notes[pause.JobTag] = append(notes[pause.JobTag], pause)
+	}
+	views := make([]jobListView, 0, len(items))
+	for _, item := range items {
+		views = append(views, jobListView{
+			JobRunDescriptor: item, Paused: len(notes[item.Tag]) > 0, Pauses: notes[item.Tag],
+		})
+	}
+	writeJSON(response, http.StatusOK, listResponse[jobListView]{Items: views})
+}
+
+// listPauses returns the stored pauses, or nothing when pausing is not wired.
+func (api *JobAPI) listPauses(ctx context.Context) ([]storage.JobPause, error) {
+	if api.pauses == nil {
+		return nil, nil
+	}
+	return api.pauses.ListJobPauses(ctx)
+}
+
+func (api *JobAPI) pause(response http.ResponseWriter, request *http.Request) {
+	api.setPaused(response, request, true)
+}
+
+func (api *JobAPI) resume(response http.ResponseWriter, request *http.Request) {
+	api.setPaused(response, request, false)
+}
+
+// setPaused pauses or resumes one job: a single profile when profile_id is
+// given, otherwise every profile the job covers. A paused schedule stops
+// creating tasks and runs immediately after resume.
+func (api *JobAPI) setPaused(response http.ResponseWriter, request *http.Request, paused bool) {
+	if api.pauses == nil {
+		writeProblem(response, http.StatusServiceUnavailable, "job pauses are not configured")
+		return
+	}
+	tag := strings.TrimSpace(request.PathValue("job_tag"))
+	if !api.hasJob(tag) {
+		writeProblem(response, http.StatusNotFound, "job not found")
+		return
+	}
+	profileID := core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id")))
+	now := time.Now().UTC()
+	affected := 0
+	var err error
+	if paused {
+		if profileID == "" {
+			affected, err = api.pauses.PauseJobs(request.Context(), tag, "operator", now)
+		} else {
+			err = api.pauses.PauseJob(request.Context(), tag, profileID, "operator", now)
+			if err == nil {
+				affected = 1
+			}
+		}
+	} else {
+		affected, err = api.pauses.ResumeJob(request.Context(), tag, profileID)
+	}
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, struct {
+		Tag       string         `json:"tag"`
+		ProfileID core.ProfileID `json:"profile_id,omitempty"`
+		Paused    bool           `json:"paused"`
+		Affected  int            `json:"affected"`
+	}{Tag: tag, ProfileID: profileID, Paused: paused, Affected: affected})
+}
+
+// hasJob reports whether the tag belongs to a runnable job.
+func (api *JobAPI) hasJob(tag string) bool {
+	if tag == "" {
+		return false
+	}
+	for _, definition := range api.workflow.Definitions() {
+		if definition.Tag == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (api *JobAPI) run(response http.ResponseWriter, request *http.Request) {

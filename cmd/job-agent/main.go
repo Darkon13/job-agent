@@ -172,6 +172,7 @@ const mainUsage = `job-agent — сервис автоматизации пои�
   check <config.json>                         проверить конфиг, ключи моделей и базу
   browser-state sanitize <state.json>         сжать browser storage state
   auth login|import|status|logout ...         вход в HeadHunter
+  jobs list|pause|resume ...                  список джоб и пауза
   captcha solve <application_id>              пройти проверку HH в браузере вручную
   captcha list                                отклики, ожидающие капчу
   db backup|restore ...                       обслуживание базы
@@ -225,6 +226,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		if err := runAuth(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "jobs" {
+		if err := runJobs(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -1072,11 +1079,18 @@ func main() {
 			return nil, fmt.Errorf("build conversation sync jobs: %w", err)
 		}
 		definitions = append(definitions, conversationDefinitions...)
-		harvestDefinitions, err := stateHarvestDefinitions(cfg)
+		systemDefinitions, err := profileSystemDefinitions(
+			cfg,
+			sessionRefreshers.Has,
+			func(profileID core.ProfileID) bool {
+				_, resolveErr := applicationTransports.ResolveVacancyReader(profileID)
+				return resolveErr == nil
+			},
+		)
 		if err != nil {
-			return nil, fmt.Errorf("build state harvest jobs: %w", err)
+			return nil, fmt.Errorf("build system profile jobs: %w", err)
 		}
-		definitions = append(definitions, harvestDefinitions...)
+		definitions = append(definitions, systemDefinitions...)
 		followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
 		if err != nil {
 			return nil, fmt.Errorf("build conversation follow-up selection jobs: %w", err)
@@ -1135,6 +1149,7 @@ func main() {
 		log.Fatalf("create scheduler: %v", err)
 	}
 	scheduler.SetGate(newApplicationBudgetGate(cfg, instances, store))
+	scheduler.SetPauseStore(store)
 	if err := scheduler.Sync(context.Background(), definitions); err != nil {
 		log.Fatalf("sync scheduled jobs: %v", err)
 	}
@@ -1156,11 +1171,14 @@ func main() {
 	}
 	// The state harvest is generated per profile instead of being declared as a
 	// config job, so its descriptions are built in.
-	jobDescriptions[stateHarvestJobTag+".chats"] = "Снятие состояния HH: обход чатов"
-	jobDescriptions[stateHarvestJobTag+".poll"] = "Снятие состояния HH: быстрый опрос непрочитанных"
-	jobDescriptions[stateHarvestJobTag+".applications"] = "Снятие состояния HH: состояния откликов"
-	jobDescriptions[stateHarvestJobTag+".activity"] = "Снятие состояния HH: активность и метрики"
+	jobDescriptions[systemJobPrefix+".state.chats"] = "Снятие состояния HH: обход чатов"
+	jobDescriptions[systemJobPrefix+".state.poll"] = "Снятие состояния HH: быстрый опрос непрочитанных"
+	jobDescriptions[systemJobPrefix+".state.applications"] = "Снятие состояния HH: состояния откликов"
+	jobDescriptions[systemJobPrefix+".state.activity"] = "Снятие состояния HH: активность и метрики"
+	jobDescriptions[systemJobPrefix+".session"] = "Обновление сессии HH"
+	jobDescriptions[systemJobPrefix+".validation"] = "Перепроверка вакансий с анкетами и тестами"
 	jobAPI.SetDescriptions(jobDescriptions)
+	jobAPI.SetPauses(store)
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
 	if err != nil {
@@ -2698,50 +2716,72 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 }
 
 const (
-	// stateHarvestJobTag prefixes the system jobs generated from the
-	// per-profile state_harvest policy. Pausing every sub-job of a profile can
-	// address the prefix as one logical job.
-	stateHarvestJobTag = "state-harvest"
+	// systemJobPrefix groups the schedules generated from the per-profile
+	// policies. Pausing the prefix addresses every generated job of a profile.
+	systemJobPrefix = "system"
 	// recentChatPollPages bounds the fast conversation poll to the newest chats;
 	// the unread pass inside discovery still covers the whole catalog.
 	recentChatPollPages = 3
 	// recentChatPollInterval is the internal cadence of that fast poll.
 	recentChatPollInterval = 2 * time.Minute
+	// sessionRefreshInterval keeps the stored HH browser session warm.
+	sessionRefreshInterval = 4 * time.Hour
+	// validationRefreshInterval rechecks vacancies that wait for a
+	// questionnaire or a test, so closed ones stop waiting for input.
+	validationRefreshInterval = 24 * time.Hour
+	validationRefreshCount    = 25
+	validationRefreshMinAge   = 24 * time.Hour
 )
 
-// stateHarvestDefinitions turns the per-profile state_harvest policy into the
-// system schedules that collect account state: a full conversation discovery, a
-// fast recent-chat poll, application state sync and activity snapshots. The
-// operator configures only the cadence; these jobs are never declared in the
-// config themselves.
-func stateHarvestDefinitions(cfg appconfig.Config) ([]jobscheduler.Definition, error) {
+// profileSystemDefinitions turns the per-profile policies into the system
+// schedules that keep an account fresh: the state harvest (conversations,
+// application states, activity) plus the HH session refresh and the recheck of
+// vacancies with pending questionnaires or tests. Operators configure only the
+// harvest cadence; these jobs are never declared in the config themselves.
+func profileSystemDefinitions(
+	cfg appconfig.Config,
+	canRefreshSession func(core.ProfileID) bool,
+	canCheckValidation func(core.ProfileID) bool,
+) ([]jobscheduler.Definition, error) {
 	definitions := make([]jobscheduler.Definition, 0)
 	for profileIndex, profile := range cfg.Profiles {
-		if !profile.Enabled || !profile.StateHarvest.HarvestEnabled() {
+		if !profile.Enabled {
 			continue
 		}
 		profileID := core.ProfileID(profile.Tag)
 		interval := profile.StateHarvest.HarvestInterval()
-		// A runnable job may not mix task types, so the harvest expands into
-		// one sub-job per task type under a shared "state-harvest" prefix.
+		// A runnable job may not mix task types, so each task type becomes its
+		// own sub-job under the shared "system" prefix.
 		entries := []struct {
-			suffix  string
-			action  core.TaskType
-			payload any
-			every   time.Duration
+			suffix      string
+			action      core.TaskType
+			payload     any
+			every       time.Duration
+			harvestOnly bool
+			capable     func(core.ProfileID) bool
 		}{
-			{"chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval},
-			{"poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
-			{"applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval},
-			{"activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval},
+			{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval, true, nil},
+			{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval, true, nil},
+			{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval, true, nil},
+			{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval, true, nil},
+			{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval, false, canRefreshSession},
+			{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
+				ProfileID: profileID, Count: validationRefreshCount, MinAge: core.Duration(validationRefreshMinAge),
+			}, validationRefreshInterval, false, canCheckValidation},
 		}
 		for _, entry := range entries {
+			if entry.harvestOnly && !profile.StateHarvest.HarvestEnabled() {
+				continue
+			}
+			if entry.capable != nil && !entry.capable(profileID) {
+				continue
+			}
 			payload, err := json.Marshal(entry.payload)
 			if err != nil {
-				return nil, fmt.Errorf("encode state harvest payload for profile %q: %w", profile.Tag, err)
+				return nil, fmt.Errorf("encode system job payload for profile %q: %w", profile.Tag, err)
 			}
 			definitions = append(definitions, jobscheduler.Definition{
-				JobTag:       stateHarvestJobTag + "." + entry.suffix,
+				JobTag:       systemJobPrefix + "." + entry.suffix,
 				TriggerIndex: triggerIndexForProfile(0, profileIndex, 1),
 				Interval:     entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
 				ProfileID: profileID, Payload: payload,

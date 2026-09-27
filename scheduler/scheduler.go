@@ -49,6 +49,21 @@ type IDGenerator interface {
 	NewID(prefix string) (string, error)
 }
 
+// Pause is one paused (job, profile) pair.
+type Pause struct {
+	JobTag    string
+	ProfileID core.ProfileID
+	Reason    string
+	CreatedAt time.Time
+}
+
+// PauseStore lists paused (job, profile) pairs. A paused schedule is skipped
+// and stays due, so resuming runs it right away instead of waiting for the
+// next occurrence.
+type PauseStore interface {
+	JobPauses(ctx context.Context) ([]Pause, error)
+}
+
 // Gate decides whether a due schedule may create its task. A denied entry is
 // skipped for this occurrence while the schedule still advances: the next cron
 // time gets a fresh decision.
@@ -57,11 +72,18 @@ type Gate interface {
 }
 
 type Scheduler struct {
-	store Store
-	queue broker.TaskQueue
-	clock Clock
-	ids   IDGenerator
-	gate  Gate
+	store  Store
+	queue  broker.TaskQueue
+	clock  Clock
+	ids    IDGenerator
+	gate   Gate
+	pauses PauseStore
+}
+
+// SetPauseStore attaches the store that reports paused jobs. Without it every
+// due schedule runs.
+func (scheduler *Scheduler) SetPauseStore(pauses PauseStore) {
+	scheduler.pauses = pauses
 }
 
 // SetGate attaches an optional gate that can pause scheduled task creation,
@@ -99,8 +121,22 @@ func (scheduler *Scheduler) ReconcileDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	paused := map[string]struct{}{}
+	if scheduler.pauses != nil {
+		items, err := scheduler.pauses.JobPauses(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, item := range items {
+			paused[item.JobTag+"\x00"+string(item.ProfileID)] = struct{}{}
+		}
+	}
 	advanced := 0
 	for _, entry := range entries {
+		if _, isPaused := paused[entry.JobTag+"\x00"+string(entry.ProfileID)]; isPaused {
+			// Leave the schedule due: resuming fires it immediately.
+			continue
+		}
 		schedule, err := parseSchedule(entry.Definition)
 		if err != nil {
 			return advanced, err

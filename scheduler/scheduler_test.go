@@ -143,6 +143,53 @@ func TestSchedulerRunsIntervalJobsFromTheirOwnCadence(t *testing.T) {
 	}
 }
 
+type mutablePauses struct{ items []scheduler.Pause }
+
+func (pauses *mutablePauses) JobPauses(context.Context) ([]scheduler.Pause, error) {
+	return pauses.items, nil
+}
+
+func TestSchedulerSkipsPausedJobsUntilResumed(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	clock := &mutableClock{now: time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)}
+	service, err := scheduler.New(store, store, clock, &sequenceIDs{})
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	pauses := &mutablePauses{items: []scheduler.Pause{{JobTag: "system.state.chats", ProfileID: "primary", Reason: "operator"}}}
+	service.SetPauseStore(pauses)
+	payload, _ := json.Marshal(map[string]string{"profile_id": "primary"})
+	if err := service.Sync(ctx, []scheduler.Definition{{
+		JobTag: "system.state.chats", TriggerIndex: 0, Interval: 10 * time.Minute,
+		ActionType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary", Payload: payload,
+	}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	clock.now = clock.now.Add(11 * time.Minute)
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 0 {
+		t.Fatalf("paused reconcile: count=%d err=%v", count, err)
+	}
+	if lease, found, err := store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "paused-worker", TaskType: core.TaskConversationDiscover, Now: clock.now, LeaseDuration: time.Minute,
+	}); err != nil || found {
+		t.Fatalf("paused job created a task: lease=%#v found=%t err=%v", lease, found, err)
+	}
+	// The paused schedule stays due, so resuming runs it right away.
+	pauses.items = nil
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
+		t.Fatalf("resumed reconcile: count=%d err=%v", count, err)
+	}
+}
+
 func TestSchedulerGateSkipsOccurrenceWithoutCreatingTask(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "job-agent.db")
