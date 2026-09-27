@@ -2198,6 +2198,10 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 	for _, search := range cfg.Searches {
 		searches[search.Tag] = search
 	}
+	configuredProfiles := make(map[core.ProfileID]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		configuredProfiles[core.ProfileID(profile.Tag)] = profile
+	}
 	routes := make([]workflow.ApplicationCampaignRoute, 0)
 	registered := make(map[core.SearchID]struct{})
 	ownedRoutes := make(map[core.SearchID]struct{})
@@ -2231,35 +2235,66 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			}
 		}
 		var platform core.Platform
+		jobRouteIDs := make([]core.SearchID, 0, len(expandedRoutes))
 		for _, value := range expandedRoutes {
 			search := searches[value]
-			searchID := core.SearchID(search.Tag)
 			instance := instances[search.Adapter]
 			if platform == "" {
 				platform = core.Platform(instance.Name())
 			}
-			if _, exists := registered[searchID]; exists {
-				continue
+			// A resume placeholder expands the route into one search per resume
+			// of every capable profile, so one search object serves several
+			// accounts without repetition in the config. A concrete resume (and
+			// every other source) keeps a single route under the first profile
+			// with read access.
+			type routeVariant struct {
+				profileID core.ProfileID
+				query     json.RawMessage
 			}
-			var searchProfileID core.ProfileID
-			for _, profile := range search.Profiles {
-				profileID := core.ProfileID(profile)
-				runtime := profiles[profileID]
-				if runtime.canReadVacancies() {
-					searchProfileID = profileID
-					break
+			variants := make([]routeVariant, 0, len(search.Profiles))
+			if hasResumePlaceholder(search.Query) {
+				for _, profile := range search.Profiles {
+					profileID := core.ProfileID(profile)
+					if !profiles[profileID].canReadVacancies() {
+						continue
+					}
+					resolved, err := resumeQueryVariants(search.Query, configuredProfiles[profileID])
+					if err != nil {
+						return nil, nil, nil, configuredJobs, fmt.Errorf("job %q route %q: %w", job.Tag, search.Tag, err)
+					}
+					for _, query := range resolved {
+						variants = append(variants, routeVariant{profileID: profileID, query: query})
+					}
+				}
+			} else {
+				for _, profile := range search.Profiles {
+					profileID := core.ProfileID(profile)
+					if profiles[profileID].canReadVacancies() {
+						variants = append(variants, routeVariant{profileID: profileID, query: search.Query})
+						break
+					}
 				}
 			}
-			if searchProfileID == "" {
+			if len(variants) == 0 {
 				logf("application campaign route %q is disabled until one of its profiles has read access", search.Tag)
 				runnable = false
 				continue
 			}
-			routes = append(routes, workflow.ApplicationCampaignRoute{
-				SearchID: searchID, Platform: core.Platform(instance.Name()), SearchProfileID: searchProfileID,
-				Query: search.Query, Searcher: instance,
-			})
-			registered[searchID] = struct{}{}
+			for index, variant := range variants {
+				routeID := core.SearchID(search.Tag)
+				if index > 0 {
+					routeID = core.SearchID(fmt.Sprintf("%s#%d", search.Tag, index+1))
+				}
+				jobRouteIDs = append(jobRouteIDs, routeID)
+				if _, exists := registered[routeID]; exists {
+					continue
+				}
+				routes = append(routes, workflow.ApplicationCampaignRoute{
+					SearchID: routeID, Platform: core.Platform(instance.Name()), SearchProfileID: variant.profileID,
+					Query: variant.query, Searcher: instance,
+				})
+				registered[routeID] = struct{}{}
+			}
 		}
 		if !runnable {
 			continue
@@ -2268,9 +2303,8 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 		for _, value := range job.Action.Profiles {
 			profileIDs = append(profileIDs, core.ProfileID(value))
 		}
-		routeIDs := make([]core.SearchID, 0, len(expandedRoutes))
-		for _, value := range expandedRoutes {
-			routeID := core.SearchID(value)
+		routeIDs := make([]core.SearchID, 0, len(jobRouteIDs))
+		for _, routeID := range jobRouteIDs {
 			routeIDs = append(routeIDs, routeID)
 			ownedRoutes[routeID] = struct{}{}
 		}
@@ -2311,6 +2345,71 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 		configuredJobs++
 	}
 	return routes, definitions, ownedRoutes, configuredJobs, nil
+}
+
+// hasResumePlaceholder reports whether the search resolves its resume per
+// profile instead of naming one concrete resume.
+func hasResumePlaceholder(query json.RawMessage) bool {
+	var parsed struct {
+		Source string `json:"source"`
+		Resume string `json:"resume"`
+	}
+	if err := json.Unmarshal(query, &parsed); err != nil {
+		return false
+	}
+	return parsed.Source == "similar_resume" &&
+		(parsed.Resume == hh.ResumePlaceholderProfile || parsed.Resume == hh.ResumePlaceholderAll)
+}
+
+// resumeQueryVariants expands the resume placeholder of a search for the
+// profile that will run it. A concrete resume and other sources pass through
+// unchanged; $profile yields the profile's own resume and $all yields one query
+// per resume declared by the profile.
+func resumeQueryVariants(query json.RawMessage, profile appconfig.Profile) ([]json.RawMessage, error) {
+	var parsed struct {
+		Source string `json:"source"`
+		Resume string `json:"resume"`
+	}
+	if err := json.Unmarshal(query, &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Source != "similar_resume" ||
+		(parsed.Resume != hh.ResumePlaceholderProfile && parsed.Resume != hh.ResumePlaceholderAll) {
+		return []json.RawMessage{query}, nil
+	}
+	resumes := make([]string, 0, 1+len(profile.ResumeAliases))
+	if strings.TrimSpace(profile.Resume) != "" {
+		resumes = append(resumes, profile.Resume)
+	}
+	if parsed.Resume == hh.ResumePlaceholderAll {
+		aliases := make([]string, 0, len(profile.ResumeAliases))
+		for _, value := range profile.ResumeAliases {
+			aliases = append(aliases, value)
+		}
+		sort.Strings(aliases)
+		for _, value := range aliases {
+			if value != "" && !slices.Contains(resumes, value) {
+				resumes = append(resumes, value)
+			}
+		}
+	}
+	if len(resumes) == 0 {
+		return nil, fmt.Errorf("profile %q has no resume for %s", profile.Tag, parsed.Resume)
+	}
+	variants := make([]json.RawMessage, 0, len(resumes))
+	for _, resume := range resumes {
+		document := make(map[string]any, 8)
+		if err := json.Unmarshal(query, &document); err != nil {
+			return nil, err
+		}
+		document["resume"] = resume
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			return nil, err
+		}
+		variants = append(variants, encoded)
+	}
+	return variants, nil
 }
 
 type profileRuntime struct {
