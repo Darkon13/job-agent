@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/Darkon13/job-agent/scheduler"
@@ -57,19 +58,50 @@ func (api *JobAPI) list(response http.ResponseWriter, request *http.Request) {
 			return
 		}
 		byTag := make(map[string][]workflow.JobSchedule)
+		system := make(map[string]workflow.JobRunDescriptor)
 		for _, entry := range entries {
 			schedule := workflow.JobSchedule{
 				TriggerIndex: entry.TriggerIndex, Expression: entry.Expression,
 				Timezone: entry.Timezone, NextRunAt: entry.NextRunAt,
+			}
+			if entry.Interval > 0 {
+				schedule.Interval = entry.Interval.String()
 			}
 			if entry.JitterMin > 0 || entry.JitterMax > 0 {
 				schedule.JitterMin = entry.JitterMin.String()
 				schedule.JitterMax = entry.JitterMax.String()
 			}
 			byTag[entry.JobTag] = append(byTag[entry.JobTag], schedule)
+			key := entry.JobTag + "\x00" + string(entry.ProfileID)
+			descriptor, exists := system[key]
+			if !exists {
+				descriptor = workflow.JobRunDescriptor{
+					Tag: entry.JobTag, TaskType: entry.ActionType, Platform: entry.Platform,
+					ProfileID: entry.ProfileID, Priority: entry.Priority,
+				}
+			}
+			descriptor.Schedules = append(descriptor.Schedules, schedule)
+			system[key] = descriptor
 		}
+		configuredTags := make(map[string]struct{}, len(items))
 		for index := range items {
 			items[index].Schedules = byTag[items[index].Tag]
+			configuredTags[items[index].Tag] = struct{}{}
+		}
+		// System schedules (for example the per-profile state harvest) are not
+		// declared in the config; surface them so the dashboard and CLI can
+		// show and pause them like any other job.
+		keys := make([]string, 0, len(system))
+		for key := range system {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			descriptor := system[key]
+			if _, configured := configuredTags[descriptor.Tag]; configured {
+				continue
+			}
+			items = append(items, descriptor)
 		}
 	}
 	for index := range items {

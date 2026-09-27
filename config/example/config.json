@@ -22,8 +22,13 @@
     {
       "tag": "example-marketplaces",
       "rules": [
-        {"platform": "hh", "employer_id": "example-id"},
-        {"name": "Example Marketplace"}
+        {
+          "platform": "hh",
+          "employer_id": "example-id"
+        },
+        {
+          "name": "Example Marketplace"
+        }
       ]
     }
   ],
@@ -38,15 +43,24 @@
         "message_template_file": "messages/backend.json",
         "employer_rules": [
           {
-            "employer_groups": ["example-marketplaces"],
+            "employer_groups": [
+              "example-marketplaces"
+            ],
             "action": "message_pool",
             "message_template_file": "messages/marketplace.json"
           }
         ],
         "allow_visibility_change": false,
         "qualification": {
-          "include_any": ["Go", "Golang", "Backend"],
-          "exclude_any": ["директор", "руководитель направления"]
+          "include_any": [
+            "Go",
+            "Golang",
+            "Backend"
+          ],
+          "exclude_any": [
+            "директор",
+            "руководитель направления"
+          ]
         },
         "timezone": "Europe/Moscow"
       },
@@ -54,7 +68,11 @@
         "allow_send": false,
         "allow_mark_read": false
       },
-      "enabled": true
+      "enabled": true,
+      "state_harvest": {
+        "enabled": true,
+        "interval": "1h"
+      }
     },
     {
       "tag": "secondary",
@@ -149,7 +167,10 @@
           "expression": "15 * * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
-          "jitter": {"min": "1m", "max": "10m"}
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
         }
       ],
       "concurrency": "forbid",
@@ -167,46 +188,15 @@
           "expression": "30 9 * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
-          "jitter": {"min": "1m", "max": "10m"}
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
         }
       ],
       "concurrency": "forbid",
       "action": {
         "type": "resume.publish",
-        "profile": "primary"
-      }
-    },
-    {
-      "tag": "observe-primary-activity",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "*/30 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once"
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "profile.activity.observe",
-        "profile": "primary"
-      }
-    },
-    {
-      "tag": "sync-primary-conversations",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "*/10 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once"
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "conversation.sync",
         "profile": "primary"
       }
     },
@@ -220,14 +210,23 @@
           "expression": "30 9 * * *",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
-          "jitter": {"min": "1m", "max": "10m"}
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
         }
       ],
       "concurrency": "forbid",
       "action": {
         "type": "application.campaign",
-        "profiles": ["primary", "secondary"],
-        "routes": ["golang-primary", "backend-fallback"],
+        "profiles": [
+          "primary",
+          "secondary"
+        ],
+        "routes": [
+          "golang-primary",
+          "backend-fallback"
+        ],
         "target_successful": 20,
         "max_in_flight": 3
       }
@@ -241,7 +240,10 @@
           "expression": "15 11 * * 1-5",
           "timezone": "Europe/Moscow",
           "misfire": "run_once",
-          "jitter": {"min": "1m", "max": "10m"}
+          "jitter": {
+            "min": "1m",
+            "max": "10m"
+          }
         }
       ],
       "concurrency": "forbid",
@@ -270,15 +272,22 @@
     {
       "tag": "golang-primary",
       "adapter": "hh-main",
-      "profiles": ["primary", "secondary"],
+      "profiles": [
+        "primary",
+        "secondary"
+      ],
       "priority": 100,
       "target_applications": 20,
       "fallback": "backend-fallback",
       "query": {
         "source": "global",
         "text": "Golang developer",
-        "area": ["1"],
-        "schedule": ["remote"],
+        "area": [
+          "1"
+        ],
+        "schedule": [
+          "remote"
+        ],
         "salary": 250000,
         "order_by": "publication_time",
         "period": 7,
@@ -289,14 +298,21 @@
     {
       "tag": "backend-fallback",
       "adapter": "hh-main",
-      "profiles": ["primary", "secondary"],
+      "profiles": [
+        "primary",
+        "secondary"
+      ],
       "priority": 50,
       "target_applications": 10,
       "query": {
         "source": "global",
         "text": "Backend developer",
-        "area": ["1"],
-        "schedule": ["remote"],
+        "area": [
+          "1"
+        ],
+        "schedule": [
+          "remote"
+        ],
         "order_by": "publication_time",
         "period": 7,
         "page_size": 20,

@@ -1072,6 +1072,11 @@ func main() {
 			return nil, fmt.Errorf("build conversation sync jobs: %w", err)
 		}
 		definitions = append(definitions, conversationDefinitions...)
+		harvestDefinitions, err := stateHarvestDefinitions(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build state harvest jobs: %w", err)
+		}
+		definitions = append(definitions, harvestDefinitions...)
 		followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
 		if err != nil {
 			return nil, fmt.Errorf("build conversation follow-up selection jobs: %w", err)
@@ -1143,12 +1148,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
-	jobDescriptions := make(map[string]string, len(cfg.Jobs))
+	jobDescriptions := make(map[string]string, len(cfg.Jobs)+1)
 	for _, job := range cfg.Jobs {
 		if description := strings.TrimSpace(job.Description); description != "" {
 			jobDescriptions[job.Tag] = description
 		}
 	}
+	// The state harvest is generated per profile instead of being declared as a
+	// config job, so its description is built in.
+	jobDescriptions["state-harvest"] = "Снятие состояния HH: чаты, отклики, активность"
 	jobAPI.SetDescriptions(jobDescriptions)
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
@@ -2681,6 +2689,52 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 				})
 			}
+		}
+	}
+	return definitions, nil
+}
+
+const (
+	// recentChatPollPages bounds the fast conversation poll to the newest chats;
+	// the unread pass inside discovery still covers the whole catalog.
+	recentChatPollPages = 3
+	// recentChatPollInterval is the internal cadence of that fast poll.
+	recentChatPollInterval = 2 * time.Minute
+)
+
+// stateHarvestDefinitions turns the per-profile state_harvest policy into the
+// system schedules that collect account state: a full conversation discovery, a
+// fast recent-chat poll, application state sync and activity snapshots. The
+// operator configures only the cadence; these jobs are never declared in the
+// config themselves.
+func stateHarvestDefinitions(cfg appconfig.Config) ([]jobscheduler.Definition, error) {
+	definitions := make([]jobscheduler.Definition, 0)
+	for profileIndex, profile := range cfg.Profiles {
+		if !profile.Enabled || !profile.StateHarvest.HarvestEnabled() {
+			continue
+		}
+		profileID := core.ProfileID(profile.Tag)
+		interval := profile.StateHarvest.HarvestInterval()
+		entries := []struct {
+			action  core.TaskType
+			payload any
+			every   time.Duration
+		}{
+			{core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval},
+			{core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
+			{core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval},
+			{core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval},
+		}
+		for index, entry := range entries {
+			payload, err := json.Marshal(entry.payload)
+			if err != nil {
+				return nil, fmt.Errorf("encode state harvest payload for profile %q: %w", profile.Tag, err)
+			}
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag: "state-harvest", TriggerIndex: triggerIndexForProfile(index, profileIndex, len(entries)),
+				Interval: entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
+				ProfileID: profileID, Payload: payload,
+			})
 		}
 	}
 	return definitions, nil

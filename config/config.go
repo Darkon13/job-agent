@@ -313,9 +313,32 @@ type Profile struct {
 	Bootstrap           *ProfileBootstrap  `json:"bootstrap,omitempty"`
 	Applications        ApplicationPolicy  `json:"applications,omitempty"`
 	Conversations       ConversationPolicy `json:"conversations,omitempty"`
+	StateHarvest        StateHarvestPolicy `json:"state_harvest,omitempty"`
 	Answers             *AnswerPolicy      `json:"answers,omitempty"`
 	Contacts            *ProfileContacts   `json:"contacts,omitempty"`
 	resolvedResumeFacts *ApplicationResumeFacts
+}
+
+// StateHarvestPolicy is the per-profile system schedule that collects the
+// account state: conversations, application states and activity. It is enabled
+// by default, so a profile only opts out or changes the cadence.
+type StateHarvestPolicy struct {
+	Enabled  *bool         `json:"enabled,omitempty"`
+	Interval core.Duration `json:"interval,omitempty"`
+}
+
+// HarvestEnabled reports whether the system state collection runs for the
+// profile. An absent setting means enabled.
+func (policy StateHarvestPolicy) HarvestEnabled() bool {
+	return policy.Enabled == nil || *policy.Enabled
+}
+
+// HarvestInterval returns the configured cadence, defaulting to one hour.
+func (policy StateHarvestPolicy) HarvestInterval() time.Duration {
+	if interval := policy.Interval.Value(); interval > 0 {
+		return interval
+	}
+	return time.Hour
 }
 
 // ProfileContacts are sender contacts rendered into letters and masked for
@@ -1567,6 +1590,9 @@ func (c Config) Validate() error {
 				}
 				seen[term] = struct{}{}
 			}
+		}
+		if interval := profile.StateHarvest.Interval.Value(); interval > 0 && interval < time.Minute {
+			return fmt.Errorf("profile %q state_harvest interval must be at least 1m", profile.Tag)
 		}
 		profiles[profile.Tag] = struct{}{}
 		profileConfigs[profile.Tag] = profile

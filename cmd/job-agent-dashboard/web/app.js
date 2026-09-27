@@ -505,7 +505,12 @@ function jobScheduleLines(item) {
   const seen = new Set();
   const lines = [];
   for (const schedule of item.schedules || []) {
-    const parts = [`${schedule.expression} · ${schedule.timezone}`];
+    // Interval schedules are timers ("каждые 30 мин"), cron schedules show
+    // their expression and timezone.
+    const cadence = schedule.interval
+      ? `каждые ${formatDuration(schedule.interval)}`
+      : `${schedule.expression} · ${schedule.timezone}`;
+    const parts = [cadence];
     if (schedule.jitter_min || schedule.jitter_max) {
       const min = schedule.jitter_min ? formatDuration(schedule.jitter_min) : "0 с";
       const max = schedule.jitter_max ? formatDuration(schedule.jitter_max) : min;

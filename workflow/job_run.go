@@ -43,8 +43,9 @@ type JobRunDefinition struct {
 // window that follows.
 type JobSchedule struct {
 	TriggerIndex int       `json:"trigger_index"`
-	Expression   string    `json:"expression"`
-	Timezone     string    `json:"timezone"`
+	Expression   string    `json:"expression,omitempty"`
+	Interval     string    `json:"interval,omitempty"`
+	Timezone     string    `json:"timezone,omitempty"`
 	NextRunAt    time.Time `json:"next_run_at"`
 	JitterMin    string    `json:"jitter_min,omitempty"`
 	JitterMax    string    `json:"jitter_max,omitempty"`
