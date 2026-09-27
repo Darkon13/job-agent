@@ -71,6 +71,7 @@ func TestRunProfileListAndShow(t *testing.T) {
 func TestRunProfileAddDrivesDraftOnboarding(t *testing.T) {
 	var created map[string]string
 	applied := ""
+	restart := false
 	inputs := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/version", func(response http.ResponseWriter, _ *http.Request) {
@@ -115,11 +116,13 @@ func TestRunProfileAddDrivesDraftOnboarding(t *testing.T) {
 	mux.HandleFunc("POST /api/v1/profile-drafts/secondary/apply", func(response http.ResponseWriter, request *http.Request) {
 		var body struct {
 			Primary string `json:"primary_resume"`
+			Restart bool   `json:"restart"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Errorf("decode apply request: %v", err)
 		}
 		applied = body.Primary
+		restart = body.Restart
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"tag": "secondary", "platform": "hh", "adapter": "hh-main",
 			"state_file": "/store/secondary/state.json", "status": "applied",
@@ -135,16 +138,16 @@ func TestRunProfileAddDrivesDraftOnboarding(t *testing.T) {
 		return value, nil
 	}
 	var output strings.Builder
-	if err := runProfileAddWith(context.Background(), []string{"secondary", "--api", server.URL}, &output, server.Client(), prompt); err != nil {
+	if err := runProfileAddWith(context.Background(), []string{"secondary", "--api", server.URL, "--restart"}, &output, server.Client(), prompt); err != nil {
 		t.Fatalf("profile add: %v", err)
 	}
 	if created["tag"] != "secondary" {
 		t.Fatalf("draft request = %#v", created)
 	}
-	if applied != "resume-8" {
-		t.Fatalf("applied primary = %q", applied)
+	if applied != "resume-8" || !restart {
+		t.Fatalf("applied primary = %q restart=%t", applied, restart)
 	}
-	for _, want := range []string{"DRAFT tag=secondary", "IDENTITY Антон Шумаков", "RESUME Go developer (resume-9)", "APPLIED tag=secondary status=applied"} {
+	for _, want := range []string{"DRAFT tag=secondary", "IDENTITY Антон Шумаков", "RESUME Go developer (resume-9)", "APPLIED tag=secondary status=applied", "backend перезапускается"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("output misses %q:\n%s", want, output.String())
 		}

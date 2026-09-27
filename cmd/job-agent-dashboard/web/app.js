@@ -2113,6 +2113,14 @@ function renderDrafts() {
       save.type = "button";
       save.addEventListener("click", () => applyDraft(draft.tag));
       actions.append(save);
+      const restartLabel = document.createElement("label");
+      restartLabel.className = "draft-restart";
+      const restartBox = document.createElement("input");
+      restartBox.type = "checkbox";
+      restartBox.id = `draft-restart-${draft.tag}`;
+      restartBox.checked = true;
+      restartLabel.append(restartBox, text("span", "перезапустить сервис (профиль подключится сразу)"));
+      card.append(restartLabel);
     }
     const remove = text("button", "Удалить", "secondary compact");
     remove.type = "button";
@@ -2188,19 +2196,48 @@ async function finishDraftSession(tag) {
 
 async function applyDraft(tag) {
   const primary = state.draftPrimary.get(tag) || "";
+  const restartBox = document.getElementById(`draft-restart-${tag}`);
+  const restart = !restartBox || restartBox.checked;
   setDraftStep(`сохраняю профиль «${tag}»…`);
+  let applied = null;
   try {
-    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
+    applied = await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ primary_resume: primary }),
+      body: JSON.stringify({ primary_resume: primary, restart }),
     });
-    setDraftStep(`профиль «${tag}» сохранён в profile-store. Перезапустите backend, чтобы он подключился.`);
   } catch (error) {
     setDraftStep(`не удалось сохранить профиль: ${error.message}`);
+    return;
   }
   await refreshDrafts();
   await refreshProfileCatalog();
+  if (!applied.restart_scheduled) {
+    setDraftStep(`профиль «${tag}» сохранён в profile-store. Перезапустите backend, чтобы он подключился.`);
+    return;
+  }
+  setDraftStep(`профиль «${tag}» сохранён, backend перезапускается…`);
+  await waitForBackendRestart(tag);
+}
+
+// waitForBackendRestart polls the version endpoint while the supervisor starts
+// the process again, then refreshes every view that depends on the profile.
+async function waitForBackendRestart(tag) {
+  const started = Date.now();
+  while (Date.now() - started < 120_000) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2_000));
+    try {
+      const version = await request("/api/v1/version");
+      if (version && version.version) {
+        setDraftStep(`backend снова доступен (${version.version}); профиль «${tag}» подключён.`);
+        await refreshSummary();
+        await refreshProfileCatalog();
+        await refreshDrafts();
+        return;
+      }
+    } catch (_) { /* the backend is still down, keep waiting */ }
+  }
+  setDraftStep("backend не поднялся за 2 минуты — проверьте контейнер и логи.");
 }
 
 async function deleteDraft(tag) {

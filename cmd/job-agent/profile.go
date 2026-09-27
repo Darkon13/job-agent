@@ -98,6 +98,7 @@ func runProfileAddWith(ctx context.Context, args []string, output io.Writer, cli
 	apiURL := flags.String("api", "http://127.0.0.1:8080", "job-agent backend URL")
 	adapterTag := flags.String("adapter", "", "adapter tag (default: the first HH adapter)")
 	primary := flags.String("primary", "", "platform resume id of the primary resume")
+	restart := flags.Bool("restart", false, "restart the backend after saving the profile so it is bound immediately")
 	imageProtocol := flags.String("image-protocol", "auto", "auto, kitty, sixel, unicode or file")
 	tag := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -160,11 +161,16 @@ func runProfileAddWith(ctx context.Context, args []string, output io.Writer, cli
 		}
 		primaryID = draft.Resumes[index-1].ID
 	}
+	var applied profileDraftView
 	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/profile-drafts/"+url.PathEscape(tag)+"/apply",
-		map[string]string{"primary_resume": primaryID}, &draft); err != nil {
+		map[string]any{"primary_resume": primaryID, "restart": *restart}, &applied); err != nil {
 		return fmt.Errorf("apply profile draft: %w", err)
 	}
-	fmt.Fprintf(output, "APPLIED tag=%s status=%s; профиль появится после перезапуска backend\n", draft.Tag, draft.Status)
+	if *restart {
+		fmt.Fprintf(output, "APPLIED tag=%s status=%s; backend перезапускается — профиль подключится сам\n", applied.Tag, applied.Status)
+		return nil
+	}
+	fmt.Fprintf(output, "APPLIED tag=%s status=%s; перезапустите backend, чтобы профиль подключился\n", applied.Tag, applied.Status)
 	return nil
 }
 
