@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -1169,16 +1170,14 @@ func main() {
 			jobDescriptions[job.Tag] = description
 		}
 	}
-	// The state harvest is generated per profile instead of being declared as a
-	// config job, so its descriptions are built in.
-	jobDescriptions[systemJobPrefix+".state.chats"] = "Снятие состояния HH: обход чатов"
-	jobDescriptions[systemJobPrefix+".state.poll"] = "Снятие состояния HH: быстрый опрос непрочитанных"
-	jobDescriptions[systemJobPrefix+".state.applications"] = "Снятие состояния HH: состояния откликов"
-	jobDescriptions[systemJobPrefix+".state.activity"] = "Снятие состояния HH: активность и метрики"
-	jobDescriptions[systemJobPrefix+".session"] = "Обновление сессии HH"
-	jobDescriptions[systemJobPrefix+".validation"] = "Перепроверка вакансий с анкетами и тестами"
+	// The system jobs are generated per profile instead of being declared as
+	// config jobs, so their descriptions are built in.
+	for tag, description := range systemJobDescriptions {
+		jobDescriptions[tag] = description
+	}
 	jobAPI.SetDescriptions(jobDescriptions)
 	jobAPI.SetPauses(store)
+	jobAPI.SetSystemTags(systemJobTags())
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
 	if err != nil {
@@ -2732,6 +2731,27 @@ const (
 	validationRefreshCount    = 25
 	validationRefreshMinAge   = 24 * time.Hour
 )
+
+// systemJobDescriptions are the built-in names of the generated system jobs.
+var systemJobDescriptions = map[string]string{
+	systemJobPrefix + ".state.chats":        "Снятие состояния HH: обход чатов",
+	systemJobPrefix + ".state.poll":         "Снятие состояния HH: быстрый опрос непрочитанных",
+	systemJobPrefix + ".state.applications": "Снятие состояния HH: состояния откликов",
+	systemJobPrefix + ".state.activity":     "Снятие состояния HH: активность и метрики",
+	systemJobPrefix + ".session":            "Обновление сессии HH",
+	systemJobPrefix + ".validation":         "Перепроверка вакансий с анкетами и тестами",
+}
+
+// systemJobTags lists every generated system job. The dashboard groups them
+// separately from the jobs declared in the configuration.
+func systemJobTags() []string {
+	tags := make([]string, 0, len(systemJobDescriptions))
+	for tag := range systemJobDescriptions {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	return tags
+}
 
 // profileSystemDefinitions turns the per-profile policies into the system
 // schedules that keep an account fresh: the state harvest (conversations,
