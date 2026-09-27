@@ -1222,18 +1222,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
-	jobDescriptions := make(map[string]string, len(cfg.Jobs)+1)
-	for _, job := range cfg.Jobs {
-		if description := strings.TrimSpace(job.Description); description != "" {
-			jobDescriptions[job.Tag] = description
-		}
-	}
-	// The system jobs are generated per profile instead of being declared as
-	// config jobs, so their descriptions are built in.
-	for tag, description := range systemJobDescriptions {
-		jobDescriptions[tag] = description
-	}
-	jobAPI.SetDescriptions(jobDescriptions)
+	jobAPI.SetDescriptions(configJobDescriptions(cfg))
 	jobAPI.SetPauses(store)
 	jobAPI.SetSystemTags(systemJobTags())
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
@@ -1263,6 +1252,7 @@ func main() {
 			return err
 		}
 		campaignDefinitions = campaignDefinitionsFresh
+		jobAPI.SetDescriptions(configJobDescriptions(fresh))
 		logf("campaign routes reloaded: %d definitions", len(campaignDefinitionsFresh))
 		return nil
 	}
@@ -2945,6 +2935,23 @@ const (
 )
 
 // systemJobDescriptions are the built-in names of the generated system jobs.
+// configJobDescriptions collects the operator-facing job names: the declared
+// descriptions plus the built-in labels of the generated system jobs. It is
+// rebuilt on config reload, so renaming a job in the config shows up without a
+// restart.
+func configJobDescriptions(cfg appconfig.Config) map[string]string {
+	descriptions := make(map[string]string, len(cfg.Jobs)+len(systemJobDescriptions))
+	for _, job := range cfg.Jobs {
+		if description := strings.TrimSpace(job.Description); description != "" {
+			descriptions[job.Tag] = description
+		}
+	}
+	for tag, description := range systemJobDescriptions {
+		descriptions[tag] = description
+	}
+	return descriptions
+}
+
 var systemJobDescriptions = map[string]string{
 	systemJobPrefix + ".state.chats":        "Снятие состояния HH: обход чатов",
 	systemJobPrefix + ".state.poll":         "Снятие состояния HH: быстрый опрос непрочитанных",

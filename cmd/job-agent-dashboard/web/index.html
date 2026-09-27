@@ -139,20 +139,20 @@
     </section>
     <section aria-labelledby="jobs-title">
       <article class="panel">
-        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация</h2><p class="panel-description">Пользовательские джобы из конфигурации и системные (снятие состояния HH, обновление сессии, перепроверка анкет) срабатывают по cron или таймеру, либо вручную. Пользовательские джобы можно ставить на паузу по одной или всей группой; системные ставит на паузу сам сервис (например, при разлогине) — у оператора остаётся только снять её.</p></div><span class="tag">jobs</span></div>
+        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация</h2><p class="panel-description">Пользовательские джобы из конфигурации и системные (снятие состояния HH, обновление сессии, перепроверка анкет) срабатывают по cron или таймеру, либо вручную. Нажмите на строку джобы, чтобы раскрыть её: там профили, описание и точечные действия — запуск и пауза для каждого профиля отдельно. Счётчик у названия показывает активные профили из привязанных. Пользовательские джобы можно ставить на паузу целиком или по одному профилю; системные ставит на паузу сам сервис (например, при разлогине) — у оператора остаётся только снять её.</p></div><span class="tag">jobs</span></div>
         <div class="jobs-group">
           <div class="jobs-group-heading">
             <h3>Пользовательские</h3>
             <button id="jobs-pause-user" class="secondary compact" type="button">Поставить все на паузу</button>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>Job</th><th>Действие и параметры</th><th>Профиль</th><th>Расписание</th><th>Следующий запуск</th><th>Пауза</th><th>Запуск</th></tr></thead><tbody id="jobs-user"></tbody></table></div>
+          <div class="table-wrap"><table class="jobs-table"><thead><tr><th>Job</th><th>Осталось</th><th>Состояние</th><th class="jobs-run-column">Запуск</th></tr></thead><tbody id="jobs-user"></tbody></table></div>
         </div>
         <div class="jobs-group">
           <div class="jobs-group-heading">
             <h3>Системные</h3>
             <button id="jobs-pause-system" class="secondary compact" type="button" hidden>Снять паузу со всех</button>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>Job</th><th>Действие и параметры</th><th>Профиль</th><th>Расписание</th><th>Следующий запуск</th><th>Пауза</th><th>Запуск</th></tr></thead><tbody id="jobs-system"></tbody></table></div>
+          <div class="table-wrap"><table class="jobs-table"><thead><tr><th>Job</th><th>Осталось</th><th>Состояние</th><th class="jobs-run-column">Запуск</th></tr></thead><tbody id="jobs-system"></tbody></table></div>
         </div>
       </article>
     </section>
