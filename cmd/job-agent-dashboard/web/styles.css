@@ -280,3 +280,35 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
 }
 .review-profile small { color: var(--muted); }
 .review-vacancy .review-cancel { justify-self: end; }
+
+.profile-catalog,
+#draft-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.profile-card-title {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.draft-resumes {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.draft-resumes label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}

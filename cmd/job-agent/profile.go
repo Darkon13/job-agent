@@ -8,8 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Darkon13/job-agent/presenter"
 )
 
 // profileCatalogResume is one resume of the account as the backend reports it.
@@ -50,15 +54,145 @@ type profileCatalogEntry struct {
 
 func runProfile(ctx context.Context, args []string, output io.Writer, client *http.Client) error {
 	if len(args) == 0 {
-		return errors.New("usage: job-agent profile list|show [flags]")
+		return errors.New("usage: job-agent profile list|show|add [flags]")
 	}
 	switch args[0] {
 	case "list":
 		return runProfileList(ctx, args[1:], output, client)
 	case "show":
 		return runProfileShow(ctx, args[1:], output, client)
+	case "add":
+		return runProfileAdd(ctx, args[1:], output, client)
 	default:
 		return fmt.Errorf("unknown profile command %q", args[0])
+	}
+}
+
+// profileDraftView mirrors the backend profile draft record.
+type profileDraftView struct {
+	Tag       string `json:"tag"`
+	Platform  string `json:"platform"`
+	Adapter   string `json:"adapter"`
+	StateFile string `json:"state_file"`
+	Identity  *struct {
+		DisplayName string `json:"display_name,omitempty"`
+		Email       string `json:"email,omitempty"`
+		Phone       string `json:"phone,omitempty"`
+		AccountHash string `json:"account_hash,omitempty"`
+		CapturedAt  string `json:"captured_at,omitempty"`
+	} `json:"identity,omitempty"`
+	Resumes []profileCatalogResume `json:"resumes"`
+	Status  string                 `json:"status"`
+}
+
+// runProfileAdd walks the onboarding flow from the terminal: it registers a
+// draft, drives the same interactive login the dashboard uses and applies the
+// profile fragment into the profile store.
+func runProfileAdd(ctx context.Context, args []string, output io.Writer, client *http.Client) error {
+	return runProfileAddWith(ctx, args, output, client, promptTTY)
+}
+
+func runProfileAddWith(ctx context.Context, args []string, output io.Writer, client *http.Client, prompt authPrompter) error {
+	flags := flag.NewFlagSet("job-agent profile add", flag.ContinueOnError)
+	flags.SetOutput(output)
+	apiURL := flags.String("api", "http://127.0.0.1:8080", "job-agent backend URL")
+	adapterTag := flags.String("adapter", "", "adapter tag (default: the first HH adapter)")
+	primary := flags.String("primary", "", "platform resume id of the primary resume")
+	imageProtocol := flags.String("image-protocol", "auto", "auto, kitty, sixel, unicode or file")
+	tag := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		tag = strings.TrimSpace(args[0])
+		args = args[1:]
+	}
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if tag == "" {
+		return errors.New("usage: job-agent profile add <tag> [--adapter tag] [--primary resume-id] [--api URL]")
+	}
+	protocol, err := presenter.ParseProtocol(*imageProtocol)
+	if err != nil {
+		return err
+	}
+	base, err := authBaseURL(*apiURL)
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	if err := checkAuthAPIVersion(ctx, client, base); err != nil {
+		return err
+	}
+	var draft profileDraftView
+	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/profile-drafts",
+		map[string]string{"tag": tag, "adapter": strings.TrimSpace(*adapterTag)}, &draft); err != nil {
+		return fmt.Errorf("create profile draft: %w", err)
+	}
+	fmt.Fprintf(output, "DRAFT tag=%s state=%s\n", draft.Tag, draft.StateFile)
+	if _, err := loginAuthSession(ctx, client, base, authSessionRequest{
+		Platform: draft.Platform, ProfileID: draft.Tag,
+	}, protocol, prompt, output); err != nil {
+		return err
+	}
+	// The post-login capture runs in the background, so refresh explicitly to
+	// show the account before choosing the primary resume.
+	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/profile-drafts/"+url.PathEscape(tag)+"/refresh", nil, &draft); err != nil {
+		return fmt.Errorf("capture profile identity: %w", err)
+	}
+	printProfileDraft(output, draft)
+	primaryID := strings.TrimSpace(*primary)
+	if primaryID == "" && len(draft.Resumes) > 1 {
+		for index, resume := range draft.Resumes {
+			label := resume.ID
+			if resume.Title != "" {
+				label = resume.Title + " (" + resume.ID + ")"
+			}
+			fmt.Fprintf(output, "  %d) %s\n", index+1, label)
+		}
+		value, err := prompt("Номер основного резюме: ")
+		if err != nil {
+			return err
+		}
+		index, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || index < 1 || index > len(draft.Resumes) {
+			return errors.New("primary resume must be one of the listed numbers")
+		}
+		primaryID = draft.Resumes[index-1].ID
+	}
+	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/profile-drafts/"+url.PathEscape(tag)+"/apply",
+		map[string]string{"primary_resume": primaryID}, &draft); err != nil {
+		return fmt.Errorf("apply profile draft: %w", err)
+	}
+	fmt.Fprintf(output, "APPLIED tag=%s status=%s; профиль появится после перезапуска backend\n", draft.Tag, draft.Status)
+	return nil
+}
+
+func printProfileDraft(output io.Writer, draft profileDraftView) {
+	if draft.Identity != nil {
+		parts := make([]string, 0, 4)
+		for _, value := range []string{draft.Identity.DisplayName, draft.Identity.Email, draft.Identity.Phone} {
+			if value = strings.TrimSpace(value); value != "" {
+				parts = append(parts, value)
+			}
+		}
+		if hash := strings.TrimSpace(draft.Identity.AccountHash); hash != "" {
+			parts = append(parts, "аккаунт "+hash)
+		}
+		if len(parts) != 0 {
+			fmt.Fprintf(output, "IDENTITY %s\n", strings.Join(parts, " · "))
+		}
+	}
+	if len(draft.Resumes) == 0 {
+		fmt.Fprintln(output, "RESUMES нет")
+		return
+	}
+	for _, resume := range draft.Resumes {
+		label := resume.ID
+		if resume.Title != "" {
+			label = resume.Title + " (" + resume.ID + ")"
+		}
+		fmt.Fprintf(output, "RESUME %s\n", label)
 	}
 }
 

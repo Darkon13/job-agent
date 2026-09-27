@@ -2,9 +2,9 @@
 
 Статус: `in_progress`. Credential record и JSON/dotenv reader/writer, persistent
 auth session, эфемерный challenge store, auth service и HTTP endpoints, HH
-browser login driver и CLI `job-agent auth` реализованы. Остаются SSE и
-dashboard wizard, refresh/revoke и OAuth exchange (недоступен для новых
-соискательских приложений HH).
+browser login driver, CLI `job-agent auth`, SSE, dashboard wizard и онбординг
+профиля через черновики реализованы. Остаются refresh/revoke и OAuth exchange
+(недоступен для новых соискательских приложений HH).
 
 Живой HH login, OAuth exchange, captcha и обновление токенов должны быть одним
 backend workflow. CLI и dashboard являются клиентами одной auth session, а не
@@ -127,6 +127,36 @@ quiet zone; captcha масштабируется без потери читае�
 попадают в постоянную БД и удаляются после успеха, отмены или timeout. Это
 ручное подтверждение, а не распознавание или обход captcha.
 
+## Онбординг нового профиля (черновики)
+
+Профиль можно добавить, не редактируя конфиг: dashboards и CLI создают
+черновик, backend сам выбирает путь сессии внутри profile store, а после входа
+пишет фрагмент конфига.
+
+```text
+POST   /api/v1/profile-drafts                 {"tag":"secondary","adapter":"hh-main"}
+GET    /api/v1/profile-drafts
+GET    /api/v1/profile-drafts/{tag}
+POST   /api/v1/profile-drafts/{tag}/refresh   снять identity и список резюме
+POST   /api/v1/profile-drafts/{tag}/apply     {"primary_resume":"..."}
+DELETE /api/v1/profile-drafts/{tag}
+```
+
+- тег — slug `^[a-z0-9][a-z0-9_-]{0,63}$`; он не может совпадать с уже
+  объявленным профилем;
+- путь сессии всегда `<profile_store.dir>/<tag>/state.json`; клиент не выбирает
+  путь на диске;
+- `POST /api/v1/auth/sessions` умеет стартовать вход для тега черновика, а
+  зарезервированные `state_file` берутся из конфига;
+- после завершения сессии auth service асинхронно вызывает capture hook:
+  читаются имя, маскированные контакты, хеш аккаунта и список резюме, черновик
+  переходит в `ready`; тот же шаг доступен явным `refresh`;
+- `apply` пишет `<profile_store.dir>/<tag>.json` атомарно с `0600`, не
+  перезаписывая чужой файл с другим содержимым, и переводит черновик в
+  `applied`;
+- применённый профиль подхватывается при рестарте backend: hot-add профилей
+  (транспорты, readers, scheduler) пока не реализован.
+
 ## Backend lifecycle
 
 Минимальная state machine:
@@ -181,6 +211,7 @@ per-profile lock и revision CAS; после частичного сбоя по�
    OAuth token exchange остаётся недоступным для новых приложений HH.
 4. ✅ Terminal presenter: рендеры Kitty, Sixel, Unicode и file, CLI
    `job-agent auth login|status` с TTY-prompts и проверкой API version.
-5. ⏳ Dashboard auth wizard и SSE.
+5. ✅ Dashboard auth wizard, SSE и онбординг профиля через черновики; CLI
+   `job-agent profile add|list|show`.
 6. ⏳ Refresh/revoke/logout; restart recovery опирается на durable session,
    полный browser E2E выполняется вручную через VNC.

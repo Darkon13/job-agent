@@ -188,59 +188,77 @@ func runAuthLoginWith(ctx context.Context, args []string, output io.Writer, clie
 	if err := checkAuthAPIVersion(ctx, client, base); err != nil {
 		return err
 	}
-	var session core.AuthSession
-	request := authSessionRequest{
+	session, err := loginAuthSession(ctx, client, base, authSessionRequest{
 		Platform: strings.TrimSpace(*platform), ProfileID: strings.TrimSpace(*profile),
 		CredentialReference: credentialReference, BrowserStateReference: strings.TrimSpace(*stateOutput),
 		TTL: strings.TrimSpace(*ttl),
+	}, protocol, prompt, output)
+	if err != nil {
+		return err
 	}
-	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/auth/sessions", request, &session); err != nil {
-		return fmt.Errorf("create auth session: %w", err)
+	fmt.Fprintf(output, "DONE status=%s credential=%s browser_state=%s\n",
+		session.Status, referenceOrNone(session.CredentialReference), referenceOrNone(session.BrowserStateReference))
+	return nil
+}
+
+// loginAuthSession creates one interactive session and drives it until it
+// settles. Both `auth login` and `profile add` share the same flow, so the two
+// entry points cannot drift apart.
+func loginAuthSession(
+	ctx context.Context,
+	client *http.Client,
+	base string,
+	create authSessionRequest,
+	protocol presenter.Protocol,
+	prompt authPrompter,
+	output io.Writer,
+) (core.AuthSession, error) {
+	var session core.AuthSession
+	if err := authJSON(ctx, client, http.MethodPost, base+"/api/v1/auth/sessions", create, &session); err != nil {
+		return core.AuthSession{}, fmt.Errorf("create auth session: %w", err)
 	}
 	fmt.Fprintf(output, "SESSION id=%s status=%s\n", session.ID, session.Status)
 	for {
 		switch session.Status {
 		case core.AuthSessionCompleted:
-			fmt.Fprintf(output, "DONE status=%s credential=%s browser_state=%s\n",
-				session.Status, referenceOrNone(session.CredentialReference), referenceOrNone(session.BrowserStateReference))
-			return nil
+			return session, nil
 		case core.AuthSessionFailed, core.AuthSessionExpired, core.AuthSessionCancelled:
-			return fmt.Errorf("auth session %s: %s %s", session.Status, session.FailureCategory, session.FailureMessage)
+			return session, fmt.Errorf("auth session %s: %s %s", session.Status, session.FailureCategory, session.FailureMessage)
 		case core.AuthSessionWaitingIdentifier:
 			value, err := prompt("Email HH: ")
 			if err != nil {
-				return err
+				return session, err
 			}
 			if err := authJSON(ctx, client, http.MethodPost, sessionInputURL(base, session.ID), authInputRequest{Kind: string(auth.InputIdentifier), Value: value}, &session); err != nil {
-				return err
+				return session, err
 			}
 		case core.AuthSessionWaitingOTP:
 			value, err := prompt("Код из письма или SMS: ")
 			if err != nil {
-				return err
+				return session, err
 			}
 			if err := authJSON(ctx, client, http.MethodPost, sessionInputURL(base, session.ID), authInputRequest{Kind: string(auth.InputOTP), Value: value}, &session); err != nil {
-				return err
+				return session, err
 			}
 		case core.AuthSessionWaitingPassword:
-			return errors.New("HH asked for a password; password login is not supported")
+			return session, errors.New("HH asked for a password; password login is not supported")
 		case core.AuthSessionWaitingCaptcha:
 			payload, err := authChallenge(ctx, client, base, session.ID)
 			if err != nil {
-				return err
+				return session, err
 			}
 			if err := renderChallenge(payload, protocol); err != nil {
-				return err
+				return session, err
 			}
 			value, err := prompt("Символы с картинки: ")
 			if err != nil {
-				return err
+				return session, err
 			}
 			if err := authJSON(ctx, client, http.MethodPost, sessionInputURL(base, session.ID), authInputRequest{Kind: string(auth.InputCaptcha), Value: value}, &session); err != nil {
-				return err
+				return session, err
 			}
 		default:
-			return fmt.Errorf("unexpected auth session status %q", session.Status)
+			return session, fmt.Errorf("unexpected auth session status %q", session.Status)
 		}
 	}
 }

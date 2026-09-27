@@ -19,6 +19,30 @@ type Descriptor interface {
 	Capabilities() []core.Capability
 }
 
+// ProfileIdentityResume is one resume of a platform account.
+type ProfileIdentityResume struct {
+	ID    string
+	Title string
+}
+
+// ProfileIdentitySnapshot is the safe, non-secret account summary captured
+// after a login: the display name, masked contacts, a short fingerprint and the
+// resume list. Tokens, cookies and full contact values never enter it.
+type ProfileIdentitySnapshot struct {
+	DisplayName string
+	Email       string
+	Phone       string
+	AccountHash string
+	Resumes     []ProfileIdentityResume
+	CapturedAt  time.Time
+}
+
+// ProfileIdentityReader reads the account summary through an authenticated
+// session. Only read operations are allowed.
+type ProfileIdentityReader interface {
+	ReadProfileIdentity(ctx context.Context, profileID core.ProfileID) (ProfileIdentitySnapshot, error)
+}
+
 type VacancySearcher interface {
 	ValidateSearch(query json.RawMessage) error
 	Search(ctx context.Context, profileID core.ProfileID, query json.RawMessage, cursor string) (core.SearchPage, error)

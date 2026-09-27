@@ -1062,6 +1062,7 @@ async function reconcileProfileState(resource) {
 }
 
 function profileDisplayName(profileID) {
+  if (state.draftLabels?.has(profileID)) return state.draftLabels.get(profileID);
   const profiles = state.summary?.profiles || [];
   const entry = profiles.find((item) => item && item.id === profileID);
   return (entry && entry.display_name) || profileID;
@@ -1554,6 +1555,8 @@ async function refreshSummary({ background = false } = {}) {
     state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
+    refreshProfileCatalog();
+    refreshDrafts();
     updateCaptchaWarning();
     updateAuthWarning();
     renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
@@ -1777,6 +1780,14 @@ setInterval(() => { if (!document.hidden) refreshConversations(); }, 10_000);
   stream.addEventListener("error", () => { /* EventSource reconnects on its own */ });
 })();
 
+// The profile onboarding state mirrors the backend drafts: the active draft
+// drives the shared login wizard, the primary map remembers the resume choice.
+if (!state.draftLabels) state.draftLabels = new Map();
+if (!state.draftPrimary) state.draftPrimary = new Map();
+if (!state.drafts) state.drafts = [];
+if (!state.activeDraft) state.activeDraft = "";
+if (!state.profileCatalog) state.profileCatalog = [];
+
 function renderAuthProfileOptions(profiles = []) {
   const select = document.getElementById("auth-profile");
   if (!select) return;
@@ -1854,6 +1865,9 @@ function renderAuthProfileOptions(profiles = []) {
         : "Вход выполнен. Сессия профиля сохранена.";
       refreshSummary();
       refreshProfileResources();
+      if (state.activeDraft && state.activeDraft === session.profile_id) {
+        finishDraftSession(session.profile_id);
+      }
     } else if (session.status === "failed") {
       resultLabel.textContent = `Вход не выполнен${session.failure_message ? `: ${session.failure_message}` : ""}. Можно начать заново.`;
     } else if (session.status === "expired") {
@@ -1879,11 +1893,13 @@ function renderAuthProfileOptions(profiles = []) {
     stream.addEventListener("error", () => setState("поток прерван, нажмите «Обновить статус»"));
   };
 
-  startButton.addEventListener("click", async () => {
-    const profile = profileSelect.value;
+  // beginAuth starts one interactive session and hands it to the shared
+  // wizard. The profile onboarding block calls it for a draft tag, so both
+  // entry points drive the same steps.
+  const beginAuth = async (profile) => {
     if (!profile) {
       setState("нет доступных профилей — проверьте конфигурацию");
-      return;
+      return false;
     }
     setState("создание сессии…");
     const response = await fetch("/api/v1/auth/sessions", {
@@ -1893,12 +1909,15 @@ function renderAuthProfileOptions(profiles = []) {
     });
     if (!response.ok) {
       setState(`ошибка создания сессии: ${response.status}`);
-      return;
+      return false;
     }
     const session = await response.json();
     renderSession(session);
     subscribe(session.id);
-  });
+    return true;
+  };
+  state.startAuthSession = beginAuth;
+  startButton.addEventListener("click", () => beginAuth(profileSelect.value));
 
   refreshButton.addEventListener("click", async () => {
     if (!sessionId) return;
@@ -1970,4 +1989,258 @@ function renderAuthProfileOptions(profiles = []) {
     }
     renderSession(await response.json());
   });
+})();
+
+// --- профили: каталог и онбординг через черновики -------------------------
+
+function profileSessionLabel(session) {
+  if (!session || !session.present) return "сессия: нет";
+  return `сессия: есть${session.modified_at ? ` (${formatDate(session.modified_at)})` : ""}`;
+}
+
+function profileCatalogIdentity(entry) {
+  const identity = entry.identity;
+  if (!identity) return "аккаунт ещё не входил";
+  const parts = [identity.display_name, identity.email, identity.phone].map(plainText).filter(Boolean);
+  if (identity.account_hash) parts.push(`аккаунт ${identity.account_hash}`);
+  return parts.length ? parts.join(" · ") : "данные аккаунта пусты";
+}
+
+function profileCatalogResumes(entry) {
+  const resumes = entry.resumes || [];
+  if (!resumes.length) return "резюме нет";
+  return resumes.map((resume) => {
+    const label = resume.title ? `${resume.title} (${compactID(resume.id)})` : compactID(resume.id);
+    return resume.primary ? `${label} — основное` : label;
+  }).join(", ");
+}
+
+function renderProfileCatalog(entries = []) {
+  const container = document.getElementById("profile-catalog");
+  if (!container) return;
+  if (!entries.length) {
+    container.replaceChildren(text("p", "Профили не объявлены. Добавьте первый ниже.", "muted"));
+    return;
+  }
+  const rows = entries.map((entry) => {
+    const card = document.createElement("div");
+    card.className = "profile-card";
+    const title = document.createElement("div");
+    title.className = "profile-card-title";
+    title.append(
+      text("strong", entry.tag || "—"),
+      text("span", `${entry.adapter || "—"}/${entry.platform || "—"}${entry.enabled ? "" : " · выключен"} · источник: ${entry.source || "config"}`, "muted"),
+    );
+    card.append(title);
+    card.append(text("div", profileCatalogIdentity(entry), "muted"));
+    card.append(text("div", `резюме: ${profileCatalogResumes(entry)}`, "muted"));
+    card.append(text("div", profileSessionLabel(entry.session), "muted"));
+    return card;
+  });
+  container.replaceChildren(...rows);
+}
+
+async function refreshProfileCatalog() {
+  try {
+    const payload = await request("/api/v1/profiles");
+    state.profileCatalog = payload.items || [];
+  } catch (_) {
+    return;
+  }
+  renderProfileCatalog(state.profileCatalog);
+}
+
+function draftIdentityLabel(draft) {
+  if (!draft.identity) return "";
+  const parts = [draft.identity.display_name, draft.identity.email, draft.identity.phone].map(plainText).filter(Boolean);
+  if (draft.identity.account_hash) parts.push(`аккаунт ${draft.identity.account_hash}`);
+  return parts.join(" · ");
+}
+
+function draftStatusLabel(status) {
+  return { pending: "ожидает входа", ready: "готов к сохранению", applied: "сохранён (нужен перезапуск)" }[status] || status || "—";
+}
+
+function renderDrafts() {
+  const container = document.getElementById("draft-list");
+  if (!container) return;
+  const drafts = state.drafts || [];
+  if (!drafts.length) {
+    container.replaceChildren(text("p", "Черновиков нет.", "muted"));
+    return;
+  }
+  container.replaceChildren(...drafts.map((draft) => {
+    const card = document.createElement("div");
+    card.className = "profile-card";
+    const title = document.createElement("div");
+    title.className = "profile-card-title";
+    title.append(text("strong", draft.tag), text("span", draftStatusLabel(draft.status), "muted"));
+    card.append(title);
+    if (draft.identity) card.append(text("div", draftIdentityLabel(draft) || "данные аккаунта пусты", "muted"));
+    const resumes = draft.resumes || [];
+    if (draft.status === "ready" && resumes.length) {
+      const list = document.createElement("div");
+      list.className = "draft-resumes";
+      for (const resume of resumes) {
+        const label = document.createElement("label");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = `draft-primary-${draft.tag}`;
+        radio.value = resume.id;
+        radio.checked = (state.draftPrimary.get(draft.tag) || resumes[0].id) === resume.id;
+        radio.addEventListener("change", () => state.draftPrimary.set(draft.tag, resume.id));
+        label.append(radio, text("span", resume.title ? `${resume.title} (${resume.id})` : resume.id));
+        list.append(label);
+      }
+      card.append(text("div", "Основное резюме:", "muted"), list);
+    } else if (draft.status === "ready") {
+      card.append(text("div", "У аккаунта нет резюме — профиль сохранится без резюме.", "muted"));
+    }
+    const actions = document.createElement("div");
+    actions.className = "auth-controls";
+    if (draft.status !== "applied") {
+      const login = text("button", draft.status === "pending" ? "Продолжить вход" : "Войти заново", "secondary compact");
+      login.type = "button";
+      login.addEventListener("click", () => startDraftSession(draft.tag));
+      actions.append(login);
+      const refresh = text("button", "Снять данные", "secondary compact");
+      refresh.type = "button";
+      refresh.addEventListener("click", () => captureDraft(draft.tag));
+      actions.append(refresh);
+    }
+    if (draft.status === "ready") {
+      const save = text("button", "Сохранить профиль");
+      save.type = "button";
+      save.addEventListener("click", () => applyDraft(draft.tag));
+      actions.append(save);
+    }
+    const remove = text("button", "Удалить", "secondary compact");
+    remove.type = "button";
+    remove.addEventListener("click", () => deleteDraft(draft.tag));
+    actions.append(remove);
+    card.append(actions);
+    return card;
+  }));
+}
+
+function setDraftStep(message) {
+  const element = document.getElementById("draft-step");
+  if (element) element.textContent = message;
+}
+
+async function refreshDrafts() {
+  try {
+    const payload = await request("/api/v1/profile-drafts");
+    state.drafts = payload.items || [];
+  } catch (_) {
+    return;
+  }
+  renderDrafts();
+}
+
+async function startDraftSession(tag) {
+  if (!tag) {
+    const input = document.getElementById("draft-tag");
+    tag = (input?.value || "").trim().toLowerCase();
+  }
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag)) {
+    setDraftStep("Тег должен быть коротким: строчные латинские буквы, цифры, дефис или подчёркивание.");
+    return;
+  }
+  state.draftLabels.set(tag, tag);
+  state.activeDraft = tag;
+  setDraftStep(`создаю сессию для «${tag}»…`);
+  const started = typeof state.startAuthSession === "function" ? await state.startAuthSession(tag) : false;
+  if (!started) {
+    setDraftStep(`не удалось начать вход для «${tag}»; попробуйте ещё раз.`);
+    state.activeDraft = "";
+    return;
+  }
+  setDraftStep("вход начат: отвечайте на шаги в блоке «Вход в HH».");
+  const section = document.getElementById("auth-section");
+  if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function captureDraft(tag) {
+  setDraftStep(`снимаю данные аккаунта «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/refresh`, { method: "POST" });
+    setDraftStep("данные аккаунта обновлены.");
+  } catch (error) {
+    setDraftStep(`не удалось снять данные: ${error.message}`);
+  }
+  await refreshDrafts();
+}
+
+async function finishDraftSession(tag) {
+  state.activeDraft = "";
+  setDraftStep(`вход выполнен, снимаю данные аккаунта «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/refresh`, { method: "POST" });
+    setDraftStep("вход выполнен: проверьте имя, выберите основное резюме и сохраните профиль.");
+  } catch (error) {
+    setDraftStep(`вход выполнен, но данные аккаунта не снялись: ${error.message}. Нажмите «Снять данные» в черновике.`);
+  }
+  await refreshDrafts();
+  const container = document.getElementById("draft-list");
+  if (container) container.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function applyDraft(tag) {
+  const primary = state.draftPrimary.get(tag) || "";
+  setDraftStep(`сохраняю профиль «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ primary_resume: primary }),
+    });
+    setDraftStep(`профиль «${tag}» сохранён в profile-store. Перезапустите backend, чтобы он подключился.`);
+  } catch (error) {
+    setDraftStep(`не удалось сохранить профиль: ${error.message}`);
+  }
+  await refreshDrafts();
+  await refreshProfileCatalog();
+}
+
+async function deleteDraft(tag) {
+  if (!globalThis.confirm(`Удалить черновик «${tag}»? Файл сессии останется на диске.`)) return;
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}`, { method: "DELETE" });
+    setDraftStep(`черновик «${tag}» удалён.`);
+  } catch (error) {
+    setDraftStep(`не удалось удалить черновик: ${error.message}`);
+  }
+  await refreshDrafts();
+}
+
+(() => {
+  const startButton = document.getElementById("draft-start");
+  if (!startButton) return;
+  const tagInput = document.getElementById("draft-tag");
+  const refreshButton = document.getElementById("profiles-refresh");
+  startButton.addEventListener("click", async () => {
+    const tag = (tagInput?.value || "").trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag)) {
+      setDraftStep("Тег должен быть коротким: строчные латинские буквы, цифры, дефис или подчёркивание.");
+      return;
+    }
+    setDraftStep(`создаю черновик «${tag}»…`);
+    try {
+      await request("/api/v1/profile-drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+    } catch (error) {
+      setDraftStep(`не удалось создать черновик: ${error.message}`);
+      return;
+    }
+    if (tagInput) tagInput.value = "";
+    await refreshDrafts();
+    await startDraftSession(tag);
+  });
+  refreshButton?.addEventListener("click", () => { refreshProfileCatalog(); refreshDrafts(); });
+  refreshProfileCatalog();
+  refreshDrafts();
 })();
