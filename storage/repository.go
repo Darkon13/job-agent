@@ -14,6 +14,7 @@ var (
 	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
 	ErrAuthSessionNotFound          = errors.New("auth session not found")
 	ErrApplicationRemoved           = errors.New("application was removed from the working set")
+	ErrConversationNotFound         = errors.New("conversation not found")
 )
 
 // RuntimeStats is an aggregate view intended for health checks and operator

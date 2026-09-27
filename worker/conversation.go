@@ -110,6 +110,21 @@ func NewConversationHandlers(repository storage.ConversationRepository, activity
 // ConfigureKnownAnswers enables reviewed text-button replies to conversation
 // questionnaires. Both the registry and the per-profile policy must be set;
 // otherwise sync never sends an automatic answer.
+// loadConversation loads a chat and reports whether it still exists. A chat is
+// deleted together with its application, so a pending task that refers to it is
+// already moot and must complete instead of failing.
+func (handlers *ConversationHandlers) loadConversation(ctx context.Context, id core.ConversationID) (core.Conversation, bool, error) {
+	conversation, err := handlers.repository.Conversation(ctx, id)
+	switch {
+	case err == nil:
+		return conversation, true, nil
+	case errors.Is(err, storage.ErrConversationNotFound):
+		return core.Conversation{}, false, nil
+	default:
+		return core.Conversation{}, false, err
+	}
+}
+
 func (handlers *ConversationHandlers) ConfigureKnownAnswers(registry *core.AnswerBlockRegistry, policy func(core.ProfileID) bool) {
 	if handlers == nil {
 		return
@@ -123,9 +138,12 @@ func (handlers *ConversationHandlers) Send(ctx context.Context, task core.Task) 
 	if err := decodeTaskPayload(task, &payload); err != nil {
 		return err
 	}
-	conversation, err := handlers.repository.Conversation(ctx, payload.ConversationID)
+	conversation, found, err := handlers.loadConversation(ctx, payload.ConversationID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return nil
 	}
 	text, err := handlers.resolver.Resolve(ctx, conversation, payload.Content)
 	if err != nil {
@@ -146,8 +164,14 @@ func (handlers *ConversationHandlers) FollowUp(ctx context.Context, task core.Ta
 	if outcome != workflow.FollowUpReady {
 		return nil
 	}
-	conversation, err := handlers.repository.Conversation(ctx, followUp.ConversationID)
+	conversation, found, err := handlers.loadConversation(ctx, followUp.ConversationID)
 	if err != nil {
+		return err
+	}
+	if !found {
+		// The chat disappeared with its application while the reminder was
+		// pending; the reminder itself is moot.
+		_, err := handlers.workflow.CancelFollowUp(ctx, followUp.ID, core.FollowUpConversationInactive)
 		return err
 	}
 	text, err := handlers.resolver.Resolve(ctx, conversation, followUp.Content)
@@ -173,9 +197,12 @@ func (handlers *ConversationHandlers) MarkRead(ctx context.Context, task core.Ta
 	if err := decodeTaskPayload(task, &payload); err != nil {
 		return err
 	}
-	conversation, err := handlers.repository.Conversation(ctx, payload.ConversationID)
+	conversation, found, err := handlers.loadConversation(ctx, payload.ConversationID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return nil
 	}
 	transport, err := handlers.transports.Resolve(conversation.ProfileID)
 	if err != nil {
@@ -286,9 +313,12 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	if err := decodeTaskPayload(task, &payload); err != nil {
 		return err
 	}
-	conversation, err := handlers.repository.Conversation(ctx, payload.ConversationID)
+	conversation, found, err := handlers.loadConversation(ctx, payload.ConversationID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return nil
 	}
 	transport, err := handlers.transports.Resolve(conversation.ProfileID)
 	if err != nil {

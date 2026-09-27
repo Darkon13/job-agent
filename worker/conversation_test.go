@@ -398,3 +398,44 @@ func TestConversationDiscoverHandlerToleratesStaleObservationTime(t *testing.T) 
 		t.Fatalf("sync tasks=%#v", queue.Tasks())
 	}
 }
+
+func TestConversationHandlersCompleteWhenChatIsGone(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, _, _, transport, clock := newConversationHandlersFixture(t)
+	now := clock.Now()
+	syncPayload, err := json.Marshal(core.ConversationIDPayload{ConversationID: "conversation-gone"})
+	if err != nil {
+		t.Fatalf("marshal sync payload: %v", err)
+	}
+	syncTask, err := core.NewTask(core.NewTaskParams{
+		ID: "task-sync-gone", Type: core.TaskConversationSync, IdempotencyKey: "sync-gone",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-gone",
+		Payload: syncPayload, AvailableAt: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("new sync task: %v", err)
+	}
+	if err := handlers.Sync(ctx, syncTask); err != nil {
+		t.Fatalf("a chat removed with its application must complete the sync: %v", err)
+	}
+	sendPayload, err := json.Marshal(core.ConversationSendPayload{
+		ConversationID: "conversation-gone", Content: core.MessageContent{Text: "Здравствуйте"},
+	})
+	if err != nil {
+		t.Fatalf("marshal send payload: %v", err)
+	}
+	sendTask, err := core.NewTask(core.NewTaskParams{
+		ID: "task-send-gone", Type: core.TaskConversationSend, IdempotencyKey: "send-gone",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-gone",
+		Payload: sendPayload, AvailableAt: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("new send task: %v", err)
+	}
+	if err := handlers.Send(ctx, sendTask); err != nil {
+		t.Fatalf("a missing chat must complete the send: %v", err)
+	}
+	if len(transport.commands) != 0 {
+		t.Fatalf("transport must not receive sends for a missing chat: %#v", transport.commands)
+	}
+}
