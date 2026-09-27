@@ -312,3 +312,12 @@ textarea:focus { outline: 2px solid var(--cyan); border-color: var(--cyan); }
   gap: 0.5rem;
   align-items: center;
 }
+
+.draft-restart {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

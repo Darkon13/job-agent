@@ -26,7 +26,8 @@ type ProfileDraftController interface {
 // ProfileDraftAPI exposes the dashboard-managed profiles before they become
 // config fragments. The state file path is always derived by the backend.
 type ProfileDraftAPI struct {
-	drafts ProfileDraftController
+	drafts  ProfileDraftController
+	restart Restarter
 }
 
 func NewProfileDraftAPI(drafts ProfileDraftController) (*ProfileDraftAPI, error) {
@@ -34,6 +35,15 @@ func NewProfileDraftAPI(drafts ProfileDraftController) (*ProfileDraftAPI, error)
 		return nil, errors.New("profile draft API requires a controller")
 	}
 	return &ProfileDraftAPI{drafts: drafts}, nil
+}
+
+// ConfigureRestart attaches the runtime restart hook used by the apply
+// endpoint when the operator asks for it.
+func (api *ProfileDraftAPI) ConfigureRestart(restarter Restarter) {
+	if api == nil {
+		return
+	}
+	api.restart = restarter
 }
 
 func (api *ProfileDraftAPI) Handler(next http.Handler) http.Handler {
@@ -63,6 +73,24 @@ type profileDraftCreateRequest struct {
 
 type profileDraftApplyRequest struct {
 	PrimaryResume string `json:"primary_resume,omitempty"`
+	// Restart asks the runtime to terminate after the fragment is written, so
+	// the supervisor starts the process with the new profile. New profiles are
+	// bound at startup only.
+	Restart bool `json:"restart,omitempty"`
+}
+
+// Restarter asks the runtime to restart after the current response is
+// delivered. The operator opts in explicitly; the supervisor is expected to
+// start the process again.
+type Restarter interface {
+	RequestRestart()
+}
+
+// profileDraftApplyView keeps the draft fields flat and reports whether a
+// restart was scheduled.
+type profileDraftApplyView struct {
+	core.ProfileDraft
+	RestartScheduled bool `json:"restart_scheduled,omitempty"`
 }
 
 func (api *ProfileDraftAPI) list(response http.ResponseWriter, request *http.Request) {
@@ -136,8 +164,13 @@ func (api *ProfileDraftAPI) apply(response http.ResponseWriter, request *http.Re
 		writeProfileDraftError(response, err)
 		return
 	}
+	restart := body.Restart && api.restart != nil
 	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, http.StatusOK, draft)
+	writeJSON(response, http.StatusOK, profileDraftApplyView{ProfileDraft: draft, RestartScheduled: restart})
+	if restart {
+		// The hook delays the shutdown, so the response reaches the client.
+		api.restart.RequestRestart()
+	}
 }
 
 func writeProfileDraftError(response http.ResponseWriter, err error) {

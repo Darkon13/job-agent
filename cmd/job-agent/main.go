@@ -1245,6 +1245,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile draft API: %v", err)
 	}
+	profileDraftAPI.ConfigureRestart(restartRequester{})
 	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)
@@ -1322,6 +1323,27 @@ func buildAPIHandler(
 	}
 	handler = httpapi.AccessLog(logger, handler)
 	return httpapi.RequestID(handler)
+}
+
+// restartRequester terminates this process after a short delay so the
+// supervisor (docker compose with restart: unless-stopped, systemd and so on)
+// starts it again with the new profile fragment. New profiles are bound at
+// startup only, so onboarding ends with one restart.
+type restartRequester struct{}
+
+func (restartRequester) RequestRestart() {
+	go func() {
+		time.Sleep(2 * time.Second)
+		logf("restart requested by profile onboarding: exiting for the supervisor")
+		process, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			logf("restart signal failed: %v", err)
+			return
+		}
+		if err := process.Signal(syscall.SIGTERM); err != nil {
+			logf("restart signal failed: %v", err)
+		}
+	}()
 }
 
 // buildProfileDraftWorkflow prepares the dashboard onboarding pipeline: it owns

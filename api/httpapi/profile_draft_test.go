@@ -20,6 +20,12 @@ type fakeDraftController struct {
 	applied string
 }
 
+type fakeRestarter struct {
+	requests int
+}
+
+func (restarter *fakeRestarter) RequestRestart() { restarter.requests++ }
+
 func newFakeDraftController() *fakeDraftController {
 	return &fakeDraftController{drafts: make(map[string]core.ProfileDraft)}
 }
@@ -100,6 +106,8 @@ func TestProfileDraftAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new api: %v", err)
 	}
+	restarter := &fakeRestarter{}
+	api.ConfigureRestart(restarter)
 	handler := api.Handler(nil)
 
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/profile-drafts", strings.NewReader(`{"tag":"secondary"}`))
@@ -137,6 +145,24 @@ func TestProfileDraftAPILifecycle(t *testing.T) {
 	handler.ServeHTTP(recorder, apply)
 	if recorder.Code != http.StatusOK || controller.applied != "resume-9" {
 		t.Fatalf("apply status = %d applied=%q body=%s", recorder.Code, controller.applied, recorder.Body.String())
+	}
+	// A plain apply must not restart the runtime.
+	if restarter.requests != 0 {
+		t.Fatalf("unexpected restart requests = %d", restarter.requests)
+	}
+	restart := httptest.NewRequest(http.MethodPost, "/api/v1/profile-drafts/secondary/apply", strings.NewReader(`{"primary_resume":"resume-9","restart":true}`))
+	restart.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, restart)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("restart apply status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var applied profileDraftApplyView
+	if err := json.NewDecoder(recorder.Body).Decode(&applied); err != nil || !applied.RestartScheduled {
+		t.Fatalf("restart apply view = %#v err=%v", applied, err)
+	}
+	if restarter.requests != 1 {
+		t.Fatalf("restart requests = %d", restarter.requests)
 	}
 
 	recorder = httptest.NewRecorder()
