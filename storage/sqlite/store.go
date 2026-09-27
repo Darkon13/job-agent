@@ -233,7 +233,10 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 	}
 	switch application.Status {
 	case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval, core.ApplicationSubmitted,
-		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed:
+		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed,
+		// A prepared application has never reached the platform; removing it is
+		// a local decision.
+		core.ApplicationReady:
 	default:
 		return core.ApplicationTombstone{}, false, fmt.Errorf("application %s is still active in status %s", id, application.Status)
 	}
