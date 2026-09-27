@@ -1155,8 +1155,11 @@ func main() {
 		}
 	}
 	// The state harvest is generated per profile instead of being declared as a
-	// config job, so its description is built in.
-	jobDescriptions["state-harvest"] = "Снятие состояния HH: чаты, отклики, активность"
+	// config job, so its descriptions are built in.
+	jobDescriptions[stateHarvestJobTag+".chats"] = "Снятие состояния HH: обход чатов"
+	jobDescriptions[stateHarvestJobTag+".poll"] = "Снятие состояния HH: быстрый опрос непрочитанных"
+	jobDescriptions[stateHarvestJobTag+".applications"] = "Снятие состояния HH: состояния откликов"
+	jobDescriptions[stateHarvestJobTag+".activity"] = "Снятие состояния HH: активность и метрики"
 	jobAPI.SetDescriptions(jobDescriptions)
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
 	authAPI, err := configureAuthAPI(cfg, instances, store)
@@ -2695,6 +2698,10 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 }
 
 const (
+	// stateHarvestJobTag prefixes the system jobs generated from the
+	// per-profile state_harvest policy. Pausing every sub-job of a profile can
+	// address the prefix as one logical job.
+	stateHarvestJobTag = "state-harvest"
 	// recentChatPollPages bounds the fast conversation poll to the newest chats;
 	// the unread pass inside discovery still covers the whole catalog.
 	recentChatPollPages = 3
@@ -2715,24 +2722,28 @@ func stateHarvestDefinitions(cfg appconfig.Config) ([]jobscheduler.Definition, e
 		}
 		profileID := core.ProfileID(profile.Tag)
 		interval := profile.StateHarvest.HarvestInterval()
+		// A runnable job may not mix task types, so the harvest expands into
+		// one sub-job per task type under a shared "state-harvest" prefix.
 		entries := []struct {
+			suffix  string
 			action  core.TaskType
 			payload any
 			every   time.Duration
 		}{
-			{core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval},
-			{core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
-			{core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval},
-			{core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval},
+			{"chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, interval},
+			{"poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
+			{"applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, interval},
+			{"activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID}, interval},
 		}
-		for index, entry := range entries {
+		for _, entry := range entries {
 			payload, err := json.Marshal(entry.payload)
 			if err != nil {
 				return nil, fmt.Errorf("encode state harvest payload for profile %q: %w", profile.Tag, err)
 			}
 			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: "state-harvest", TriggerIndex: triggerIndexForProfile(index, profileIndex, len(entries)),
-				Interval: entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
+				JobTag:       stateHarvestJobTag + "." + entry.suffix,
+				TriggerIndex: triggerIndexForProfile(0, profileIndex, 1),
+				Interval:     entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
 				ProfileID: profileID, Payload: payload,
 			})
 		}
