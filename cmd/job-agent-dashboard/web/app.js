@@ -945,17 +945,43 @@ function profileLatestSnapshot(profileID) {
   return profileSnapshots(profileID)[0] || null;
 }
 
-// profileMetricsSummary packs the collected gauges into one short line; the
+// profileScoreColor maps the activity score to a red-to-green hue so the
+// colour scale stays readable for any percentage.
+function profileScoreColor(score) {
+  const bounded = Math.max(0, Math.min(100, Number(score) || 0));
+  return `hsl(${Math.round(bounded * 1.35)} 70% 62%)`;
+}
+
+function profileMetric(label, value, delta = "", color = "") {
+  const block = document.createElement("div");
+  block.className = "metric";
+  block.append(text("span", label, "metric-label"));
+  const row = document.createElement("div");
+  row.className = "metric-value";
+  const strong = text("strong", value);
+  if (color) strong.style.color = color;
+  row.append(strong);
+  if (delta) row.append(text("small", delta, "metric-delta"));
+  block.append(row);
+  return block;
+}
+
+// profileMetrics renders the collected gauges as labelled counters; the
 // detailed snapshots live in the expanded row.
-function profileMetricsSummary(profileID) {
+function profileMetrics(profileID) {
   const snapshot = profileLatestSnapshot(profileID);
-  if (!snapshot) return "нет данных";
-  const parts = [];
-  if (typeof snapshot.score === "number") parts.push(`активность ${snapshot.score}%`);
-  parts.push(`просмотры ${counter(snapshot.views)}`);
-  parts.push(`приглашения ${counter(snapshot.invitations)}`);
-  if (snapshot.search_shows !== null && snapshot.search_shows !== undefined) parts.push(`показы ${snapshot.search_shows}`);
-  return parts.join(" · ");
+  if (!snapshot) return text("span", "нет данных", "muted");
+  const grid = document.createElement("div");
+  grid.className = "metric-grid";
+  if (typeof snapshot.score === "number") {
+    grid.append(profileMetric("активность", `${snapshot.score}%`, "", profileScoreColor(snapshot.score)));
+  }
+  grid.append(profileMetric("просмотры", counter(snapshot.views), snapshot.new_views ? `+${snapshot.new_views}` : ""));
+  grid.append(profileMetric("приглашения", counter(snapshot.invitations), snapshot.new_invitations ? `+${snapshot.new_invitations}` : ""));
+  if (snapshot.search_shows !== null && snapshot.search_shows !== undefined) {
+    grid.append(profileMetric("показы", String(snapshot.search_shows)));
+  }
+  return grid;
 }
 
 function profileRowSession(session) {
@@ -1012,7 +1038,7 @@ function renderProfileRow(entry) {
 
   const metrics = document.createElement("td");
   metrics.className = "profile-metrics";
-  metrics.append(text("span", profileMetricsSummary(entry.tag)));
+  metrics.append(profileMetrics(entry.tag));
 
   const session = document.createElement("td");
   session.append(text("span", profileRowSession(entry.session)));
@@ -1045,8 +1071,8 @@ function renderProfileDetail(entry) {
 
   const snapshots = profileSnapshots(entry.tag);
   if (snapshots.length) {
-    // The history is long; the row shows the recent trend, not every sample.
-    const recent = snapshots.slice(0, 10);
+    // The history is long; three recent samples are enough for a trend.
+    const recent = snapshots.slice(0, 3);
     cell.append(profileDetailTable("Снимки HH", ["Снято", "Окно", "Активность", "Показы", "Просмотры", "Приглашения"],
       recent.map((item) => [
         formatDate(item.observed_at),

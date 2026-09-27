@@ -345,7 +345,7 @@ td.task-actions > * + * { margin-left: .35rem; }
   color: var(--green);
 }
 .job-run:hover:not(:disabled) { border-color: var(--green); filter: none; }
-.job-detail-row td { padding: 0 0 .7rem; border-bottom: 1px solid var(--line); white-space: normal; }
+.job-detail-row td { padding: 0 0 .7rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
 .job-detail-profile {
   display: grid;
   gap: .4rem;
@@ -416,3 +416,15 @@ td.task-actions > * + * { margin-left: .35rem; }
 /* The profile tag is a second muted line, never glued to the name. */
 #application-table .application-profile strong { display: block; }
 #application-table .application-profile small { display: block; }
+
+/* Sections with more than one panel need their own spacing: panels are only
+   separated by the grid gap of <main>. */
+#profiles-section { display: grid; gap: 1.6rem; }
+
+/* Profile metrics read as labelled counters, not as one long line. */
+.metric-grid { display: flex; flex-wrap: wrap; gap: 1.1rem; align-items: flex-start; }
+.metric { display: grid; gap: .12rem; }
+.metric-label { color: var(--muted); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; }
+.metric-value { display: flex; align-items: baseline; gap: .3rem; }
+.metric-value strong { color: var(--text); font: 700 1.15rem/1.1 ui-monospace, monospace; }
+.metric-delta { color: var(--green); font: 700 .72rem ui-monospace, monospace; }
