@@ -135,7 +135,7 @@ function renderApplicationFilters(items = []) {
   }));
 }
 function visibleApplicationObjects() { return state.applicationObjects; }
-function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed"].includes(item.status); }
+function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed", "ready"].includes(item.status); }
 
 async function captureQuestionnaire(item, button) {
   button.disabled = true;
