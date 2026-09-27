@@ -174,6 +174,10 @@ func (api *JobAPI) setPaused(response http.ResponseWriter, request *http.Request
 		writeProblem(response, http.StatusNotFound, "job not found")
 		return
 	}
+	if paused && api.isSystem(tag) {
+		writeProblem(response, http.StatusConflict, "system jobs are paused by the service itself, not by the operator")
+		return
+	}
 	profileID := core.ProfileID(strings.TrimSpace(request.URL.Query().Get("profile_id")))
 	now := time.Now().UTC()
 	affected := 0
@@ -220,6 +224,12 @@ func (api *JobAPI) setGroupPaused(response http.ResponseWriter, request *http.Re
 	group := strings.TrimSpace(request.URL.Query().Get("group"))
 	if group != "system" && group != "user" {
 		writeProblem(response, http.StatusBadRequest, "job group must be system or user")
+		return
+	}
+	if paused && group == "system" {
+		// The service pauses system jobs itself (for example on logout); the
+		// operator only needs the recovery path.
+		writeProblem(response, http.StatusConflict, "system jobs are paused by the service itself, not by the operator")
 		return
 	}
 	now := time.Now().UTC()

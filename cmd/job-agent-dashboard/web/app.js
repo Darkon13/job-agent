@@ -545,9 +545,18 @@ function renderJobs(items = []) {
   for (const group of groups) {
     const groupItems = items.filter((item) => Boolean(item.system) === group.system).sort((left, right) => String(left.tag).localeCompare(String(right.tag)));
     const pausedCount = groupItems.filter((item) => item.paused).length;
-    group.button.textContent = pausedCount === groupItems.length && groupItems.length ? "Снять паузу со всех" : "Поставить все на паузу";
-    group.button.disabled = state.jobBusy.has(group.key) || groupItems.length === 0;
-    group.button.dataset.paused = pausedCount === groupItems.length && groupItems.length ? "1" : "";
+    if (group.system) {
+      // System jobs are paused by the service itself; the operator only gets a
+      // recovery action when something already paused them.
+      group.button.hidden = pausedCount === 0;
+      group.button.textContent = "Снять паузу со всех";
+      group.button.dataset.paused = "1";
+      group.button.disabled = state.jobBusy.has(group.key);
+    } else {
+      group.button.textContent = pausedCount === groupItems.length && groupItems.length ? "Снять паузу со всех" : "Поставить все на паузу";
+      group.button.disabled = state.jobBusy.has(group.key) || groupItems.length === 0;
+      group.button.dataset.paused = pausedCount === groupItems.length && groupItems.length ? "1" : "";
+    }
     if (!groupItems.length) {
       const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell);
       group.body.replaceChildren(row);
@@ -583,10 +592,13 @@ function renderJobRow(item) {
     } else {
       pauseCell.append(text("span", "работает", "muted"));
     }
-    const pauseToggle = text("button", paused ? "Снять паузу" : "Пауза", "secondary compact"); pauseToggle.type = "button";
-    pauseToggle.disabled = state.jobBusy.has(item.tag);
-    pauseToggle.addEventListener("click", () => toggleJobPause(item, !paused));
-    pauseCell.append(text("div", "", "muted")); pauseCell.lastChild.append(pauseToggle);
+    // System jobs are paused by the service; the operator can only release them.
+    if (paused || !item.system) {
+      const pauseToggle = text("button", paused ? "Снять паузу" : "Пауза", "secondary compact"); pauseToggle.type = "button";
+      pauseToggle.disabled = state.jobBusy.has(item.tag);
+      pauseToggle.addEventListener("click", () => toggleJobPause(item, !paused));
+      pauseCell.append(text("div", "", "muted")); pauseCell.lastChild.append(pauseToggle);
+    }
     const jobCell = document.createElement("td");
     if (item.description) {
       jobCell.append(text("div", item.description));
