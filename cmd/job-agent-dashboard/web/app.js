@@ -570,11 +570,40 @@ function updateApplicationProfileColumn() {
   if (table) table.classList.toggle("profile-hidden", Boolean(state.account));
 }
 function renderTasks(items = []) {
-  const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));
-  if (!queued.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 4; row.append(cell); elements.tasks.replaceChildren(row); return; }
-  elements.tasks.replaceChildren(...queued.map((item) => {
-    const row = document.createElement("tr"); row.append(text("td", taskTypeLabel(item.type)), statusCell(taskStatusLabel(item.status), `task-${item.status}`), text("td", String(item.priority)), text("td", String(item.count))); return row;
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 6; row.append(cell); elements.tasks.replaceChildren(row); return; }
+  elements.tasks.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.className = "task-actions";
+    actions.append(rowIcon("cancel", "Отменить задачу: она не будет выполнена", () => cancelTask(item)));
+    const profile = text("td", item.profile_id ? profileDisplayName(item.profile_id) : "—");
+    const availability = document.createElement("td");
+    const countdown = text("span", "", "countdown");
+    countdown.dataset.nextRun = item.available_at;
+    availability.append(countdown);
+    row.append(
+      text("td", taskTypeLabel(item.type)),
+      statusCell(taskStatusLabel(item.status), `task-${item.status}`),
+      profile,
+      availability,
+      text("td", String(item.attempts)),
+      actions,
+    );
+    return row;
   }));
+}
+
+// cancelTask removes a queued task from the execution queue; running and
+// finished tasks are rejected by the backend.
+async function cancelTask(item) {
+  if (!globalThis.confirm(`Отменить задачу «${taskTypeLabel(item.type)}»? Она не будет выполнена.`)) return;
+  try {
+    await enqueue(`/api/v1/tasks/${encodeURIComponent(item.id)}/cancel`, { reason: "cancelled from the dashboard" });
+    elements.connectionState.textContent = `Задача «${taskTypeLabel(item.type)}» отменена`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  }
 }
 function durationParts(value) {
   const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(value || "");
@@ -859,47 +888,38 @@ function renderJobRow(item) {
     if (!expanded) return [row];
     return [row, ...renderJobDetailRows(item)];
 }
-// renderJobDetailRows shows one line per bound profile as real table rows, so
-// the state and run controls stay in the same columns as the parent job row.
+// renderJobDetailRows shows the per-profile lines inside one cell: the info
+// stays on the left and the state and run controls on the right, so the parent
+// row keeps its columns and the block reads as part of the same job.
 function renderJobDetailRows(item) {
   const commands = Array.isArray(item.commands) ? item.commands : [];
   const profiles = jobProfiles(item);
-  const rows = [];
-  if (!profiles.length) {
-    const row = document.createElement("tr");
-    row.className = "job-detail-row job-detail-last";
-    const cell = text("td", "нет привязанных профилей", "muted");
-    cell.colSpan = 4;
-    row.append(cell);
-    rows.push(row);
-    return rows;
-  }
+  const row = document.createElement("tr");
+  row.className = "job-detail-row";
+  const cell = document.createElement("td");
+  cell.colSpan = 4;
+  const list = document.createElement("div");
+  list.className = "job-detail-list";
   for (const profileID of profiles) {
-    const row = document.createElement("tr");
-    row.className = "job-detail-row";
-    const info = document.createElement("td");
+    const line = document.createElement("div");
+    line.className = "job-detail-line";
+    const info = document.createElement("div");
     info.className = "job-detail-info-cell";
     info.append(text("strong", profileDisplayName(profileID)));
     const command = commands.find((entry) => entry.profile_id === profileID);
     const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
     if (summary) info.append(text("div", summary, "muted job-detail-info"));
-    const state = document.createElement("td");
-    state.className = "job-detail-state-cell";
-    state.append(...jobStateControl(item, profileID));
-    const run = document.createElement("td");
-    run.className = "job-run-cell";
-    run.append(jobRunButton(item, profileID));
-    row.append(info, document.createElement("td"), state, run);
-    rows.push(row);
+    const actions = document.createElement("div");
+    actions.className = "job-detail-actions";
+    actions.append(...jobStateControl(item, profileID), jobRunButton(item, profileID));
+    line.append(info, actions);
+    list.append(line);
   }
-  const scheduleRow = document.createElement("tr");
-  scheduleRow.className = "job-detail-row job-detail-last";
-  const scheduleCell = document.createElement("td");
-  scheduleCell.colSpan = 2;
-  scheduleCell.append(text("span", `расписание: ${jobScheduleTitle(item)}`, "muted"));
-  scheduleRow.append(scheduleCell, document.createElement("td"), document.createElement("td"));
-  rows.push(scheduleRow);
-  return rows;
+  if (!profiles.length) list.append(text("div", "нет привязанных профилей", "muted"));
+  list.append(text("div", `расписание: ${jobScheduleTitle(item)}`, "muted job-detail-schedule"));
+  cell.append(list);
+  row.append(cell);
+  return [row];
 }
 
 function renderFailedTasks(items = []) {
@@ -1628,10 +1648,9 @@ async function refreshReviewSessions(options = {}) {
     state.reviewSessions = append ? [...state.reviewSessions, ...items] : items;
     if (!append) state.cache.reviews = { key: cacheKey, at: Date.now(), items: state.reviewSessions };
     state.reviewHasMore = items.length === reviewPageSize;
-    elements.reviewMore.hidden = !state.reviewHasMore;
     elements.reviewState.textContent = state.reviewSessions.length
-      ? `Сессий: ${state.reviewSessions.length}${state.reviewHasMore ? "+" : ""}`
-      : "Нет сессий";
+      ? `Анкет: ${state.reviewSessions.length}${state.reviewHasMore ? "+" : ""}`
+      : "Анкет нет";
     renderReviewSessions();
   } catch (error) {
     elements.reviewState.textContent = error.message;
@@ -2050,19 +2069,19 @@ async function refreshSummary({ background = false } = {}) {
   if (state.cache.summary) {
     state.summary = state.cache.summary;
     renderAccountSwitcher(state.summary.profiles || []);
-    renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.summary.tasks || []);
+    renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.queuedTasks || []);
     renderCampaigns(state.summary.campaigns || []); renderProfiles();
   }
   try {
-    const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
-    state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
+    const [summary, failures, jobs, queued] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/tasks/queued?limit=100"), refreshApplications()]);
+    state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || []; state.queuedTasks = queued.items || [];
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
     refreshProfileCatalog();
     refreshDrafts();
     updateCaptchaWarning();
     updateAuthWarning();
-    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
+    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(state.queuedTasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
     elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { if (!background) elements.refresh.disabled = false; }
@@ -2248,7 +2267,6 @@ elements.reviewSearch.addEventListener("input", () => {
     refreshReviewSessions();
   }, 250);
 });
-elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
 refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary({ background: true }); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
 // The conversation list drives unread work, so it polls on its own faster
 // cadence; the SSE above only shortens the latency further.

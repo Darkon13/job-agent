@@ -17,7 +17,8 @@ import (
 )
 
 type failedTaskRepositoryStub struct {
-	items []storage.FailedTaskSummary
+	items  []storage.FailedTaskSummary
+	queued []storage.QueuedTaskSummary
 }
 
 type taskAPIClock struct{ now time.Time }
@@ -26,6 +27,61 @@ func (clock taskAPIClock) Now() time.Time { return clock.now }
 
 func (repository failedTaskRepositoryStub) ListFailedTasks(context.Context, int) ([]storage.FailedTaskSummary, error) {
 	return repository.items, nil
+}
+
+func (repository failedTaskRepositoryStub) ListQueuedTasks(context.Context, int) ([]storage.QueuedTaskSummary, error) {
+	return repository.queued, nil
+}
+
+func TestTaskAPIListsQueuedTasksAndCancelsThemByID(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
+	queue := brokermemory.NewQueue()
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "task-queued", Type: core.TaskApplicationSubmit, IdempotencyKey: "queued-key", Source: "test",
+		ProfileID: "primary", CorrelationID: "correlation-queued", Payload: json.RawMessage(`{}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+	if _, err := queue.Enqueue(ctx, task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	control, _ := workflow.NewTaskControlWorkflow(queue, taskAPIClock{now.Add(time.Second)})
+	api, err := NewTaskAPI(failedTaskRepositoryStub{queued: []storage.QueuedTaskSummary{{
+		ID: task.ID, Type: task.Type, Status: core.TaskNew, ProfileID: task.ProfileID,
+		AvailableAt: now, CreatedAt: now,
+	}}}, control)
+	if err != nil {
+		t.Fatalf("new task API: %v", err)
+	}
+	listResponse := httptest.NewRecorder()
+	api.Handler(nil).ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/queued", nil))
+	var listing struct {
+		Items []storage.QueuedTaskSummary `json:"items"`
+	}
+	if err := json.NewDecoder(listResponse.Body).Decode(&listing); err != nil || len(listing.Items) != 1 || listing.Items[0].ID != task.ID {
+		t.Fatalf("queued listing = %#v err=%v", listing, err)
+	}
+
+	cancel := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-queued/cancel", strings.NewReader(`{"reason":"junk"}`))
+	cancel.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	api.Handler(nil).ServeHTTP(recorder, cancel)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var result TaskControlResult
+	if err := json.NewDecoder(recorder.Body).Decode(&result); err != nil || result.Status != core.TaskDismissed {
+		t.Fatalf("cancel result = %#v err=%v", result, err)
+	}
+	// Repeating the cancel is a conflict, not a silent success.
+	recorder = httptest.NewRecorder()
+	repeat := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-queued/cancel", nil)
+	api.Handler(nil).ServeHTTP(recorder, repeat)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("second cancel status = %d", recorder.Code)
+	}
 }
 
 func TestTaskAPIListsAndControlsFailuresWithoutReturningPayload(t *testing.T) {
