@@ -93,11 +93,16 @@ func runJobsList(ctx context.Context, args []string, output io.Writer, client *h
 			name = item.Tag
 		}
 		fmt.Fprintf(output, "%-40s %-24s %-12s %s\n", item.Tag, item.TaskType, state, name)
+		seen := make(map[string]struct{}, len(item.Schedules))
 		for _, schedule := range item.Schedules {
 			cadence := schedule.Expression
 			if schedule.Interval != "" {
 				cadence = "каждые " + schedule.Interval
 			}
+			if _, exists := seen[cadence]; exists {
+				continue
+			}
+			seen[cadence] = struct{}{}
 			fmt.Fprintf(output, "    %s: %s\n", cadence, schedule.NextRunAt.Format(time.RFC3339))
 		}
 	}
