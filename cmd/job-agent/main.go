@@ -2441,6 +2441,27 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 	return routes, definitions, ownedRoutes, configuredJobs, nil
 }
 
+// activityMaintainQuery picks the global search the profile can use to warm up
+// its activity: the first configured global search that targets this profile
+// through the same adapter. A profile without such a search keeps an empty
+// query, and the maintenance job then reports zero candidates instead of
+// failing.
+func activityMaintainQuery(cfg appconfig.Config, profile appconfig.Profile) json.RawMessage {
+	for _, search := range cfg.Searches {
+		if search.Adapter != profile.Adapter || !slices.Contains(search.Profiles, profile.Tag) {
+			continue
+		}
+		var parsed struct {
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(search.Query, &parsed); err != nil || parsed.Source != "global" {
+			continue
+		}
+		return search.Query
+	}
+	return nil
+}
+
 // hasResumePlaceholder reports whether the search resolves its resume per
 // profile instead of naming one concrete resume.
 func hasResumePlaceholder(query json.RawMessage) bool {
@@ -3049,8 +3070,11 @@ func profileSystemDefinitions(cfg appconfig.Config, capabilities profileSystemCa
 			entries = append(entries, systemEntry{"resume-touch", core.TaskResumeTouch, core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID}, profile.ResumeTouch.JobInterval(defaultResumeTouchInterval), profile.ResumeTouch})
 		}
 		if profile.ActivityMaintain.JobEnabled(true) && capabilityAllows(capabilities.activityMaintain, profileID) {
+			// The handler opens real vacancies from a search query; without one
+			// it has no candidates and the job becomes a no-op.
 			entries = append(entries, systemEntry{"activity-maintain", core.TaskProfileActivityMaintain, core.ProfileActivityMaintainPayload{
 				ProfileID: profileID, Count: activityMaintainCount, Pause: core.Duration(activityMaintainPause),
+				Query: activityMaintainQuery(cfg, profile),
 			}, profile.ActivityMaintain.JobInterval(defaultActivityMaintainInterval), profile.ActivityMaintain})
 		}
 		if profile.ApplicationCleanup.JobEnabled(false) && capabilityAllows(capabilities.applicationCleanup, profileID) {
