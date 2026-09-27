@@ -4,7 +4,7 @@ const state = {
   applicationOffset: 0, applicationTotal: 0, applicationGroups: {}, applicationRequest: 0, applicationLoading: false,
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
-  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
+  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationRequest: 0, conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
   reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
@@ -718,7 +718,12 @@ function renderConversations(items = state.conversationItems) {
 // list. Filters and the search run in SQL, so pagination stays correct for
 // thousands of dialogs.
 async function refreshConversations({ append = false } = {}) {
-  if (state.conversationLoading) return;
+  if (append && state.conversationLoading) return;
+  // Non-append refreshes are sequenced instead of dropped: a filter change must
+  // not be swallowed by an in-flight poll, and an older response must never
+  // overwrite a newer list.
+  const requestID = (state.conversationRequest || 0) + 1;
+  state.conversationRequest = requestID;
   state.conversationLoading = true;
   const offset = append ? state.conversationItems.length : 0;
   const params = new URLSearchParams({ limit: "50", offset: String(offset) });
@@ -737,6 +742,7 @@ async function refreshConversations({ append = false } = {}) {
   }
   try {
     const page = await request(`/api/v1/conversations?${params}`);
+    if (state.conversationRequest !== requestID) return;
     const applied = append ? { items: page.items || [], hiddenUnread: 0 } : applyLocalReads(page.items || []);
     state.conversationItems = append ? [...state.conversationItems, ...applied.items] : applied.items;
     state.conversationTotal = Number(page.total || 0);
@@ -757,8 +763,10 @@ async function refreshConversations({ append = false } = {}) {
     renderConversations(state.conversationItems);
     renderAccountSwitcher(state.summary?.profiles || []);
   } catch (error) {
-    state.conversationTotal = state.conversationItems.length;
-    elements.conversationBulkState.textContent = error.message;
+    if (state.conversationRequest === requestID) {
+      state.conversationTotal = state.conversationItems.length;
+      elements.conversationBulkState.textContent = error.message;
+    }
   } finally {
     state.conversationLoading = false;
   }
@@ -1693,6 +1701,9 @@ elements.reviewSearch.addEventListener("input", () => {
 });
 elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
 refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary({ background: true }); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
+// The conversation list drives unread work, so it polls on its own faster
+// cadence; the SSE above only shortens the latency further.
+setInterval(() => { if (!document.hidden) refreshConversations(); }, 10_000);
 
 // Server-sent change notifications replace most of the polling latency; the
 // interval above stays as a safety net.
@@ -1713,7 +1724,7 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
       }
     }, 1200);
   });
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshSummary(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshSummary(); refreshConversations(); } });
   stream.addEventListener("error", () => { /* EventSource reconnects on its own */ });
 })();
 
