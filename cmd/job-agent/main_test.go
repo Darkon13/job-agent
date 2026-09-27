@@ -793,3 +793,50 @@ func TestResumeQueryVariantsExpandsPlaceholders(t *testing.T) {
 		t.Fatal("expected a profile without resumes to fail")
 	}
 }
+
+func TestActivityMaintainDefinitionsCarryTheGlobalSearch(t *testing.T) {
+	cfg := appconfig.Config{
+		Adapters: []appconfig.AdapterConfig{{Tag: "platform", Type: "platform"}},
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
+		Searches: []appconfig.Search{
+			{Tag: "similar", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{"source":"similar_resume","resume":"resume-1"}`)},
+			{Tag: "global-go", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{"source":"global","text":"Golang"}`)},
+		},
+	}
+	definitions, err := profileSystemDefinitions(cfg, profileSystemCapabilities{})
+	if err != nil {
+		t.Fatalf("definitions: %v", err)
+	}
+	var maintain *jobscheduler.Definition
+	for index := range definitions {
+		if definitions[index].JobTag == "system.activity-maintain" {
+			maintain = &definitions[index]
+		}
+	}
+	if maintain == nil {
+		t.Fatal("activity-maintain definition is missing")
+	}
+	var payload core.ProfileActivityMaintainPayload
+	if err := json.Unmarshal(maintain.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if string(payload.Query) != `{"source":"global","text":"Golang"}` {
+		t.Fatalf("activity-maintain query = %s", payload.Query)
+	}
+
+	// A profile without a global search keeps an empty query instead of failing.
+	cfg.Searches = cfg.Searches[:1]
+	definitions, err = profileSystemDefinitions(cfg, profileSystemCapabilities{})
+	if err != nil {
+		t.Fatalf("definitions without a global search: %v", err)
+	}
+	for index := range definitions {
+		if definitions[index].JobTag != "system.activity-maintain" {
+			continue
+		}
+		payload = core.ProfileActivityMaintainPayload{}
+		if err := json.Unmarshal(definitions[index].Payload, &payload); err != nil || len(payload.Query) != 0 {
+			t.Fatalf("empty query payload = %s err=%v", definitions[index].Payload, err)
+		}
+	}
+}
