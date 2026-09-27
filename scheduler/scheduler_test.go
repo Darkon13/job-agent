@@ -175,16 +175,25 @@ func TestSchedulerSkipsPausedJobsUntilResumed(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 	clock.now = clock.now.Add(11 * time.Minute)
-	if count, err := service.ReconcileDue(ctx); err != nil || count != 0 {
-		t.Fatalf("paused reconcile: count=%d err=%v", count, err)
+	if _, err := service.ReconcileDue(ctx); err != nil {
+		t.Fatalf("paused reconcile: %v", err)
 	}
 	if lease, found, err := store.Claim(ctx, broker.ClaimParams{
 		WorkerID: "paused-worker", TaskType: core.TaskConversationDiscover, Now: clock.now, LeaseDuration: time.Minute,
 	}); err != nil || found {
 		t.Fatalf("paused job created a task: lease=%#v found=%t err=%v", lease, found, err)
 	}
-	// The paused schedule stays due, so resuming runs it right away.
+	// A paused schedule keeps its cadence instead of piling up in the due
+	// queue: the next run is one interval later, and resuming runs it then.
+	entries, err := store.Schedules(ctx)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("schedules=%#v err=%v", entries, err)
+	}
+	if want := clock.now.Add(10 * time.Minute); !entries[0].NextRunAt.Equal(want) {
+		t.Fatalf("paused schedule next run=%s want=%s", entries[0].NextRunAt, want)
+	}
 	pauses.items = nil
+	clock.now = clock.now.Add(11 * time.Minute)
 	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
 		t.Fatalf("resumed reconcile: count=%d err=%v", count, err)
 	}

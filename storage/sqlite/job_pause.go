@@ -70,6 +70,29 @@ func (store *Store) ResumeJob(ctx context.Context, jobTag string, profileID core
 	return int(affected), nil
 }
 
+// TriggerScheduledJob makes the next reconcile of a resumed job run it
+// immediately instead of waiting for its next natural occurrence.
+func (store *Store) TriggerScheduledJob(ctx context.Context, jobTag string, profileID core.ProfileID, now time.Time) (int, error) {
+	if jobTag == "" {
+		return 0, fmt.Errorf("job trigger requires a job tag")
+	}
+	query := `UPDATE scheduled_jobs SET next_run_at = ?, updated_at = ? WHERE job_tag = ?`
+	args := []any{now.UnixNano(), now.UnixNano(), jobTag}
+	if profileID != "" {
+		query += ` AND profile_id = ?`
+		args = append(args, profileID)
+	}
+	result, err := store.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("trigger job %s: %w", jobTag, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count triggered rows for %s: %w", jobTag, err)
+	}
+	return int(affected), nil
+}
+
 // JobPauses lists every paused (job, profile) pair.
 func (store *Store) JobPauses(ctx context.Context) ([]scheduler.Pause, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT job_tag, profile_id, reason, created_at

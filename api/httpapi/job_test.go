@@ -52,6 +52,10 @@ func (pauses *jobPausesFake) ListJobPauses(context.Context) ([]storage.JobPause,
 	return pauses.items, nil
 }
 
+func (pauses *jobPausesFake) TriggerScheduledJob(context.Context, string, core.ProfileID, time.Time) (int, error) {
+	return 1, nil
+}
+
 type jobClock struct{ now time.Time }
 
 func (clock jobClock) Now() time.Time { return clock.now }

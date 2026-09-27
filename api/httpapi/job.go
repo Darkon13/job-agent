@@ -27,6 +27,8 @@ type JobPauseRepository interface {
 	PauseJobs(ctx context.Context, jobTag string, reason string, now time.Time) (int, error)
 	ResumeJob(ctx context.Context, jobTag string, profileID core.ProfileID) (int, error)
 	ListJobPauses(ctx context.Context) ([]storage.JobPause, error)
+	// TriggerScheduledJob runs the resumed job at the next reconcile.
+	TriggerScheduledJob(ctx context.Context, jobTag string, profileID core.ProfileID, now time.Time) (int, error)
 }
 
 type JobAPI struct {
@@ -193,6 +195,13 @@ func (api *JobAPI) setPaused(response http.ResponseWriter, request *http.Request
 		}
 	} else {
 		affected, err = api.pauses.ResumeJob(request.Context(), tag, profileID)
+		if err == nil {
+			// A resumed job runs right away instead of waiting for its next
+			// natural occurrence.
+			if _, triggerErr := api.pauses.TriggerScheduledJob(request.Context(), tag, profileID, now); triggerErr != nil {
+				err = triggerErr
+			}
+		}
 	}
 	if err != nil {
 		writeError(response, err)
@@ -250,6 +259,10 @@ func (api *JobAPI) setGroupPaused(response http.ResponseWriter, request *http.Re
 		count, err := api.pauses.ResumeJob(request.Context(), definition.Tag, "")
 		if err != nil {
 			writeError(response, err)
+			return
+		}
+		if _, triggerErr := api.pauses.TriggerScheduledJob(request.Context(), definition.Tag, "", now); triggerErr != nil {
+			writeError(response, triggerErr)
 			return
 		}
 		affected += count
