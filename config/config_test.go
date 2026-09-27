@@ -1042,3 +1042,70 @@ func TestSearchFallbackChainResolvesAndRejectsCycles(t *testing.T) {
 		t.Fatal("expected unknown fallback to be rejected")
 	}
 }
+
+func TestJobTriggerDefaults(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, Resume: "resume-1", StateFile: "/tmp/primary.json"}},
+		Jobs: []Job{{
+			Tag: "refresh-primary-session", Enabled: true, Concurrency: JobConcurrencyForbid,
+			Triggers: []JobTrigger{{Type: "cron", Expression: "0 */4 * * *"}},
+			Action:   JobAction{Type: JobActionProfileSessionRefresh, Profile: "primary"},
+		}},
+	}
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected an unset trigger to fail before defaults are applied")
+	}
+	base.applyJobDefaults()
+	if err := base.Validate(); err != nil {
+		t.Fatalf("trigger defaults must satisfy validation: %v", err)
+	}
+	trigger := base.Jobs[0].Triggers[0]
+	if trigger.Timezone != defaultJobTimezone || trigger.Misfire != defaultJobMisfire {
+		t.Fatalf("default trigger = %#v", trigger)
+	}
+	if minimum, maximum := trigger.Jitter.Durations(); minimum != defaultJobJitterMin || maximum != defaultJobJitterMax {
+		t.Fatalf("default jitter = %v..%v", minimum, maximum)
+	}
+	explicit := &base.Jobs[0].Triggers[0]
+	explicit.Timezone = "UTC"
+	explicit.Jitter = JitterConfig{Min: "0s", Max: "0s"}
+	base.applyJobDefaults()
+	if explicit.Timezone != "UTC" {
+		t.Fatalf("explicit timezone overwritten: %#v", explicit)
+	}
+	if minimum, maximum := explicit.Jitter.Durations(); minimum != 0 || maximum != 0 {
+		t.Fatalf("explicit zero jitter = %v..%v", minimum, maximum)
+	}
+}
+
+func TestSystemJobJitterDefaults(t *testing.T) {
+	policy := SystemJobPolicy{}
+	minimum, maximum := policy.JobJitter(2 * time.Minute)
+	if minimum != 12*time.Second/5 || maximum != 12*time.Second {
+		t.Fatalf("poll jitter = %v..%v", minimum, maximum)
+	}
+	if minimum, maximum = policy.JobJitter(24 * time.Hour); minimum != time.Minute || maximum != 5*time.Minute {
+		t.Fatalf("daily jitter = %v..%v", minimum, maximum)
+	}
+	if minimum, maximum = policy.JobJitter(0); minimum != 0 || maximum != 0 {
+		t.Fatalf("unknown cadence jitter = %v..%v", minimum, maximum)
+	}
+	explicit := SystemJobPolicy{Jitter: JitterConfig{Min: "30s", Max: "2m"}}
+	if minimum, maximum = explicit.JobJitter(time.Hour); minimum != 30*time.Second || maximum != 2*time.Minute {
+		t.Fatalf("explicit jitter = %v..%v", minimum, maximum)
+	}
+	broken := SystemJobPolicy{Jitter: JitterConfig{Min: "10m", Max: "1m"}}
+	if err := broken.Jitter.validate(); err == nil {
+		t.Fatal("expected max below min to fail")
+	}
+	base := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{Tag: "primary", Adapter: "hh-main", Enabled: true, StateHarvest: broken}},
+	}
+	if err := base.Validate(); err == nil {
+		t.Fatal("expected a broken profile jitter to fail validation")
+	}
+}

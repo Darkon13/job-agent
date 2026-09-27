@@ -562,7 +562,14 @@ Campaign routes должны использовать один adapter и вкл
 профили. Пока профиль не авторизован, соответствующий job не регистрируется.
 
 Поднятие резюме — второй core-контур. Декларативные jobs задают cron expression,
-timezone, `misfire: run_once` и bounded jitter, а встроенный scheduler хранит
+а `timezone` (`Europe/Moscow`), `misfire` (`run_once`) и bounded jitter
+(`1m..10m`) подставляются по умолчанию: оператор указывает их явно только когда
+нужно другое поведение, а `"jitter": {"min": "0s", "max": "0s"}` выключает
+разброс. Системные джобы (`state.*`, `session`, `validation`, `resume-touch`,
+`activity-maintain`, `cleanup`) тоже разнесены по времени: их jitter по умолчанию
+не превышает десятой части интервала и пяти минут, а политика профиля
+(`state_harvest`, `resume_touch`, `activity_maintain`, `application_cleanup`)
+принимает явный `jitter` при необходимости. Встроенный scheduler хранит
 `next_run_at` в SQLite и создаёт обычные durable `resume.touch`,
 `resume.publish`, `resume.update`, `profile.activity.observe`,
 `profile.session_refresh`,

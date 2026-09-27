@@ -2903,40 +2903,41 @@ func profileSystemDefinitions(cfg appconfig.Config, capabilities profileSystemCa
 			action  core.TaskType
 			payload any
 			every   time.Duration
+			policy  appconfig.SystemJobPolicy
 		}
 		entries := make([]systemEntry, 0, 8)
 		if profile.StateHarvest.JobEnabled(true) {
 			entries = append(entries,
-				systemEntry{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, harvestInterval},
-				systemEntry{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval},
-				systemEntry{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, harvestInterval},
+				systemEntry{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, harvestInterval, profile.StateHarvest},
+				systemEntry{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval, profile.StateHarvest},
+				systemEntry{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, harvestInterval, profile.StateHarvest},
 			)
 			if resumeID != "" {
-				entries = append(entries, systemEntry{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID}, harvestInterval})
+				entries = append(entries, systemEntry{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID}, harvestInterval, profile.StateHarvest})
 			} else {
 				logf("system jobs: profile %q has no resume, activity snapshots are skipped", profile.Tag)
 			}
 		}
 		if capabilityAllows(capabilities.sessionRefresh, profileID) {
-			entries = append(entries, systemEntry{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval})
+			entries = append(entries, systemEntry{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval, appconfig.SystemJobPolicy{}})
 		}
 		if capabilityAllows(capabilities.validationCheck, profileID) {
 			entries = append(entries, systemEntry{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
 				ProfileID: profileID, Count: validationRefreshCount, MinAge: core.Duration(validationRefreshMinAge),
-			}, validationRefreshInterval})
+			}, validationRefreshInterval, appconfig.SystemJobPolicy{}})
 		}
 		if profile.ResumeTouch.JobEnabled(true) && resumeID != "" && capabilityAllows(capabilities.resumeTouch, profileID) {
-			entries = append(entries, systemEntry{"resume-touch", core.TaskResumeTouch, core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID}, profile.ResumeTouch.JobInterval(defaultResumeTouchInterval)})
+			entries = append(entries, systemEntry{"resume-touch", core.TaskResumeTouch, core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID}, profile.ResumeTouch.JobInterval(defaultResumeTouchInterval), profile.ResumeTouch})
 		}
 		if profile.ActivityMaintain.JobEnabled(true) && capabilityAllows(capabilities.activityMaintain, profileID) {
 			entries = append(entries, systemEntry{"activity-maintain", core.TaskProfileActivityMaintain, core.ProfileActivityMaintainPayload{
 				ProfileID: profileID, Count: activityMaintainCount, Pause: core.Duration(activityMaintainPause),
-			}, profile.ActivityMaintain.JobInterval(defaultActivityMaintainInterval)})
+			}, profile.ActivityMaintain.JobInterval(defaultActivityMaintainInterval), profile.ActivityMaintain})
 		}
 		if profile.ApplicationCleanup.JobEnabled(false) && capabilityAllows(capabilities.applicationCleanup, profileID) {
 			entries = append(entries, systemEntry{
 				"cleanup", core.TaskApplicationRetention, profile.ApplicationCleanup.Retention.Payload(profileID),
-				profile.ApplicationCleanup.JobInterval(defaultApplicationCleanupInterval),
+				profile.ApplicationCleanup.JobInterval(defaultApplicationCleanupInterval), profile.ApplicationCleanup.SystemJobPolicy,
 			})
 		}
 		for _, entry := range entries {
@@ -2944,11 +2945,13 @@ func profileSystemDefinitions(cfg appconfig.Config, capabilities profileSystemCa
 			if err != nil {
 				return nil, fmt.Errorf("encode system job payload for profile %q: %w", profile.Tag, err)
 			}
+			jitterMin, jitterMax := entry.policy.JobJitter(entry.every)
 			definitions = append(definitions, jobscheduler.Definition{
 				JobTag:       systemJobPrefix + "." + entry.suffix,
 				TriggerIndex: triggerIndexForProfile(0, profileIndex, 1),
 				Interval:     entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
 				ProfileID: profileID, Payload: payload,
+				JitterMin: jitterMin, JitterMax: jitterMax,
 			})
 		}
 	}
