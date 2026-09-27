@@ -21,6 +21,7 @@ type jobListItemView struct {
 	TaskType    string   `json:"task_type"`
 	Profiles    []string `json:"profiles,omitempty"`
 	ProfileID   string   `json:"profile_id,omitempty"`
+	System      bool     `json:"system"`
 	Paused      bool     `json:"paused"`
 	Pauses      []struct {
 		ProfileID string `json:"profile_id"`
@@ -88,11 +89,15 @@ func runJobsList(ctx context.Context, args []string, output io.Writer, client *h
 		if item.Paused {
 			state = "на паузе"
 		}
+		group := "user"
+		if item.System {
+			group = "system"
+		}
 		name := item.Description
 		if name == "" {
 			name = item.Tag
 		}
-		fmt.Fprintf(output, "%-40s %-24s %-12s %s\n", item.Tag, item.TaskType, state, name)
+		fmt.Fprintf(output, "%-40s %-24s %-8s %-12s %s\n", item.Tag, item.TaskType, group, state, name)
 		seen := make(map[string]struct{}, len(item.Schedules))
 		for _, schedule := range item.Schedules {
 			cadence := schedule.Expression
@@ -118,20 +123,33 @@ func runJobsSetPaused(ctx context.Context, args []string, output io.Writer, clie
 	flags.SetOutput(output)
 	apiURL := flags.String("api", "http://127.0.0.1:8080", "job-agent backend URL")
 	profileID := flags.String("profile", "", "profile id (default: every profile of the job)")
+	groupFlag := flags.String("group", "", "pause or resume the whole group: user|system")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	tag := strings.TrimSpace(flags.Arg(0))
-	if tag == "" {
-		return fmt.Errorf("usage: job-agent jobs %s <tag> [--profile id]", action)
+	group := strings.TrimSpace(*groupFlag)
+	if tag == "" && group == "" {
+		return fmt.Errorf("usage: job-agent jobs %s <tag> [--profile id] | --group user|system", action)
+	}
+	if tag != "" && group != "" {
+		return fmt.Errorf("job-agent jobs %s takes either a tag or --group, not both", action)
+	}
+	if group != "" && group != "user" && group != "system" {
+		return fmt.Errorf("job group must be user or system")
 	}
 	base, err := authBaseURL(*apiURL)
 	if err != nil {
 		return err
 	}
-	endpoint := fmt.Sprintf("%s/api/v1/jobs/%s/%s", base, url.PathEscape(tag), action)
-	if profile := strings.TrimSpace(*profileID); profile != "" {
-		endpoint += "?profile_id=" + url.QueryEscape(profile)
+	endpoint := ""
+	if group != "" {
+		endpoint = fmt.Sprintf("%s/api/v1/jobs/%s?group=%s", base, action, url.QueryEscape(group))
+	} else {
+		endpoint = fmt.Sprintf("%s/api/v1/jobs/%s/%s", base, url.PathEscape(tag), action)
+		if profile := strings.TrimSpace(*profileID); profile != "" {
+			endpoint += "?profile_id=" + url.QueryEscape(profile)
+		}
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -151,6 +169,7 @@ func runJobsSetPaused(ctx context.Context, args []string, output io.Writer, clie
 	}
 	var result struct {
 		Tag       string `json:"tag"`
+		Group     string `json:"group"`
 		ProfileID string `json:"profile_id"`
 		Paused    bool   `json:"paused"`
 		Affected  int    `json:"affected"`
@@ -162,6 +181,10 @@ func runJobsSetPaused(ctx context.Context, args []string, output io.Writer, clie
 	if result.Paused {
 		state = "на паузе"
 	}
-	fmt.Fprintf(output, "job %s: %s (затронуто профилей: %d)\n", result.Tag, state, result.Affected)
+	target := result.Tag
+	if target == "" {
+		target = "группа " + result.Group
+	}
+	fmt.Fprintf(output, "job %s: %s (затронуто профилей: %d)\n", target, state, result.Affected)
 	return nil
 }

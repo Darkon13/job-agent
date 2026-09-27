@@ -81,6 +81,10 @@ input[type="search"]:focus, select:focus { outline: 2px solid var(--cyan); borde
 .table-link:hover, .button-link:hover { text-decoration: underline; }
 .activity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .8rem; }
 .activity-card { display: grid; gap: .8rem; }
+.jobs-group { margin-bottom: 1.2rem; }
+.jobs-group:last-child { margin-bottom: 0; }
+.jobs-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0 0 .6rem; }
+.jobs-group-heading h3 { margin: 0; font-size: 1rem; }
 .activity-card .panel-heading { margin: 0; }
 .activity-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: .45rem; }
 .activity-metrics div { position: relative; display: grid; gap: .25rem; padding: .65rem; border-radius: 9px; background: var(--surface-2); }

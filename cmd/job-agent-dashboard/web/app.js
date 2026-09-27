@@ -16,7 +16,7 @@ const state = {
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
-  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
   "profile-resources", "profile-state-state",
@@ -534,10 +534,30 @@ function jobNextRunCell(item) {
   if (first && (first.jitter_min || first.jitter_max)) cell.append(text("span", " + jitter", "muted"));
   return cell;
 }
+// renderJobs splits the runnable jobs into the operator's own configuration and
+// the generated system jobs, so each group can be paused as a whole.
 function renderJobs(items = []) {
   items = state.account ? items.filter((item) => jobProfiles(item).includes(state.account)) : items;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
-  elements.jobs.replaceChildren(...items.map((item) => {
+  const groups = [
+    { system: false, body: elements.jobsUser, button: elements.jobsPauseUser, key: "group:user" },
+    { system: true, body: elements.jobsSystem, button: elements.jobsPauseSystem, key: "group:system" },
+  ];
+  for (const group of groups) {
+    const groupItems = items.filter((item) => Boolean(item.system) === group.system).sort((left, right) => String(left.tag).localeCompare(String(right.tag)));
+    const pausedCount = groupItems.filter((item) => item.paused).length;
+    group.button.textContent = pausedCount === groupItems.length && groupItems.length ? "Снять паузу со всех" : "Поставить все на паузу";
+    group.button.disabled = state.jobBusy.has(group.key) || groupItems.length === 0;
+    group.button.dataset.paused = pausedCount === groupItems.length && groupItems.length ? "1" : "";
+    if (!groupItems.length) {
+      const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 7; row.append(cell);
+      group.body.replaceChildren(row);
+      continue;
+    }
+    group.body.replaceChildren(...groupItems.map((item) => renderJobRow(item)));
+  }
+  updateCountdowns();
+}
+function renderJobRow(item) {
     const row = document.createElement("tr");
     const action = document.createElement("td");
     action.append(text("div", taskTypeLabel(item.task_type)));
@@ -576,8 +596,6 @@ function renderJobs(items = []) {
     }
     row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), pauseCell, run);
     return row;
-  }));
-  updateCountdowns();
 }
 function renderFailedTasks(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
@@ -1465,6 +1483,21 @@ async function controlFailedTask(task, action) {
 
 // toggleJobPause pauses or resumes a job: paused schedules stop creating tasks
 // and resume with an immediate run.
+// toggleJobGroupPause pauses or resumes every job of a group.
+async function toggleJobGroupPause(key, group, paused) {
+  state.jobBusy.add(key); renderJobs(state.jobs);
+  try {
+    const result = await enqueue(`/api/v1/jobs/${paused ? "pause" : "resume"}?group=${encodeURIComponent(group)}`);
+    elements.connectionState.textContent = `${group === "system" ? "Системные" : "Пользовательские"} джобы: ${result.paused ? "на паузе" : "снова выполняются"} (затронуто: ${result.affected})`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  } finally {
+    state.jobBusy.delete(key); renderJobs(state.jobs);
+  }
+}
+elements.jobsPauseUser.addEventListener("click", () => toggleJobGroupPause("group:user", "user", !elements.jobsPauseUser.dataset.paused));
+elements.jobsPauseSystem.addEventListener("click", () => toggleJobGroupPause("group:system", "system", !elements.jobsPauseSystem.dataset.paused));
 async function toggleJobPause(job, paused) {
   state.jobBusy.add(job.tag); renderJobs(state.jobs);
   try {

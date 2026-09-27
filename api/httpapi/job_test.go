@@ -146,6 +146,65 @@ func TestJobAPIPausesAndResumesJobs(t *testing.T) {
 	}
 }
 
+func TestJobAPIPausesEveryJobOfAGroup(t *testing.T) {
+	jobWorkflow, err := workflow.NewJobRunWorkflow(brokermemory.NewQueue(), jobClock{now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}, &jobIDs{}, []workflow.JobRunDefinition{
+		{
+			Tag: "daily-applications",
+			Commands: []workflow.JobRunCommand{{
+				TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
+				Payload: json.RawMessage(`{"job_tag":"daily-applications"}`),
+			}},
+		},
+		{
+			Tag: "system.state.chats",
+			Commands: []workflow.JobRunCommand{{
+				TaskType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary",
+				Payload: json.RawMessage(`{"profile_id":"primary"}`),
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	pauses := &jobPausesFake{}
+	api, err := NewJobAPI(jobWorkflow, nil)
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	api.SetPauses(pauses)
+	api.SetSystemTags([]string{"system.state.chats"})
+	handler := api.Handler(nil)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=system", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"affected":1`) {
+		t.Fatalf("pause system group: %d %s", response.Code, response.Body.String())
+	}
+	if len(pauses.items) != 1 || pauses.items[0].JobTag != "system.state.chats" {
+		t.Fatalf("wrong jobs paused: %#v", pauses.items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/resume?group=system", nil))
+	if response.Code != http.StatusOK || len(pauses.items) != 0 {
+		t.Fatalf("resume system group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=user", nil))
+	if response.Code != http.StatusOK || len(pauses.items) != 1 || pauses.items[0].JobTag != "daily-applications" {
+		t.Fatalf("pause user group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=unknown", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown group: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))
+	if !strings.Contains(response.Body.String(), `"tag":"system.state.chats"`) || !strings.Contains(response.Body.String(), `"system":true`) {
+		t.Fatalf("system job was not flagged: %s", response.Body.String())
+	}
+}
+
 func TestJobAPIRequiresKeyAndRunnableJob(t *testing.T) {
 	jobWorkflow, err := workflow.NewJobRunWorkflow(brokermemory.NewQueue(), jobClock{now: time.Now().UTC()}, &jobIDs{}, nil)
 	if err != nil {
