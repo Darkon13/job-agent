@@ -701,3 +701,40 @@ func TestBuildAPIHandlerOrdersAuthMetricsAndObservability(t *testing.T) {
 		t.Fatal("access log did not record the incoming request id")
 	}
 }
+
+func TestResumeQueryVariantsExpandsPlaceholders(t *testing.T) {
+	profile := appconfig.Profile{
+		Tag: "primary", Resume: "resume-1",
+		ResumeAliases: map[string]string{"extra": "resume-3", "backend": "resume-2"},
+	}
+	concrete := json.RawMessage(`{"source":"similar_resume","resume":"resume-9"}`)
+	if hasResumePlaceholder(concrete) {
+		t.Fatal("a concrete resume must not be a placeholder")
+	}
+	variants, err := resumeQueryVariants(concrete, profile)
+	if err != nil || len(variants) != 1 || !bytes.Contains(variants[0], []byte("resume-9")) {
+		t.Fatalf("concrete resume variants=%#v err=%v", variants, err)
+	}
+	own := json.RawMessage(`{"source":"similar_resume","resume":"$profile","area":["113"]}`)
+	if !hasResumePlaceholder(own) {
+		t.Fatal("$profile must be a placeholder")
+	}
+	variants, err = resumeQueryVariants(own, profile)
+	if err != nil || len(variants) != 1 ||
+		!bytes.Contains(variants[0], []byte(`"resume":"resume-1"`)) || bytes.Contains(variants[0], []byte("$profile")) {
+		t.Fatalf("$profile variants=%#v err=%v", variants, err)
+	}
+	all := json.RawMessage(`{"source":"similar_resume","resume":"$all"}`)
+	variants, err = resumeQueryVariants(all, profile)
+	if err != nil || len(variants) != 3 {
+		t.Fatalf("$all variants=%#v err=%v", variants, err)
+	}
+	for index, want := range []string{"resume-1", "resume-2", "resume-3"} {
+		if !bytes.Contains(variants[index], []byte(want)) {
+			t.Fatalf("variant %d = %s, want %s", index, variants[index], want)
+		}
+	}
+	if _, err := resumeQueryVariants(all, appconfig.Profile{Tag: "empty"}); err == nil {
+		t.Fatal("expected a profile without resumes to fail")
+	}
+}
