@@ -170,7 +170,21 @@ func runProfileAddWith(ctx context.Context, args []string, output io.Writer, cli
 		fmt.Fprintf(output, "APPLIED tag=%s status=%s; backend перезапускается — профиль подключится сам\n", applied.Tag, applied.Status)
 		return nil
 	}
-	fmt.Fprintf(output, "APPLIED tag=%s status=%s; перезапустите backend, чтобы профиль подключился\n", applied.Tag, applied.Status)
+	fmt.Fprintf(output, "APPLIED tag=%s status=%s; жду подключения без перезапуска…\n", applied.Tag, applied.Status)
+	for attempt := 0; attempt < 15; attempt++ {
+		time.Sleep(2 * time.Second)
+		entries, err := fetchProfileCatalog(ctx, *apiURL, client)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Tag == applied.Tag {
+				fmt.Fprintf(output, "READY tag=%s источник=%s — профиль подключён без перезапуска\n", entry.Tag, entry.Source)
+				return nil
+			}
+		}
+	}
+	fmt.Fprintf(output, "PENDING tag=%s пока не появился в каталоге; проверьте статус перезагрузки конфига\n", applied.Tag)
 	return nil
 }
 

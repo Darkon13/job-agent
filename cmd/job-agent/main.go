@@ -514,9 +514,23 @@ func main() {
 	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
 	qualificationAnswerModels := make(map[core.ProfileID]taskworker.QualificationAnswerModel)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
-	applicationPlans := make(taskworker.StaticApplicationPlans)
+	applicationPlans := taskworker.NewLiveApplicationPlans()
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
-	knownConversationAnswers := make(map[core.ProfileID]bool)
+	knownConversationAnswers := newKnownAnswerProfiles()
+	binder := &profileRuntimeBinder{
+		instances: instances, profiles: profiles, contacts: profileContacts,
+		applicationModels: applicationModels, employerMatcher: employerMatcher,
+		answerResolver: answerResolver, browserSubmissionDriver: browserSubmissionDriver,
+		knownAnswers: knownConversationAnswers, applicationPlans: applicationPlans,
+		profileStateReaders: profileStateReaders, profileStateWriters: profileStateWriters,
+		profileStatePlatforms: profileStatePlatforms, conversationTransports: conversationTransports,
+		applicationTransports: applicationTransports, applicationStateObservers: applicationStateObservers,
+		resumeTouchers: resumeTouchers, resumePublishers: resumePublishers,
+		testCapturers: testCapturers, testSubmitters: testSubmitters,
+		qualificationReaders: qualificationReaders, qualificationAttempts: qualificationAttempts,
+		qualificationPlatforms: qualificationPlatforms, qualificationAnswerModels: qualificationAnswerModels,
+		activityObservers: activityObservers, applicationTailoringPlans: applicationTailoringPlans,
+	}
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, profileContacts[core.ProfileID(profile.Tag)])
 		if err != nil {
@@ -525,227 +539,8 @@ func main() {
 		if !profile.Enabled {
 			continue
 		}
-		profileID := core.ProfileID(profile.Tag)
-		if profile.Conversations.AnswerKnown {
-			knownConversationAnswers[profileID] = true
-		}
-		if profile.Answers != nil && profile.Answers.Model != nil {
-			model, err := answerModel(profile.Answers.Model, applicationModels)
-			if err != nil {
-				log.Fatalf("build answer model for profile %q: %v", profile.Tag, err)
-			}
-			if model != nil {
-				qualificationAnswerModels[profileID] = model
-				logf("profile %q answers unknown questions through model %q", profile.Tag, model.Tag())
-			}
-		}
-		runtime := profiles[profileID]
-		instance := instances[profile.Adapter]
-		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
-		browserApplicationsReady := false
-		browserConversationsReady := false
-		var browserProfileStateWriter adapter.ProfileStateWriter
-		if profile.StateFile != "" {
-			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
-				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
-				if err != nil {
-					log.Fatalf("bind browser session for profile %q: %v", profile.Tag, err)
-				}
-				runtime.BrowserReader = reader
-				profiles[profileID] = runtime
-				logf("profile %q has a browser-backed read session", profile.Tag)
-				if capturer, ok := instance.(adapter.VacancyTestCapturer); ok {
-					if err := testCapturers.Register(profileID, capturer); err != nil {
-						log.Fatalf("register vacancy test capturer for profile %q: %v", profile.Tag, err)
-					}
-					logf("profile %q can capture vacancy tests through the browser session", profile.Tag)
-				}
-				if reader, ok := instance.(adapter.QualificationCatalogReader); ok {
-					if err := qualificationReaders.Register(profileID, reader); err != nil {
-						log.Fatalf("register qualification catalog for profile %q: %v", profile.Tag, err)
-					}
-					qualificationPlatforms[profileID] = core.Platform(instance.Name())
-					logf("profile %q can sync the skill verification catalog", profile.Tag)
-				}
-				if service, ok := instance.(adapter.QualificationAttemptService); ok && answerResolver != nil {
-					if err := qualificationAttempts.Register(profileID, service); err != nil {
-						log.Fatalf("register qualification attempt service for profile %q: %v", profile.Tag, err)
-					}
-				}
-				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
-					profileStateReaders[profileID] = profileStateReader
-				}
-			}
-			if binder, ok := instance.(adapter.BrowserProfileStateSessionBinder); ok {
-				writer, err := binder.BindBrowserProfileStateSession(profileID, profile.StateFile)
-				if err != nil {
-					log.Fatalf("bind browser profile state session for profile %q: %v", profile.Tag, err)
-				}
-				browserProfileStateWriter = writer
-			}
-			if binder, ok := instance.(adapter.BrowserConversationSessionBinder); ok {
-				transport, err := binder.BindBrowserConversationSession(profileID, profile.StateFile, adapter.BrowserConversationOptions{
-					AllowSend: profile.Conversations.AllowSend, AllowMarkRead: profile.Conversations.AllowMarkRead,
-				})
-				if err != nil {
-					log.Fatalf("bind browser conversation session for profile %q: %v", profile.Tag, err)
-				}
-				if err := conversationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register browser conversation transport for profile %q: %v", profile.Tag, err)
-				}
-				browserConversationsReady = true
-				logf("profile %q has a browser-backed conversation session", profile.Tag)
-			}
-			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
-				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
-					transport, err := binder.BindBrowserApplicationSession(profileID, profile.StateFile, adapter.BrowserApplicationOptions{
-						AllowVisibilityChange: profile.Applications.AllowVisibilityChange,
-						ResumeID:              profile.Resume,
-					})
-					if err != nil {
-						log.Fatalf("bind browser application session for profile %q: %v", profile.Tag, err)
-					}
-					if err := applicationTransports.Register(profileID, transport); err != nil {
-						log.Fatalf("register browser application transport for profile %q: %v", profile.Tag, err)
-					}
-					if submitter, ok := instance.(adapter.VacancyTestSubmitter); ok {
-						if err := testSubmitters.Register(profileID, submitter); err != nil {
-							log.Fatalf("register vacancy test submitter for profile %q: %v", profile.Tag, err)
-						}
-					}
-					browserApplicationsReady = true
-					logf("profile %q uses explicit browser-backed application transport", profile.Tag)
-				}
-			}
-		}
-		if browserSubmissionDriver != nil && instance.Name() == hh.Name && strings.TrimSpace(profile.StateFile) != "" {
-			if err := applicationTransports.RegisterBrowserSubmitter(profileID, browserSubmissionDriver); err != nil {
-				log.Fatalf("register browser submitter for profile %q: %v", profile.Tag, err)
-			}
-			logf("profile %q has the automatic browser submission fallback", profile.Tag)
-		}
-		if apiReady || runtime.BrowserReader != nil {
-			if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
-				profileStateReaders[profileID] = profileStateReader
-			}
-			writer, ok := instance.(adapter.ProfileStateWriter)
-			if !ok {
-				writer = browserProfileStateWriter
-			}
-			if writer != nil {
-				if err := profileStateWriters.Register(profileID, writer); err != nil {
-					log.Fatalf("register profile state writer for profile %q: %v", profile.Tag, err)
-				}
-				profileStatePlatforms[profileID] = core.Platform(instance.Name())
-			}
-		}
-		if apiReady {
-			if transport, ok := instance.(adapter.ConversationTransport); ok && !browserConversationsReady {
-				if err := conversationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if transport, ok := instance.(adapter.ApplicationTransport); ok {
-				if err := applicationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if observer, ok := instance.(adapter.ApplicationStateObserver); ok {
-				if err := applicationStateObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register application state observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		} else if runtime.BrowserReader == nil {
-			logf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
-		}
-		if !applicationStateObservers.Has(profileID) {
-			if observer, ok := runtime.BrowserReader.(adapter.ApplicationStateObserver); ok {
-				if err := applicationStateObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register browser application state observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		applicationReady := apiReady || browserApplicationsReady || runtime.BrowserReader != nil && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun
-		if applicationReady {
-			if !apiReady && !browserApplicationsReady {
-				if err := applicationTransports.RegisterVacancyReader(profileID, runtime.BrowserReader); err != nil {
-					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if searcher, ok := instance.(adapter.VacancySearcher); ok {
-				if err := applicationTransports.RegisterVacancySearcher(profileID, searcher); err != nil {
-					log.Fatalf("register vacancy searcher for profile %q: %v", profile.Tag, err)
-				}
-			}
-			jitterMin, jitterMax, err := profile.Applications.SubmitJitterDurations(instance.Name())
-			if err != nil {
-				log.Fatalf("resolve application pacing for profile %q: %v", profile.Tag, err)
-			}
-			applicationPlan := taskworker.ApplicationPlan{
-				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-				Message: profile.Applications.Message, Preparer: preparer,
-				DailyLimit:      profile.Applications.EffectiveDailyLimit(instance.Name()),
-				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
-				Timezone:       profile.Applications.LocationName(),
-				SkipValidation: profile.Applications.SkipValidation(),
-			}
-			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels, profileContacts[profileID])
-			if tailoringErr != nil {
-				log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, tailoringErr)
-			}
-			if tailoringProcessor != nil {
-				if _, hasReader := profileStateReaders[profileID]; !hasReader {
-					log.Fatalf("profile %q application tailoring requires a profile state reader", profile.Tag)
-				}
-				if _, resolveErr := profileStateWriters.Resolve(profileID); resolveErr != nil {
-					log.Fatalf("profile %q application tailoring requires a profile state writer", profile.Tag)
-				}
-				tailoringPlan := taskworker.ApplicationTailoringPlan{
-					Processor:       tailoringProcessor,
-					AllowedPaths:    tailoringPaths,
-					EmployerMatcher: employerMatcher,
-				}
-				applicationTailoringPlans[profileID] = tailoringPlan
-				applicationPlan.Tailoring = &tailoringPlan
-			}
-			applicationPlans[profileID] = applicationPlan
-		}
-		if toucher, ok := instance.(adapter.ResumeToucher); ok {
-			if err := resumeTouchers.Register(profileID, toucher); err != nil {
-				log.Fatalf("register resume toucher for profile %q: %v", profile.Tag, err)
-			}
-		} else if instance.Name() == hh.Name && profile.StateFile != "" {
-			if _, err := os.Stat(profile.StateFile); err == nil {
-				toucher, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
-				if err != nil {
-					log.Fatalf("create HH resume toucher for profile %q: %v", profile.Tag, err)
-				}
-				if err := resumeTouchers.Register(profileID, toucher); err != nil {
-					log.Fatalf("register HH resume toucher for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		if observer, ok := instance.(adapter.ProfileActivityObserver); ok {
-			if err := activityObservers.Register(profileID, observer); err != nil {
-				log.Fatalf("register profile activity observer for profile %q: %v", profile.Tag, err)
-			}
-		} else if instance.Name() == hh.Name && profile.StateFile != "" {
-			if _, err := os.Stat(profile.StateFile); err == nil {
-				observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
-				if err != nil {
-					log.Fatalf("create HH profile activity observer for profile %q: %v", profile.Tag, err)
-				}
-				if err := activityObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register HH profile activity observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		if apiReady {
-			if publisher, ok := instance.(adapter.ResumePublisher); ok {
-				if err := resumePublishers.Register(profileID, publisher); err != nil {
-					log.Fatalf("register resume publisher for profile %q: %v", profile.Tag, err)
-				}
-			}
+		if err := binder.bind(profile, preparer, false); err != nil {
+			log.Fatalf("bind profile %q: %v", profile.Tag, err)
 		}
 	}
 	profileStateApplyWorkflow, err := workflow.NewProfileStateApplyWorkflow(
@@ -785,12 +580,12 @@ func main() {
 		repository: store, transports: conversationTransports, workflow: conversationWorkflow,
 	})
 	conversationAPI.ConfigureLiveSender(liveConversationSend{repository: store, handlers: conversationHandlers})
-	if answerRegistry != nil && len(knownConversationAnswers) > 0 {
+	if answerRegistry != nil && knownConversationAnswers.Len() > 0 {
 		conversationHandlers.ConfigureKnownAnswers(answerRegistry, func(profileID core.ProfileID) bool {
-			return knownConversationAnswers[profileID]
+			return knownConversationAnswers.Has(profileID)
 		})
-		logf("known conversation answers are enabled for %d profile(s)", len(knownConversationAnswers))
-	} else if len(knownConversationAnswers) > 0 {
+		logf("known conversation answers are enabled for %d profile(s)", knownConversationAnswers.Len())
+	} else if knownConversationAnswers.Len() > 0 {
 		logf("WARNING: conversations.answer_known is set but no answer_sets are resolved; no automatic conversation answers will be sent")
 	}
 	profileMutationLane := taskworker.NewProfileMutationLane()
@@ -844,7 +639,7 @@ func main() {
 			log.Fatalf("create application tailoring coordinator: %v", err)
 		}
 	}
-	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
+	if applicationPlans.Len() > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
 			store, store, store, store, store, applicationTransports, applicationPlans,
 			taskworker.UniformApplicationJitter{}, taskworker.SystemClock{},
@@ -1256,7 +1051,54 @@ func main() {
 		logf("campaign routes reloaded: %d definitions", len(campaignDefinitionsFresh))
 		return nil
 	}
-	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions, refreshCampaigns, reloadStatus)
+	// bindProfiles wires profiles that a fragment added to the running service:
+	// the transports, readers and plans appear without a restart, while the
+	// fields that workers read through plain maps still wait for the next
+	// restart (see profileRuntimeBinder).
+	boundProfiles := make(map[core.ProfileID]struct{}, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		boundProfiles[core.ProfileID(profile.Tag)] = struct{}{}
+	}
+	refreshProfileViews := func(fresh appconfig.Config) {
+		runtimeAPI.SetProfiles(dashboardProfiles(fresh, profileContacts))
+		profileCatalogAPI.SetEntries(profileCatalog(fresh, instances))
+		resumeAPI.SetTargets(fresh.ResumeTargets())
+		if authAPI != nil {
+			authAPI.SetStatePaths(profileStateFiles(fresh))
+		}
+		profileDrafts.SetDeclared(configProfileTags(fresh))
+	}
+	bindProfiles := func(fresh appconfig.Config) error {
+		for _, profile := range fresh.Profiles {
+			profileID := core.ProfileID(profile.Tag)
+			if _, exists := boundProfiles[profileID]; exists {
+				continue
+			}
+			runtimes, err := probeProfileAuthorizations(context.Background(), []appconfig.Profile{profile}, instances)
+			if err != nil {
+				return fmt.Errorf("probe profile %q: %w", profile.Tag, err)
+			}
+			for runtimeID, runtime := range runtimes {
+				profiles[runtimeID] = runtime
+			}
+			contacts := resolveProfileContactsFor(profile, instances)
+			profileContacts[profileID] = contacts
+			preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, contacts)
+			if err != nil {
+				return fmt.Errorf("build application operator for profile %q: %w", profile.Tag, err)
+			}
+			if profile.Enabled {
+				if err := binder.bind(profile, preparer, true); err != nil {
+					return fmt.Errorf("bind profile %q: %w", profile.Tag, err)
+				}
+			}
+			boundProfiles[profileID] = struct{}{}
+			logf("profile %q is bound without a restart", profile.Tag)
+		}
+		refreshProfileViews(fresh)
+		return nil
+	}
+	go watchConfigReload(ctx, options.configPath, scheduler, bindProfiles, buildReloadableDefinitions, refreshCampaigns, reloadStatus)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -1708,50 +1550,58 @@ func resolveProfileContacts(cfg appconfig.Config, instances map[string]adapter.A
 		if !profile.Enabled {
 			continue
 		}
-		profileID := core.ProfileID(profile.Tag)
-		fallback := configProfileContacts(profile)
-		if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
-			resolved[profileID] = fallback
-			continue
-		}
-		instance := instances[profile.Adapter]
-		if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
-			if _, err := binder.BindBrowserSession(profileID, profile.StateFile); err != nil {
-				logf("profile %q contacts: browser session failed, using config: %v", profile.Tag, err)
-				resolved[profileID] = fallback
-				continue
-			}
-		}
-		reader, ok := instance.(adapter.ProfileStateReader)
-		if !ok {
-			resolved[profileID] = fallback
-			continue
-		}
-		observation, err := reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
-			ProfileID: profileID, Paths: profileContactPaths(profile.Resume),
-		})
-		if err != nil {
-			logf("profile %q contacts: platform read failed, using config: %v", profile.Tag, err)
-			resolved[profileID] = fallback
-			continue
-		}
-		contacts := profileContactsFromObservation(observation, profile.Resume)
-		if contacts.FirstName == "" {
-			contacts.FirstName = fallback.FirstName
-		}
-		if contacts.LastName == "" {
-			contacts.LastName = fallback.LastName
-		}
-		if contacts.Email == "" {
-			contacts.Email = fallback.Email
-		}
-		if contacts.Telegram == "" {
-			contacts.Telegram = fallback.Telegram
-		}
-		resolved[profileID] = contacts
-		logf("profile %q contacts resolved: %s", profile.Tag, contactFieldNames(contacts))
+		resolved[core.ProfileID(profile.Tag)] = resolveProfileContactsFor(profile, instances)
 	}
 	return resolved
+}
+
+// resolveProfileContactsFor reads the sender name and contacts of one profile
+// from the platform once, then lets the optional config block fill the gaps.
+func resolveProfileContactsFor(profile appconfig.Profile, instances map[string]adapter.Adapter) applicationoperator.ApplicationProfileContext {
+	profileID := core.ProfileID(profile.Tag)
+	fallback := configProfileContacts(profile)
+	if !profile.Enabled {
+		return fallback
+	}
+	if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
+		return fallback
+	}
+	instance := instances[profile.Adapter]
+	if instance == nil {
+		return fallback
+	}
+	if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
+		if _, err := binder.BindBrowserSession(profileID, profile.StateFile); err != nil {
+			logf("profile %q contacts: browser session failed, using config: %v", profile.Tag, err)
+			return fallback
+		}
+	}
+	reader, ok := instance.(adapter.ProfileStateReader)
+	if !ok {
+		return fallback
+	}
+	observation, err := reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: profileID, Paths: profileContactPaths(profile.Resume),
+	})
+	if err != nil {
+		logf("profile %q contacts: platform read failed, using config: %v", profile.Tag, err)
+		return fallback
+	}
+	contacts := profileContactsFromObservation(observation, profile.Resume)
+	if contacts.FirstName == "" {
+		contacts.FirstName = fallback.FirstName
+	}
+	if contacts.LastName == "" {
+		contacts.LastName = fallback.LastName
+	}
+	if contacts.Email == "" {
+		contacts.Email = fallback.Email
+	}
+	if contacts.Telegram == "" {
+		contacts.Telegram = fallback.Telegram
+	}
+	logf("profile %q contacts resolved: %s", profile.Tag, contactFieldNames(contacts))
+	return contacts
 }
 
 func configProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
@@ -2441,6 +2291,15 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 	return routes, definitions, ownedRoutes, configuredJobs, nil
 }
 
+// configProfileTags lists the declared profile tags of a config.
+func configProfileTags(cfg appconfig.Config) []core.ProfileID {
+	tags := make([]core.ProfileID, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		tags = append(tags, core.ProfileID(profile.Tag))
+	}
+	return tags
+}
+
 // activityMaintainQuery returns the vacancy source of the activity maintenance
 // job: the operator's override when the profile declares one, otherwise a
 // filterless global search. The job only needs vacancies to open, not the
@@ -2604,7 +2463,15 @@ func (status *configReloadStatus) snapshot() httpapi.ConfigStatus {
 	return status.status
 }
 
-func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error), refresh func(appconfig.Config) error, status *configReloadStatus) {
+func watchConfigReload(
+	ctx context.Context,
+	configPath string,
+	scheduler *jobscheduler.Scheduler,
+	bind func(appconfig.Config) error,
+	build func(appconfig.Config) ([]jobscheduler.Definition, error),
+	refresh func(appconfig.Config) error,
+	status *configReloadStatus,
+) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	defer signal.Stop(signals)
@@ -2630,6 +2497,11 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 		digest := sha256.Sum256(encoded)
 		current := hex.EncodeToString(digest[:])
 		if current == lastDigest {
+			return
+		}
+		if err := bind(fresh); err != nil {
+			logf("config reload rejected: %v", err)
+			status.recordError(err.Error())
 			return
 		}
 		if err := refresh(fresh); err != nil {

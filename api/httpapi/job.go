@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/core"
@@ -32,6 +33,7 @@ type JobPauseRepository interface {
 }
 
 type JobAPI struct {
+	mu           sync.RWMutex
 	workflow     *workflow.JobRunWorkflow
 	schedules    ScheduleReader
 	descriptions map[string]string
@@ -70,7 +72,12 @@ type jobListView struct {
 // SetDescriptions attaches optional per-job descriptions from the config so the
 // dashboard can show the operator's own wording instead of the task type.
 func (api *JobAPI) SetDescriptions(descriptions map[string]string) {
+	if api == nil {
+		return
+	}
+	api.mu.Lock()
 	api.descriptions = descriptions
+	api.mu.Unlock()
 }
 
 func NewJobAPI(jobWorkflow *workflow.JobRunWorkflow, schedules ScheduleReader) (*JobAPI, error) {
@@ -123,8 +130,11 @@ func (api *JobAPI) list(response http.ResponseWriter, request *http.Request) {
 			items[index].Schedules = byTag[items[index].Tag]
 		}
 	}
+	api.mu.RLock()
+	descriptions := api.descriptions
+	api.mu.RUnlock()
 	for index := range items {
-		if description := strings.TrimSpace(api.descriptions[items[index].Tag]); description != "" {
+		if description := strings.TrimSpace(descriptions[items[index].Tag]); description != "" {
 			items[index].Description = description
 		}
 	}
