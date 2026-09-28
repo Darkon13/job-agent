@@ -215,7 +215,7 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 	application, err := scanApplication(tx.QueryRowContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
 		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
 		preparation_provenance, created_at, updated_at, prepared_at, submitted_at FROM applications WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, storage.ErrApplicationNotFound) {
 		var tombstone core.ApplicationTombstone
 		var removedAtUnix int64
 		err = tx.QueryRowContext(ctx, `SELECT application_id, profile_id, platform, external_id, reason, removed_at, status
@@ -392,6 +392,9 @@ func scanApplication(row rowScanner) (core.Application, error) {
 		&application.FailureCategory, &application.FailureMessage, &application.DecisionCode,
 		&application.DecisionReason, &application.PreparedResumeID, &application.PreparedMessage, &preparationProvenance,
 		&createdAt, &updatedAt, &preparedAt, &submittedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Application{}, storage.ErrApplicationNotFound
+		}
 		return core.Application{}, err
 	}
 	if err := unmarshalApplicationPreparationProvenance(preparationProvenance, &application.PreparationProvenance); err != nil {
@@ -615,6 +618,31 @@ func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.F
 	if err != nil {
 		return nil, fmt.Errorf("list failed tasks: %w", err)
 	}
+	return scanFailedTasks(rows)
+}
+
+// FailedAuthTasks lists the tasks that failed because the profile had no usable
+// platform session. The oldest failures come first: after a sign-in the
+// recovery retries them in the order they originally happened.
+func (store *Store) FailedAuthTasks(ctx context.Context, profileID core.ProfileID, limit int) ([]storage.FailedTaskSummary, error) {
+	if profileID == "" {
+		return nil, errors.New("failed auth tasks require a profile")
+	}
+	if limit < 1 || limit > 500 {
+		return nil, errors.New("failed auth task limit must be between 1 and 500")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, type, profile_id, attempts,
+		failure_category, failure_message, updated_at
+		FROM tasks WHERE status = ? AND profile_id = ? AND failure_category = ?
+		ORDER BY updated_at, id LIMIT ?`,
+		core.TaskFailed, profileID, core.ErrorUnauthorized, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list failed auth tasks: %w", err)
+	}
+	return scanFailedTasks(rows)
+}
+
+func scanFailedTasks(rows *sql.Rows) ([]storage.FailedTaskSummary, error) {
 	defer rows.Close()
 	items := make([]storage.FailedTaskSummary, 0)
 	for rows.Next() {

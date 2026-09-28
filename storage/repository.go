@@ -11,6 +11,7 @@ import (
 var (
 	ErrRevisionConflict             = errors.New("repository revision conflict")
 	ErrProfileMutationLocked        = errors.New("profile already has an active mutation workflow")
+	ErrApplicationNotFound          = errors.New("application not found")
 	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
 	ErrAuthSessionNotFound          = errors.New("auth session not found")
 	ErrApplicationRemoved           = errors.New("application was removed from the working set")

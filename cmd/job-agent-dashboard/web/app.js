@@ -49,6 +49,13 @@ const decisionLabels = { qualified: "Проверки пройдены", respons
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
+// hideEmptySection keeps the dashboard free of empty blocks: a section without
+// data disappears instead of occupying the page with an empty table.
+function hideEmptySection(id, visible) {
+  const section = document.getElementById(id);
+  if (section) section.hidden = !visible;
+}
+
 function plainText(value) { return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
 // Questionnaires come with simple markup (bold, lists, links). Only that safe
 // subset is rendered: every other element is unwrapped and every attribute is
@@ -444,6 +451,7 @@ async function removeSelectedApplications() {
 
 function renderApplicationObjects() {
   const items = visibleApplicationObjects();
+  hideEmptySection("applications-section", state.applicationTotal > 0);
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
   elements.applicationActionState.textContent = state.applicationActionMessage || "";
   updateApplicationProfileColumn();
@@ -622,6 +630,7 @@ function updateApplicationProfileColumn() {
   if (table) table.classList.toggle("profile-hidden", Boolean(state.account));
 }
 function renderTasks(items = []) {
+  hideEmptySection("tasks-section", items.length > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 6; row.append(cell); elements.tasks.replaceChildren(row); return; }
   elements.tasks.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -1000,6 +1009,7 @@ function renderJobDetailRows(item) {
 
 function renderFailedTasks(items = []) {
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
+  hideEmptySection("failed-tasks-section", items.length > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
   elements.failedTasks.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -1015,6 +1025,7 @@ function renderFailedTasks(items = []) {
   }));
 }
 function renderCampaigns(items = []) {
+  hideEmptySection("campaigns-section", items.length > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
   // The panel is informational: only the last few runs stay on the main page.
   const visible = items.slice(0, 5);
@@ -1230,6 +1241,19 @@ function renderProfileDetail(entry) {
     cell.append(line);
   }
 
+  // The account state import loads every negotiation and the full chat
+  // catalog, including responses that were sent outside this service.
+  const accountState = document.createElement("div");
+  accountState.className = "profile-detail-line";
+  accountState.append(text("strong", "Состояние аккаунта"));
+  const importButton = text("button", "Загрузить отклики и чаты", "secondary compact");
+  importButton.type = "button";
+  importButton.disabled = state.profileBusy.has(entry.tag);
+  importButton.addEventListener("click", () => importProfileState(entry, importButton));
+  const importState = text("span", state.profileMessages.get(`import:${entry.tag}`) || "", "muted");
+  accountState.append(importButton, importState);
+  cell.append(accountState);
+
   // The desired state of the profile lives in its expansion: paths, plan
   // builder, revisions and the one-off editor.
   const resources = (state.profileResources || []).filter((resource) => resource.profile_id === entry.tag);
@@ -1249,6 +1273,25 @@ function renderProfileDetail(entry) {
 
   row.append(cell);
   return row;
+}
+
+// importProfileState asks the backend to load the platform account state into
+// the local database; the work happens in the background as a durable task.
+async function importProfileState(entry, button) {
+  button.disabled = true;
+  state.profileMessages.set(`import:${entry.tag}`, "Ставлю задачу импорта…");
+  renderProfiles();
+  try {
+    const key = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `import-${Date.now()}`;
+    const response = await fetch(`/api/v1/profiles/${encodeURIComponent(entry.tag)}/import`, {
+      method: "POST", headers: { "Idempotency-Key": key },
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    state.profileMessages.set(`import:${entry.tag}`, "Импорт поставлен в очередь: отклики и чаты загрузятся в фоне");
+  } catch (error) {
+    state.profileMessages.set(`import:${entry.tag}`, `Не удалось запустить импорт: ${error.message}`);
+  }
+  renderProfiles();
 }
 
 function profileDetailTable(caption, headers, rows) {
@@ -1331,6 +1374,7 @@ function applyLocalReads(items = []) {
 }
 
 function renderConversations(items = state.conversationItems) {
+  hideEmptySection("conversations-section", (items || []).length > 0);
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
   if (state.selectedConversation) {
@@ -1850,6 +1894,7 @@ function reviewVacancyKey(session) {
 function renderReviewSessions() {
   const layout = elements.reviewSessions.closest(".review-layout");
   const sessions = state.reviewSessions || [];
+  hideEmptySection("review-section", sessions.length > 0);
   if (layout) layout.classList.toggle("empty", !sessions.length);
   if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
   if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {

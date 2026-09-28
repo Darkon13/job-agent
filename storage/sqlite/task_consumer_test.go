@@ -402,6 +402,52 @@ func sqliteTask(t *testing.T, id core.TaskID, key string, now time.Time, deadlin
 	return task
 }
 
+func TestFailedAuthTasksListsOnlyUnauthorizedFailuresOfTheProfile(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 28, 18, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	unauthorized := sqliteTask(t, "task-auth", "key-auth", now, nil)
+	unauthorized.Type, unauthorized.ProfileID = core.TaskConversationDiscover, "main"
+	temporary := sqliteTask(t, "task-temp", "key-temp", now, nil)
+	temporary.Type, temporary.ProfileID = core.TaskConversationSync, "main"
+	foreign := sqliteTask(t, "task-other", "key-other", now, nil)
+	foreign.ProfileID = "secondary"
+	for _, task := range []core.Task{unauthorized, temporary, foreign} {
+		if _, err := store.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+	fail := func(taskType core.TaskType, category core.ErrorCategory) {
+		t.Helper()
+		lease, found, err := store.Claim(ctx, broker.ClaimParams{
+			WorkerID: "worker", TaskType: taskType, Now: now.Add(time.Second), LeaseDuration: time.Minute,
+		})
+		if err != nil || !found {
+			t.Fatalf("claim %s: found=%t err=%v", taskType, found, err)
+		}
+		if err := store.Fail(ctx, lease, &core.OperationError{
+			Category: category, Operation: string(taskType), Message: "failed",
+		}, now.Add(2*time.Second)); err != nil {
+			t.Fatalf("fail %s: %v", taskType, err)
+		}
+	}
+	fail(core.TaskConversationDiscover, core.ErrorUnauthorized)
+	fail(core.TaskConversationSync, core.ErrorTemporaryFailure)
+	fail(core.TaskApplicationSubmit, core.ErrorUnauthorized)
+
+	items, err := store.FailedAuthTasks(ctx, "main", 10)
+	if err != nil {
+		t.Fatalf("failed auth tasks: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != unauthorized.ID {
+		t.Fatalf("failed auth tasks = %#v", items)
+	}
+}
+
 func TestTaskRetryPreservesAttemptsForPacing(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)

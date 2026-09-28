@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Darkon13/job-agent/core"
 )
 
 func TestProfileCatalogRefreshesTheSessionState(t *testing.T) {
@@ -56,6 +60,34 @@ func TestProfileCatalogRefreshesTheSessionState(t *testing.T) {
 	api.Handler(nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil))
 	if strings.Contains(recorder.Body.String(), "secret-cookie") {
 		t.Fatal("the catalog must not expose the session file content")
+	}
+}
+
+type catalogIdentitySource struct {
+	identity core.ProfileIdentity
+	found    bool
+}
+
+func (source catalogIdentitySource) ProfileIdentity(context.Context, core.ProfileID) (core.ProfileIdentity, bool, error) {
+	return source.identity, source.found, nil
+}
+
+func TestProfileCatalogFillsTheIdentityCapturedAtLogin(t *testing.T) {
+	api, err := NewProfileCatalogAPI([]ProfileCatalogEntry{
+		{Tag: "main", Adapter: "hh-main", Platform: "hh", Enabled: true, Source: "config"},
+	})
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	api.SetIdentitySource(catalogIdentitySource{
+		identity: core.ProfileIdentity{DisplayName: "Антон", Email: "a***@example.test", CapturedAt: time.Date(2026, 9, 28, 16, 0, 0, 0, time.UTC)},
+		found:    true,
+	})
+	response := httptest.NewRecorder()
+	api.Handler(http.NotFoundHandler()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `"display_name":"Антон"`) || !strings.Contains(body, `"captured_at":"2026-09-28T16:00:00Z"`) {
+		t.Fatalf("catalog identity missing: %d %s", response.Code, body)
 	}
 }
 
