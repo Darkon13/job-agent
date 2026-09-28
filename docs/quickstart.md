@@ -194,6 +194,16 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 `deploy/config.json` (имя переопределяется `JOB_AGENT_CONFIG_NAME`), поэтому
 копия из шага 1 обязательна: `config.example.json` остаётся шаблоном.
 
+Останавливать стек нужно тем же профилем:
+
+```sh
+docker compose --profile browser down
+```
+
+`down` без `--profile browser` снимает только `job-agent` и `dashboard`, а
+`browser-worker` продолжает работать и удерживает сеть `job-agent_default` —
+Compose тогда сообщает `Resource is still in use`.
+
 `JOB_AGENT_API_TOKEN` — необязательный общий секрет (не пользовательская
 авторизация). В Compose он рекомендован, потому что backend доступен
 контейнерам приватной сети, а dashboard подставляет токен server-side. Можно
