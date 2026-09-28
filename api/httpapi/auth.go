@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/auth"
@@ -30,12 +31,24 @@ type ProfileStateResolver interface {
 }
 
 type AuthAPI struct {
+	mu             sync.RWMutex
 	controller     AuthController
 	eventsInterval time.Duration
 	logout         *auth.LogoutService
 	logoutTargets  map[core.ProfileID]auth.LogoutTarget
 	statePaths     map[core.ProfileID]string
 	states         ProfileStateResolver
+}
+
+// SetStatePaths replaces the declared browser state targets, for example when a
+// config reload adds a profile to the running service.
+func (api *AuthAPI) SetStatePaths(paths map[core.ProfileID]string) {
+	if api == nil {
+		return
+	}
+	api.mu.Lock()
+	api.statePaths = paths
+	api.mu.Unlock()
 }
 
 func NewAuthAPI(controller AuthController, statePaths map[core.ProfileID]string) (*AuthAPI, error) {
@@ -213,8 +226,11 @@ func (api *AuthAPI) start(response http.ResponseWriter, request *http.Request) {
 // a profile draft, so the dashboard can log in before the profile exists in the
 // config.
 func (api *AuthAPI) browserStateTarget(ctx context.Context, profileID core.ProfileID) string {
-	if path := strings.TrimSpace(api.statePaths[profileID]); path != "" {
-		return path
+	api.mu.RLock()
+	declared := strings.TrimSpace(api.statePaths[profileID])
+	api.mu.RUnlock()
+	if declared != "" {
+		return declared
 	}
 	if api.states == nil {
 		return ""

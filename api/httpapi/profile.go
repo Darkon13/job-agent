@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -49,7 +50,22 @@ type ProfileCatalogEntry struct {
 // ProfileCatalogAPI exposes the declared profiles with their resume list and
 // cached identity. It never reads secrets and never contacts the platform.
 type ProfileCatalogAPI struct {
+	mu      sync.RWMutex
 	entries []ProfileCatalogEntry
+}
+
+// SetEntries replaces the catalog, for example when a config reload adds a
+// profile to the running service.
+func (api *ProfileCatalogAPI) SetEntries(entries []ProfileCatalogEntry) {
+	if api == nil {
+		return
+	}
+	if entries == nil {
+		entries = []ProfileCatalogEntry{}
+	}
+	api.mu.Lock()
+	api.entries = entries
+	api.mu.Unlock()
 }
 
 func NewProfileCatalogAPI(entries []ProfileCatalogEntry) (*ProfileCatalogAPI, error) {
@@ -70,8 +86,11 @@ func (api *ProfileCatalogAPI) Handler(next http.Handler) http.Handler {
 }
 
 func (api *ProfileCatalogAPI) list(response http.ResponseWriter, request *http.Request) {
-	items := make([]ProfileCatalogEntry, 0, len(api.entries))
-	for _, entry := range api.entries {
+	api.mu.RLock()
+	entries := append([]ProfileCatalogEntry(nil), api.entries...)
+	api.mu.RUnlock()
+	items := make([]ProfileCatalogEntry, 0, len(entries))
+	for _, entry := range entries {
 		items = append(items, entry.withSessionState())
 	}
 	response.Header().Set("Cache-Control", "no-store")

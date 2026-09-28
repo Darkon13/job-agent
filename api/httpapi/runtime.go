@@ -65,6 +65,23 @@ type RuntimeAPI struct {
 	summaryTTL     time.Duration
 }
 
+// SetProfiles replaces the account list, for example when a config reload adds
+// a profile to the running service. The cached summary is dropped so the next
+// request sees the new set.
+func (api *RuntimeAPI) SetProfiles(profiles []ProfileSummary) {
+	if api == nil {
+		return
+	}
+	if profiles == nil {
+		profiles = []ProfileSummary{}
+	}
+	api.summaryMu.Lock()
+	api.profiles = profiles
+	api.summaryCache = nil
+	api.summaryExpires = time.Time{}
+	api.summaryMu.Unlock()
+}
+
 // ConfigureSummaryCache serves a recently generated summary for the given
 // window. The dashboard refreshes on every change notification, so a short
 // window collapses bursts of identical requests.

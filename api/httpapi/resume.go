@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/workflow"
@@ -11,8 +12,20 @@ import (
 // ResumeAPI exposes the configured resume targets of a profile. It reads the
 // config-derived catalog and never contacts the platform.
 type ResumeAPI struct {
+	mu       sync.RWMutex
 	targets  map[core.ProfileID][]core.ResumeTarget
 	workflow *workflow.ResumeUpdateWorkflow
+}
+
+// SetTargets replaces the resume catalog, for example when a config reload
+// adds a profile to the running service.
+func (api *ResumeAPI) SetTargets(targets map[core.ProfileID][]core.ResumeTarget) {
+	if api == nil {
+		return
+	}
+	api.mu.Lock()
+	api.targets = targets
+	api.mu.Unlock()
 }
 
 func NewResumeAPI(targets map[core.ProfileID][]core.ResumeTarget) (*ResumeAPI, error) {
@@ -71,7 +84,9 @@ func (api *ResumeAPI) updateResume(response http.ResponseWriter, request *http.R
 
 func (api *ResumeAPI) listTargets(response http.ResponseWriter, request *http.Request) {
 	profileID := core.ProfileID(request.PathValue("profile"))
+	api.mu.RLock()
 	targets, exists := api.targets[profileID]
+	api.mu.RUnlock()
 	if !exists {
 		writeProblem(response, http.StatusNotFound, "profile has no registered resume targets")
 		return

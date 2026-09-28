@@ -2564,14 +2564,6 @@ function renderDrafts() {
       detail.className = "draft-detail-row";
       const cell = document.createElement("td");
       cell.colSpan = 4;
-      const restartLabel = document.createElement("label");
-      restartLabel.className = "draft-restart";
-      const restartBox = document.createElement("input");
-      restartBox.type = "checkbox";
-      restartBox.id = `draft-restart-${draft.tag}`;
-      restartBox.checked = true;
-      restartLabel.append(restartBox, text("span", "перезапустить сервис после сохранения (профиль подключится сразу)"));
-      cell.append(restartLabel);
       cell.append(text("span", "Основное резюме: ", "muted"));
       for (const resume of resumes) {
         const label = document.createElement("label");
@@ -2657,15 +2649,12 @@ async function finishDraftSession(tag) {
 
 async function applyDraft(tag) {
   const primary = state.draftPrimary.get(tag) || "";
-  const restartBox = document.getElementById(`draft-restart-${tag}`);
-  const restart = !restartBox || restartBox.checked;
   setDraftStep(`сохраняю профиль «${tag}»…`);
-  let applied = null;
   try {
-    applied = await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ primary_resume: primary, restart }),
+      body: JSON.stringify({ primary_resume: primary }),
     });
   } catch (error) {
     setDraftStep(`не удалось сохранить профиль: ${error.message}`);
@@ -2673,32 +2662,25 @@ async function applyDraft(tag) {
   }
   await refreshDrafts();
   await refreshProfileCatalog();
-  if (!applied.restart_scheduled) {
-    setDraftStep(`профиль «${tag}» сохранён в profile-store. Перезапустите backend, чтобы он подключился.`);
-    return;
-  }
-  setDraftStep(`профиль «${tag}» сохранён, backend перезапускается…`);
-  await waitForBackendRestart(tag);
+  setDraftStep(`профиль «${tag}» сохранён, жду подключения (перезагрузка конфига)…`);
+  await waitForProfileBinding(tag);
 }
 
-// waitForBackendRestart polls the version endpoint while the supervisor starts
-// the process again, then refreshes every view that depends on the profile.
-async function waitForBackendRestart(tag) {
+// waitForProfileBinding waits for the config reload to bind the new profile:
+// the fragment appears in the catalog without a backend restart.
+async function waitForProfileBinding(tag) {
   const started = Date.now();
-  while (Date.now() - started < 120_000) {
+  while (Date.now() - started < 60_000) {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 2_000));
-    try {
-      const version = await request("/api/v1/version");
-      if (version && version.version) {
-        setDraftStep(`backend снова доступен (${version.version}); профиль «${tag}» подключён.`);
-        await refreshSummary();
-        await refreshProfileCatalog();
-        await refreshDrafts();
-        return;
-      }
-    } catch (_) { /* the backend is still down, keep waiting */ }
+    await refreshProfileCatalog();
+    if ((state.profileCatalog || []).some((entry) => entry.tag === tag)) {
+      setDraftStep(`профиль «${tag}» подключён без перезапуска.`);
+      await refreshSummary();
+      await refreshDrafts();
+      return;
+    }
   }
-  setDraftStep("backend не поднялся за 2 минуты — проверьте контейнер и логи.");
+  setDraftStep(`профиль «${tag}» сохранён, но за минуту не появился в каталоге — проверьте статус перезагрузки конфига.`);
 }
 
 async function deleteDraft(tag) {

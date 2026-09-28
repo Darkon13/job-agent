@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/core"
@@ -28,6 +29,7 @@ type ProfileIdentitySource func(profileID core.ProfileID, stateFile string) (ada
 // drafts, captures the account identity after a successful login and writes the
 // fragment into the profile store.
 type ProfileDraftWorkflow struct {
+	mu        sync.RWMutex
 	drafts    storage.ProfileDraftRepository
 	declared  map[core.ProfileID]struct{}
 	adapters  map[string]string
@@ -35,6 +37,21 @@ type ProfileDraftWorkflow struct {
 	directory string
 	reader    ProfileIdentitySource
 	clock     Clock
+}
+
+// SetDeclared replaces the declared profile tags, for example when a config
+// reload adds a profile: its tag can no longer be used by a new draft.
+func (workflow *ProfileDraftWorkflow) SetDeclared(declared []core.ProfileID) {
+	if workflow == nil {
+		return
+	}
+	known := make(map[core.ProfileID]struct{}, len(declared))
+	for _, profileID := range declared {
+		known[profileID] = struct{}{}
+	}
+	workflow.mu.Lock()
+	workflow.declared = known
+	workflow.mu.Unlock()
 }
 
 func NewProfileDraftWorkflow(
@@ -92,7 +109,10 @@ func (workflow *ProfileDraftWorkflow) Create(ctx context.Context, tag, adapterTa
 	if err := core.ValidateProfileDraftTag(tag); err != nil {
 		return core.ProfileDraft{}, err
 	}
-	if _, exists := workflow.declared[core.ProfileID(tag)]; exists {
+	workflow.mu.RLock()
+	_, declared := workflow.declared[core.ProfileID(tag)]
+	workflow.mu.RUnlock()
+	if declared {
 		return core.ProfileDraft{}, fmt.Errorf("profile %q is already declared in the config", tag)
 	}
 	adapterTag = strings.TrimSpace(adapterTag)
