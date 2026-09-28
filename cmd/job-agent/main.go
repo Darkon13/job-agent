@@ -1091,6 +1091,16 @@ func main() {
 				if err := binder.bind(profile, preparer, true); err != nil {
 					return fmt.Errorf("bind profile %q: %w", profile.Tag, err)
 				}
+				if instance := instances[profile.Adapter]; instance != nil && instance.Name() == hh.Name &&
+					strings.TrimSpace(profile.StateFile) != "" {
+					// The session refresher lives outside the binder: it keeps the
+					// browser state fresh through the browser worker.
+					if refreshClient, clientErr := browserWorkerHTTPClient(); clientErr == nil && refreshClient != nil {
+						if err := sessionRefreshers.Register(profileID, refreshClient, profile.StateFile); err != nil {
+							return fmt.Errorf("register session refresher for profile %q: %w", profile.Tag, err)
+						}
+					}
+				}
 			}
 			boundProfiles[profileID] = struct{}{}
 			logf("profile %q is bound without a restart", profile.Tag)
@@ -1098,7 +1108,14 @@ func main() {
 		refreshProfileViews(fresh)
 		return nil
 	}
-	go watchConfigReload(ctx, options.configPath, scheduler, bindProfiles, buildReloadableDefinitions, refreshCampaigns, reloadStatus)
+	applyJobDefinitions := func(definitions []jobscheduler.Definition) {
+		if err := jobRunWorkflow.ReplaceDefinitions(jobRunDefinitions(definitions)); err != nil {
+			logf("job definitions reload failed: %v", err)
+			return
+		}
+		logf("runnable job definitions reloaded: %d", len(definitions))
+	}
+	go watchConfigReload(ctx, options.configPath, scheduler, bindProfiles, buildReloadableDefinitions, refreshCampaigns, applyJobDefinitions, reloadStatus)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -2470,6 +2487,7 @@ func watchConfigReload(
 	bind func(appconfig.Config) error,
 	build func(appconfig.Config) ([]jobscheduler.Definition, error),
 	refresh func(appconfig.Config) error,
+	applyDefinitions func([]jobscheduler.Definition),
 	status *configReloadStatus,
 ) {
 	signals := make(chan os.Signal, 1)
@@ -2519,6 +2537,9 @@ func watchConfigReload(
 			logf("config reload failed: %v", err)
 			status.recordError(err.Error())
 			return
+		}
+		if applyDefinitions != nil {
+			applyDefinitions(definitions)
 		}
 		lastDigest = current
 		status.record(current, len(definitions))

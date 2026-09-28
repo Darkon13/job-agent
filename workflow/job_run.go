@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -72,11 +73,37 @@ type JobRunDescriptor struct {
 }
 
 type JobRunWorkflow struct {
+	mu          sync.RWMutex
 	tasks       broker.TaskStore
 	clock       Clock
 	ids         IDGenerator
 	definitions map[string]JobRunDefinition
 	descriptors []JobRunDescriptor
+}
+
+// ReplaceDefinitions swaps the runnable job set, for example when a config
+// reload adds jobs or binds a profile that generates new system jobs. Running
+// tasks keep the definition they were created from.
+func (workflow *JobRunWorkflow) ReplaceDefinitions(definitions []JobRunDefinition) error {
+	if workflow == nil {
+		return errors.New("job run workflow is nil")
+	}
+	replacement := make(map[string]JobRunDefinition, len(definitions))
+	descriptors := make([]JobRunDescriptor, 0, len(definitions))
+	for _, definition := range definitions {
+		if err := definition.validate(); err != nil {
+			return err
+		}
+		copied := JobRunDefinition{Tag: definition.Tag, Commands: cloneJobRunCommands(definition.Commands)}
+		replacement[copied.Tag] = copied
+		descriptors = append(descriptors, copied.descriptor())
+	}
+	sort.Slice(descriptors, func(i, j int) bool { return descriptors[i].Tag < descriptors[j].Tag })
+	workflow.mu.Lock()
+	workflow.definitions = replacement
+	workflow.descriptors = descriptors
+	workflow.mu.Unlock()
+	return nil
 }
 
 func NewJobRunWorkflow(tasks broker.TaskStore, clock Clock, ids IDGenerator, definitions []JobRunDefinition) (*JobRunWorkflow, error) {
@@ -103,6 +130,8 @@ func (workflow *JobRunWorkflow) Definitions() []JobRunDescriptor {
 	if workflow == nil {
 		return nil
 	}
+	workflow.mu.RLock()
+	defer workflow.mu.RUnlock()
 	return append([]JobRunDescriptor(nil), workflow.descriptors...)
 }
 
@@ -129,7 +158,9 @@ func (workflow *JobRunWorkflow) run(ctx context.Context, tag string, profileID c
 	if tag == "" || requestKey == "" {
 		return core.Task{}, false, errors.New("job run requires tag and idempotency key")
 	}
+	workflow.mu.RLock()
 	definition, exists := workflow.definitions[tag]
+	workflow.mu.RUnlock()
 	if !exists {
 		return core.Task{}, false, fmt.Errorf("%w: %s", ErrJobRunNotFound, tag)
 	}
