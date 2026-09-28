@@ -18,7 +18,7 @@ services:
         COMMIT: ${JOB_AGENT_COMMIT:-unknown}
         BUILD_TIME: ${JOB_AGENT_BUILD_TIME:-unknown}
         MODIFIED: ${JOB_AGENT_MODIFIED:-unknown}
-    command: ["/usr/local/bin/job-agent", "-migrate-up", "/config/${JOB_AGENT_CONFIG_NAME:-config.example.json}"]
+    command: ["/usr/local/bin/job-agent", "-migrate-up", "/config/${JOB_AGENT_CONFIG_NAME:-config.json}"]
     environment:
       JOB_AGENT_SERVER_LISTEN: 0.0.0.0:8080
       JOB_AGENT_SERVER_EXPOSURE: private
