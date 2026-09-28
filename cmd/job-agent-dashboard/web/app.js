@@ -9,7 +9,7 @@ const state = {
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
   messageRequest: new Map(), messageSignatures: new Map(),
   localReads: new Map(),
-  profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
+  profileResources: [], profileStateError: "", profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false, reviewFocusPending: false,
   browserCheck: null, captchaCheckRemaining: [],
@@ -18,7 +18,7 @@ const elements = Object.fromEntries([
   "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
-  "profile-resources", "profile-state-state",
+
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt", "review-send",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
   "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
@@ -1201,6 +1201,23 @@ function renderProfileDetail(entry) {
     cell.append(line);
   }
 
+  // The desired state of the profile lives in its expansion: paths, plan
+  // builder, revisions and the one-off editor.
+  const resources = (state.profileResources || []).filter((resource) => resource.profile_id === entry.tag);
+  if (resources.length || state.profileStateError) {
+    const line = document.createElement("div");
+    line.className = "profile-detail-line";
+    line.append(text("strong", "Desired state"));
+    if (state.profileStateError) line.append(text("div", state.profileStateError, "muted"));
+    if (resources.length) {
+      const grid = document.createElement("div");
+      grid.className = "resource-grid";
+      grid.append(...resources.map((resource) => profileResourceCard(resource)));
+      line.append(grid);
+    }
+    cell.append(line);
+  }
+
   row.append(cell);
   return row;
 }
@@ -1472,9 +1489,12 @@ async function sendQuestionnaireOption(message, option) {
   renderMessages(state.selectedMessages);
 }
 
-function renderProfileResources() {
-  if (!state.profileResources.length) { elements.profileResources.replaceChildren(text("p", "Desired-state ресурсов пока нет.", "empty panel")); return; }
-  elements.profileResources.replaceChildren(...state.profileResources.map((resource) => {
+// renderProfileResources re-renders the profile table: the desired-state cards
+// are part of the profile expansion now.
+function renderProfileResources() { renderProfiles(); }
+
+function profileResourceCard(resource) {
+  {
     const card = document.createElement("article"); card.className = "panel resource-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
     const identity = document.createElement("div"); identity.append(text("h2", resource.tag), text("p", `${profileDisplayName(resource.profile_id)} · ${resource.ownership}`, "muted"));
@@ -1539,7 +1559,7 @@ function renderProfileResources() {
       applyButton.addEventListener("click", () => applyProfileState(resource, plan, applyButton)); actions.append(applyButton);
     }
     card.append(actions); return card;
-  }));
+  }
 }
 
 async function refreshProfileResources() {
@@ -1556,11 +1576,11 @@ async function refreshProfileResources() {
       }
     }
     state.profileResources = resources;
-    elements.profileStateState.textContent = `${state.profileResources.length} ресурсов`;
+    state.profileStateError = "";
     renderProfileResources();
   } catch (error) {
-    elements.profileStateState.textContent = error.message;
-    elements.profileResources.replaceChildren(text("p", "Не удалось загрузить desired state.", "empty panel"));
+    state.profileStateError = `Desired state не загрузился: ${error.message}`;
+    renderProfileResources();
   }
 }
 
