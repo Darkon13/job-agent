@@ -120,7 +120,9 @@ Compose сам применяет миграции (`-migrate-up`) и подни
 `deploy/config.example.json` остаётся шаблоном.
 
 Останавливать стек нужно тем же профилем, иначе `browser-worker` останется
-работать и удержит сеть: `docker compose --profile browser down`.
+работать и удержит сеть: `docker compose --profile browser down`. За VPN с
+меньшим MTU (AmneziaWG — 1280) добавьте в `.env` `JOB_AGENT_NETWORK_MTU=1280`,
+иначе контейнеры не достучатся до hh.ru.
 
 <details>
 <summary>Вариант без Docker: локальные бинарники</summary>

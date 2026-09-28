@@ -2636,8 +2636,13 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// No write deadline: browser RPCs may legitimately take up to two
+		// minutes and the auth challenge stream is long-lived. A shorter
+		// deadline silently cuts the response, and the client sees only an
+		// empty reply instead of the real error. Slow clients stay bounded by
+		// the read timeouts.
+		WriteTimeout: 0,
+		IdleTimeout:  60 * time.Second,
 	}
 	result := make(chan error, 1)
 	workerErrors := make(chan error, len(workers))
