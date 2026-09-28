@@ -18,6 +18,7 @@ import (
 // submits anything to the platform: it records the selection and the
 // review.answer worker continues the chain.
 type ReviewAPI struct {
+	bank      AnswerBankLookup
 	reviews   storage.ReviewRepository
 	workflow  *workflow.VacancyTestWorkflow
 	vacancies reviewVacancyRepository
@@ -27,6 +28,52 @@ type ReviewAPI struct {
 // to. Qualification sessions expose no vacancy and stay without one.
 type reviewVacancyRepository interface {
 	Vacancy(context.Context, core.VacancyKey) (core.Vacancy, error)
+}
+
+// AnswerBankLookup resolves the reviewed answer block of a platform so the
+// review view can mark the questions the bank already covers.
+type AnswerBankLookup interface {
+	FindVacancy(ctx context.Context, platform core.Platform) (core.AnswerBlock, bool, error)
+}
+
+// reviewQuestionView is one remaining question with the reviewed answer the
+// bank already holds for it, if any.
+type reviewQuestionView struct {
+	core.Question
+	BankAnswer *reviewBankAnswer `json:"bank_answer,omitempty"`
+}
+
+type reviewBankAnswer struct {
+	SelectedOptions []string `json:"selected_options,omitempty"`
+	Text            string   `json:"text,omitempty"`
+}
+
+// ConfigureAnswerBank attaches the reviewed answer blocks. Without it the view
+// simply omits the bank hints.
+func (api *ReviewAPI) ConfigureAnswerBank(bank AnswerBankLookup) {
+	if api == nil {
+		return
+	}
+	api.bank = bank
+}
+
+// bankAnswers maps question fingerprints to the reviewed answers of the
+// platform's vacancy block.
+func (api *ReviewAPI) bankAnswers(ctx context.Context, session core.ReviewSession) map[string]core.StoredAnswer {
+	if api.bank == nil {
+		return nil
+	}
+	block, found, err := api.bank.FindVacancy(ctx, session.Platform)
+	if err != nil || !found {
+		return nil
+	}
+	answers := make(map[string]core.StoredAnswer, len(block.Answers))
+	for _, answer := range block.Answers {
+		if fingerprint := strings.TrimSpace(answer.QuestionFingerprint); fingerprint != "" {
+			answers[fingerprint] = answer
+		}
+	}
+	return answers
 }
 
 func NewReviewAPI(reviews storage.ReviewRepository, workflow *workflow.VacancyTestWorkflow, vacancies reviewVacancyRepository) (*ReviewAPI, error) {
@@ -67,7 +114,7 @@ type reviewSessionResponse struct {
 	UpdatedAt        time.Time                `json:"updated_at"`
 	Prompt           *core.ReviewPrompt       `json:"prompt,omitempty"`
 	Selections       []core.ReviewSelection   `json:"selections,omitempty"`
-	Questions        []core.Question          `json:"questions,omitempty"`
+	Questions        []reviewQuestionView     `json:"questions,omitempty"`
 	Vacancy          *reviewVacancyInfo       `json:"vacancy,omitempty"`
 }
 
@@ -238,7 +285,7 @@ func (api *ReviewAPI) getSession(response http.ResponseWriter, request *http.Req
 		return
 	}
 	view.Selections = selections
-	view.Questions = api.remainingQuestions(request.Context(), session)
+	view.Questions = api.remainingQuestionViews(request.Context(), session)
 	writeJSON(response, http.StatusOK, view)
 }
 
@@ -289,6 +336,28 @@ func (api *ReviewAPI) answer(response http.ResponseWriter, request *http.Request
 		return
 	}
 	writeJSON(response, http.StatusAccepted, taskResponse{TaskID: task.ID, Created: created})
+}
+
+// remainingQuestionViews adds the bank hint to every remaining question.
+func (api *ReviewAPI) remainingQuestionViews(ctx context.Context, session core.ReviewSession) []reviewQuestionView {
+	remaining := api.remainingQuestions(ctx, session)
+	if len(remaining) == 0 {
+		return nil
+	}
+	bank := api.bankAnswers(ctx, session)
+	views := make([]reviewQuestionView, 0, len(remaining))
+	for _, question := range remaining {
+		view := reviewQuestionView{Question: question}
+		if len(bank) != 0 {
+			if fingerprint, err := core.QuestionFingerprint(question); err == nil {
+				if answer, exists := bank[fingerprint]; exists {
+					view.BankAnswer = &reviewBankAnswer{SelectedOptions: answer.SelectedOptions, Text: answer.Text}
+				}
+			}
+		}
+		views = append(views, view)
+	}
+	return views
 }
 
 // remainingQuestions lists the observed questionnaire questions that have no

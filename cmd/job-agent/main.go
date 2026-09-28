@@ -414,6 +414,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create review API: %v", err)
 	}
+	reviewAPI.ConfigureAnswerBank(answerResolver)
 	resumeAPI, err := httpapi.NewResumeAPI(cfg.ResumeTargets())
 	if err != nil {
 		log.Fatalf("create resume API: %v", err)
