@@ -725,6 +725,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile import handler: %v", err)
 	}
+	profileImportHandler.ConfigureIdentity(store, func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+		return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+	}, profileStateFiles(cfg))
 	profileImportWorker, err := newTaskWorker(store, core.TaskProfileStateImport, profileImportHandler.Handle)
 	if err != nil {
 		log.Fatalf("create profile import worker: %v", err)
