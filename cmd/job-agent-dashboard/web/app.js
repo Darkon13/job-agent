@@ -15,7 +15,7 @@ const state = {
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
-  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-filters", "application-items", "application-filter-state", "application-action-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
 
@@ -160,21 +160,27 @@ function renderApplicationFilters(items = []) {
 function visibleApplicationObjects() { return state.applicationObjects; }
 function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed", "ready"].includes(item.status); }
 
+// setApplicationActionMessage keeps the applications header in sync with the
+// last operator action: without it a click that cannot finish looks silent.
+function setApplicationActionMessage(message) {
+  state.applicationActionMessage = message;
+  if (elements.applicationActionState) elements.applicationActionState.textContent = message || "";
+}
+
 async function captureQuestionnaire(item, button) {
   button.disabled = true;
-  state.applicationActionMessage = "Запрашиваю анкету у HH…";
-  updateApplicationSelection(state.applicationObjects);
+  setApplicationActionMessage("Запрашиваю анкету у HH…");
   try {
     const key = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `questionnaire-${Date.now()}`;
     const response = await fetch(`/api/v1/applications/${encodeURIComponent(item.id)}/questionnaire`, {
       method: "POST", headers: { "Idempotency-Key": key },
     });
     if (!response.ok) throw new Error(String(response.status));
-    state.applicationActionMessage = "";
+    setApplicationActionMessage("");
     const vacancyID = String(item.vacancy_url || "").match(/\/vacancy\/(\d+)/)?.[1] || "";
     await focusReviewSession(vacancyID, item.profile_id);
   } catch (error) {
-    state.applicationActionMessage = `Не удалось запросить анкету: ${error.message}`;
+    setApplicationActionMessage(`Не удалось запросить анкету: ${error.message}`);
   }
   button.disabled = false;
   updateApplicationSelection(state.applicationObjects);
@@ -196,12 +202,14 @@ async function focusReviewSession(vacancyID, profileID) {
     document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  // The captured questionnaire may fall outside the active review filters.
-  if (elements.reviewFilter.value || state.reviewQuery) {
-    elements.reviewFilter.value = ""; elements.reviewSearch.value = ""; state.reviewQuery = "";
-  }
+  // The captured questionnaire may fall outside the loaded page: with hundreds
+  // of sessions the right card is otherwise never fetched. The list is narrowed
+  // to this vacancy instead, which also shows the operator why one card is left.
+  elements.reviewFilter.value = "";
+  state.reviewQuery = vacancyID;
+  elements.reviewSearch.value = vacancyID;
   state.reviewSelected = null; state.reviewFocusPending = true;
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 90000;
   try {
     for (;;) {
       await refreshReviewSessions();
@@ -212,7 +220,7 @@ async function focusReviewSession(vacancyID, profileID) {
         return;
       }
       if (Date.now() >= deadline) {
-        elements.reviewState.textContent = "HH ещё готовит анкету — обновите список проверок";
+        elements.reviewState.textContent = "HH не отдал анкету — проверьте «Неразрешённые ошибки задач»";
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -437,6 +445,7 @@ async function removeSelectedApplications() {
 function renderApplicationObjects() {
   const items = visibleApplicationObjects();
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
+  elements.applicationActionState.textContent = state.applicationActionMessage || "";
   updateApplicationProfileColumn();
   if (!items.length) {
     const row = document.createElement("tr");

@@ -181,6 +181,40 @@ func TestStoreAppendsOneReviewSelectionForConcurrentClients(t *testing.T) {
 	}
 }
 
+func TestListReviewSessionsFindsVacancyByExternalID(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "job-agent.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	// A vacancy questionnaire lives under hh:vacancy:<external id>; the review
+	// search must find it by that id so the dashboard can focus one card.
+	definition := core.TestDefinition{
+		ID: core.VacancyTestDefinitionID("hh", "137743845"), Platform: "hh", ExternalID: "137743845",
+		Title: "Senior QA Engineer", Questions: []core.TestQuestion{}, DiscoveredAt: now, UpdatedAt: now,
+	}
+	if _, err := store.UpsertTestDefinition(ctx, definition); err != nil {
+		t.Fatalf("store definition: %v", err)
+	}
+	session, err := core.NewReviewSession("review-vacancy", definition, "primary", "correlation-1", now)
+	if err != nil {
+		t.Fatalf("new review session: %v", err)
+	}
+	if created, err := store.CreateReviewSession(ctx, session); err != nil || !created {
+		t.Fatalf("create review session: created=%v err=%v", created, err)
+	}
+	listed, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{Query: "137743845"})
+	if err != nil || len(listed) != 1 || listed[0].ID != session.ID {
+		t.Fatalf("search by vacancy id: %#v err=%v", listed, err)
+	}
+	empty, err := store.ListReviewSessions(ctx, storage.ReviewSessionFilter{Query: "999999999"})
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("search by a foreign vacancy id: %#v err=%v", empty, err)
+	}
+}
+
 func TestSQLiteReviewSessionKeepsAnswerBlockTag(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
