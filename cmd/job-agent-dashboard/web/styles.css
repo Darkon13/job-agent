@@ -325,8 +325,9 @@ td.task-actions > * + * { margin-left: .35rem; }
 .job-state.ok { color: var(--green); border-color: rgb(186 230 126 / 35%); }
 .job-state.paused { color: var(--orange); border-color: rgb(255 204 102 / 35%); }
 .job-state:disabled { opacity: .7; }
-.job-run-cell { width: 3.5rem; text-align: right; }
-.job-run {
+.job-run-cell { width: 5.5rem; text-align: right; white-space: nowrap; }
+.job-run,
+.job-edit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -339,6 +340,8 @@ td.task-actions > * + * { margin-left: .35rem; }
   color: var(--green);
 }
 .job-run:hover:not(:disabled) { border-color: var(--green); filter: none; }
+.job-edit { color: var(--cyan); }
+.job-edit:hover:not(:disabled) { border-color: var(--cyan); filter: none; }
 
 /* Applications read as a document, not a wide grid: the vacancy cell carries
    the title link and the company, rows grow in height instead of width. */
@@ -440,3 +443,17 @@ td[colspan] { text-align: left; }
 .job-detail-schedule { padding-left: .9rem; color: var(--muted); }
 .job-lock { display: inline-flex; align-items: center; margin-left: .1rem; color: var(--muted); }
 .profile-detail-row td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
+
+/* The job editor keeps the JSON as the single source of truth: the fields only
+   help to assemble it. */
+#job-editor-json {
+  width: 100%;
+  margin-top: .4rem;
+  padding: .7rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: .8rem/1.5 ui-monospace, monospace;
+  resize: vertical;
+}

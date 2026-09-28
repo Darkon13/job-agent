@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -263,5 +264,91 @@ func TestJobAPIEnrichesRunnableJobsWithSchedules(t *testing.T) {
 		!strings.Contains(body, `"next_run_at":"2026-09-13T16:00:00Z"`) ||
 		!strings.Contains(body, `"jitter_min":"1m0s"`) || !strings.Contains(body, `"jitter_max":"10m0s"`) {
 		t.Fatalf("list jobs with schedules: %d %s", response.Code, body)
+	}
+}
+
+type jobEditorFake struct {
+	saved   []string
+	deleted []string
+	managed map[string]bool
+	err     error
+}
+
+func (editor *jobEditorFake) Save(_ context.Context, job json.RawMessage) error {
+	if editor.err != nil {
+		return editor.err
+	}
+	editor.saved = append(editor.saved, string(job))
+	return nil
+}
+
+func (editor *jobEditorFake) Delete(_ context.Context, tag string) error {
+	if editor.err != nil {
+		return editor.err
+	}
+	if !editor.managed[tag] {
+		return workflow.ErrJobFragmentNotFound
+	}
+	editor.deleted = append(editor.deleted, tag)
+	return nil
+}
+
+func (editor *jobEditorFake) Exists(tag string) bool { return editor.managed[tag] }
+
+func (editor *jobEditorFake) Directory() string { return "/store" }
+
+func TestJobAPIEditsFragments(t *testing.T) {
+	editor := &jobEditorFake{managed: map[string]bool{"hourly": true}}
+	api, err := NewJobAPI(&workflow.JobRunWorkflow{}, nil)
+	if err != nil {
+		t.Fatalf("new api: %v", err)
+	}
+	api.SetSystemTags([]string{"system.state.poll"})
+	api.ConfigureEditor(editor)
+	handler := api.Handler(nil)
+
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"hourly","enabled":true}`))
+	create.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, create)
+	if recorder.Code != http.StatusOK || len(editor.saved) != 1 {
+		t.Fatalf("create status = %d saved=%#v body=%s", recorder.Code, editor.saved, recorder.Body.String())
+	}
+
+	mismatch := httptest.NewRequest(http.MethodPut, "/api/v1/jobs/other", strings.NewReader(`{"tag":"hourly"}`))
+	mismatch.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, mismatch)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("tag mismatch status = %d", recorder.Code)
+	}
+
+	system := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"system.state.poll"}`))
+	system.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, system)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("system job status = %d", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/hourly", nil))
+	if recorder.Code != http.StatusNoContent || len(editor.deleted) != 1 {
+		t.Fatalf("delete status = %d deleted=%#v", recorder.Code, editor.deleted)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/missing", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing delete status = %d", recorder.Code)
+	}
+
+	// A validator failure surfaces as a bad request with the reason.
+	editor.err = errors.New("job \"hourly\" campaign route \"nope\" does not exist")
+	invalid := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"hourly"}`))
+	invalid.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, invalid)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "does not exist") {
+		t.Fatalf("invalid job status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
