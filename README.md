@@ -119,6 +119,9 @@ Compose сам применяет миграции (`-migrate-up`) и подни
 `JOB_AGENT_CONFIG_NAME`), поэтому пример нужно скопировать, а не править: файл
 `deploy/config.example.json` остаётся шаблоном.
 
+Останавливать стек нужно тем же профилем, иначе `browser-worker` останется
+работать и удержит сеть: `docker compose --profile browser down`.
+
 <details>
 <summary>Вариант без Docker: локальные бинарники</summary>
 
