@@ -291,4 +291,42 @@ func TestApplicationAPIEnqueuesQuestionnaireCapture(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("missing application status=%d body=%s", response.Code, response.Body.String())
 	}
+
+	// A platform refusal cannot be answered by a questionnaire: the endpoint
+	// must reject the capture instead of enqueueing a task that only dies.
+	if _, err := repository.UpsertVacancy(context.Background(), core.Vacancy{
+		Platform: "hh", ExternalID: "43", Title: "Backend engineer", Employer: "Example",
+		State: core.VacancyStateOpen, ObservedAt: now,
+	}); err != nil {
+		t.Fatalf("store refused vacancy: %v", err)
+	}
+	refused, err := core.NewApplication(
+		"application-2",
+		core.ApplicationKey{ProfileID: "primary", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "43"}},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("new refused application: %v", err)
+	}
+	if _, _, err := repository.CreateApplication(context.Background(), refused); err != nil {
+		t.Fatalf("store refused application: %v", err)
+	}
+	// The repository accepts new applications only in their initial state;
+	// then the platform decision is persisted as the worker would.
+	if err := refused.Transition(core.ApplicationPreparing, now.Add(time.Second)); err != nil {
+		t.Fatalf("refused preparing: %v", err)
+	}
+	if err := refused.RecordPreparation("response_impossible", "HH currently does not allow an application to this vacancy", "", "", now.Add(2*time.Second)); err != nil {
+		t.Fatalf("refused decision: %v", err)
+	}
+	if err := refused.Transition(core.ApplicationWaitingValidation, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("refused validation: %v", err)
+	}
+	if err := repository.SaveApplication(context.Background(), refused, core.ApplicationNew); err != nil {
+		t.Fatalf("save refused application: %v", err)
+	}
+	response = performRequest(t, api.Handler(nil), http.MethodPost, "/api/v1/applications/application-2/questionnaire", "questionnaire-3", "", nil)
+	if response.Code != http.StatusConflict || recorder.calls != 1 {
+		t.Fatalf("refused capture status=%d calls=%d body=%s", response.Code, recorder.calls, response.Body.String())
+	}
 }

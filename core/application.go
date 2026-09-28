@@ -44,6 +44,20 @@ type Application struct {
 	SubmittedAt           *time.Time                       `json:"submitted_at,omitempty"`
 }
 
+// QuestionnaireDecisionActionable reports whether the dashboard can resolve a
+// platform decision by capturing and answering a vacancy questionnaire: the
+// vacancy asks for a questionnaire, a test or extra data. A platform refusal,
+// a captcha or an unsupported flow cannot be answered that way, so the capture
+// call to action must stay blocked for them.
+func QuestionnaireDecisionActionable(code string) bool {
+	switch code {
+	case "questionnaire_required", "vacancy_test_required", "platform_validation_required":
+		return true
+	default:
+		return false
+	}
+}
+
 const ApplicationPreparationProvenanceVersion = 3
 
 const (

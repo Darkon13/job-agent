@@ -450,9 +450,20 @@ function renderApplicationObjects() {
   updateApplicationSelection(items);
 }
 
+// questionnaireDecisionCodes are the decisions the operator resolves by
+// answering the vacancy questionnaire. Other validation decisions (a platform
+// refusal, a captcha, an unsupported flow) must not offer the capture action.
+const questionnaireDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
+
 function applicationNeedsInput(item) {
-  const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
-  return validationSkipped || item.status === "waiting_validation";
+  return questionnaireDecisionCodes.has(item.decision_code) && (item.status === "waiting_validation" || item.status === "skipped");
+}
+
+// applicationValidationBlocked covers the applications waiting on a platform
+// decision that the questionnaire cannot resolve: their status stays a blocked
+// button instead of a working call to action.
+function applicationValidationBlocked(item) {
+  return item.status === "waiting_validation" || item.status === "skipped";
 }
 
 function applicationCanRetry(item) {
@@ -500,6 +511,15 @@ function applicationStatusCell(item) {
     button.title = "Открыть анкету и ответить на вопросы";
     button.append(text("span", applicationGroupLabels[group]), text("small", "анкета", "status-hint"));
     button.addEventListener("click", (event) => { event.stopPropagation(); captureQuestionnaire(item, button); });
+    cell.append(button);
+  } else if (applicationValidationBlocked(item) && item.platform === "hh") {
+    // The decision cannot be answered by a questionnaire: show the state but
+    // keep the action blocked so it never enqueues a capture that must die.
+    const button = text("button", "", `status status-${group} status-action`);
+    button.type = "button";
+    button.disabled = true;
+    button.title = `${applicationReason(item) || "Действие недоступно"} — анкета недоступна`;
+    button.append(text("span", applicationGroupLabels[group]));
     cell.append(button);
   } else {
     cell.append(text("span", applicationGroupLabels[group], `status status-${group}`));
