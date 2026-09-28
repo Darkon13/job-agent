@@ -77,6 +77,20 @@ func TestLoadBarePathKeepsWorkingAsJSON(t *testing.T) {
 	}
 }
 
+func TestWriteFileCreatesMissingOutputDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles", "primary", "credentials.json")
+	if err := WriteFile(path, testRecord(), FormatJSON, false); err != nil {
+		t.Fatalf("write into a missing directory: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat credential output: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("credential permissions = %o", info.Mode().Perm())
+	}
+}
+
 func TestWriteFileRefusesOverwriteWithoutForce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	if err := WriteFile(path, testRecord(), FormatJSON, false); err != nil {

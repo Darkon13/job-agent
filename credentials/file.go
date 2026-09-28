@@ -137,6 +137,12 @@ func WriteFile(path string, record Record, format string, force bool) error {
 		return fmt.Errorf("inspect credential output: %w", err)
 	}
 	directory := filepath.Dir(trimmed)
+	// The configured path may live in a directory the operator has not created
+	// yet (for example /data/profiles on a fresh volume): create it instead of
+	// failing the whole login after a successful platform exchange.
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create credential directory: %w", err)
+	}
 	temp, err := os.CreateTemp(directory, "."+filepath.Base(trimmed)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create credential output: %w", err)
