@@ -795,6 +795,29 @@ function jobRunButton(item, profileID = "") {
   return button;
 }
 
+// jobEditButton opens the fragment editor of a dashboard-managed job.
+function jobEditButton(item) {
+  const button = text("button", "", "job-edit");
+  button.type = "button";
+  button.title = "Изменить джобу";
+  button.setAttribute("aria-label", button.title);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M11.3 2.1l2.6 2.6-7.5 7.5-3 .4.4-3 7.5-7.5z");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.4");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); openJobEditor(item); });
+  return button;
+}
+
 function toggleJobExpanded(tag) {
   if (state.expandedJobs.has(tag)) state.expandedJobs.delete(tag);
   else state.expandedJobs.add(tag);
@@ -865,6 +888,7 @@ function renderJobRow(item) {
 
     const runCell = document.createElement("td");
     runCell.className = "job-run-cell";
+    if (item.editable) runCell.append(jobEditButton(item));
     runCell.append(jobRunButton(item));
 
     row.append(jobCell, scheduleCell, stateCell, runCell);
@@ -2723,4 +2747,190 @@ async function deleteDraft(tag) {
   refreshButton?.addEventListener("click", () => { refreshProfileCatalog(); refreshDrafts(); });
   refreshProfileCatalog();
   refreshDrafts();
+})();
+
+// --- редактор джоб: фрагмент в profile-store, применение через reload ------
+
+function jobEditorValue(id) {
+  const element = document.getElementById(id);
+  return element ? String(element.value || "").trim() : "";
+}
+
+function jobEditorChecked(id) {
+  const element = document.getElementById(id);
+  return !element || element.checked;
+}
+
+function jobEditorList(id) {
+  return jobEditorValue(id).split(",").map((value) => value.trim()).filter(Boolean);
+}
+
+// buildJobEditorJSON assembles a campaign job from the helper fields; the
+// textarea stays editable, so any other action type is still reachable.
+function buildJobEditorJSON() {
+  const tag = jobEditorValue("job-editor-tag");
+  if (!tag) {
+    setJobEditorStep("Укажите тег джобы.");
+    return;
+  }
+  const job = {
+    tag,
+    enabled: jobEditorChecked("job-editor-enabled"),
+    concurrency: "forbid",
+    triggers: [{ type: "cron", expression: jobEditorValue("job-editor-cron") || "0 * * * *" }],
+    action: { type: "application.campaign" },
+  };
+  const description = jobEditorValue("job-editor-description");
+  if (description) job.description = description;
+  const profiles = jobEditorList("job-editor-profiles");
+  if (profiles.length) job.action.profiles = profiles;
+  const routes = jobEditorList("job-editor-routes");
+  if (routes.length) job.action.routes = routes;
+  const target = Number(jobEditorValue("job-editor-target"));
+  if (target > 0) job.action.target_successful = target;
+  const inflight = Number(jobEditorValue("job-editor-inflight"));
+  if (inflight > 0) job.action.max_in_flight = inflight;
+  const textarea = document.getElementById("job-editor-json");
+  if (textarea) textarea.value = JSON.stringify(job, null, 2);
+  setJobEditorStep("JSON собран — проверьте его и сохраните.");
+}
+
+function setJobEditorStep(message) {
+  const element = document.getElementById("job-editor-step");
+  if (element) element.textContent = message;
+}
+
+// openJobEditor fills the panel from an existing job descriptor or clears it
+// for a new one.
+function openJobEditor(job = null) {
+  const panel = document.getElementById("job-editor");
+  if (!panel) return;
+  state.jobEditorTag = job ? job.tag : "";
+  const title = document.getElementById("job-editor-title");
+  if (title) title.textContent = job ? `Джоба ${job.tag}` : "Новая джоба";
+  const set = (id, value) => { const element = document.getElementById(id); if (element) element.value = value; };
+  set("job-editor-tag", job ? job.tag : "");
+  set("job-editor-description", job ? job.description || "" : "");
+  set("job-editor-cron", job && job.schedules && job.schedules[0] ? job.schedules[0].expression || "0 * * * *" : "0 * * * *");
+  set("job-editor-profiles", job ? (job.profiles || [job.profile_id]).filter(Boolean).join(", ") : "");
+  const payload = job && job.payload ? job.payload : {};
+  set("job-editor-routes", Array.isArray(payload.routes) ? payload.routes.join(", ") : "");
+  set("job-editor-target", payload.target_successful ? String(payload.target_successful) : "200");
+  set("job-editor-inflight", payload.max_in_flight ? String(payload.max_in_flight) : "2");
+  const enabled = document.getElementById("job-editor-enabled");
+  if (enabled) enabled.checked = job ? job.enabled !== false : true;
+  const textarea = document.getElementById("job-editor-json");
+  if (textarea) textarea.value = job ? JSON.stringify(jobEditorJobDefinition(job), null, 2) : "";
+  const remove = document.getElementById("job-editor-delete");
+  if (remove) remove.hidden = !job;
+  panel.hidden = false;
+  setJobEditorStep(job
+    ? "Правьте JSON и сохраните — фрагмент заменится."
+    : "Заполните поля и нажмите «Собрать JSON» — его можно править вручную.");
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// jobEditorJobDefinition rebuilds the config-shaped definition of an existing
+// job, so the editor starts from the same document it will save.
+function jobEditorJobDefinition(job) {
+  const definition = {
+    tag: job.tag,
+    enabled: job.enabled !== false,
+    concurrency: "forbid",
+    triggers: (job.schedules || []).map((schedule) => ({
+      type: "cron", expression: schedule.expression || "0 * * * *",
+    })),
+    action: { type: job.task_type },
+  };
+  if (job.description) definition.description = job.description;
+  if (!definition.triggers.length) definition.triggers = [{ type: "cron", expression: "0 * * * *" }];
+  const payload = job.payload || {};
+  if (job.task_type === "application.campaign") {
+    definition.action.profiles = job.profiles || [];
+    definition.action.routes = payload.routes || [];
+    if (payload.target_successful) definition.action.target_successful = payload.target_successful;
+    if (payload.max_in_flight) definition.action.max_in_flight = payload.max_in_flight;
+  } else {
+    definition.action.profiles = job.profiles || [];
+  }
+  return definition;
+}
+
+function closeJobEditor() {
+  const panel = document.getElementById("job-editor");
+  if (panel) panel.hidden = true;
+  state.jobEditorTag = "";
+}
+
+async function saveJobEditor() {
+  const textarea = document.getElementById("job-editor-json");
+  const raw = textarea ? textarea.value.trim() : "";
+  if (!raw) {
+    setJobEditorStep("JSON пуст: заполните поля и нажмите «Собрать JSON».");
+    return;
+  }
+  let job = null;
+  try {
+    job = JSON.parse(raw);
+  } catch (error) {
+    setJobEditorStep(`JSON не разобран: ${error.message}`);
+    return;
+  }
+  const tag = String(job.tag || "").trim();
+  if (!tag) {
+    setJobEditorStep("В JSON нужен tag.");
+    return;
+  }
+  const method = state.jobEditorTag === tag ? "PUT" : "POST";
+  const path = method === "PUT" ? `/api/v1/jobs/${encodeURIComponent(tag)}` : "/api/v1/jobs";
+  setJobEditorStep(`сохраняю «${tag}»…`);
+  try {
+    await request(path, { method, headers: { "Content-Type": "application/json" }, body: raw });
+  } catch (error) {
+    setJobEditorStep(`не удалось сохранить: ${error.message}`);
+    return;
+  }
+  setJobEditorStep(`джоба «${tag}» сохранена, жду применения (перезагрузка конфига)…`);
+  await waitForJobChange(tag, true);
+}
+
+async function deleteEditedJob() {
+  const tag = state.jobEditorTag;
+  if (!tag) return;
+  if (!globalThis.confirm(`Удалить джобу «${tag}»? Файл фрагмента будет удалён, расписание снимется.`)) return;
+  setJobEditorStep(`удаляю «${tag}»…`);
+  try {
+    await request(`/api/v1/jobs/${encodeURIComponent(tag)}`, { method: "DELETE" });
+  } catch (error) {
+    setJobEditorStep(`не удалось удалить: ${error.message}`);
+    return;
+  }
+  setJobEditorStep(`джоба «${tag}» удалена, жду применения…`);
+  await waitForJobChange(tag, false);
+}
+
+// waitForJobChange polls the job list until the reload applies the change.
+async function waitForJobChange(tag, present) {
+  const started = Date.now();
+  while (Date.now() - started < 60_000) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2_000));
+    await refreshSummary();
+    const found = (state.jobs || []).some((item) => item.tag === tag);
+    if (found === present) {
+      setJobEditorStep(present ? `джоба «${tag}» применена.` : `джоба «${tag}» больше не запускается.`);
+      if (!present) closeJobEditor();
+      return;
+    }
+  }
+  setJobEditorStep("изменение не применилось за минуту — проверьте статус перезагрузки конфига.");
+}
+
+(() => {
+  const open = document.getElementById("job-editor-open");
+  if (!open) return;
+  open.addEventListener("click", () => openJobEditor(null));
+  document.getElementById("job-editor-build")?.addEventListener("click", buildJobEditorJSON);
+  document.getElementById("job-editor-save")?.addEventListener("click", saveJobEditor);
+  document.getElementById("job-editor-delete")?.addEventListener("click", deleteEditedJob);
+  document.getElementById("job-editor-cancel")?.addEventListener("click", closeJobEditor);
 })();

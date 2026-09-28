@@ -132,6 +132,30 @@
           </div>
           <div class="table-wrap"><table class="jobs-table"><thead><tr><th>Job</th><th>Осталось</th><th>Состояние</th><th class="jobs-run-column">Запуск</th></tr></thead><tbody id="jobs-system"></tbody></table></div>
         </div>
+        <div class="jobs-group-heading">
+          <button id="job-editor-open" class="secondary compact" type="button">Создать джобу</button>
+        </div>
+        <article id="job-editor" class="panel" hidden>
+          <div class="panel-heading"><div><h3 id="job-editor-title">Новая джоба</h3><p class="panel-description">Джоба сохраняется фрагментом в profile-store и применяется перезагрузкой конфига без перезапуска. Поля-помощники собирают JSON кампании откликов; для другого действия правьте JSON вручную.</p></div></div>
+          <div class="list-toolbar">
+            <label>Тег <input id="job-editor-tag" type="text" placeholder="hourly-applications" autocomplete="off"></label>
+            <label>Описание <input id="job-editor-description" type="text" placeholder="Рассылка откликов"></label>
+            <label>Cron <input id="job-editor-cron" type="text" value="0 * * * *"></label>
+            <label>Профили <input id="job-editor-profiles" type="text" placeholder="primary, secondary"></label>
+            <label>Маршруты <input id="job-editor-routes" type="text" placeholder="global-go, global-devops"></label>
+            <label>Цель <input id="job-editor-target" type="number" value="200" min="0"></label>
+            <label>В параллели <input id="job-editor-inflight" type="number" value="2" min="1"></label>
+            <label class="selection-control"><input id="job-editor-enabled" type="checkbox" checked> Включена</label>
+          </div>
+          <div class="auth-controls">
+            <button id="job-editor-build" class="secondary compact" type="button">Собрать JSON</button>
+            <button id="job-editor-save" type="button">Сохранить джобу</button>
+            <button id="job-editor-delete" class="secondary compact" type="button" hidden>Удалить джобу</button>
+            <button id="job-editor-cancel" class="secondary compact" type="button">Отмена</button>
+          </div>
+          <p id="job-editor-step" class="auth-step muted">Заполните поля и нажмите «Собрать JSON» — его можно править вручную.</p>
+          <textarea id="job-editor-json" rows="12" spellcheck="false"></textarea>
+        </article>
       </article>
     </section>
     <section aria-labelledby="tasks-title">

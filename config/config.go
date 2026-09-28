@@ -470,18 +470,42 @@ const (
 func (c *Config) applyJobDefaults() {
 	for jobIndex := range c.Jobs {
 		for triggerIndex := range c.Jobs[jobIndex].Triggers {
-			trigger := &c.Jobs[jobIndex].Triggers[triggerIndex]
-			if strings.TrimSpace(trigger.Timezone) == "" {
-				trigger.Timezone = defaultJobTimezone
-			}
-			if strings.TrimSpace(trigger.Misfire) == "" {
-				trigger.Misfire = defaultJobMisfire
-			}
-			if !trigger.Jitter.Configured() {
-				trigger.Jitter = JitterConfig{Min: defaultJobJitterMin.String(), Max: defaultJobJitterMax.String()}
-			}
+			NormalizeJobTrigger(&c.Jobs[jobIndex].Triggers[triggerIndex])
 		}
 	}
+}
+
+// NormalizeJobTrigger fills the trigger fields an operator may omit. It is
+// shared by the config loader and by the dashboard job editor, so a job written
+// from the UI behaves exactly like one written in the config.
+func NormalizeJobTrigger(trigger *JobTrigger) {
+	if trigger == nil {
+		return
+	}
+	if strings.TrimSpace(trigger.Timezone) == "" {
+		trigger.Timezone = defaultJobTimezone
+	}
+	if strings.TrimSpace(trigger.Misfire) == "" {
+		trigger.Misfire = defaultJobMisfire
+	}
+	if !trigger.Jitter.Configured() {
+		trigger.Jitter = JitterConfig{Min: defaultJobJitterMin.String(), Max: defaultJobJitterMax.String()}
+	}
+}
+
+// ValidateJobReplace validates one job definition as a replacement for the job
+// with the same tag (or as a new job) against the loaded config: tags stay
+// unique and every reference resolves.
+func (c Config) ValidateJobReplace(job Job) error {
+	clone := c
+	clone.Jobs = make([]Job, 0, len(c.Jobs)+1)
+	for _, existing := range c.Jobs {
+		if existing.Tag != job.Tag {
+			clone.Jobs = append(clone.Jobs, existing)
+		}
+	}
+	clone.Jobs = append(clone.Jobs, job)
+	return clone.Validate()
 }
 
 func (policy SystemJobPolicy) JobEnabled(fallback bool) bool {

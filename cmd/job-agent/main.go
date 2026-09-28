@@ -1030,6 +1030,22 @@ func main() {
 		log.Fatalf("create profile draft API: %v", err)
 	}
 	profileDraftAPI.ConfigureRestart(restartRequester{})
+	live := &liveConfig{}
+	live.Set(cfg)
+	jobFragments, err := workflow.NewJobFragmentWorkflow(mustProfileStoreDirectory(cfg, options.configPath), func(raw json.RawMessage) error {
+		var job appconfig.Job
+		if err := json.Unmarshal(raw, &job); err != nil {
+			return fmt.Errorf("decode job definition: %w", err)
+		}
+		for index := range job.Triggers {
+			appconfig.NormalizeJobTrigger(&job.Triggers[index])
+		}
+		return live.Get().ValidateJobReplace(job)
+	})
+	if err != nil {
+		log.Fatalf("create job fragment workflow: %v", err)
+	}
+	jobAPI.ConfigureEditor(jobFragments)
 	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)
@@ -1069,6 +1085,7 @@ func main() {
 		profileDrafts.SetDeclared(configProfileTags(fresh))
 	}
 	bindProfiles := func(fresh appconfig.Config) error {
+		live.Set(fresh)
 		for _, profile := range fresh.Profiles {
 			profileID := core.ProfileID(profile.Tag)
 			if _, exists := boundProfiles[profileID]; exists {
@@ -1198,6 +1215,41 @@ func (restartRequester) RequestRestart() {
 // buildProfileDraftWorkflow prepares the dashboard onboarding pipeline: it owns
 // profile drafts, derives their session paths inside the profile store and
 // writes the applied fragments there.
+// liveConfig keeps the most recently loaded config: the dashboard job editor
+// validates new definitions against the running state, not the startup one.
+type liveConfig struct {
+	mu  sync.RWMutex
+	cfg appconfig.Config
+}
+
+func (holder *liveConfig) Set(cfg appconfig.Config) {
+	holder.mu.Lock()
+	holder.cfg = cfg
+	holder.mu.Unlock()
+}
+
+func (holder *liveConfig) Get() appconfig.Config {
+	holder.mu.RLock()
+	defer holder.mu.RUnlock()
+	return holder.cfg
+}
+
+// profileStoreDirectory resolves the fragment directory of the running config
+// to an absolute path.
+func profileStoreDirectory(cfg appconfig.Config, configPath string) (string, error) {
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return "", err
+	}
+	directory := cfg.ProfileStoreDirectory(filepath.Dir(absolute))
+	if directory != "" {
+		if resolved, err := filepath.Abs(directory); err == nil {
+			directory = resolved
+		}
+	}
+	return directory, nil
+}
+
 func buildProfileDraftWorkflow(cfg appconfig.Config, configPath string, instances map[string]adapter.Adapter, store *storesqlite.Store) (*workflow.ProfileDraftWorkflow, error) {
 	absolute, err := filepath.Abs(configPath)
 	if err != nil {
@@ -2306,6 +2358,16 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 		configuredJobs++
 	}
 	return routes, definitions, ownedRoutes, configuredJobs, nil
+}
+
+// mustProfileStoreDirectory resolves the fragment directory or fails fast at
+// startup: a missing directory simply means no fragments yet.
+func mustProfileStoreDirectory(cfg appconfig.Config, configPath string) string {
+	directory, err := profileStoreDirectory(cfg, configPath)
+	if err != nil {
+		log.Fatalf("resolve profile store directory: %v", err)
+	}
+	return directory
 }
 
 // configProfileTags lists the declared profile tags of a config.
