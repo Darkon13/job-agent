@@ -108,7 +108,9 @@ func TestProfileImportCreatesMissingApplicationsAndStartsFullDiscovery(t *testin
 	if imported.Status != core.ApplicationSubmitted || imported.DecisionCode != "already_applied" || imported.Key.Vacancy.ExternalID != "42" {
 		t.Fatalf("imported application = %#v", imported)
 	}
-	if vacancies.count != 2 || len(states.saved) != 2 {
+	// Only the missing application creates a vacancy; the known one keeps the
+	// real title a search already observed.
+	if vacancies.count != 1 || len(states.saved) != 2 {
 		t.Fatalf("vacancies=%d states=%d", vacancies.count, len(states.saved))
 	}
 	tasks := queue.Tasks()

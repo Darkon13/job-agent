@@ -220,10 +220,13 @@ type ApplicationTransport interface {
 type ApplicationStateObservation struct {
 	ExternalNegotiationID string
 	ExternalVacancyID     string
-	PlatformState         string
-	Disposition           core.ApplicationDisposition
-	ViewedByOpponent      *bool
-	PlatformUpdatedAt     *time.Time
+	// VacancyTitle is optional: transports that read the topic list may know
+	// the vacancy name, others only its identifier.
+	VacancyTitle      string
+	PlatformState     string
+	Disposition       core.ApplicationDisposition
+	ViewedByOpponent  *bool
+	PlatformUpdatedAt *time.Time
 }
 
 type ApplicationStateObservationResult struct {
