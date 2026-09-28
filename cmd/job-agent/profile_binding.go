@@ -69,6 +69,7 @@ type profileRuntimeBinder struct {
 	conversationTransports    *taskworker.ConversationTransportRegistry
 	applicationTransports     *taskworker.ApplicationTransportRegistry
 	applicationStateObservers *taskworker.ApplicationStateObserverRegistry
+	profileImportPlatforms    map[core.ProfileID]core.Platform
 	resumeTouchers            *taskworker.ResumeToucherRegistry
 	resumePublishers          *taskworker.ResumePublisherRegistry
 	testCapturers             *taskworker.VacancyTestCapturerRegistry
@@ -231,12 +232,18 @@ func (binder *profileRuntimeBinder) bind(profile appconfig.Profile, preparer app
 			if err := binder.applicationStateObservers.Register(profileID, observer); err != nil {
 				return fmt.Errorf("register application state observer for profile %q: %w", profile.Tag, err)
 			}
+			if binder.profileImportPlatforms != nil {
+				binder.profileImportPlatforms[profileID] = core.Platform(instance.Name())
+			}
 		}
 	} else if runtime.BrowserReader == nil {
 		logf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
 	}
 	if !binder.applicationStateObservers.Has(profileID) {
 		if observer, ok := runtime.BrowserReader.(adapter.ApplicationStateObserver); ok {
+			if binder.profileImportPlatforms != nil {
+				binder.profileImportPlatforms[profileID] = core.Platform(instance.Name())
+			}
 			if err := binder.applicationStateObservers.Register(profileID, observer); err != nil {
 				return fmt.Errorf("register browser application state observer for profile %q: %w", profile.Tag, err)
 			}

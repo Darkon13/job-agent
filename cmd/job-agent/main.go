@@ -429,6 +429,9 @@ func main() {
 	}
 	resumeAPI.ConfigureUpdate(resumeUpdateWorkflow)
 	profileCatalogAPI, err := httpapi.NewProfileCatalogAPI(profileCatalog(cfg, instances))
+	if err == nil {
+		profileCatalogAPI.SetIdentitySource(store)
+	}
 	if err != nil {
 		log.Fatalf("create profile catalog API: %v", err)
 	}
@@ -448,6 +451,13 @@ func main() {
 	taskControlWorkflow, err := workflow.NewTaskControlWorkflow(store, workflow.SystemClock{})
 	if err != nil {
 		log.Fatalf("create task control workflow: %v", err)
+	}
+	// A missing platform session cannot heal by itself: the guard stops the job
+	// that failed with unauthorized, and the next successful sign-in resumes
+	// those jobs and retries the failures.
+	authGuard, err := workflow.NewAuthGuard(store, store, taskControlWorkflow, workflow.SystemClock{})
+	if err != nil {
+		log.Fatalf("create auth guard: %v", err)
 	}
 	taskAPI, err := httpapi.NewTaskAPI(store, taskControlWorkflow)
 	if err != nil {
@@ -506,6 +516,8 @@ func main() {
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
+	// Only a profile whose account state can be read may import it.
+	profileImportPlatforms := make(map[core.ProfileID]core.Platform)
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	sessionRefreshers := taskworker.NewSessionRefresherRegistry()
 	resumePublishers := taskworker.NewResumePublisherRegistry()
@@ -527,7 +539,8 @@ func main() {
 		profileStateReaders: profileStateReaders, profileStateWriters: profileStateWriters,
 		profileStatePlatforms: profileStatePlatforms, conversationTransports: conversationTransports,
 		applicationTransports: applicationTransports, applicationStateObservers: applicationStateObservers,
-		resumeTouchers: resumeTouchers, resumePublishers: resumePublishers,
+		profileImportPlatforms: profileImportPlatforms,
+		resumeTouchers:         resumeTouchers, resumePublishers: resumePublishers,
 		testCapturers: testCapturers, testSubmitters: testSubmitters,
 		qualificationReaders: qualificationReaders, qualificationAttempts: qualificationAttempts,
 		qualificationPlatforms: qualificationPlatforms, qualificationAnswerModels: qualificationAnswerModels,
@@ -566,6 +579,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile state reconcile workflow: %v", err)
 	}
+	profileImportWorkflow, err := workflow.NewProfileImportWorkflow(
+		store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileImportPlatforms,
+	)
+	if err != nil {
+		log.Fatalf("create profile import workflow: %v", err)
+	}
+	profileCatalogAPI.SetImporter(profileImportWorkflow)
 	profileStateAPI, err := httpapi.NewProfileStateAPI(
 		profileStatePlanner, profileStateApplyWorkflow, profileStateReconcileWorkflow, store, store, profileStateReaders,
 	)
@@ -699,6 +719,17 @@ func main() {
 		log.Fatalf("create application state sync worker: %v", err)
 	}
 	workers = append(workers, applicationStateSyncWorker)
+	profileImportHandler, err := taskworker.NewProfileImportHandler(
+		store, store, store, applicationStateObservers, store, workflow.RandomIDGenerator{}, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create profile import handler: %v", err)
+	}
+	profileImportWorker, err := newTaskWorker(store, core.TaskProfileStateImport, profileImportHandler.Handle)
+	if err != nil {
+		log.Fatalf("create profile import worker: %v", err)
+	}
+	workers = append(workers, profileImportWorker)
 	activityMaintainHandler, err := taskworker.NewActivityMaintainHandler(
 		store, applicationTransports, store, store, taskworker.SystemClock{},
 	)
@@ -1048,7 +1079,7 @@ func main() {
 		log.Fatalf("create job fragment workflow: %v", err)
 	}
 	jobAPI.ConfigureEditor(jobFragments)
-	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts)
+	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts, authGuard)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)
 	}
@@ -1166,6 +1197,11 @@ func main() {
 	handler = buildAPIHandler(
 		handler, httpapi.NewMetricsAPI(store), apiToken, authHandler, slog.Default(),
 	)
+	// Every worker reports authorization failures to the same guard, so a lost
+	// session stops the account's jobs and a later sign-in resumes them.
+	for _, instance := range workers {
+		instance.SetAuthGuard(authGuard.Guard)
+	}
 	if err := serve(ctx, cfg, handler, conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
@@ -1311,7 +1347,67 @@ func (resolver draftLoginSettings) LoginSettings(profileID core.ProfileID) (hh.L
 // configureAuthAPI wires the interactive login control plane when the browser
 // worker is configured. The credential writer runs with Force enabled because
 // the CLI enforces the explicit --force decision before creating a session.
-func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store, drafts *workflow.ProfileDraftWorkflow) (*httpapi.AuthAPI, error) {
+// authCompletionHooks runs every post-login observer: the draft identity
+// capture, the account summary of a config profile, and the recovery of jobs
+// and tasks that failed without a session.
+type authCompletionHooks struct {
+	drafts   *workflow.ProfileDraftWorkflow
+	guard    *workflow.AuthGuard
+	identity profileIdentityCapture
+}
+
+func (hooks authCompletionHooks) AuthCompleted(ctx context.Context, profileID core.ProfileID, browserStateReference string) error {
+	if hooks.drafts != nil {
+		if err := hooks.drafts.AuthCompleted(ctx, profileID, browserStateReference); err != nil {
+			logf("profile draft capture failed for %s: %v", profileID, err)
+		}
+	}
+	if err := hooks.identity.capture(ctx, profileID, browserStateReference); err != nil {
+		logf("profile identity capture failed for %s: %v", profileID, err)
+	}
+	if hooks.guard != nil {
+		return hooks.guard.AuthCompleted(ctx, profileID, browserStateReference)
+	}
+	return nil
+}
+
+// profileIdentityCapture stores the account summary of a profile that lives in
+// the read-only config file: the dashboard then shows the account without the
+// operator editing the config.
+type profileIdentityCapture struct {
+	reader func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error)
+	store  interface {
+		SaveProfileIdentity(ctx context.Context, profileID core.ProfileID, identity core.ProfileIdentity, now time.Time) error
+	}
+	clock workflow.Clock
+}
+
+func (capture profileIdentityCapture) capture(ctx context.Context, profileID core.ProfileID, stateFile string) error {
+	if capture.reader == nil || capture.store == nil || strings.TrimSpace(stateFile) == "" {
+		return nil
+	}
+	reader, err := capture.reader(profileID, stateFile)
+	if err != nil {
+		return err
+	}
+	snapshot, err := reader.ReadProfileIdentity(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	identity := core.ProfileIdentity{
+		DisplayName: strings.TrimSpace(snapshot.DisplayName),
+		Email:       strings.TrimSpace(snapshot.Email),
+		Phone:       strings.TrimSpace(snapshot.Phone),
+		AccountHash: strings.TrimSpace(snapshot.AccountHash),
+		CapturedAt:  snapshot.CapturedAt,
+	}
+	if identity.DisplayName == "" && identity.Email == "" && identity.Phone == "" && identity.AccountHash == "" {
+		return nil
+	}
+	return capture.store.SaveProfileIdentity(ctx, profileID, identity, capture.clock.Now())
+}
+
+func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store, drafts *workflow.ProfileDraftWorkflow, guard *workflow.AuthGuard) (*httpapi.AuthAPI, error) {
 	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
 	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
 	if baseURL == "" || token == "" {
@@ -1351,7 +1447,15 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	if err != nil {
 		return nil, err
 	}
-	service.SetCompletionHook(drafts)
+	service.SetCompletionHook(authCompletionHooks{
+		drafts: drafts, guard: guard,
+		identity: profileIdentityCapture{
+			reader: func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+				return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+			},
+			store: store, clock: workflow.SystemClock{},
+		},
+	})
 	authAPI, err := httpapi.NewAuthAPI(service, profileStateFiles(cfg))
 	if err != nil {
 		return nil, err

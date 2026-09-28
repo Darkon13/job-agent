@@ -39,6 +39,7 @@ const (
 	TaskProfileSessionRefresh      TaskType = "profile.session_refresh"
 	TaskProfileBootstrap           TaskType = "profile.bootstrap"
 	TaskProfileStateReconcile      TaskType = "profile_state.reconcile"
+	TaskProfileStateImport         TaskType = "profile.state.import"
 	TaskProfileStateApply          TaskType = "profile_state.apply"
 	TaskSkillVerificationStart     TaskType = "skill_verification.start"
 	TaskSkillVerificationSync      TaskType = "skill_verification.sync"

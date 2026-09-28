@@ -159,13 +159,13 @@
         </article>
       </article>
     </section>
-    <section aria-labelledby="tasks-title">
+    <section id="tasks-section" aria-labelledby="tasks-title">
       <article class="panel">
         <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Отдельные задачи, которые ещё не стартовали: job или действие пользователя создаёт task, worker забирает его и меняет состояние. Ненужную задачу можно отменить крестиком — она не будет выполнена.</p></div><span class="tag">durable</span></div>
         <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Состояние</th><th>Профиль</th><th>До запуска</th><th>Попытки</th><th class="task-actions">Управление</th></tr></thead><tbody id="tasks"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="campaigns-title">
+    <section id="campaigns-section" aria-labelledby="campaigns-title">
       <div class="section-title">
         <div><p class="eyebrow">АВТОМАТИЧЕСКИЕ ЗАПУСКИ</p><h2 id="campaigns-title">Последние рассылки откликов</h2></div>
         <span class="muted">Последние 5 запусков без содержимого вакансий и писем</span>
@@ -174,7 +174,7 @@
         <div class="table-wrap"><table><thead><tr><th>Запуск</th><th>Job</th><th>Статус</th><th>Цель</th><th>Результаты</th><th>Обновлён</th></tr></thead><tbody id="campaigns"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="failed-tasks-title">
+    <section id="failed-tasks-section" aria-labelledby="failed-tasks-title">
       <div class="section-title">
         <div><p class="eyebrow">OPERATOR RECOVERY</p><h2 id="failed-tasks-title">Неразрешённые ошибки задач</h2></div>
         <span class="muted">Retry повторяет действие; dismiss сохраняет ошибку, но закрывает её.</span>
@@ -183,7 +183,7 @@
         <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Тип</th><th>Профиль</th><th>Попытки</th><th>Ошибка</th><th>Обновлена</th><th>Действия</th></tr></thead><tbody id="failed-tasks"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="review-title">
+    <section id="review-section" aria-labelledby="review-title">
       <div class="section-title">
         <div><p class="eyebrow">РЕВЬЮ</p><h2 id="review-title">Проверки и опросники</h2></div>
         <div class="section-actions">
@@ -209,7 +209,7 @@
         </article>
       </div>
     </section>
-    <section aria-labelledby="conversations-title">
+    <section id="conversations-section" aria-labelledby="conversations-title">
       <div class="section-title">
         <div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div>
         <div class="section-actions"><span id="conversation-bulk-state" class="muted"></span><button id="mark-all-read" class="secondary" type="button" disabled>Прочитать все</button></div>
