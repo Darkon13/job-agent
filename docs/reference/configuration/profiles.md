@@ -129,6 +129,38 @@ browser context, data).
 | `instruction` | string | **да** | Инструкция модели. |
 | `timeout` | string | **да** | Таймаут вызова, Go duration (`30s`). |
 
+## Системные джобы профиля
+
+Фоновая жизнь аккаунта описана политиками, а не джобами: сервис сам создаёт
+`system.*` расписания и не даёт редактировать их как обычные jobs. Каждая
+политика принимает `enabled`, `interval` (Go duration) и необязательный
+`jitter`; выключение политики убирает её расписания.
+
+```json
+"state_harvest": {"enabled": true, "interval": "30m"},
+"resume_touch": {"enabled": true},
+"activity_maintain": {"enabled": true, "query": {"source": "global", "text": "Go"}},
+"application_cleanup": {
+  "enabled": true,
+  "interval": "3h",
+  "retention": {"stale_after": "720h", "remove_rejected": true, "remove_waiting_validation": true, "validation_stale_after": "168h"}
+}
+```
+
+| Политика | По умолчанию | Джобы | Что делает |
+|---|---|---|---|
+| `state_harvest` | включена, `1h` | `system.state.chats`, `system.state.poll` (2m), `system.state.applications`, `system.state.activity` | Синхронизирует каталог и историю чатов, состояния откликов и снимки метрик резюме. `system.state.activity` создаётся, только если у профиля есть резюме. |
+| `resume_touch` | включена, `4h` | `system.resume-touch` | Поднимает основное резюме; платформа сама сообщает `nextTouchAt`, задача ждёт разрешённого времени. |
+| `activity_maintain` | включена, `1h` | `system.activity-maintain` | Открывает реальные вакансии-кандидаты браузерной сессией. `query` заменяет источник (по умолчанию общий фид без фильтров). |
+| `application_cleanup` | **выключена**, `3h` | `system.cleanup` | Локально убирает устаревшие и отказанные отклики по `retention` (см. [Очистка откликов](../../application-cleanup.md)). |
+
+Всегда включены `system.session` (обновление сессии HH раз в 4 часа) и
+`system.validation` (перепроверка вакансий с анкетами и тестами раз в сутки) —
+они зависят от возможностей профиля, а не от политики. Разброс запуска
+системной джобы по умолчанию не превышает десятой части интервала и пяти минут;
+явный `jitter` в политике переопределяет его. Приостановить системную джобу
+можно как любую другую: `job-agent jobs pause <tag>` или кнопкой в дашборде.
+
 ## Связанные документы
 
 - [Отклики и письма](applications.md)

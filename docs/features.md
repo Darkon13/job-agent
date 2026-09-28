@@ -425,7 +425,7 @@ provider response ID, tag/digest resume facts, input/output/evidence digests,
   {
     "tag": "primary",
     "adapter": "hh-main",
-    "resume": "resume-id-from-platform",
+    "resumes": [{"id": "resume-id-from-platform", "primary": true}],
     "resume_facts_file": "resumes/backend.json",
     "enabled": true,
     "applications": {
@@ -735,7 +735,7 @@ job-agent auth import \
   "tag": "primary",
   "adapter": "hh-main",
   "credentials_ref": "file:/run/secrets/hh-primary.json",
-  "resume": "replace-with-hh-resume-id",
+  "resumes": [{"id": "replace-with-hh-resume-id", "primary": true}],
   "applications": {"mode": "dry_run", "timezone": "Europe/Moscow"},
   "enabled": true
 }

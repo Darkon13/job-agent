@@ -17,7 +17,7 @@
   {
     "tag": "backend",                       // произвольное имя профиля
     "adapter": "hh-main",                   // ссылка на adapters[].tag
-    "resume": "resume-id-backend",          // ID резюме или alias
+    "resumes": [{"id": "resume-id-backend", "primary": true}],  // резюме аккаунта
     "state_file": "/data/profiles/backend.json",
     "applications": {
       "mode": "submit",                     // dry_run | approval | submit
@@ -30,7 +30,7 @@
   {
     "tag": "golang",
     "adapter": "hh-main",
-    "resume": "resume-id-golang",
+    "resumes": [{"id": "resume-id-golang", "primary": true}],
     "state_file": "/data/profiles/golang.json",
     "applications": {
       "mode": "dry_run",                    // этот аккаунт только готовит письма
@@ -108,7 +108,7 @@
     "priority": 50,
     "query": {
       "source": "similar_resume",     // похожие на это резюме
-      "resume": "resume-id",
+      "resume": "$profile",           // резюме профиля (или $all, alias, ID)
       "area": ["1"]
     }
   }
@@ -166,33 +166,31 @@ Similar-выдача уже меньше глобальной, но её фил�
 `resume.touch` поднимает резюме в выдаче. Платформа сама сообщает, когда
 следующее поднятие разрешено: задача откладывается до `nextTouchAt`.
 
+По умолчанию резюме уже поднимает системная джоба `system.resume-touch`
+(политика профиля `resume_touch`, раз в 4 часа). Пользовательская job нужна,
+только если хочется другое расписание:
+
 ```jsonc
 "jobs": [
   {
     "tag": "touch-resume",
     "enabled": true,
-    "triggers": [
-      {
-        "type": "cron",
-        "expression": "0 10 * * *",       // ежедневно в 10:00
-        "timezone": "Europe/Moscow",
-        "misfire": "run_once",            // догнать один пропущенный запуск
-        "jitter": {"min": "5m", "max": "30m"}
-      }
-    ],
     "concurrency": "forbid",
+    "triggers": [
+      {"type": "cron", "expression": "0 10 * * *"}   // ежедневно в 10:00
+    ],
     "action": {"type": "resume.touch", "profile": "main"}
   }
 ]
 ```
 
-| Поле trigger | Значения |
-|---|---|
-| `expression` | cron из 5 полей |
-| `timezone` | IANA-зона, например `Europe/Moscow` |
-| `misfire` | `run_once` — один догоняющий запуск |
-| `jitter` | случайная задержка старта, `min`/`max` |
-| `concurrency` | `forbid`, `forbid_per_profile`, `allow` |
+| Поле trigger | По умолчанию | Значения |
+|---|---|---|
+| `expression` | — | cron из 5 полей |
+| `timezone` | `Europe/Moscow` | IANA-зона |
+| `misfire` | `run_once` | один догоняющий запуск |
+| `jitter` | `1m..10m` | случайная задержка старта, `min`/`max`; `0s..0s` выключает |
+| `concurrency` | — | `forbid`, `forbid_per_profile`, `allow` |
 
 ## Обновление «О себе» из конфига
 
@@ -251,7 +249,7 @@ plan → apply → read-back и, если нужно, публикацию. Зн
   {
     "tag": "main",
     "adapter": "hh-main",
-    "resume": "resume-id",
+    "resumes": [{"id": "resume-id", "primary": true}],
     "state_file": "/data/profiles/main.json",
     "applications": {
       "mode": "submit",
@@ -309,7 +307,7 @@ plan → apply → read-back и, если нужно, публикацию. Зн
   {
     "tag": "main",
     "adapter": "hh-main",
-    "resume": "resume-id",
+    "resumes": [{"id": "resume-id", "primary": true}],
     "resume_facts_file": "facts/main.json",
     "state_file": "/data/profiles/main.json",
     "applications": {
@@ -501,20 +499,17 @@ Job выбирает один подходящий диалог (последн�
 ## Очистка старых откликов
 
 Локальное удаление без платформенного DELETE: остаётся tombstone для dedup,
-а приглашения защищены от удаления.
+а приглашения защищены от удаления. Очистку выполняет системная джоба
+`system.cleanup` по политике профиля `application_cleanup` — по умолчанию она
+**выключена**:
 
 ```jsonc
-"jobs": [
+"profiles": [
   {
-    "tag": "cleanup",
-    "enabled": true,
-    "triggers": [
-      {"type": "cron", "expression": "0 3 * * *", "timezone": "Europe/Moscow"}
-    ],
-    "concurrency": "forbid_per_profile",
-    "action": {
-      "type": "application.retention",
-      "profile": "main",
+    "tag": "main",
+    "application_cleanup": {
+      "enabled": true,
+      "interval": "3h",
       "retention": {
         "stale_after": "336h",        // 14 дней
         "remove_rejected": true       // удалять и отказы

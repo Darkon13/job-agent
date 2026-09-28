@@ -16,7 +16,7 @@
     "target_applications": 50,
     "query": {
       "source": "similar_resume",
-      "resume": "0123456789abcdef",
+      "resume": "$profile",
       "area": ["1"],
       "text": "Golang AND (Kafka OR PostgreSQL)",
       "page_size": 20,
@@ -43,7 +43,7 @@
 | Поле | Тип | Обяз. | Описание |
 |---|---|---|---|
 | `source` | string | **да** | `global` — глобальная выдача; `similar_resume` — вакансии, подходящие к резюме; `similar_vacancy` — к конкретной вакансии; `related_vacancy` — контекстная выдача платформы. |
-| `resume` | string | да для `similar_resume` | ID резюме. Для `global` и vacancy-источников запрещён. |
+| `resume` | string | да для `similar_resume` | Резюме: ID, alias профиля, `$profile` — основное резюме профиля, для которого запущен поиск, или `$all` — развернуть поиск по всем резюме профиля. Для `global` и vacancy-источников запрещён. |
 | `vacancy` | string | да для `similar_vacancy`/`related_vacancy` | ID исходной вакансии. |
 
 `similar_resume` — правильный источник для подбора под резюме: browser-транспорт

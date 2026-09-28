@@ -5,7 +5,10 @@ Job Agent читает один JSON-файл. Файл может быть со
 пишет её обратно.
 
 Документация разложена по объектам — как в справочнике Xray, у каждого поля
-указаны тип, обязательность и значение по умолчанию.
+указаны тип, обязательность и значение по умолчанию. Конфиг рассчитан на
+короткую запись: безопасные значения подставляются сами (например, триггеры
+job), обслуживающие джобы выводятся из политик профиля, а профили и
+пользовательские jobs можно держать фрагментами в `profile_store`.
 
 ## Объекты
 
@@ -15,7 +18,8 @@ Job Agent читает один JSON-файл. Файл может быть со
 | [server](configuration/server.md) | `server` | HTTP API, наблюдаемость, токен |
 | [adapters](configuration/adapters.md) | `adapters` | инстансы платформ и их настройки |
 | [models](configuration/models.md) | `models` | провайдеры моделей для писем и ответов |
-| [profiles](configuration/profiles.md) | `profiles` | учётные записи, резюме, контакты |
+| [profiles](configuration/profiles.md) | `profiles` | учётные записи, резюме, контакты, политики системных джоб |
+| [profile_store](configuration/profiles.md#profile_store-профильные-фрагменты) | `profile_store` | каталог профильных фрагментов, которые пишет дашборд |
 | [applications](configuration/applications.md) | `profiles[].applications` | политика откликов и писем |
 | [tailoring](configuration/tailoring.md) | `profiles[].applications.tailoring` | временная подстройка резюме |
 | [conversations](configuration/conversations.md) | `profiles[].conversations` | чаты и автоответы |
@@ -37,7 +41,7 @@ Job Agent читает один JSON-файл. Файл может быть со
   "profiles": [{
     "tag": "primary",
     "adapter": "hh-main",
-    "resume": "0123456789abcdef",
+    "resumes": [{"id": "0123456789abcdef", "primary": true}],
     "state_file": "./data/profiles/primary.json",
     "enabled": true,
     "applications": {"mode": "dry_run", "message": "Здравствуйте!"}
