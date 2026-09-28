@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/broker"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
@@ -35,6 +37,15 @@ type ProfileImportIDGenerator interface {
 	NewID(prefix string) (string, error)
 }
 
+// ProfileImportIdentityStore stores the account summary the import captures.
+type ProfileImportIdentityStore interface {
+	SaveProfileIdentity(ctx context.Context, profileID core.ProfileID, identity core.ProfileIdentity, now time.Time) error
+}
+
+// ProfileImportIdentityReader builds the reader of the account summary for one
+// profile and its browser state file.
+type ProfileImportIdentityReader func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error)
+
 // ProfileImportHandler loads the whole platform account state into the local
 // database. Every negotiation becomes an application record with its observed
 // state, including responses that were sent outside this service, and the full
@@ -48,6 +59,20 @@ type ProfileImportHandler struct {
 	tasks        broker.TaskStore
 	ids          ProfileImportIDGenerator
 	clock        Clock
+	identities   ProfileImportIdentityStore
+	identityFor  ProfileImportIdentityReader
+	stateFiles   map[core.ProfileID]string
+}
+
+// ConfigureIdentity attaches the account summary capture: the import then also
+// refreshes the identity of the profile it loads.
+func (handler *ProfileImportHandler) ConfigureIdentity(store ProfileImportIdentityStore, reader ProfileImportIdentityReader, stateFiles map[core.ProfileID]string) {
+	if handler == nil {
+		return
+	}
+	handler.identities = store
+	handler.identityFor = reader
+	handler.stateFiles = stateFiles
 }
 
 func NewProfileImportHandler(
@@ -123,6 +148,11 @@ func (handler *ProfileImportHandler) Handle(ctx context.Context, task core.Task)
 			return err
 		}
 	}
+	if err := handler.captureIdentity(ctx, payload.ProfileID); err != nil {
+		// The identity is a convenience: a failed capture must not fail the
+		// import that already loaded the applications.
+		slog.Default().Warn("profile import identity capture failed", "profile", payload.ProfileID, "error", err)
+	}
 	discovery, err := handler.enqueueFullDiscovery(ctx, payload.ProfileID, task.Platform)
 	if err != nil {
 		return err
@@ -158,6 +188,37 @@ func (handler *ProfileImportHandler) importApplication(ctx context.Context, key 
 	}
 	stored, _, err := handler.applications.CreateApplication(ctx, application)
 	return stored, err
+}
+
+// captureIdentity refreshes the stored account summary through the same
+// browser session the import already uses.
+func (handler *ProfileImportHandler) captureIdentity(ctx context.Context, profileID core.ProfileID) error {
+	if handler.identities == nil || handler.identityFor == nil {
+		return nil
+	}
+	stateFile := strings.TrimSpace(handler.stateFiles[profileID])
+	if stateFile == "" {
+		return nil
+	}
+	reader, err := handler.identityFor(profileID, stateFile)
+	if err != nil {
+		return err
+	}
+	snapshot, err := reader.ReadProfileIdentity(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	identity := core.ProfileIdentity{
+		DisplayName: strings.TrimSpace(snapshot.DisplayName),
+		Email:       strings.TrimSpace(snapshot.Email),
+		Phone:       strings.TrimSpace(snapshot.Phone),
+		AccountHash: strings.TrimSpace(snapshot.AccountHash),
+		CapturedAt:  snapshot.CapturedAt,
+	}
+	if identity.DisplayName == "" && identity.Email == "" && identity.Phone == "" && identity.AccountHash == "" {
+		return nil
+	}
+	return handler.identities.SaveProfileIdentity(ctx, profileID, identity, handler.clock.Now())
 }
 
 // enqueueFullDiscovery starts a complete conversation catalog pass: the import
