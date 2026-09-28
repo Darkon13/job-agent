@@ -227,6 +227,7 @@ func (store *Store) ListReviewSessions(ctx context.Context, filter storage.Revie
 		  AND (? = '' OR platform = ?)
 		  AND (? <> '' OR status <> 'cancelled')
 		  AND (? = '' OR instr(lower(cast(questionnaire as text)), lower(?)) > 0
+		       OR instr(lower(test_definition_id), lower(?)) > 0
 		       OR test_definition_id IN (SELECT id FROM test_definitions WHERE instr(lower(title), lower(?)) > 0))
 		ORDER BY updated_at DESC, id
 		LIMIT ? OFFSET ?`
@@ -236,7 +237,7 @@ func (store *Store) ListReviewSessions(ctx context.Context, filter storage.Revie
 	}
 	args := []any{
 		filter.Status, filter.Status, filter.ProfileID, filter.ProfileID, filter.Platform, filter.Platform,
-		filter.Query, filter.Query, filter.Query, filter.Query, limit, filter.Offset,
+		filter.Query, filter.Query, filter.Query, filter.Query, filter.Query, limit, filter.Offset,
 	}
 	rows, err := store.db.QueryContext(ctx, query, args...)
 	if err != nil {
