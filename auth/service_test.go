@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -235,6 +236,25 @@ func TestAuthServiceCancelDeletesPayload(t *testing.T) {
 	}
 	if _, err := service.Cancel(ctx, session.ID); !errors.Is(err, ErrAuthSessionSettled) {
 		t.Fatalf("second cancel error = %v", err)
+	}
+}
+
+func TestFileBrowserStateWriterCreatesMissingDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles", "primary", "state.json")
+	writer := &FileBrowserStateWriter{}
+	digest, err := writer.Store(context.Background(), path, json.RawMessage(`{"cookies":[]}`))
+	if err != nil {
+		t.Fatalf("store browser state into a missing directory: %v", err)
+	}
+	if digest == "" {
+		t.Fatal("store must return a digest")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat browser state: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("browser state permissions = %o", info.Mode().Perm())
 	}
 }
 
