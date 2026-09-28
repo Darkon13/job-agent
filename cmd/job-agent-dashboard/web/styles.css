@@ -486,3 +486,7 @@ td[colspan] { text-align: left; }
 .review-question { font-weight: 600; }
 .review-bank-hint { color: var(--green); font-size: .78rem; }
 .review-form .review-options { display: grid; gap: .35rem; }
+
+/* A status button that is blocked: the platform decision cannot be resolved by
+   the operator, so it must not look clickable. */
+button.status-action:disabled { opacity: .55; cursor: not-allowed; filter: none; }
