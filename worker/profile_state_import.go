@@ -121,16 +121,17 @@ func (handler *ProfileImportHandler) Handle(ctx context.Context, task core.Task)
 			ProfileID: payload.ProfileID,
 			Vacancy:   core.VacancyKey{Platform: task.Platform, ExternalID: item.ExternalVacancyID},
 		}
-		// The negotiations list carries identifiers only: the title arrives
-		// later from a search or a conversation observation of the vacancy.
-		if _, err := handler.vacancies.UpsertVacancy(ctx, core.Vacancy{
-			Platform: task.Platform, ExternalID: item.ExternalVacancyID,
-			State: core.VacancyStateOpen, ObservedAt: observed.ObservedAt,
-		}); err != nil {
-			return err
-		}
 		application, err := handler.applications.Application(ctx, key)
 		if errors.Is(err, storage.ErrApplicationNotFound) {
+			// Only a missing application needs its vacancy record: an existing
+			// one already carries the real title and state from the searches,
+			// and the negotiations list knows identifiers only.
+			if _, err := handler.vacancies.UpsertVacancy(ctx, core.Vacancy{
+				Platform: task.Platform, ExternalID: item.ExternalVacancyID,
+				Title: importVacancyTitle(item), State: core.VacancyStateOpen, ObservedAt: observed.ObservedAt,
+			}); err != nil {
+				return err
+			}
 			application, err = handler.importApplication(ctx, key, observed.ObservedAt)
 			if err != nil {
 				return err
@@ -161,6 +162,15 @@ func (handler *ProfileImportHandler) Handle(ctx context.Context, task core.Task)
 		"profile", payload.ProfileID, "negotiations", len(observed.Applications),
 		"applications_imported", imported, "applications_updated", updated, "discovery_created", discovery)
 	return nil
+}
+
+// importVacancyTitle keeps the vacancy record valid without inventing content:
+// the operator sees the platform identifier until a real title is observed.
+func importVacancyTitle(item adapter.ApplicationStateObservation) string {
+	if title := strings.TrimSpace(item.VacancyTitle); title != "" {
+		return title
+	}
+	return "Вакансия " + strings.TrimSpace(item.ExternalVacancyID)
 }
 
 // importApplication records a response that already exists on the platform.
