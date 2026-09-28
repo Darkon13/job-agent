@@ -216,7 +216,7 @@ Tailoring включается явно в профиле и работает т
 ```json
 {
   "tag": "primary",
-  "resume": "1234567890abcdef",
+  "resumes": [{"id": "1234567890abcdef", "primary": true}],
   "applications": {
     "mode": "submit",
     "tailoring": {
