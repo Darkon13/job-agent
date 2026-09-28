@@ -53,6 +53,12 @@ func (store *Store) SyncSchedules(ctx context.Context, entries []scheduler.Entry
 			return fmt.Errorf("sync schedule %s/%d: %w", entry.JobTag, entry.TriggerIndex, err)
 		}
 	}
+	// Disabled rows are leftovers of earlier configurations: the sync above
+	// re-enables everything the current definitions list, and pauses live in
+	// job_pauses, so a schedule that is gone must not accumulate forever.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scheduled_jobs WHERE enabled = 0`); err != nil {
+		return fmt.Errorf("prune disabled schedules: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schedule sync: %w", err)
 	}
