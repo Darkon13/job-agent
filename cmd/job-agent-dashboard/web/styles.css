@@ -425,7 +425,7 @@ td[colspan] { text-align: left; }
 
 /* Sub-jobs live in one cell under the parent row: info on the left, the state
    and run controls on the right, a left accent to show the nesting. */
-.job-detail-row td { padding: 0 0 .8rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
+.job-detail-row > td { padding: 0 0 .8rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
 .job-detail-list { display: grid; gap: .45rem; }
 .job-detail-line {
   display: flex;
@@ -442,7 +442,7 @@ td[colspan] { text-align: left; }
 .job-detail-actions { display: flex; gap: .5rem; align-items: center; flex: none; }
 .job-detail-schedule { padding-left: .9rem; color: var(--muted); }
 .job-lock { display: inline-flex; align-items: center; margin-left: .1rem; color: var(--muted); }
-.profile-detail-row td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
+.profile-detail-row > td { padding: .1rem 0 .9rem; border-bottom: 1px solid var(--line); white-space: normal; text-align: left; }
 
 /* The job editor keeps the JSON as the single source of truth: the fields only
    help to assemble it. */
@@ -457,3 +457,32 @@ td[colspan] { text-align: left; }
   font: .8rem/1.5 ui-monospace, monospace;
   resize: vertical;
 }
+
+/* Review section: one card per vacancy, questions as a readable list with the
+   bank hint and clear spacing. */
+.review-vacancy { position: relative; padding: .15rem .25rem .15rem 0; }
+.review-vacancy-pick {
+  display: grid;
+  gap: .2rem;
+  width: 100%;
+  padding: .65rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  font-weight: 400;
+}
+.review-vacancy-pick:hover { border-color: var(--cyan); filter: none; }
+.review-vacancy.active .review-vacancy-pick { border-color: var(--cyan); background: #24313b; }
+.review-vacancy .review-cancel { position: absolute; top: .45rem; right: .45rem; }
+.review-question-block {
+  display: grid;
+  gap: .45rem;
+  padding: .8rem 0 1rem;
+  border-bottom: 1px dashed var(--line);
+}
+.review-question-block:last-of-type { border-bottom: none; }
+.review-question { font-weight: 600; }
+.review-bank-hint { color: var(--green); font-size: .78rem; }
+.review-form .review-options { display: grid; gap: .35rem; }

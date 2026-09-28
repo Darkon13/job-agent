@@ -6,7 +6,6 @@ const state = {
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
   conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationRequest: 0, conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
-  reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
   messageRequest: new Map(), messageSignatures: new Map(),
   localReads: new Map(),
@@ -51,6 +50,47 @@ const failureLabels = { temporary_failure: "Временная ошибка — 
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
 function plainText(value) { return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
+// Questionnaires come with simple markup (bold, lists, links). Only that safe
+// subset is rendered: every other element is unwrapped and every attribute is
+// dropped, so a malicious questionnaire cannot inject markup or scripts.
+const safeQuestionTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "BR", "P", "UL", "OL", "LI", "SPAN", "DIV", "A"]);
+
+function sanitizeQuestionNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent);
+  if (node.nodeType !== Node.ELEMENT_NODE) return document.createTextNode("");
+  if (!safeQuestionTags.has(node.tagName)) {
+    const fragment = document.createDocumentFragment();
+    for (const child of node.childNodes) fragment.append(sanitizeQuestionNode(child));
+    return fragment;
+  }
+  const element = document.createElement(node.tagName.toLowerCase());
+  if (node.tagName === "A") {
+    const href = node.getAttribute("href") || "";
+    if (/^https?:/i.test(href)) {
+      element.href = href; element.target = "_blank"; element.rel = "noopener noreferrer";
+    }
+  }
+  for (const child of node.childNodes) element.append(sanitizeQuestionNode(child));
+  return element;
+}
+
+// questionHTML renders the questionnaire text as sanitized HTML.
+function questionHTML(value, className = "") {
+  const template = document.createElement("template");
+  template.innerHTML = String(value ?? "");
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  for (const node of template.content.childNodes) span.append(sanitizeQuestionNode(node));
+  return span;
+}
+
+// bankAnswerLabel renders the reviewed answer the bank already holds.
+function bankAnswerLabel(answer) {
+  if (!answer) return "";
+  const parts = [...(answer.selected_options || [])];
+  if (answer.text) parts.push(answer.text);
+  return parts.join(" · ");
+}
 function statusCell(value, className = "") { const cell = document.createElement("td"); cell.append(text("span", value, `status ${className}`.trim())); return cell; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
 function taskTypeLabel(value) { return taskTypeLabels[value] || value; }
@@ -1700,10 +1740,17 @@ function reviewVacancyID(session) {
 }
 // sendReviewApplication enqueues the submit retry for the selected profile: a
 // filled questionnaire is attached by the application pipeline itself.
+// reviewSendTargets sends the filled questionnaire from every profile that has
+// a session for this vacancy: the operator chooses the questionnaire, not the
+// accounts.
 function reviewSendTargets() {
-  const selected = [...state.reviewSendProfiles];
-  if (selected.length) return selected;
-  return state.reviewSelected ? [state.reviewSelected.profile_id] : [];
+  const session = state.reviewSelected;
+  if (!session) return [];
+  const vacancyID = reviewVacancyID(session);
+  const profiles = [...new Set((state.reviewSessions || [])
+    .filter((item) => reviewVacancyID(item) === vacancyID)
+    .map((item) => item.profile_id))].filter(Boolean);
+  return profiles.length ? profiles : [session.profile_id];
 }
 function updateReviewSendButton() {
   const targets = reviewSendTargets();
@@ -1770,36 +1817,27 @@ function renderReviewSessions() {
     groups.get(key).sessions.push(session);
   }
   elements.reviewSessions.replaceChildren(...[...groups.values()].map((group) => {
-    const card = document.createElement("div"); card.className = "review-vacancy";
-    const heading = document.createElement("div"); heading.className = "review-vacancy-heading";
+    const card = document.createElement("div");
+    card.className = "review-vacancy";
+    const selected = group.sessions.find((item) => item.id === state.reviewSelected?.id);
+    if (selected) card.classList.add("active");
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "review-vacancy-pick";
+    const heading = document.createElement("div");
+    heading.className = "review-vacancy-heading";
     heading.append(text("strong", group.vacancy.title || "Без названия"));
     heading.append(text("small", group.vacancy.employer || "Компания не определена", "muted"));
-    card.append(heading);
-    const profiles = document.createElement("div"); profiles.className = "review-vacancy-profiles";
-    for (const session of group.sessions) {
-      const chip = document.createElement("label");
-      chip.className = `review-profile${state.reviewSelected?.id === session.id ? " active" : ""}`;
-      const control = document.createElement("input"); control.type = "checkbox";
-      control.checked = state.reviewSendProfiles.has(session.profile_id);
-      control.addEventListener("change", () => {
-        if (control.checked) state.reviewSendProfiles.add(session.profile_id);
-        else state.reviewSendProfiles.delete(session.profile_id);
-        updateReviewSendButton();
-      });
-      const name = document.createElement("button"); name.type = "button"; name.className = "review-profile-name";
-      name.append(text("span", profileDisplayName(session.profile_id)));
-      name.append(text("small", reviewStatusLabel(session.status)));
-      name.addEventListener("click", () => selectReviewSession(session));
-      chip.append(control, name);
-      profiles.append(chip);
-    }
-    card.append(profiles);
-    const selected = group.sessions.find((item) => item.id === state.reviewSelected?.id);
+    pick.append(heading);
+    const profiles = [...new Set(group.sessions.map((item) => item.profile_id))];
+    pick.append(text("small", profiles.length > 1 ? `профилей: ${profiles.length}` : `профиль: ${profileDisplayName(profiles[0])}`, "muted"));
+    pick.addEventListener("click", () => selectReviewSession(selected || group.sessions[0]));
+    card.append(pick);
     if (selected) {
-      const cancel = document.createElement("button");
-      cancel.type = "button"; cancel.className = "secondary compact review-cancel";
-      cancel.textContent = "Убрать"; cancel.disabled = state.reviewBusy;
-      cancel.addEventListener("click", () => cancelReviewSession(selected));
+      const cancel = text("button", "Убрать", "secondary compact review-cancel");
+      cancel.type = "button";
+      cancel.disabled = state.reviewBusy;
+      cancel.addEventListener("click", (event) => { event.stopPropagation(); cancelReviewSession(selected); });
       card.append(cancel);
     }
     return card;
@@ -1848,10 +1886,12 @@ function renderReviewPrompt() {
     return;
   }
   const form = document.createElement("form"); form.className = "review-form";
-  form.append(text("p", plainText(prompt.question.text), "review-question"));
+  form.append(questionHTML(prompt.question.text, "review-question"));
   const kindLabels = { single: "один вариант", multiple: "несколько вариантов", text: "текстовый ответ" };
   const remaining = Array.isArray(detail.questions) ? detail.questions.length : 0;
-  form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · в банке ответа ещё нет${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
+  const bankText = bankAnswerLabel(prompt.question.bank_answer);
+  form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · ${bankText ? "в банке уже есть ответ" : "в банке ответа ещё нет"}${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
+  if (bankText) form.append(text("p", `✓ ответ уже есть в банке: ${bankText}`, "review-bank-hint"));
   const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
   const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
   bankLabel.append(bankControl, text("span", "Сохранить ответ в банк — пригодится в других анкетах"));
@@ -1861,12 +1901,14 @@ function renderReviewPrompt() {
     input = document.createElement("textarea"); input.rows = 5; input.placeholder = "Ответ"; input.required = true;
   } else {
     input = document.createElement("div"); input.className = "review-options";
+    const bankOptions = new Set(prompt.question.bank_answer?.selected_options || []);
     for (const option of prompt.question.options || []) {
       const label = document.createElement("label"); label.className = "review-option";
       const control = document.createElement("input");
       control.type = kind === "single" ? "radio" : "checkbox";
       control.name = "review-option"; control.value = option.text;
-      label.append(control, text("span", plainText(option.text)));
+      if (bankOptions.has(option.text)) control.checked = true;
+      label.append(control, questionHTML(option.text));
       input.append(label);
     }
   }
@@ -1886,18 +1928,25 @@ function renderReviewBatch(detail) {
   let unsupported = false;
   for (const question of detail.questions) {
     const block = document.createElement("div"); block.className = "review-question-block";
-    block.append(text("p", plainText(question.text), "review-question"));
+    block.append(questionHTML(question.text, "review-question"));
+    const bankText = bankAnswerLabel(question.bank_answer);
+    if (bankText) {
+      block.append(text("p", `✓ ответ уже есть в банке: ${bankText}`, "review-bank-hint"));
+    }
     let input;
     if (question.kind === "text") {
       input = document.createElement("textarea"); input.rows = 4; input.placeholder = "Ответ"; input.required = true;
+      if (question.bank_answer?.text) input.value = question.bank_answer.text;
     } else if (question.kind === "single" || question.kind === "multiple") {
       input = document.createElement("div"); input.className = "review-options";
+      const bankOptions = new Set(question.bank_answer?.selected_options || []);
       for (const option of question.options || []) {
         const label = document.createElement("label"); label.className = "review-option";
         const control = document.createElement("input");
         control.type = question.kind === "single" ? "radio" : "checkbox";
         control.name = reviewControlName(question.id); control.value = option.text;
-        label.append(control, text("span", plainText(option.text)));
+        if (bankOptions.has(option.text)) control.checked = true;
+        label.append(control, questionHTML(option.text));
         input.append(label);
       }
     } else {
