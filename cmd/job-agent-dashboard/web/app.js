@@ -98,23 +98,6 @@ function applicationReason(item) {
   }
 }
 
-function renderStats(summary = {}) {
-  const applications = summary.applications || [];
-  const metrics = [
-    { value: total(applications, (item) => (item.status === "submitted" || item.decision_code === "already_applied") && item.decision_code !== "imported_appltool"), label: "Отклики отправлены", filter: "sent" },
-    { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
-    { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
-    { value: summary.conversation_stats?.active || 0, label: "Активные диалоги", target: "conversations-title" },
-  ];
-  elements.stats.replaceChildren(...metrics.map((metric) => {
-    const card = document.createElement(metric.filter || metric.target ? "button" : "article"); card.className = "stat-card";
-    card.append(text("strong", String(metric.value)), text("span", metric.label));
-    if (metric.filter) card.addEventListener("click", () => setApplicationFilter(metric.filter));
-    if (metric.target) card.addEventListener("click", () => document.querySelector(`#${metric.target}`)?.scrollIntoView({ behavior: "smooth" }));
-    return card;
-  }));
-}
-
 function applicationMatchesFilter(item) {
   if (state.applicationFilter === "sent" && !applicationIsSent(item)) return false;
   if (state.applicationFilter && state.applicationFilter !== "sent" && applicationGroup(item) !== state.applicationFilter) return false;
@@ -2069,7 +2052,7 @@ async function refreshSummary({ background = false } = {}) {
   if (state.cache.summary) {
     state.summary = state.cache.summary;
     renderAccountSwitcher(state.summary.profiles || []);
-    renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.queuedTasks || []);
+    renderConfigState(state.summary.config_status); renderTasks(state.queuedTasks || []);
     renderCampaigns(state.summary.campaigns || []); renderProfiles();
   }
   try {
@@ -2081,8 +2064,8 @@ async function refreshSummary({ background = false } = {}) {
     refreshDrafts();
     updateCaptchaWarning();
     updateAuthWarning();
-    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(state.queuedTasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
-    elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
+    renderConfigState(summary.config_status); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(state.queuedTasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
+    elements.connectionState.textContent = `Backend доступен · обновлено ${formatDate(summary.generated_at)}`; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { if (!background) elements.refresh.disabled = false; }
 }
