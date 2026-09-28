@@ -115,7 +115,9 @@ docker compose --profile browser up -d
 ```
 
 Compose сам применяет миграции (`-migrate-up`) и поднимает backend, dashboard
-и browser-worker.
+и browser-worker. Стек запускает именно `deploy/config.json` (переопределяется
+`JOB_AGENT_CONFIG_NAME`), поэтому пример нужно скопировать, а не править: файл
+`deploy/config.example.json` остаётся шаблоном.
 
 <details>
 <summary>Вариант без Docker: локальные бинарники</summary>
@@ -155,6 +157,15 @@ Backend наружу не публикуется: dashboard проксирует
 
 ```sh
 job-agent auth login --profile main --state-output ./data/profiles/main.json
+```
+
+В Docker-режиме backend порт на хост не публикует: CLI-командам передайте
+`--api http://127.0.0.1:8081` — это dashboard-прокси, который сам подставляет
+Bearer-токен:
+
+```sh
+./job-agent auth login --api http://127.0.0.1:8081 \
+  --profile main --state-output ./data/profiles/main.json
 ```
 
 ### Этап 6. Прогоните dry-run

@@ -190,7 +190,9 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 ```
 
 Профиль `browser` добавляет worker для входа и browser-only операций. Без него
-сервис тоже работает, но login и анкеты будут недоступны.
+сервис тоже работает, но login и анкеты будут недоступны. Стек запускает именно
+`deploy/config.json` (имя переопределяется `JOB_AGENT_CONFIG_NAME`), поэтому
+копия из шага 1 обязательна: `config.example.json` остаётся шаблоном.
 
 `JOB_AGENT_API_TOKEN` — необязательный общий секрет (не пользовательская
 авторизация). В Compose он рекомендован, потому что backend доступен
