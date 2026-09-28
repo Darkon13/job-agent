@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +258,44 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 }
 
 func intPointer(value int) *int { return &value }
+
+func TestRuntimeAPISummaryHidesAuthWarningsAfterRelogin(t *testing.T) {
+	now := time.Date(2026, 9, 28, 16, 0, 0, 0, time.UTC)
+	stateFile := filepath.Join(t.TempDir(), "profiles", "main.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o700); err != nil {
+		t.Fatalf("create profile directory: %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte(`{"cookies":[]}`), 0o600); err != nil {
+		t.Fatalf("write state file: %v", err)
+	}
+	// The sign-in rewrites the state file after the failed tasks, so the
+	// warning from before it is no longer actionable.
+	if err := os.Chtimes(stateFile, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatalf("touch state file: %v", err)
+	}
+	repository := &runtimeRepository{
+		authWarnings: []storage.AuthWarning{
+			{ProfileID: "main", Count: 19, LastAt: now},
+			{ProfileID: "other", Count: 3, LastAt: now},
+		},
+	}
+	api, err := NewRuntimeAPI(repository, nil)
+	if err != nil {
+		t.Fatalf("new runtime API: %v", err)
+	}
+	api.now = func() time.Time { return now }
+	api.SetStatePaths(map[core.ProfileID]string{"main": stateFile})
+	response := httptest.NewRecorder()
+	api.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(
+		response, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/summary", nil))
+	body := response.Body.String()
+	if strings.Contains(body, `"profile_id":"main"`) {
+		t.Fatalf("stale warning survived the relogin: %s", body)
+	}
+	if !strings.Contains(body, `"profile_id":"other"`) {
+		t.Fatalf("warning without a fresh session must stay: %s", body)
+	}
+}
 
 func TestRuntimeAPIReadinessDoesNotLeakStorageError(t *testing.T) {
 	api, err := NewRuntimeAPI(&runtimeRepository{err: errors.New("database /secret/path failed")}, nil)

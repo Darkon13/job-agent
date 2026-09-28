@@ -440,6 +440,7 @@ func main() {
 	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg, profileContacts))
 	if err == nil {
 		runtimeAPI.ConfigureSummaryCache(3 * time.Second)
+		runtimeAPI.SetStatePaths(profileStateFiles(cfg))
 	}
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
@@ -1078,6 +1079,7 @@ func main() {
 	}
 	refreshProfileViews := func(fresh appconfig.Config) {
 		runtimeAPI.SetProfiles(dashboardProfiles(fresh, profileContacts))
+		runtimeAPI.SetStatePaths(profileStateFiles(fresh))
 		profileCatalogAPI.SetEntries(profileCatalog(fresh, instances))
 		resumeAPI.SetTargets(fresh.ResumeTargets())
 		if authAPI != nil {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,10 +60,48 @@ type RuntimeAPI struct {
 	questionnaires QuestionnaireCapturer
 	configStatus   func() ConfigStatus
 
+	stateMu    sync.Mutex
+	statePaths map[core.ProfileID]string
+
 	summaryMu      sync.Mutex
 	summaryCache   []byte
 	summaryExpires time.Time
 	summaryTTL     time.Duration
+}
+
+// SetStatePaths replaces the declared browser state targets, for example when a
+// config reload adds a profile to the running service.
+func (api *RuntimeAPI) SetStatePaths(paths map[core.ProfileID]string) {
+	if api == nil {
+		return
+	}
+	api.stateMu.Lock()
+	api.statePaths = paths
+	api.stateMu.Unlock()
+}
+
+// freshAuthWarnings drops warnings that predate the profile's current browser
+// state: a successful sign-in rewrites the state file, and failures from before
+// that sign-in are no longer actionable. Without it the dashboard keeps asking
+// for a login the operator has already completed.
+func (api *RuntimeAPI) freshAuthWarnings(warnings []storage.AuthWarning) []storage.AuthWarning {
+	api.stateMu.Lock()
+	paths := api.statePaths
+	api.stateMu.Unlock()
+	if len(paths) == 0 || len(warnings) == 0 {
+		return warnings
+	}
+	fresh := make([]storage.AuthWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		path := strings.TrimSpace(paths[warning.ProfileID])
+		if path != "" {
+			if info, err := os.Stat(path); err == nil && info.ModTime().After(warning.LastAt) {
+				continue
+			}
+		}
+		fresh = append(fresh, warning)
+	}
+	return fresh
 }
 
 // SetProfiles replaces the account list, for example when a config reload adds
@@ -352,6 +391,7 @@ func (api *RuntimeAPI) summary(response http.ResponseWriter, request *http.Reque
 		writeProblem(response, http.StatusInternalServerError, "load auth warnings")
 		return
 	}
+	authWarnings = api.freshAuthWarnings(authWarnings)
 	applications, err := api.repository.ApplicationCounts(request.Context())
 	if err != nil {
 		writeProblem(response, http.StatusInternalServerError, "load application summary")
