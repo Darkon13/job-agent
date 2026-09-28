@@ -451,7 +451,10 @@ async function removeSelectedApplications() {
 
 function renderApplicationObjects() {
   const items = visibleApplicationObjects();
-  hideEmptySection("applications-section", state.applicationTotal > 0);
+  // A filter or search that matches nothing must not hide the section and its
+  // own controls.
+  const filtered = Boolean(state.applicationFilter || state.applicationQuery);
+  hideEmptySection("applications-section", state.applicationTotal > 0 || filtered);
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
   elements.applicationActionState.textContent = state.applicationActionMessage || "";
   updateApplicationProfileColumn();
@@ -1008,8 +1011,9 @@ function renderJobDetailRows(item) {
 }
 
 function renderFailedTasks(items = []) {
+  const total = items.length;
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  hideEmptySection("failed-tasks-section", items.length > 0);
+  hideEmptySection("failed-tasks-section", total > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
   elements.failedTasks.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -1374,7 +1378,10 @@ function applyLocalReads(items = []) {
 }
 
 function renderConversations(items = state.conversationItems) {
-  hideEmptySection("conversations-section", (items || []).length > 0);
+  // The section hides only when the account has no chats at all: hiding it on
+  // an empty filtered view would take away the filter controls themselves.
+  const filtered = Boolean(elements.conversationFilter.value || state.conversationQuery);
+  hideEmptySection("conversations-section", (state.conversationItems || []).length > 0 || filtered);
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
   if (state.selectedConversation) {
@@ -1383,7 +1390,7 @@ function renderConversations(items = state.conversationItems) {
   }
   const loaded = state.conversationItems.length;
   elements.conversationPageState.textContent = state.conversationTotal ? `Показано ${loaded} из ${state.conversationTotal}` : "";
-  if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
+  if (!visible.length) { elements.conversations.replaceChildren(text("p", filtered ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
   elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
     const heading = document.createElement("span"); heading.className = "conversation-heading";
@@ -1894,9 +1901,14 @@ function reviewVacancyKey(session) {
 function renderReviewSessions() {
   const layout = elements.reviewSessions.closest(".review-layout");
   const sessions = state.reviewSessions || [];
-  hideEmptySection("review-section", sessions.length > 0);
+  const filtered = Boolean(elements.reviewFilter.value || state.reviewQuery);
+  // A filter that matches nothing must not hide its own controls.
+  hideEmptySection("review-section", sessions.length > 0 || filtered);
   if (layout) layout.classList.toggle("empty", !sessions.length);
-  if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
+  if (!sessions.length) {
+    elements.reviewSessions.replaceChildren(text("p", filtered ? "Под фильтр ничего не подошло." : "Проверок нет.", "empty"));
+    return;
+  }
   if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {
     // While a captured questionnaire is still being looked up, keep the list
     // unselected instead of jumping to the top card.
