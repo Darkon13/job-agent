@@ -21,10 +21,12 @@ type ProfileImportVacancyStore interface {
 	UpsertVacancy(ctx context.Context, vacancy core.Vacancy) (bool, error)
 }
 
-// ProfileImportApplicationStore resolves and creates application records.
+// ProfileImportApplicationStore resolves, creates and settles application
+// records.
 type ProfileImportApplicationStore interface {
 	Application(ctx context.Context, key core.ApplicationKey) (core.Application, error)
 	CreateApplication(ctx context.Context, candidate core.Application) (core.Application, bool, error)
+	SaveApplication(ctx context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error
 }
 
 // ProfileImportStateStore stores the observed platform state of an application.
@@ -185,19 +187,27 @@ func (handler *ProfileImportHandler) importApplication(ctx context.Context, key 
 	if err != nil {
 		return core.Application{}, err
 	}
-	if err := application.Transition(core.ApplicationPreparing, now); err != nil {
+	// The repository accepts a new application only in its initial state, so
+	// the record is created first and settled as the worker would settle it.
+	stored, _, err := handler.applications.CreateApplication(ctx, application)
+	if err != nil {
 		return core.Application{}, err
 	}
-	if err := application.RecordPreparation("already_applied", "отклик уже существует на платформе", "", "", now); err != nil {
+	if err := stored.Transition(core.ApplicationPreparing, now); err != nil {
+		return core.Application{}, err
+	}
+	if err := stored.RecordPreparation("already_applied", "отклик уже существует на платформе", "", "", now); err != nil {
 		return core.Application{}, err
 	}
 	for _, status := range []core.ApplicationStatus{core.ApplicationReady, core.ApplicationSubmitting, core.ApplicationSubmitted} {
-		if err := application.Transition(status, now); err != nil {
+		if err := stored.Transition(status, now); err != nil {
 			return core.Application{}, err
 		}
 	}
-	stored, _, err := handler.applications.CreateApplication(ctx, application)
-	return stored, err
+	if err := handler.applications.SaveApplication(ctx, stored, core.ApplicationNew); err != nil {
+		return core.Application{}, err
+	}
+	return stored, nil
 }
 
 // captureIdentity refreshes the stored account summary through the same

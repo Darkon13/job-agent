@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -35,6 +36,14 @@ func (store *importApplicationStore) Application(_ context.Context, key core.App
 func (store *importApplicationStore) CreateApplication(_ context.Context, candidate core.Application) (core.Application, bool, error) {
 	store.created = append(store.created, candidate)
 	return candidate, true, nil
+}
+
+func (store *importApplicationStore) SaveApplication(_ context.Context, candidate core.Application, expectedStatus core.ApplicationStatus) error {
+	if expectedStatus != core.ApplicationNew {
+		return errors.New("an imported application must be saved from its initial state")
+	}
+	store.created[len(store.created)-1] = candidate
+	return nil
 }
 
 type importStateStore struct {
