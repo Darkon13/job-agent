@@ -43,12 +43,12 @@ func (workflow *VacancyTestWorkflow) EnqueueCapture(ctx context.Context, profile
 	if err != nil || created {
 		return created, err
 	}
-	// A capture that failed earlier (for example the vacancy exposed no test at
-	// that moment) must be retryable from the dashboard instead of silently
-	// doing nothing.
-	if task.Status == core.TaskFailed {
+	// A capture that settled without a usable result (failed, or dismissed
+	// during a cleanup) must be retryable from the dashboard instead of
+	// silently doing nothing.
+	if task.Status == core.TaskFailed || task.Status == core.TaskDismissed {
 		if controller, ok := workflow.tasks.(broker.TaskControlStore); ok {
-			if _, retryErr := controller.RestartFailedTask(ctx, key, workflow.clock.Now()); retryErr == nil {
+			if _, retryErr := controller.RequeueTask(ctx, key, workflow.clock.Now()); retryErr == nil {
 				return true, nil
 			}
 		}

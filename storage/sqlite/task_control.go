@@ -42,6 +42,47 @@ func (store *Store) RestartFailedTask(ctx context.Context, key string, now time.
 	return task, nil
 }
 
+// RequeueTask returns a settled task to the queue after an explicit operator
+// action. It also revives a dismissed attempt, because a fresh request outranks
+// the earlier dismissal; completed and queued tasks are never touched.
+func (store *Store) RequeueTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
+	if key == "" || now.IsZero() {
+		return core.Task{}, errors.New("task requeue requires idempotency key and current time")
+	}
+	task, err := store.TaskByIdempotencyKey(ctx, key)
+	if err != nil {
+		return core.Task{}, err
+	}
+	if task.Status != core.TaskFailed && task.Status != core.TaskDismissed {
+		return core.Task{}, broker.ErrTaskNotRequeueable
+	}
+	previousUpdatedAt := task.UpdatedAt
+	if task.Deadline != nil && !now.Before(*task.Deadline) {
+		return core.Task{}, broker.ErrTaskDeadlineExpired
+	}
+	if err := task.Requeue(now); err != nil {
+		return core.Task{}, err
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE tasks SET
+		status = ?, attempts = ?, available_at = ?, updated_at = ?,
+		failure_category = NULL, failure_message = NULL,
+		lease_owner = NULL, lease_token = NULL, lease_until = NULL
+		WHERE idempotency_key = ? AND status IN (?, ?) AND updated_at = ?`,
+		task.Status, task.Attempts, task.AvailableAt.UnixNano(), task.UpdatedAt.UnixNano(),
+		key, core.TaskFailed, core.TaskDismissed, previousUpdatedAt.UnixNano())
+	if err != nil {
+		return core.Task{}, fmt.Errorf("requeue task: %w", err)
+	}
+	updated, err := oneRowAffected(result)
+	if err != nil {
+		return core.Task{}, err
+	}
+	if !updated {
+		return core.Task{}, broker.ErrTaskControlConflict
+	}
+	return task, nil
+}
+
 // CancelQueuedTask removes a task that has not started from the queue: it never
 // runs and keeps the operator's reason in the failure fields. A task that is
 // already running or settled cannot be cancelled.

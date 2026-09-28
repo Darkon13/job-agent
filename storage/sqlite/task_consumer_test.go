@@ -292,6 +292,22 @@ func TestTaskClaimFailedProfileStateApplyBlocksUntilRestarted(t *testing.T) {
 	if err != nil || !found || lease.Task.ID != application.ID || lease.Task.Attempts != 1 {
 		t.Fatalf("claim after dismissal: found=%t lease=%#v err=%v", found, lease, err)
 	}
+	// An explicit operator retry revives even a dismissed task and makes it
+	// block dependent applications again.
+	requeued, err := store.RequeueTask(ctx, apply.IdempotencyKey, now.Add(7*time.Second))
+	if err != nil || requeued.Status != core.TaskNew || requeued.Attempts != 0 || requeued.Failure != nil {
+		t.Fatalf("requeue dismissed apply: task=%#v err=%v", requeued, err)
+	}
+	if _, err := store.RequeueTask(ctx, apply.IdempotencyKey, now.Add(8*time.Second)); !errors.Is(err, broker.ErrTaskNotRequeueable) {
+		t.Fatalf("requeue queued apply: err=%v", err)
+	}
+	lease, found, err = store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: now.Add(8 * time.Second), LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || lease.Task.ID != apply.ID {
+		t.Fatalf("claim requeued apply: found=%t lease=%#v err=%v", found, lease, err)
+	}
 }
 
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
