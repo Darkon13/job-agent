@@ -1,5 +1,15 @@
 name: job-agent
 
+# Containers inherit the bridge MTU. A VPN tunnel on the host (AmneziaWG uses
+# 1280) is smaller than the default 1500, and then large TLS handshakes from a
+# container are dropped even though the host itself works: set
+# JOB_AGENT_NETWORK_MTU=1280 in .env for such a host.
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "${JOB_AGENT_NETWORK_MTU:-1500}"
+
 x-runtime: &runtime
   image: ${JOB_AGENT_IMAGE:-job-agent:1.0.0}
 

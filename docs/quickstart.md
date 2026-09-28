@@ -204,6 +204,11 @@ docker compose --profile browser down
 `browser-worker` продолжает работать и удерживает сеть `job-agent_default` —
 Compose тогда сообщает `Resource is still in use`.
 
+Если хост выходит в интернет через VPN с MTU меньше 1500 (AmneziaWG — 1280),
+задайте в `.env` `JOB_AGENT_NETWORK_MTU=1280`. Иначе контейнеры теряют крупные
+TLS-хендшейки (например, к `hh.ru`) и вход в HH падает по таймауту, хотя сам
+хост открывает сайт.
+
 `JOB_AGENT_API_TOKEN` — необязательный общий секрет (не пользовательская
 авторизация). В Compose он рекомендован, потому что backend доступен
 контейнерам приватной сети, а dashboard подставляет токен server-side. Можно
