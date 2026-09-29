@@ -395,6 +395,9 @@ func (client *BrowserApplicationClient) pagePreflight(ctx context.Context, key c
 		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application page failed", err)
 	}
 	defer response.Body.Close()
+	if isCaptchaURL(response.Request.URL) {
+		return browserApplicationPreflight{}, captchaError("applications.preflight.browser")
+	}
 	if isLoginURL(response.Request.URL) {
 		return browserApplicationPreflight{}, operationError(core.ErrorUnauthorized, "applications.preflight.browser", "HH browser session requires authentication", nil)
 	}
@@ -480,6 +483,10 @@ func (client *BrowserApplicationClient) popupPreflight(ctx context.Context, key 
 		return browserApplicationPreflight{}, operationError(core.ErrorTemporaryFailure, "applications.preflight.browser", "HH application preflight failed", err)
 	}
 	defer response.Body.Close()
+	if isCaptchaURL(response.Request.URL) {
+		drain(response.Body)
+		return browserApplicationPreflight{}, captchaError("applications.preflight.browser")
+	}
 	if isLoginURL(response.Request.URL) {
 		drain(response.Body)
 		return browserApplicationPreflight{}, operationError(core.ErrorUnauthorized, "applications.preflight.browser", "HH browser session requires authentication", nil)
