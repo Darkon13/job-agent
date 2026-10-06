@@ -48,7 +48,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Собрать и опубликовать job-agent
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runtime
@@ -63,7 +63,7 @@ jobs:
             MODIFIED=false
 
       - name: Собрать и опубликовать browser-worker (slim)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./browser-worker
           file: ./browser-worker/Dockerfile.slim
