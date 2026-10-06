@@ -21,10 +21,10 @@ func (store *Store) CreateConversation(ctx context.Context, candidate core.Conve
 		return core.Conversation{}, false, errors.New("conversation repository accepts only initialized active conversations")
 	}
 	result, err := store.db.ExecContext(ctx, `INSERT OR IGNORE INTO conversations
-		(id, platform, profile_id, external_id, application_id, vacancy_title, employer, vacancy_url, unread_count, status, last_message_id,
+		(id, platform, profile_id, external_id, application_id, vacancy_title, employer, employer_id, vacancy_url, unread_count, status, last_message_id,
 			 last_message_at, last_incoming_at, last_outgoing_at, last_read_at, created_at, updated_at, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, candidate.ID, candidate.Platform,
-		candidate.ProfileID, candidate.ExternalID, candidate.ApplicationID, candidate.VacancyTitle, candidate.Employer, candidate.VacancyURL, candidate.UnreadCount,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, candidate.ID, candidate.Platform,
+		candidate.ProfileID, candidate.ExternalID, candidate.ApplicationID, candidate.VacancyTitle, candidate.Employer, candidate.EmployerID, candidate.VacancyURL, candidate.UnreadCount,
 		candidate.Status,
 		candidate.LastMessageID, nullableTime(candidate.LastMessageAt), nullableTime(candidate.LastIncomingAt),
 		nullableTime(candidate.LastOutgoingAt), nullableTime(candidate.LastReadAt), candidate.CreatedAt.UnixNano(), candidate.UpdatedAt.UnixNano(), candidate.Revision)
@@ -72,10 +72,10 @@ func (store *Store) SaveConversation(ctx context.Context, candidate core.Convers
 	if candidate.Revision != expectedRevision+1 {
 		return errors.New("conversation candidate must advance revision exactly once")
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE conversations SET status = ?, vacancy_title = ?, employer = ?, vacancy_url = ?, unread_count = ?, last_read_at = ?, updated_at = ?, revision = ?
+	result, err := store.db.ExecContext(ctx, `UPDATE conversations SET status = ?, vacancy_title = ?, employer = ?, employer_id = ?, vacancy_url = ?, unread_count = ?, last_read_at = ?, updated_at = ?, revision = ?
 		WHERE id = ? AND platform = ? AND profile_id = ? AND external_id = ? AND application_id = ?
 		AND last_message_id = ? AND last_message_at IS ? AND last_incoming_at IS ? AND last_outgoing_at IS ?
-		AND created_at = ? AND revision = ?`, candidate.Status, candidate.VacancyTitle, candidate.Employer, candidate.VacancyURL, candidate.UnreadCount, nullableTime(candidate.LastReadAt), candidate.UpdatedAt.UnixNano(), candidate.Revision,
+		AND created_at = ? AND revision = ?`, candidate.Status, candidate.VacancyTitle, candidate.Employer, candidate.EmployerID, candidate.VacancyURL, candidate.UnreadCount, nullableTime(candidate.LastReadAt), candidate.UpdatedAt.UnixNano(), candidate.Revision,
 		candidate.ID, candidate.Platform, candidate.ProfileID, candidate.ExternalID, candidate.ApplicationID,
 		candidate.LastMessageID, nullableTime(candidate.LastMessageAt), nullableTime(candidate.LastIncomingAt), nullableTime(candidate.LastOutgoingAt),
 		candidate.CreatedAt.UnixNano(), expectedRevision)
@@ -582,7 +582,7 @@ func (store *Store) ListFollowUps(ctx context.Context, filter storage.FollowUpFi
 	return result, nil
 }
 
-const conversationSelect = `SELECT id, platform, profile_id, external_id, application_id, vacancy_title, employer, vacancy_url, unread_count, status,
+const conversationSelect = `SELECT id, platform, profile_id, external_id, application_id, vacancy_title, employer, employer_id, vacancy_url, unread_count, status,
 	last_message_id, last_message_at, last_incoming_at, last_outgoing_at, last_read_at, created_at, updated_at, revision FROM conversations`
 
 const messageSelect = `SELECT id, conversation_id, external_id, reply_to_id, direction, kind, status,
@@ -617,7 +617,7 @@ func scanConversation(row rowScanner) (core.Conversation, error) {
 	var lastMessageAt, lastIncomingAt, lastOutgoingAt, lastReadAt sql.NullInt64
 	var createdAt, updatedAt int64
 	if err := row.Scan(&conversation.ID, &conversation.Platform, &conversation.ProfileID, &conversation.ExternalID,
-		&conversation.ApplicationID, &conversation.VacancyTitle, &conversation.Employer, &conversation.VacancyURL,
+		&conversation.ApplicationID, &conversation.VacancyTitle, &conversation.Employer, &conversation.EmployerID, &conversation.VacancyURL,
 		&conversation.UnreadCount, &conversation.Status, &conversation.LastMessageID, &lastMessageAt,
 		&lastIncomingAt, &lastOutgoingAt, &lastReadAt, &createdAt, &updatedAt, &conversation.Revision); err != nil {
 		return core.Conversation{}, err
