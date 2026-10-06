@@ -71,6 +71,51 @@ type ApplicationPlanResolver interface {
 
 type StaticApplicationPlans map[core.ProfileID]ApplicationPlan
 
+// LiveApplicationPlans is the mutable plan set of the running service: a config
+// reload adds profiles while workers keep resolving plans, so the map is
+// guarded. Tests keep using the plain StaticApplicationPlans literal.
+type LiveApplicationPlans struct {
+	mu    sync.RWMutex
+	plans map[core.ProfileID]ApplicationPlan
+}
+
+func NewLiveApplicationPlans() *LiveApplicationPlans {
+	return &LiveApplicationPlans{plans: make(map[core.ProfileID]ApplicationPlan)}
+}
+
+// Set replaces the plan of one profile. Reloads call it for new profiles only.
+func (plans *LiveApplicationPlans) Set(profileID core.ProfileID, plan ApplicationPlan) {
+	if plans == nil || profileID == "" {
+		return
+	}
+	plans.mu.Lock()
+	defer plans.mu.Unlock()
+	plans.plans[profileID] = plan
+}
+
+// Len reports how many profiles have a plan.
+func (plans *LiveApplicationPlans) Len() int {
+	plans.mu.RLock()
+	defer plans.mu.RUnlock()
+	return len(plans.plans)
+}
+
+func (plans *LiveApplicationPlans) ResolveApplicationPlan(_ context.Context, application core.Application) (ApplicationPlan, error) {
+	plans.mu.RLock()
+	plan, exists := plans.plans[application.Key.ProfileID]
+	plans.mu.RUnlock()
+	if !exists {
+		return ApplicationPlan{}, &core.OperationError{
+			Category: core.ErrorValidationRequired, Operation: "applications.prepare",
+			Platform: application.Key.Vacancy.Platform, Message: "profile requires an application plan",
+		}
+	}
+	if err := plan.Validate(); err != nil {
+		return ApplicationPlan{}, err
+	}
+	return plan, nil
+}
+
 func (plans StaticApplicationPlans) ResolveApplicationPlan(_ context.Context, application core.Application) (ApplicationPlan, error) {
 	plan, exists := plans[application.Key.ProfileID]
 	if !exists {

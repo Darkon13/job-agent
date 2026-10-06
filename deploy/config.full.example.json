@@ -29,12 +29,26 @@
       "reasoning_effort": "none"
     }
   ],
+  "profile_store": {
+    "dir": "/data/profile-store"
+  },
   "profiles": [
     {
       "tag": "primary",
       "adapter": "hh-main",
-      "resume": "0123456789abcdef0123456789abcdef01234567",
+      "resumes": [
+        {
+          "id": "0123456789abcdef0123456789abcdef01234567",
+          "primary": true
+        }
+      ],
       "state_file": "/data/profiles/primary.json",
+      "contacts": {
+        "first_name": "Иван",
+        "last_name": "Примеров",
+        "email": "user@example.test",
+        "telegram": "@example_user"
+      },
       "applications": {
         "mode": "submit",
         "message_template_file": "messages/backend.json",
@@ -65,18 +79,32 @@
         "answer_known": true
       },
       "enabled": true,
-      "contacts": {
-        "first_name": "Иван",
-        "last_name": "Примеров",
-        "email": "user@example.test",
-        "telegram": "@example_user"
+      "application_cleanup": {
+        "enabled": true,
+        "interval": "3h",
+        "retention": {
+          "stale_after": "720h",
+          "remove_rejected": true,
+          "remove_waiting_validation": true
+        }
       }
     },
     {
       "tag": "secondary",
       "adapter": "hh-main",
-      "resume": "fedcba9876543210fedcba9876543210fedcba98",
+      "resumes": [
+        {
+          "id": "fedcba9876543210fedcba9876543210fedcba98",
+          "primary": true
+        }
+      ],
       "state_file": "/data/profiles/secondary.json",
+      "contacts": {
+        "first_name": "Иван",
+        "last_name": "Примеров",
+        "email": "user@example.test",
+        "telegram": "@example_user"
+      },
       "applications": {
         "mode": "submit",
         "message_template_file": "messages/backend.json",
@@ -130,51 +158,18 @@
         "answer_known": true
       },
       "enabled": true,
-      "contacts": {
-        "first_name": "Иван",
-        "last_name": "Примеров",
-        "email": "user@example.test",
-        "telegram": "@example_user"
+      "application_cleanup": {
+        "enabled": true,
+        "interval": "3h",
+        "retention": {
+          "stale_after": "720h",
+          "remove_rejected": true,
+          "remove_waiting_validation": true
+        }
       }
     }
   ],
   "searches": [
-    {
-      "tag": "secondary-similar",
-      "adapter": "hh-main",
-      "profiles": [
-        "secondary"
-      ],
-      "priority": 100,
-      "target_applications": 200,
-      "query": {
-        "source": "similar_resume",
-        "resume": "fedcba9876543210fedcba9876543210fedcba98",
-        "area": [
-          "1"
-        ],
-        "page_size": 20,
-        "max_pages": 10
-      }
-    },
-    {
-      "tag": "primary-similar",
-      "adapter": "hh-main",
-      "profiles": [
-        "primary"
-      ],
-      "priority": 100,
-      "target_applications": 200,
-      "query": {
-        "source": "similar_resume",
-        "resume": "0123456789abcdef0123456789abcdef01234567",
-        "area": [
-          "1"
-        ],
-        "page_size": 20,
-        "max_pages": 10
-      }
-    },
     {
       "tag": "global-go",
       "adapter": "hh-main",
@@ -204,232 +199,63 @@
         "page_size": 20,
         "max_pages": 10
       }
+    },
+    {
+      "tag": "similar-resume",
+      "adapter": "hh-main",
+      "profiles": [
+        "primary",
+        "secondary"
+      ],
+      "priority": 100,
+      "target_applications": 200,
+      "query": {
+        "source": "similar_resume",
+        "resume": "$profile",
+        "area": [
+          "1"
+        ],
+        "page_size": 20,
+        "max_pages": 10
+      }
     }
   ],
   "jobs": [
     {
-      "tag": "refresh-sessions",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "15 */4 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "profile.session_refresh",
-        "profiles": [
-          "primary",
-          "secondary"
-        ]
-      },
-      "description": "Обновление сессий HH каждые 4 часа"
-    },
-    {
-      "tag": "touch-resumes",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "0 */4 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "resume.touch",
-        "profiles": [
-          "primary",
-          "secondary"
-        ]
-      },
-      "description": "Поднятие резюме каждые 4 часа"
-    },
-    {
-      "tag": "sync-conversations",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "*/10 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once"
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "conversation.sync",
-        "profiles": [
-          "primary",
-          "secondary"
-        ]
-      },
-      "description": "Синхронизация чатов каждые 10 минут"
-    },
-    {
-      "tag": "observe-activity",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "*/30 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once"
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "profile.activity.observe",
-        "profiles": [
-          "primary",
-          "secondary"
-        ]
-      },
-      "description": "Снимок метрик резюме каждые 30 минут"
-    },
-    {
-      "tag": "periodic-primary-applications",
+      "tag": "periodic-applications",
       "enabled": true,
       "concurrency": "forbid",
       "triggers": [
         {
           "type": "cron",
-          "expression": "0 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
+          "expression": "0 * * * *"
         }
       ],
       "action": {
         "type": "application.campaign",
         "profiles": [
-          "primary"
-        ],
-        "routes": [
-          "global-go",
-          "primary-similar"
-        ],
-        "target_successful": 200,
-        "max_in_flight": 2
-      },
-      "description": "Рассылка откликов (Антон Шумаков) каждый час"
-    },
-    {
-      "tag": "periodic-secondary-applications",
-      "enabled": true,
-      "concurrency": "forbid",
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "0 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
-        }
-      ],
-      "action": {
-        "type": "application.campaign",
-        "profiles": [
+          "primary",
           "secondary"
         ],
         "routes": [
           "global-go",
-          "secondary-similar"
+          "similar-resume"
         ],
         "target_successful": 200,
         "max_in_flight": 2
       },
-      "description": "Рассылка откликов (Антон Иванов) каждый час"
-    },
-    {
-      "tag": "sync-application-states",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "20 * * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "5m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "application.state.sync",
-        "profiles": [
-          "primary",
-          "secondary"
-        ]
-      },
-      "description": "Синхронизация состояний откликов раз в час"
-    },
-    {
-      "tag": "cleanup-rejected-applications",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "0 */3 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "10m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "application.retention",
-        "profiles": [
-          "primary",
-          "secondary"
-        ],
-        "retention": {
-          "stale_after": "720h",
-          "remove_rejected": true,
-          "remove_waiting_validation": true
-        }
-      },
-      "description": "Очистка отказов и устаревших откликов каждые 3 часа"
+      "description": "Рассылка откликов каждый час"
     },
     {
       "tag": "follow-up-unanswered",
       "enabled": true,
+      "concurrency": "forbid",
       "triggers": [
         {
           "type": "cron",
-          "expression": "0 11 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "15m"
-          }
+          "expression": "0 11 * * *"
         }
       ],
-      "concurrency": "forbid",
       "action": {
         "type": "conversation.follow_up.select",
         "profiles": [
@@ -454,33 +280,6 @@
         }
       },
       "description": "Напоминания во всех чатах, молчащих 5 дней"
-    },
-    {
-      "tag": "maintain-activity",
-      "description": "Просмотр вакансий-кандидатов для активности",
-      "enabled": true,
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "40 10-19 * * *",
-          "timezone": "Europe/Moscow",
-          "misfire": "run_once",
-          "jitter": {
-            "min": "1m",
-            "max": "15m"
-          }
-        }
-      ],
-      "concurrency": "forbid",
-      "action": {
-        "type": "profile.activity.maintain",
-        "profiles": [
-          "primary",
-          "secondary"
-        ],
-        "count": 5,
-        "pause": "20s"
-      }
     }
   ],
   "answer_sets": [

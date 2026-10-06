@@ -182,13 +182,12 @@ func (cache *ResponseCache) store(key string, ttl time.Duration, buffer *bufferi
 	return entry, true
 }
 
+// invalidate drops cached bodies after a mutation: the next read must show the
+// new state instead of the previous body served once while revalidating.
 func (cache *ResponseCache) invalidate() {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	for key, entry := range cache.entries {
-		entry.stale = true
-		cache.entries[key] = entry
-	}
+	cache.entries = make(map[string]cachedResponse)
 }
 
 func (cache *ResponseCache) write(response http.ResponseWriter, request *http.Request, entry cachedResponse) {

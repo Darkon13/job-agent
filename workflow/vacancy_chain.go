@@ -39,8 +39,21 @@ func (workflow *VacancyTestWorkflow) EnqueueCapture(ctx context.Context, profile
 	if err != nil {
 		return false, fmt.Errorf("encode test capture task: %w", err)
 	}
-	_, created, err := workflow.enqueue(ctx, profileID, platform, core.TaskTestCapture, key, source, payload)
-	return created, err
+	task, created, err := workflow.enqueue(ctx, profileID, platform, core.TaskTestCapture, key, source, payload)
+	if err != nil || created {
+		return created, err
+	}
+	// A capture that settled without a usable result (failed, or dismissed
+	// during a cleanup) must be retryable from the dashboard instead of
+	// silently doing nothing.
+	if task.Status == core.TaskFailed || task.Status == core.TaskDismissed {
+		if controller, ok := workflow.tasks.(broker.TaskControlStore); ok {
+			if _, retryErr := controller.RequeueTask(ctx, key, workflow.clock.Now()); retryErr == nil {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (workflow *VacancyTestWorkflow) EnqueueAnswer(ctx context.Context, profileID core.ProfileID, platform core.Platform, externalID string, answers []core.ResolvedAnswer, requestKey string) (bool, error) {

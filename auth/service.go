@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,13 @@ type BrowserStateWriter interface {
 	Store(ctx context.Context, reference string, data json.RawMessage) (string, error)
 }
 
+// CompletionHook observes a completed login after its artifacts are stored. It
+// runs asynchronously and must not change the session: a capture failure is
+// retried from the profile draft instead.
+type CompletionHook interface {
+	AuthCompleted(ctx context.Context, profileID core.ProfileID, browserStateReference string) error
+}
+
 type StartRequest struct {
 	Platform              core.Platform
 	ProfileID             core.ProfileID
@@ -117,6 +125,7 @@ type Service struct {
 	states     BrowserStateWriter
 	clock      Clock
 	ids        IDGenerator
+	completed  CompletionHook
 }
 
 func NewService(sessions storage.AuthSessionRepository, challenges ChallengeStore, driver Driver, writer CredentialWriter, states BrowserStateWriter, clock Clock, ids IDGenerator) (*Service, error) {
@@ -334,7 +343,7 @@ func (service *Service) store(ctx context.Context, session core.AuthSession, out
 	if outcome.Credentials != nil {
 		revision, err := service.writer.Store(ctx, session.CredentialReference, *outcome.Credentials)
 		if err != nil {
-			return service.failStorage(ctx, session, now)
+			return service.failStorage(ctx, session, err, now)
 		}
 		credentialRevision = revision
 	}
@@ -342,19 +351,49 @@ func (service *Service) store(ctx context.Context, session core.AuthSession, out
 	if outcome.BrowserState != nil {
 		digest, err := service.states.Store(ctx, session.BrowserStateReference, outcome.BrowserState.Data)
 		if err != nil {
-			return service.failStorage(ctx, session, now)
+			return service.failStorage(ctx, session, err, now)
 		}
 		browserStateDigest = digest
 	}
 	if err := session.Complete(credentialRevision, browserStateDigest, now); err != nil {
 		return core.AuthSession{}, err
 	}
+	if service.completed != nil {
+		// The hook reads the fresh session and can take seconds; the auth call
+		// must return without waiting for it. A detached context keeps the work
+		// alive after the HTTP request is answered.
+		profileID := session.ProfileID
+		reference := session.BrowserStateReference
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), completionHookTimeout)
+		go func() {
+			defer cancel()
+			if err := service.completed.AuthCompleted(hookCtx, profileID, reference); err != nil {
+				slog.Default().Warn("auth completion hook failed", "profile", profileID, "error", err)
+			}
+		}()
+	}
 	return session, nil
 }
 
+// completionHookTimeout bounds one post-login capture.
+const completionHookTimeout = 2 * time.Minute
+
+// SetCompletionHook attaches an optional post-login observer, for example the
+// profile draft identity capture.
+func (service *Service) SetCompletionHook(hook CompletionHook) {
+	if service == nil {
+		return
+	}
+	service.completed = hook
+}
+
 // failStorage settles the session because the exchanged one-time artifacts
-// cannot be replayed by a retry.
-func (service *Service) failStorage(_ context.Context, session core.AuthSession, now time.Time) (core.AuthSession, error) {
+// cannot be replayed by a retry. The cause is logged: the session status alone
+// does not tell an operator whether the path, its permissions or the disk is at
+// fault.
+func (service *Service) failStorage(_ context.Context, session core.AuthSession, cause error, now time.Time) (core.AuthSession, error) {
+	slog.Default().Warn("auth artifact storage failed",
+		"session", session.ID, "profile", session.ProfileID, "error", cause)
 	if err := session.Fail(core.ErrorPermanentFailure, "artifact storage failed after a successful exchange", now); err != nil {
 		return core.AuthSession{}, err
 	}
@@ -440,6 +479,11 @@ func (writer *FileBrowserStateWriter) Store(_ context.Context, reference string,
 		return "", errors.New("browser state output must not be a symlink")
 	}
 	directory := filepath.Dir(path)
+	// A fresh volume may not have the profile directory yet; the exchanged
+	// artifacts cannot be replayed, so the store creates it itself.
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("create browser state directory: %w", err)
+	}
 	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return "", fmt.Errorf("create browser state output: %w", err)

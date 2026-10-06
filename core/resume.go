@@ -5,5 +5,6 @@ package core
 type ResumeTarget struct {
 	ID      string `json:"id"`
 	Alias   string `json:"alias,omitempty"`
+	Title   string `json:"title,omitempty"`
 	Primary bool   `json:"primary,omitempty"`
 }

@@ -41,6 +41,26 @@ func (workflow *TaskControlWorkflow) Retry(ctx context.Context, taskID core.Task
 	return updated, nil
 }
 
+// Cancel removes a queued task that has not started. A running or settled task
+// is rejected: it must finish first, and only then can the operator act on it.
+func (workflow *TaskControlWorkflow) Cancel(ctx context.Context, taskID core.TaskID, reason string) (core.Task, error) {
+	if workflow == nil || taskID == "" {
+		return core.Task{}, errors.New("task cancellation requires workflow and task id")
+	}
+	target, err := workflow.tasks.TaskByID(ctx, taskID)
+	if err != nil {
+		return core.Task{}, err
+	}
+	updated, err := workflow.tasks.CancelQueuedTask(ctx, target.IdempotencyKey, reason, workflow.clock.Now())
+	if err != nil {
+		return core.Task{}, err
+	}
+	if updated.ID != taskID {
+		return core.Task{}, broker.ErrTaskControlConflict
+	}
+	return updated, nil
+}
+
 func (workflow *TaskControlWorkflow) Dismiss(ctx context.Context, taskID core.TaskID) (core.Task, error) {
 	if workflow == nil || taskID == "" {
 		return core.Task{}, errors.New("task dismissal requires workflow and task id")

@@ -147,12 +147,80 @@ func TestWorkerSchedulesRateLimitAtRetryAfterAndReleasesLease(t *testing.T) {
 	}
 }
 
-func TestWorkerSchedulesBlockedCategoryWithoutKeepingLease(t *testing.T) {
+func TestWorkerFailsUnauthorizedWithoutRetrying(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	queue := brokermemory.NewQueue()
 	enqueueWorkerTask(t, queue, "auth", core.TaskVacancySearchPage, now)
 	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
 		return &core.OperationError{Category: core.ErrorUnauthorized, Operation: "vacancies.search.global"}
+	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	task := queue.Tasks()[0]
+	if task.Status != core.TaskFailed || task.Failure == nil || task.Failure.Category != core.ErrorUnauthorized {
+		t.Fatalf("unauthorized task kept retrying: %#v", task)
+	}
+}
+
+func TestWorkerReportsAuthorizationFailureToTheGuard(t *testing.T) {
+	now := time.Date(2026, 9, 28, 18, 0, 0, 0, time.UTC)
+	queue := brokermemory.NewQueue()
+	enqueueWorkerTask(t, queue, "auth", core.TaskConversationDiscover, now)
+	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{Category: core.ErrorUnauthorized, Operation: "conversation.discover"}
+	}), fixedClock{now}, workerConfig(core.TaskConversationDiscover))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	guarded := make(chan core.Task, 2)
+	instance.SetAuthGuard(func(_ context.Context, task core.Task) error {
+		guarded <- task
+		return nil
+	})
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	select {
+	case task := <-guarded:
+		if task.Type != core.TaskConversationDiscover {
+			t.Fatalf("guarded task = %#v", task)
+		}
+	default:
+		t.Fatal("the guard must observe the authorization failure")
+	}
+
+	// Other categories keep their normal retry path and never reach the guard.
+	enqueueWorkerTask(t, queue, "temporary", core.TaskConversationDiscover, now)
+	instance, err = New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{Category: core.ErrorTemporaryFailure, Operation: "conversation.discover"}
+	}), fixedClock{now}, workerConfig(core.TaskConversationDiscover))
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+	instance.SetAuthGuard(func(_ context.Context, task core.Task) error {
+		guarded <- task
+		return nil
+	})
+	if worked, err := instance.RunOnce(context.Background()); err != nil || !worked {
+		t.Fatalf("run once: worked=%t err=%v", worked, err)
+	}
+	select {
+	case task := <-guarded:
+		t.Fatalf("a temporary failure must not pause the job: %#v", task)
+	default:
+	}
+}
+
+func TestWorkerSchedulesBlockedCategoryWithoutKeepingLease(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	queue := brokermemory.NewQueue()
+	enqueueWorkerTask(t, queue, "validation", core.TaskVacancySearchPage, now)
+	instance, err := New(queue, HandlerFunc(func(context.Context, core.Task) error {
+		return &core.OperationError{Category: core.ErrorValidationRequired, Operation: "vacancies.search.global"}
 	}), fixedClock{now}, workerConfig(core.TaskVacancySearchPage))
 	if err != nil {
 		t.Fatalf("new worker: %v", err)

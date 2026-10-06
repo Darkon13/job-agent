@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	brokermemory "github.com/Darkon13/job-agent/broker/memory"
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/scheduler"
+	"github.com/Darkon13/job-agent/storage"
 	"github.com/Darkon13/job-agent/workflow"
 )
 
@@ -19,6 +21,40 @@ type jobSchedules []scheduler.Entry
 
 func (schedules jobSchedules) Schedules(context.Context) ([]scheduler.Entry, error) {
 	return schedules, nil
+}
+
+type jobPausesFake struct{ items []storage.JobPause }
+
+func (pauses *jobPausesFake) PauseJob(_ context.Context, jobTag string, profileID core.ProfileID, reason string, now time.Time) error {
+	pauses.items = append(pauses.items, storage.JobPause{JobTag: jobTag, ProfileID: profileID, Reason: reason, CreatedAt: now})
+	return nil
+}
+
+func (pauses *jobPausesFake) PauseJobs(_ context.Context, jobTag string, reason string, now time.Time) (int, error) {
+	pauses.items = append(pauses.items, storage.JobPause{JobTag: jobTag, ProfileID: "primary", Reason: reason, CreatedAt: now})
+	return 1, nil
+}
+
+func (pauses *jobPausesFake) ResumeJob(_ context.Context, jobTag string, profileID core.ProfileID) (int, error) {
+	kept := pauses.items[:0]
+	removed := 0
+	for _, item := range pauses.items {
+		if item.JobTag == jobTag && (profileID == "" || item.ProfileID == profileID) {
+			removed++
+			continue
+		}
+		kept = append(kept, item)
+	}
+	pauses.items = kept
+	return removed, nil
+}
+
+func (pauses *jobPausesFake) ListJobPauses(context.Context) ([]storage.JobPause, error) {
+	return pauses.items, nil
+}
+
+func (pauses *jobPausesFake) TriggerScheduledJob(context.Context, string, core.ProfileID, time.Time) (int, error) {
+	return 1, nil
 }
 
 type jobClock struct{ now time.Time }
@@ -68,6 +104,113 @@ func TestJobAPIListsAndQueuesRuns(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"created":false`) {
 		t.Fatalf("repeat job: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestJobAPIPausesAndResumesJobs(t *testing.T) {
+	jobWorkflow, err := workflow.NewJobRunWorkflow(brokermemory.NewQueue(), jobClock{now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}, &jobIDs{}, []workflow.JobRunDefinition{{
+		Tag: "state-harvest.chats",
+		Commands: []workflow.JobRunCommand{{
+			TaskType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary",
+			Payload: json.RawMessage(`{"profile_id":"primary"}`),
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	pauses := &jobPausesFake{}
+	api, err := NewJobAPI(jobWorkflow, nil)
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	api.SetPauses(pauses)
+	handler := api.Handler(nil)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/state-harvest.chats/pause", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paused":true`) {
+		t.Fatalf("pause job: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))
+	if !strings.Contains(response.Body.String(), `"paused":true`) || !strings.Contains(response.Body.String(), `"reason":"operator"`) {
+		t.Fatalf("paused job was not listed as paused: %s", response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/state-harvest.chats/resume", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"paused":false`) {
+		t.Fatalf("resume job: %d %s", response.Code, response.Body.String())
+	}
+	if len(pauses.items) != 0 {
+		t.Fatalf("pauses were not cleared: %#v", pauses.items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/unknown/pause", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unknown job pause: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestJobAPIPausesEveryJobOfAGroup(t *testing.T) {
+	jobWorkflow, err := workflow.NewJobRunWorkflow(brokermemory.NewQueue(), jobClock{now: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}, &jobIDs{}, []workflow.JobRunDefinition{
+		{
+			Tag: "daily-applications",
+			Commands: []workflow.JobRunCommand{{
+				TaskType: core.TaskApplicationCampaign, Platform: "hh", ProfileID: "primary",
+				Payload: json.RawMessage(`{"job_tag":"daily-applications"}`),
+			}},
+		},
+		{
+			Tag: "system.state.chats",
+			Commands: []workflow.JobRunCommand{{
+				TaskType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary",
+				Payload: json.RawMessage(`{"profile_id":"primary"}`),
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	pauses := &jobPausesFake{}
+	api, err := NewJobAPI(jobWorkflow, nil)
+	if err != nil {
+		t.Fatalf("new API: %v", err)
+	}
+	api.SetPauses(pauses)
+	api.SetSystemTags([]string{"system.state.chats"})
+	handler := api.Handler(nil)
+
+	// System jobs are paused by the service, not by the operator.
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=system", nil))
+	if response.Code != http.StatusConflict || len(pauses.items) != 0 {
+		t.Fatalf("pause system group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/system.state.chats/pause", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("pause system tag: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=user", nil))
+	if response.Code != http.StatusOK || len(pauses.items) != 1 || pauses.items[0].JobTag != "daily-applications" {
+		t.Fatalf("pause user group: %d %s pauses=%#v", response.Code, response.Body.String(), pauses.items)
+	}
+	// Resuming stays available as the recovery path.
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/resume?group=system", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resume system group: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/jobs/pause?group=unknown", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown group: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil))
+	if !strings.Contains(response.Body.String(), `"tag":"system.state.chats"`) || !strings.Contains(response.Body.String(), `"system":true`) {
+		t.Fatalf("system job was not flagged: %s", response.Body.String())
 	}
 }
 
@@ -121,5 +264,91 @@ func TestJobAPIEnrichesRunnableJobsWithSchedules(t *testing.T) {
 		!strings.Contains(body, `"next_run_at":"2026-09-13T16:00:00Z"`) ||
 		!strings.Contains(body, `"jitter_min":"1m0s"`) || !strings.Contains(body, `"jitter_max":"10m0s"`) {
 		t.Fatalf("list jobs with schedules: %d %s", response.Code, body)
+	}
+}
+
+type jobEditorFake struct {
+	saved   []string
+	deleted []string
+	managed map[string]bool
+	err     error
+}
+
+func (editor *jobEditorFake) Save(_ context.Context, job json.RawMessage) error {
+	if editor.err != nil {
+		return editor.err
+	}
+	editor.saved = append(editor.saved, string(job))
+	return nil
+}
+
+func (editor *jobEditorFake) Delete(_ context.Context, tag string) error {
+	if editor.err != nil {
+		return editor.err
+	}
+	if !editor.managed[tag] {
+		return workflow.ErrJobFragmentNotFound
+	}
+	editor.deleted = append(editor.deleted, tag)
+	return nil
+}
+
+func (editor *jobEditorFake) Exists(tag string) bool { return editor.managed[tag] }
+
+func (editor *jobEditorFake) Directory() string { return "/store" }
+
+func TestJobAPIEditsFragments(t *testing.T) {
+	editor := &jobEditorFake{managed: map[string]bool{"hourly": true}}
+	api, err := NewJobAPI(&workflow.JobRunWorkflow{}, nil)
+	if err != nil {
+		t.Fatalf("new api: %v", err)
+	}
+	api.SetSystemTags([]string{"system.state.poll"})
+	api.ConfigureEditor(editor)
+	handler := api.Handler(nil)
+
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"hourly","enabled":true}`))
+	create.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, create)
+	if recorder.Code != http.StatusOK || len(editor.saved) != 1 {
+		t.Fatalf("create status = %d saved=%#v body=%s", recorder.Code, editor.saved, recorder.Body.String())
+	}
+
+	mismatch := httptest.NewRequest(http.MethodPut, "/api/v1/jobs/other", strings.NewReader(`{"tag":"hourly"}`))
+	mismatch.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, mismatch)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("tag mismatch status = %d", recorder.Code)
+	}
+
+	system := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"system.state.poll"}`))
+	system.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, system)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("system job status = %d", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/hourly", nil))
+	if recorder.Code != http.StatusNoContent || len(editor.deleted) != 1 {
+		t.Fatalf("delete status = %d deleted=%#v", recorder.Code, editor.deleted)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/missing", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("missing delete status = %d", recorder.Code)
+	}
+
+	// A validator failure surfaces as a bad request with the reason.
+	editor.err = errors.New("job \"hourly\" campaign route \"nope\" does not exist")
+	invalid := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"tag":"hourly"}`))
+	invalid.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, invalid)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "does not exist") {
+		t.Fatalf("invalid job status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

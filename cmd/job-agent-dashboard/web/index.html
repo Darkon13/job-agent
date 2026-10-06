@@ -17,6 +17,10 @@
         <span id="account-captcha-label">Нужно ввести капчу</span>
         <button id="account-captcha-button" class="compact" type="button">Ввести капчу</button>
       </span>
+      <span id="account-auth" class="captcha-warning" hidden>
+        <span id="account-auth-label">HH отклонил сессию</span>
+        <button id="account-auth-button" class="compact" type="button">Войти заново</button>
+      </span>
       <span id="runtime-version" class="muted">версия…</span>
       <span id="config-state" class="muted"></span>
       <span id="connection-dot" class="dot pending"></span>
@@ -50,28 +54,33 @@
         <p id="auth-result" class="auth-result" hidden></p>
       </article>
     </section>
-    <section aria-labelledby="overview-title">
+    <section id="profiles-section" aria-labelledby="profiles-title">
       <div class="section-title">
-        <div><p class="eyebrow">СОСТОЯНИЕ</p><h2 id="overview-title">Обзор runtime</h2></div>
-        <time id="updated-at"></time>
+        <div><p class="eyebrow">ПРОФИЛИ</p><h2 id="profiles-title">Профили, резюме и метрики</h2></div>
+        <div class="section-actions">
+          <span id="profiles-state" class="muted">Загрузка…</span>
+          <button id="profiles-refresh" class="secondary compact" type="button">Обновить</button>
+        </div>
       </div>
-      <div id="stats" class="stat-grid"></div>
-    </section>
-    <section aria-labelledby="activity-title">
-      <div class="section-title">
-        <div><p class="eyebrow">МЕТРИКИ РЕЗЮМЕ</p><h2 id="activity-title">Что HH показывает по профилю</h2></div>
-        <span class="muted">Последний снимок метрик и подтверждённые действия сервиса</span>
-      </div>
-      <div id="activity-observations" class="activity-grid"></div>
-      <article class="panel activity-events">
-        <div class="panel-heading"><h2>Действия профилей</h2><span class="tag">факты</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Профиль</th><th>Платформа</th><th>Действие</th><th>Количество</th><th>Последнее</th></tr></thead><tbody id="activity"></tbody></table></div>
+      <article class="panel">
+        <p class="panel-description">Строка — профиль: аккаунт, резюме, собранные метрики и состояние сессии. Нажмите на строку, чтобы раскрыть identity, снимки HH, факты по джобам и список привязанных джоб.</p>
+        <div class="table-wrap"><table id="profile-table"><thead><tr><th>Профиль</th><th>Резюме</th><th>Метрики</th><th>Сессия</th><th>Источник</th></tr></thead><tbody id="profile-rows"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><h3>Добавить профиль</h3><p class="panel-description">Введите короткий тег, войдите в аккаунт и сохраните профиль: сервис сам создаст файл в profile-store, запишет сессию и снимет имя со списком резюме. После сохранения backend перезапустится, чтобы профиль подключился.</p></div></div>
+        <div class="auth-controls">
+          <label>Тег <input id="draft-tag" type="text" placeholder="secondary" autocomplete="off"></label>
+          <button id="draft-start" type="button">Создать и войти</button>
+        </div>
+        <p id="draft-step" class="auth-step muted">Тег: строчные латинские буквы, цифры, дефис или подчёркивание.</p>
+        <div class="table-wrap"><table id="draft-table"><thead><tr><th>Тег</th><th>Состояние</th><th>Аккаунт</th><th class="task-actions">Действия</th></tr></thead><tbody id="draft-rows"></tbody></table></div>
       </article>
     </section>
     <section id="applications-section" aria-labelledby="applications-title">
       <div class="section-title">
         <div><p class="eyebrow">ОБЪЕКТЫ</p><h2 id="applications-title">Отклики</h2></div>
         <div class="section-actions">
+          <span id="application-action-state" class="muted"></span>
           <span id="application-filter-state" class="muted">Загрузка откликов…</span>
         </div>
       </div>
@@ -89,16 +98,12 @@
           </select>
           <button id="application-reset" class="secondary compact" type="button">Сбросить</button>
         </div>
-        <div class="bulk-toolbar">
-          <label class="selection-control"><input id="application-select-all" type="checkbox"> Выбрать видимые</label>
+        <div id="application-selection-bar" class="application-selection-bar" hidden>
           <span id="application-selection-state" class="muted">Ничего не выбрано</span>
-          <select id="application-bulk-action">
-            <option value="">Действие…</option>
-            <option value="remove">Убрать из рабочего списка</option>
-          </select>
-          <button id="application-run-action" class="secondary compact" type="button" disabled>Выполнить</button>
+          <button id="application-remove-selected" class="secondary compact" type="button" disabled>Убрать выбранные</button>
+          <button id="application-clear-selection" class="secondary compact" type="button">Снять выбор</button>
         </div>
-        <div class="table-wrap"><table id="application-table"><thead><tr><th class="selection-column">Выбор</th><th>Вакансия</th><th>Компания</th><th class="application-profile">Профиль</th><th>Состояние</th><th>Причина</th><th>Обновлён</th><th>Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
+        <div class="table-wrap"><table id="application-table"><thead><tr><th>Вакансия</th><th class="application-profile">Профиль</th><th>Состояние</th><th>Обновлён</th><th class="task-actions">Действие</th></tr></thead><tbody id="application-items"></tbody></table></div>
       </article>
       <article id="browser-check" class="panel browser-check" hidden>
         <div class="panel-heading"><div><h3>Проверка HH</h3><p id="browser-check-state" class="panel-description"></p></div><span class="tag">браузер</span></div>
@@ -113,26 +118,63 @@
     </section>
     <section aria-labelledby="jobs-title">
       <article class="panel">
-        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация из конфигурации</h2><p class="panel-description">Jobs срабатывают по cron-расписанию (jitter добавляется к времени запуска) либо вручную. Обратный отсчёт показывает, сколько осталось до постановки задачи в очередь; результаты запусков рассылки показаны ниже.</p></div><span class="tag">jobs</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Job</th><th>Действие и параметры</th><th>Профиль</th><th>Расписание</th><th>Следующий запуск</th><th>Запуск</th></tr></thead><tbody id="jobs"></tbody></table></div>
+        <div class="panel-heading"><div><h2 id="jobs-title">Автоматизация</h2><p class="panel-description">Пользовательские джобы из конфигурации и системные (снятие состояния HH, обновление сессии, перепроверка анкет) срабатывают по cron или таймеру, либо вручную. Нажмите на строку джобы, чтобы раскрыть её: там профили, описание и точечные действия — запуск и пауза для каждого профиля отдельно. Счётчик у названия показывает активные профили из привязанных. Пользовательские джобы можно ставить на паузу целиком или по одному профилю; системные ставит на паузу сам сервис (например, при разлогине) — у оператора остаётся только снять её.</p></div><span class="tag">jobs</span></div>
+        <div class="jobs-group">
+          <div class="jobs-group-heading">
+            <h3>Пользовательские</h3>
+            <button id="jobs-pause-user" class="secondary compact" type="button">Поставить все на паузу</button>
+          </div>
+          <div class="table-wrap"><table class="jobs-table"><thead><tr><th>Job</th><th>Осталось</th><th>Состояние</th><th class="jobs-run-column">Запуск</th></tr></thead><tbody id="jobs-user"></tbody></table></div>
+        </div>
+        <div class="jobs-group">
+          <div class="jobs-group-heading">
+            <h3>Системные</h3>
+            <button id="jobs-pause-system" class="secondary compact" type="button" hidden>Снять паузу со всех</button>
+          </div>
+          <div class="table-wrap"><table class="jobs-table"><thead><tr><th>Job</th><th>Осталось</th><th>Состояние</th><th class="jobs-run-column">Запуск</th></tr></thead><tbody id="jobs-system"></tbody></table></div>
+        </div>
+        <div class="jobs-group-heading">
+          <button id="job-editor-open" class="secondary compact" type="button">Создать джобу</button>
+        </div>
+        <article id="job-editor" class="panel" hidden>
+          <div class="panel-heading"><div><h3 id="job-editor-title">Новая джоба</h3><p class="panel-description">Джоба сохраняется фрагментом в profile-store и применяется перезагрузкой конфига без перезапуска. Поля-помощники собирают JSON кампании откликов; для другого действия правьте JSON вручную.</p></div></div>
+          <div class="list-toolbar">
+            <label>Тег <input id="job-editor-tag" type="text" placeholder="hourly-applications" autocomplete="off"></label>
+            <label>Описание <input id="job-editor-description" type="text" placeholder="Рассылка откликов"></label>
+            <label>Cron <input id="job-editor-cron" type="text" value="0 * * * *"></label>
+            <label>Профили <input id="job-editor-profiles" type="text" placeholder="primary, secondary"></label>
+            <label>Маршруты <input id="job-editor-routes" type="text" placeholder="global-go, global-devops"></label>
+            <label>Цель <input id="job-editor-target" type="number" value="200" min="0"></label>
+            <label>В параллели <input id="job-editor-inflight" type="number" value="2" min="1"></label>
+            <label class="selection-control"><input id="job-editor-enabled" type="checkbox" checked> Включена</label>
+          </div>
+          <div class="auth-controls">
+            <button id="job-editor-build" class="secondary compact" type="button">Собрать JSON</button>
+            <button id="job-editor-save" type="button">Сохранить джобу</button>
+            <button id="job-editor-delete" class="secondary compact" type="button" hidden>Удалить джобу</button>
+            <button id="job-editor-cancel" class="secondary compact" type="button">Отмена</button>
+          </div>
+          <p id="job-editor-step" class="auth-step muted">Заполните поля и нажмите «Собрать JSON» — его можно править вручную.</p>
+          <textarea id="job-editor-json" rows="12" spellcheck="false"></textarea>
+        </article>
       </article>
     </section>
-    <section aria-labelledby="tasks-title">
+    <section id="tasks-section" aria-labelledby="tasks-title">
       <article class="panel">
-        <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Это сгруппированные экземпляры задач, а не статистика jobs: job или действие пользователя создаёт task, worker забирает его и меняет состояние.</p></div><span class="tag">durable</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Действие</th><th>Состояние</th><th>Приоритет</th><th>Количество экземпляров</th></tr></thead><tbody id="tasks"></tbody></table></div>
+        <div class="panel-heading"><div><h2 id="tasks-title">Очередь выполнения</h2><p class="panel-description">Отдельные задачи, которые ещё не стартовали: job или действие пользователя создаёт task, worker забирает его и меняет состояние. Ненужную задачу можно отменить крестиком — она не будет выполнена.</p></div><span class="tag">durable</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Состояние</th><th>Профиль</th><th>До запуска</th><th>Попытки</th><th class="task-actions">Управление</th></tr></thead><tbody id="tasks"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="campaigns-title">
+    <section id="campaigns-section" aria-labelledby="campaigns-title">
       <div class="section-title">
         <div><p class="eyebrow">АВТОМАТИЧЕСКИЕ ЗАПУСКИ</p><h2 id="campaigns-title">Последние рассылки откликов</h2></div>
-        <span class="muted">Результат каждого запуска без содержимого вакансий и писем</span>
+        <span class="muted">Последние 5 запусков без содержимого вакансий и писем</span>
       </div>
       <article class="panel">
         <div class="table-wrap"><table><thead><tr><th>Запуск</th><th>Job</th><th>Статус</th><th>Цель</th><th>Результаты</th><th>Обновлён</th></tr></thead><tbody id="campaigns"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="failed-tasks-title">
+    <section id="failed-tasks-section" aria-labelledby="failed-tasks-title">
       <div class="section-title">
         <div><p class="eyebrow">OPERATOR RECOVERY</p><h2 id="failed-tasks-title">Неразрешённые ошибки задач</h2></div>
         <span class="muted">Retry повторяет действие; dismiss сохраняет ошибку, но закрывает её.</span>
@@ -141,26 +183,18 @@
         <div class="table-wrap"><table><thead><tr><th>Задача</th><th>Тип</th><th>Профиль</th><th>Попытки</th><th>Ошибка</th><th>Обновлена</th><th>Действия</th></tr></thead><tbody id="failed-tasks"></tbody></table></div>
       </article>
     </section>
-    <section aria-labelledby="profile-state-title">
-      <div class="section-title">
-        <div><p class="eyebrow">DESIRED STATE</p><h2 id="profile-state-title">Профиль и резюме</h2></div>
-        <span id="profile-state-state" class="muted">Загрузка ресурсов…</span>
-      </div>
-      <div id="profile-resources" class="resource-grid"></div>
-    </section>
-    <section aria-labelledby="review-title">
+    <section id="review-section" aria-labelledby="review-title">
       <div class="section-title">
         <div><p class="eyebrow">РЕВЬЮ</p><h2 id="review-title">Проверки и опросники</h2></div>
         <div class="section-actions">
           <span id="review-state" class="muted">Загрузка…</span>
           <input id="review-search" type="search" placeholder="Вопрос, вакансия или определение">
           <select id="review-filter">
-            <option value="">Все сессии</option>
+            <option value="">Все анкеты</option>
             <option value="waiting_answer">Ожидают ответа</option>
             <option value="answer_recorded">Ответ записан</option>
             <option value="cancelled">Скрытые</option>
           </select>
-          <button id="review-more" class="secondary compact" type="button" hidden>Показать ещё</button>
           <button id="review-refresh" class="secondary compact" type="button">Обновить</button>
         </div>
       </div>
@@ -175,7 +209,7 @@
         </article>
       </div>
     </section>
-    <section aria-labelledby="conversations-title">
+    <section id="conversations-section" aria-labelledby="conversations-title">
       <div class="section-title">
         <div><p class="eyebrow">ПЕРЕПИСКИ</p><h2 id="conversations-title">Диалоги</h2></div>
         <div class="section-actions"><span id="conversation-bulk-state" class="muted"></span><button id="mark-all-read" class="secondary" type="button" disabled>Прочитать все</button></div>

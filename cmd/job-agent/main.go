@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -71,9 +73,50 @@ func dashboardProfiles(cfg appconfig.Config, contacts map[core.ProfileID]applica
 		profileID := core.ProfileID(profile.Tag)
 		resolved := contacts[profileID]
 		displayName := strings.TrimSpace(strings.TrimSpace(resolved.FirstName) + " " + strings.TrimSpace(resolved.LastName))
-		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName})
+		if displayName == "" && profile.Identity != nil {
+			// The cached identity keeps the account recognizable before the
+			// first live contact read after a restart.
+			displayName = strings.TrimSpace(profile.Identity.DisplayName)
+		}
+		profiles = append(profiles, httpapi.ProfileSummary{ID: profileID, DisplayName: displayName, Resumes: len(profile.Resumes)})
 	}
 	return profiles
+}
+
+// profileCatalog builds the operator-facing profile list. It is derived from
+// the config (including dashboard-managed fragments) and never from a live
+// platform call, so the list is available without a login.
+func profileCatalog(cfg appconfig.Config, instances map[string]adapter.Adapter) []httpapi.ProfileCatalogEntry {
+	entries := make([]httpapi.ProfileCatalogEntry, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		platform := ""
+		if instance := instances[profile.Adapter]; instance != nil {
+			platform = instance.Name()
+		}
+		source := profile.Source
+		if source == "" {
+			source = appconfig.ProfileSourceConfig
+		}
+		entry := httpapi.ProfileCatalogEntry{
+			Tag: profile.Tag, Adapter: profile.Adapter, Platform: platform,
+			Enabled: profile.Enabled, Source: source,
+			Session: httpapi.ProfileCatalogSession{StateFile: profile.StateFile},
+		}
+		for _, resume := range profile.Resumes {
+			entry.Resumes = append(entry.Resumes, httpapi.ProfileCatalogResume{
+				ID: resume.ID, Title: resume.Title, Primary: resume.Primary,
+			})
+		}
+		if profile.Identity != nil {
+			entry.Identity = &httpapi.ProfileCatalogIdentity{
+				DisplayName: profile.Identity.DisplayName, Email: profile.Identity.Email,
+				Phone: profile.Identity.Phone, AccountHash: profile.Identity.AccountHash,
+				CapturedAt: profile.Identity.CapturedAt,
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 // liveConversationSync mirrors the durable conversation.sync worker for the
@@ -172,6 +215,8 @@ const mainUsage = `job-agent — сервис автоматизации пои�
   check <config.json>                         проверить конфиг, ключи моделей и базу
   browser-state sanitize <state.json>         сжать browser storage state
   auth login|import|status|logout ...         вход в HeadHunter
+  jobs list|pause|resume ...                  список джоб и пауза
+  profile list|show ...                       профили, резюме и состояние сессии
   captcha solve <application_id>              пройти проверку HH в браузере вручную
   captcha list                                отклики, ожидающие капчу
   db backup|restore ...                       обслуживание базы
@@ -225,6 +270,18 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		if err := runAuth(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "jobs" {
+		if err := runJobs(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "profile" {
+		if err := runProfile(context.Background(), os.Args[2:], os.Stdout, nil); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -357,6 +414,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create review API: %v", err)
 	}
+	reviewAPI.ConfigureAnswerBank(answerResolver)
 	resumeAPI, err := httpapi.NewResumeAPI(cfg.ResumeTargets())
 	if err != nil {
 		log.Fatalf("create resume API: %v", err)
@@ -370,6 +428,13 @@ func main() {
 		log.Fatalf("create resume update workflow: %v", err)
 	}
 	resumeAPI.ConfigureUpdate(resumeUpdateWorkflow)
+	profileCatalogAPI, err := httpapi.NewProfileCatalogAPI(profileCatalog(cfg, instances))
+	if err == nil {
+		profileCatalogAPI.SetIdentitySource(store)
+	}
+	if err != nil {
+		log.Fatalf("create profile catalog API: %v", err)
+	}
 	conversationAPI, err := httpapi.NewConversationAPI(store, conversationWorkflow)
 	if err != nil {
 		log.Fatalf("create conversation API: %v", err)
@@ -378,6 +443,7 @@ func main() {
 	runtimeAPI, err := httpapi.NewRuntimeAPI(store, dashboardProfiles(cfg, profileContacts))
 	if err == nil {
 		runtimeAPI.ConfigureSummaryCache(3 * time.Second)
+		runtimeAPI.SetStatePaths(profileStateFiles(cfg))
 	}
 	if err != nil {
 		log.Fatalf("create runtime API: %v", err)
@@ -385,6 +451,13 @@ func main() {
 	taskControlWorkflow, err := workflow.NewTaskControlWorkflow(store, workflow.SystemClock{})
 	if err != nil {
 		log.Fatalf("create task control workflow: %v", err)
+	}
+	// A missing platform session cannot heal by itself: the guard stops the job
+	// that failed with unauthorized, and the next successful sign-in resumes
+	// those jobs and retries the failures.
+	authGuard, err := workflow.NewAuthGuard(store, store, taskControlWorkflow, workflow.SystemClock{})
+	if err != nil {
+		log.Fatalf("create auth guard: %v", err)
 	}
 	taskAPI, err := httpapi.NewTaskAPI(store, taskControlWorkflow)
 	if err != nil {
@@ -443,6 +516,8 @@ func main() {
 	conversationTransports := taskworker.NewConversationTransportRegistry()
 	applicationTransports := taskworker.NewApplicationTransportRegistry()
 	applicationStateObservers := taskworker.NewApplicationStateObserverRegistry()
+	// Only a profile whose account state can be read may import it.
+	profileImportPlatforms := make(map[core.ProfileID]core.Platform)
 	resumeTouchers := taskworker.NewResumeToucherRegistry()
 	sessionRefreshers := taskworker.NewSessionRefresherRegistry()
 	resumePublishers := taskworker.NewResumePublisherRegistry()
@@ -453,9 +528,24 @@ func main() {
 	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
 	qualificationAnswerModels := make(map[core.ProfileID]taskworker.QualificationAnswerModel)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
-	applicationPlans := make(taskworker.StaticApplicationPlans)
+	applicationPlans := taskworker.NewLiveApplicationPlans()
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
-	knownConversationAnswers := make(map[core.ProfileID]bool)
+	knownConversationAnswers := newKnownAnswerProfiles()
+	binder := &profileRuntimeBinder{
+		instances: instances, profiles: profiles, contacts: profileContacts,
+		applicationModels: applicationModels, employerMatcher: employerMatcher,
+		answerResolver: answerResolver, browserSubmissionDriver: browserSubmissionDriver,
+		knownAnswers: knownConversationAnswers, applicationPlans: applicationPlans,
+		profileStateReaders: profileStateReaders, profileStateWriters: profileStateWriters,
+		profileStatePlatforms: profileStatePlatforms, conversationTransports: conversationTransports,
+		applicationTransports: applicationTransports, applicationStateObservers: applicationStateObservers,
+		profileImportPlatforms: profileImportPlatforms,
+		resumeTouchers:         resumeTouchers, resumePublishers: resumePublishers,
+		testCapturers: testCapturers, testSubmitters: testSubmitters,
+		qualificationReaders: qualificationReaders, qualificationAttempts: qualificationAttempts,
+		qualificationPlatforms: qualificationPlatforms, qualificationAnswerModels: qualificationAnswerModels,
+		activityObservers: activityObservers, applicationTailoringPlans: applicationTailoringPlans,
+	}
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, profileContacts[core.ProfileID(profile.Tag)])
 		if err != nil {
@@ -464,227 +554,8 @@ func main() {
 		if !profile.Enabled {
 			continue
 		}
-		profileID := core.ProfileID(profile.Tag)
-		if profile.Conversations.AnswerKnown {
-			knownConversationAnswers[profileID] = true
-		}
-		if profile.Answers != nil && profile.Answers.Model != nil {
-			model, err := answerModel(profile.Answers.Model, applicationModels)
-			if err != nil {
-				log.Fatalf("build answer model for profile %q: %v", profile.Tag, err)
-			}
-			if model != nil {
-				qualificationAnswerModels[profileID] = model
-				logf("profile %q answers unknown questions through model %q", profile.Tag, model.Tag())
-			}
-		}
-		runtime := profiles[profileID]
-		instance := instances[profile.Adapter]
-		apiReady := runtime.Status == core.ProfileEnabled && runtime.Reader != nil
-		browserApplicationsReady := false
-		browserConversationsReady := false
-		var browserProfileStateWriter adapter.ProfileStateWriter
-		if profile.StateFile != "" {
-			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
-				reader, err := binder.BindBrowserSession(profileID, profile.StateFile)
-				if err != nil {
-					log.Fatalf("bind browser session for profile %q: %v", profile.Tag, err)
-				}
-				runtime.BrowserReader = reader
-				profiles[profileID] = runtime
-				logf("profile %q has a browser-backed read session", profile.Tag)
-				if capturer, ok := instance.(adapter.VacancyTestCapturer); ok {
-					if err := testCapturers.Register(profileID, capturer); err != nil {
-						log.Fatalf("register vacancy test capturer for profile %q: %v", profile.Tag, err)
-					}
-					logf("profile %q can capture vacancy tests through the browser session", profile.Tag)
-				}
-				if reader, ok := instance.(adapter.QualificationCatalogReader); ok {
-					if err := qualificationReaders.Register(profileID, reader); err != nil {
-						log.Fatalf("register qualification catalog for profile %q: %v", profile.Tag, err)
-					}
-					qualificationPlatforms[profileID] = core.Platform(instance.Name())
-					logf("profile %q can sync the skill verification catalog", profile.Tag)
-				}
-				if service, ok := instance.(adapter.QualificationAttemptService); ok && answerResolver != nil {
-					if err := qualificationAttempts.Register(profileID, service); err != nil {
-						log.Fatalf("register qualification attempt service for profile %q: %v", profile.Tag, err)
-					}
-				}
-				if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
-					profileStateReaders[profileID] = profileStateReader
-				}
-			}
-			if binder, ok := instance.(adapter.BrowserProfileStateSessionBinder); ok {
-				writer, err := binder.BindBrowserProfileStateSession(profileID, profile.StateFile)
-				if err != nil {
-					log.Fatalf("bind browser profile state session for profile %q: %v", profile.Tag, err)
-				}
-				browserProfileStateWriter = writer
-			}
-			if binder, ok := instance.(adapter.BrowserConversationSessionBinder); ok {
-				transport, err := binder.BindBrowserConversationSession(profileID, profile.StateFile, adapter.BrowserConversationOptions{
-					AllowSend: profile.Conversations.AllowSend, AllowMarkRead: profile.Conversations.AllowMarkRead,
-				})
-				if err != nil {
-					log.Fatalf("bind browser conversation session for profile %q: %v", profile.Tag, err)
-				}
-				if err := conversationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register browser conversation transport for profile %q: %v", profile.Tag, err)
-				}
-				browserConversationsReady = true
-				logf("profile %q has a browser-backed conversation session", profile.Tag)
-			}
-			if !apiReady && profile.Applications.ExecutionMode() != appconfig.ApplicationModeDryRun {
-				if binder, ok := instance.(adapter.BrowserApplicationSessionBinder); ok {
-					transport, err := binder.BindBrowserApplicationSession(profileID, profile.StateFile, adapter.BrowserApplicationOptions{
-						AllowVisibilityChange: profile.Applications.AllowVisibilityChange,
-						ResumeID:              profile.Resume,
-					})
-					if err != nil {
-						log.Fatalf("bind browser application session for profile %q: %v", profile.Tag, err)
-					}
-					if err := applicationTransports.Register(profileID, transport); err != nil {
-						log.Fatalf("register browser application transport for profile %q: %v", profile.Tag, err)
-					}
-					if submitter, ok := instance.(adapter.VacancyTestSubmitter); ok {
-						if err := testSubmitters.Register(profileID, submitter); err != nil {
-							log.Fatalf("register vacancy test submitter for profile %q: %v", profile.Tag, err)
-						}
-					}
-					browserApplicationsReady = true
-					logf("profile %q uses explicit browser-backed application transport", profile.Tag)
-				}
-			}
-		}
-		if browserSubmissionDriver != nil && instance.Name() == hh.Name && strings.TrimSpace(profile.StateFile) != "" {
-			if err := applicationTransports.RegisterBrowserSubmitter(profileID, browserSubmissionDriver); err != nil {
-				log.Fatalf("register browser submitter for profile %q: %v", profile.Tag, err)
-			}
-			logf("profile %q has the automatic browser submission fallback", profile.Tag)
-		}
-		if apiReady || runtime.BrowserReader != nil {
-			if profileStateReader, ok := instance.(adapter.ProfileStateReader); ok {
-				profileStateReaders[profileID] = profileStateReader
-			}
-			writer, ok := instance.(adapter.ProfileStateWriter)
-			if !ok {
-				writer = browserProfileStateWriter
-			}
-			if writer != nil {
-				if err := profileStateWriters.Register(profileID, writer); err != nil {
-					log.Fatalf("register profile state writer for profile %q: %v", profile.Tag, err)
-				}
-				profileStatePlatforms[profileID] = core.Platform(instance.Name())
-			}
-		}
-		if apiReady {
-			if transport, ok := instance.(adapter.ConversationTransport); ok && !browserConversationsReady {
-				if err := conversationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register conversation transport for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if transport, ok := instance.(adapter.ApplicationTransport); ok {
-				if err := applicationTransports.Register(profileID, transport); err != nil {
-					log.Fatalf("register application transport for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if observer, ok := instance.(adapter.ApplicationStateObserver); ok {
-				if err := applicationStateObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register application state observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		} else if runtime.BrowserReader == nil {
-			logf("profile %q has no authorized API session; API workers are disabled", profile.Tag)
-		}
-		if !applicationStateObservers.Has(profileID) {
-			if observer, ok := runtime.BrowserReader.(adapter.ApplicationStateObserver); ok {
-				if err := applicationStateObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register browser application state observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		applicationReady := apiReady || browserApplicationsReady || runtime.BrowserReader != nil && profile.Applications.ExecutionMode() == appconfig.ApplicationModeDryRun
-		if applicationReady {
-			if !apiReady && !browserApplicationsReady {
-				if err := applicationTransports.RegisterVacancyReader(profileID, runtime.BrowserReader); err != nil {
-					log.Fatalf("register browser vacancy reader for profile %q: %v", profile.Tag, err)
-				}
-			}
-			if searcher, ok := instance.(adapter.VacancySearcher); ok {
-				if err := applicationTransports.RegisterVacancySearcher(profileID, searcher); err != nil {
-					log.Fatalf("register vacancy searcher for profile %q: %v", profile.Tag, err)
-				}
-			}
-			jitterMin, jitterMax, err := profile.Applications.SubmitJitterDurations(instance.Name())
-			if err != nil {
-				log.Fatalf("resolve application pacing for profile %q: %v", profile.Tag, err)
-			}
-			applicationPlan := taskworker.ApplicationPlan{
-				ResumeID: profile.Resume, Mode: core.ApplicationExecutionMode(profile.Applications.ExecutionMode()),
-				Message: profile.Applications.Message, Preparer: preparer,
-				DailyLimit:      profile.Applications.EffectiveDailyLimit(instance.Name()),
-				SubmitJitterMin: jitterMin, SubmitJitterMax: jitterMax,
-				Timezone:       profile.Applications.LocationName(),
-				SkipValidation: profile.Applications.SkipValidation(),
-			}
-			tailoringProcessor, tailoringPaths, tailoringErr := applicationTailoringProcessor(profile, applicationModels, profileContacts[profileID])
-			if tailoringErr != nil {
-				log.Fatalf("build application tailoring processor for profile %q: %v", profile.Tag, tailoringErr)
-			}
-			if tailoringProcessor != nil {
-				if _, hasReader := profileStateReaders[profileID]; !hasReader {
-					log.Fatalf("profile %q application tailoring requires a profile state reader", profile.Tag)
-				}
-				if _, resolveErr := profileStateWriters.Resolve(profileID); resolveErr != nil {
-					log.Fatalf("profile %q application tailoring requires a profile state writer", profile.Tag)
-				}
-				tailoringPlan := taskworker.ApplicationTailoringPlan{
-					Processor:       tailoringProcessor,
-					AllowedPaths:    tailoringPaths,
-					EmployerMatcher: employerMatcher,
-				}
-				applicationTailoringPlans[profileID] = tailoringPlan
-				applicationPlan.Tailoring = &tailoringPlan
-			}
-			applicationPlans[profileID] = applicationPlan
-		}
-		if toucher, ok := instance.(adapter.ResumeToucher); ok {
-			if err := resumeTouchers.Register(profileID, toucher); err != nil {
-				log.Fatalf("register resume toucher for profile %q: %v", profile.Tag, err)
-			}
-		} else if instance.Name() == hh.Name && profile.StateFile != "" {
-			if _, err := os.Stat(profile.StateFile); err == nil {
-				toucher, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
-				if err != nil {
-					log.Fatalf("create HH resume toucher for profile %q: %v", profile.Tag, err)
-				}
-				if err := resumeTouchers.Register(profileID, toucher); err != nil {
-					log.Fatalf("register HH resume toucher for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		if observer, ok := instance.(adapter.ProfileActivityObserver); ok {
-			if err := activityObservers.Register(profileID, observer); err != nil {
-				log.Fatalf("register profile activity observer for profile %q: %v", profile.Tag, err)
-			}
-		} else if instance.Name() == hh.Name && profile.StateFile != "" {
-			if _, err := os.Stat(profile.StateFile); err == nil {
-				observer, err := hh.NewResumeTouchTransport(profile.StateFile, nil)
-				if err != nil {
-					log.Fatalf("create HH profile activity observer for profile %q: %v", profile.Tag, err)
-				}
-				if err := activityObservers.Register(profileID, observer); err != nil {
-					log.Fatalf("register HH profile activity observer for profile %q: %v", profile.Tag, err)
-				}
-			}
-		}
-		if apiReady {
-			if publisher, ok := instance.(adapter.ResumePublisher); ok {
-				if err := resumePublishers.Register(profileID, publisher); err != nil {
-					log.Fatalf("register resume publisher for profile %q: %v", profile.Tag, err)
-				}
-			}
+		if err := binder.bind(profile, preparer, false); err != nil {
+			log.Fatalf("bind profile %q: %v", profile.Tag, err)
 		}
 	}
 	profileStateApplyWorkflow, err := workflow.NewProfileStateApplyWorkflow(
@@ -708,6 +579,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create profile state reconcile workflow: %v", err)
 	}
+	profileImportWorkflow, err := workflow.NewProfileImportWorkflow(
+		store, workflow.SystemClock{}, workflow.RandomIDGenerator{}, profileImportPlatforms,
+	)
+	if err != nil {
+		log.Fatalf("create profile import workflow: %v", err)
+	}
+	profileCatalogAPI.SetImporter(profileImportWorkflow)
 	profileStateAPI, err := httpapi.NewProfileStateAPI(
 		profileStatePlanner, profileStateApplyWorkflow, profileStateReconcileWorkflow, store, store, profileStateReaders,
 	)
@@ -724,12 +602,12 @@ func main() {
 		repository: store, transports: conversationTransports, workflow: conversationWorkflow,
 	})
 	conversationAPI.ConfigureLiveSender(liveConversationSend{repository: store, handlers: conversationHandlers})
-	if answerRegistry != nil && len(knownConversationAnswers) > 0 {
+	if answerRegistry != nil && knownConversationAnswers.Len() > 0 {
 		conversationHandlers.ConfigureKnownAnswers(answerRegistry, func(profileID core.ProfileID) bool {
-			return knownConversationAnswers[profileID]
+			return knownConversationAnswers.Has(profileID)
 		})
-		logf("known conversation answers are enabled for %d profile(s)", len(knownConversationAnswers))
-	} else if len(knownConversationAnswers) > 0 {
+		logf("known conversation answers are enabled for %d profile(s)", knownConversationAnswers.Len())
+	} else if knownConversationAnswers.Len() > 0 {
 		logf("WARNING: conversations.answer_known is set but no answer_sets are resolved; no automatic conversation answers will be sent")
 	}
 	profileMutationLane := taskworker.NewProfileMutationLane()
@@ -783,7 +661,7 @@ func main() {
 			log.Fatalf("create application tailoring coordinator: %v", err)
 		}
 	}
-	if len(applicationPlans) > 0 && applicationTransports.VacancyReaderCount() > 0 {
+	if applicationPlans.Len() > 0 && applicationTransports.VacancyReaderCount() > 0 {
 		applicationHandler, err := taskworker.NewApplicationHandler(
 			store, store, store, store, store, applicationTransports, applicationPlans,
 			taskworker.UniformApplicationJitter{}, taskworker.SystemClock{},
@@ -841,6 +719,20 @@ func main() {
 		log.Fatalf("create application state sync worker: %v", err)
 	}
 	workers = append(workers, applicationStateSyncWorker)
+	profileImportHandler, err := taskworker.NewProfileImportHandler(
+		store, store, store, applicationStateObservers, store, workflow.RandomIDGenerator{}, taskworker.SystemClock{},
+	)
+	if err != nil {
+		log.Fatalf("create profile import handler: %v", err)
+	}
+	profileImportHandler.ConfigureIdentity(store, func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+		return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+	}, profileStateFiles(cfg))
+	profileImportWorker, err := newTaskWorker(store, core.TaskProfileStateImport, profileImportHandler.Handle)
+	if err != nil {
+		log.Fatalf("create profile import worker: %v", err)
+	}
+	workers = append(workers, profileImportWorker)
 	activityMaintainHandler, err := taskworker.NewActivityMaintainHandler(
 		store, applicationTransports, store, store, taskworker.SystemClock{},
 	)
@@ -1072,6 +964,23 @@ func main() {
 			return nil, fmt.Errorf("build conversation sync jobs: %w", err)
 		}
 		definitions = append(definitions, conversationDefinitions...)
+		systemDefinitions, err := profileSystemDefinitions(cfg, profileSystemCapabilities{
+			sessionRefresh:     sessionRefreshers.Has,
+			resumeTouch:        resumeTouchers.Has,
+			applicationCleanup: applicationStateObservers.Has,
+			validationCheck: func(profileID core.ProfileID) bool {
+				_, resolveErr := applicationTransports.ResolveVacancyReader(profileID)
+				return resolveErr == nil
+			},
+			activityMaintain: func(profileID core.ProfileID) bool {
+				_, resolveErr := applicationTransports.ResolveVacancyReader(profileID)
+				return resolveErr == nil
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build system profile jobs: %w", err)
+		}
+		definitions = append(definitions, systemDefinitions...)
 		followUpSelectionDefinitions, err := conversationFollowUpSelectionDefinitions(cfg, instances, conversationTransports)
 		if err != nil {
 			return nil, fmt.Errorf("build conversation follow-up selection jobs: %w", err)
@@ -1130,6 +1039,7 @@ func main() {
 		log.Fatalf("create scheduler: %v", err)
 	}
 	scheduler.SetGate(newApplicationBudgetGate(cfg, instances, store))
+	scheduler.SetPauseStore(store)
 	if err := scheduler.Sync(context.Background(), definitions); err != nil {
 		log.Fatalf("sync scheduled jobs: %v", err)
 	}
@@ -1143,15 +1053,36 @@ func main() {
 	if err != nil {
 		log.Fatalf("create job API: %v", err)
 	}
-	jobDescriptions := make(map[string]string, len(cfg.Jobs))
-	for _, job := range cfg.Jobs {
-		if description := strings.TrimSpace(job.Description); description != "" {
-			jobDescriptions[job.Tag] = description
-		}
-	}
-	jobAPI.SetDescriptions(jobDescriptions)
+	jobAPI.SetDescriptions(configJobDescriptions(cfg))
+	jobAPI.SetPauses(store)
+	jobAPI.SetSystemTags(systemJobTags())
 	runtimeAPI.ConfigureQuestionnaireCapture(vacancyTestWorkflow)
-	authAPI, err := configureAuthAPI(cfg, instances, store)
+	profileDrafts, err := buildProfileDraftWorkflow(cfg, options.configPath, instances, store)
+	if err != nil {
+		log.Fatalf("create profile draft workflow: %v", err)
+	}
+	profileDraftAPI, err := httpapi.NewProfileDraftAPI(profileDrafts)
+	if err != nil {
+		log.Fatalf("create profile draft API: %v", err)
+	}
+	profileDraftAPI.ConfigureRestart(restartRequester{})
+	live := &liveConfig{}
+	live.Set(cfg)
+	jobFragments, err := workflow.NewJobFragmentWorkflow(mustProfileStoreDirectory(cfg, options.configPath), func(raw json.RawMessage) error {
+		var job appconfig.Job
+		if err := json.Unmarshal(raw, &job); err != nil {
+			return fmt.Errorf("decode job definition: %w", err)
+		}
+		for index := range job.Triggers {
+			appconfig.NormalizeJobTrigger(&job.Triggers[index])
+		}
+		return live.Get().ValidateJobReplace(job)
+	})
+	if err != nil {
+		log.Fatalf("create job fragment workflow: %v", err)
+	}
+	jobAPI.ConfigureEditor(jobFragments)
+	authAPI, err := configureAuthAPI(cfg, instances, store, profileDrafts, authGuard)
 	if err != nil {
 		log.Fatalf("configure auth API: %v", err)
 	}
@@ -1168,10 +1099,77 @@ func main() {
 			return err
 		}
 		campaignDefinitions = campaignDefinitionsFresh
+		jobAPI.SetDescriptions(configJobDescriptions(fresh))
 		logf("campaign routes reloaded: %d definitions", len(campaignDefinitionsFresh))
 		return nil
 	}
-	go watchConfigReload(ctx, options.configPath, scheduler, buildReloadableDefinitions, refreshCampaigns, reloadStatus)
+	// bindProfiles wires profiles that a fragment added to the running service:
+	// the transports, readers and plans appear without a restart, while the
+	// fields that workers read through plain maps still wait for the next
+	// restart (see profileRuntimeBinder).
+	boundProfiles := make(map[core.ProfileID]struct{}, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		boundProfiles[core.ProfileID(profile.Tag)] = struct{}{}
+	}
+	refreshProfileViews := func(fresh appconfig.Config) {
+		runtimeAPI.SetProfiles(dashboardProfiles(fresh, profileContacts))
+		runtimeAPI.SetStatePaths(profileStateFiles(fresh))
+		profileCatalogAPI.SetEntries(profileCatalog(fresh, instances))
+		resumeAPI.SetTargets(fresh.ResumeTargets())
+		if authAPI != nil {
+			authAPI.SetStatePaths(profileStateFiles(fresh))
+		}
+		profileDrafts.SetDeclared(configProfileTags(fresh))
+	}
+	bindProfiles := func(fresh appconfig.Config) error {
+		live.Set(fresh)
+		for _, profile := range fresh.Profiles {
+			profileID := core.ProfileID(profile.Tag)
+			if _, exists := boundProfiles[profileID]; exists {
+				continue
+			}
+			runtimes, err := probeProfileAuthorizations(context.Background(), []appconfig.Profile{profile}, instances)
+			if err != nil {
+				return fmt.Errorf("probe profile %q: %w", profile.Tag, err)
+			}
+			for runtimeID, runtime := range runtimes {
+				profiles[runtimeID] = runtime
+			}
+			contacts := resolveProfileContactsFor(profile, instances)
+			profileContacts[profileID] = contacts
+			preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, contacts)
+			if err != nil {
+				return fmt.Errorf("build application operator for profile %q: %w", profile.Tag, err)
+			}
+			if profile.Enabled {
+				if err := binder.bind(profile, preparer, true); err != nil {
+					return fmt.Errorf("bind profile %q: %w", profile.Tag, err)
+				}
+				if instance := instances[profile.Adapter]; instance != nil && instance.Name() == hh.Name &&
+					strings.TrimSpace(profile.StateFile) != "" {
+					// The session refresher lives outside the binder: it keeps the
+					// browser state fresh through the browser worker.
+					if refreshClient, clientErr := browserWorkerHTTPClient(); clientErr == nil && refreshClient != nil {
+						if err := sessionRefreshers.Register(profileID, refreshClient, profile.StateFile); err != nil {
+							return fmt.Errorf("register session refresher for profile %q: %w", profile.Tag, err)
+						}
+					}
+				}
+			}
+			boundProfiles[profileID] = struct{}{}
+			logf("profile %q is bound without a restart", profile.Tag)
+		}
+		refreshProfileViews(fresh)
+		return nil
+	}
+	applyJobDefinitions := func(definitions []jobscheduler.Definition) {
+		if err := jobRunWorkflow.ReplaceDefinitions(jobRunDefinitions(definitions)); err != nil {
+			logf("job definitions reload failed: %v", err)
+			return
+		}
+		logf("runnable job definitions reloaded: %d", len(definitions))
+	}
+	go watchConfigReload(ctx, options.configPath, scheduler, bindProfiles, buildReloadableDefinitions, refreshCampaigns, applyJobDefinitions, reloadStatus)
 	defer stop()
 	instanceID, err := workflow.RandomIDGenerator{}.NewID("instance")
 	if err != nil {
@@ -1194,7 +1192,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create qualification API: %v", err)
 	}
-	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))
+	var handler http.Handler = runtimeAPI.Handler(jobAPI.Handler(taskAPI.Handler(profileStateAPI.Handler(applicationAPI.Handler(resumeAPI.Handler(profileCatalogAPI.Handler(profileDraftAPI.Handler(qualificationAPI.Handler(reviewAPI.Handler(conversationAPI.Handler()))))))))))
 	var authHandler func(http.Handler) http.Handler
 	if authAPI != nil {
 		authHandler = authAPI.Handler
@@ -1202,6 +1200,11 @@ func main() {
 	handler = buildAPIHandler(
 		handler, httpapi.NewMetricsAPI(store), apiToken, authHandler, slog.Default(),
 	)
+	// Every worker reports authorization failures to the same guard, so a lost
+	// session stops the account's jobs and a later sign-in resumes them.
+	for _, instance := range workers {
+		instance.SetAuthGuard(authGuard.Guard)
+	}
 	if err := serve(ctx, cfg, handler, conversationWorkflow, scheduler, workers); err != nil {
 		log.Fatal(err)
 	}
@@ -1230,10 +1233,184 @@ func buildAPIHandler(
 	return httpapi.RequestID(handler)
 }
 
+// restartRequester terminates this process after a short delay so the
+// supervisor (docker compose with restart: unless-stopped, systemd and so on)
+// starts it again with the new profile fragment. New profiles are bound at
+// startup only, so onboarding ends with one restart.
+type restartRequester struct{}
+
+func (restartRequester) RequestRestart() {
+	go func() {
+		time.Sleep(2 * time.Second)
+		logf("restart requested by profile onboarding: exiting for the supervisor")
+		process, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			logf("restart signal failed: %v", err)
+			return
+		}
+		if err := process.Signal(syscall.SIGTERM); err != nil {
+			logf("restart signal failed: %v", err)
+		}
+	}()
+}
+
+// buildProfileDraftWorkflow prepares the dashboard onboarding pipeline: it owns
+// profile drafts, derives their session paths inside the profile store and
+// writes the applied fragments there.
+// liveConfig keeps the most recently loaded config: the dashboard job editor
+// validates new definitions against the running state, not the startup one.
+type liveConfig struct {
+	mu  sync.RWMutex
+	cfg appconfig.Config
+}
+
+func (holder *liveConfig) Set(cfg appconfig.Config) {
+	holder.mu.Lock()
+	holder.cfg = cfg
+	holder.mu.Unlock()
+}
+
+func (holder *liveConfig) Get() appconfig.Config {
+	holder.mu.RLock()
+	defer holder.mu.RUnlock()
+	return holder.cfg
+}
+
+// profileStoreDirectory resolves the fragment directory of the running config
+// to an absolute path.
+func profileStoreDirectory(cfg appconfig.Config, configPath string) (string, error) {
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return "", err
+	}
+	directory := cfg.ProfileStoreDirectory(filepath.Dir(absolute))
+	if directory != "" {
+		if resolved, err := filepath.Abs(directory); err == nil {
+			directory = resolved
+		}
+	}
+	return directory, nil
+}
+
+func buildProfileDraftWorkflow(cfg appconfig.Config, configPath string, instances map[string]adapter.Adapter, store *storesqlite.Store) (*workflow.ProfileDraftWorkflow, error) {
+	absolute, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, err
+	}
+	declared := make([]core.ProfileID, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		declared = append(declared, core.ProfileID(profile.Tag))
+	}
+	platforms := make(map[string]string, len(cfg.Adapters))
+	fallbackAdapter := ""
+	for _, item := range cfg.Adapters {
+		instance := instances[item.Tag]
+		if instance == nil {
+			continue
+		}
+		platforms[item.Tag] = instance.Name()
+		if fallbackAdapter == "" && instance.Name() == hh.Name {
+			fallbackAdapter = item.Tag
+		}
+	}
+	reader := func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+		return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+	}
+	// The derived default can be process-relative; the runtime reports and
+	// writes an absolute path so logs, the API and the fragments agree.
+	directory := cfg.ProfileStoreDirectory(filepath.Dir(absolute))
+	if directory != "" {
+		if resolved, err := filepath.Abs(directory); err == nil {
+			directory = resolved
+		}
+	}
+	return workflow.NewProfileDraftWorkflow(
+		store, declared, platforms, fallbackAdapter,
+		directory, reader, workflow.SystemClock{},
+	)
+}
+
+// draftLoginSettings lets the login driver start a session for a profile draft
+// that is not declared in the config yet.
+type draftLoginSettings struct {
+	drafts *workflow.ProfileDraftWorkflow
+}
+
+func (resolver draftLoginSettings) LoginSettings(profileID core.ProfileID) (hh.LoginSettings, bool) {
+	if resolver.drafts == nil {
+		return hh.LoginSettings{}, false
+	}
+	stateFile, ok := resolver.drafts.ProfileStateFile(context.Background(), profileID)
+	if !ok {
+		return hh.LoginSettings{}, false
+	}
+	return hh.LoginSettings{ProfileID: profileID, StateFile: stateFile}, true
+}
+
 // configureAuthAPI wires the interactive login control plane when the browser
 // worker is configured. The credential writer runs with Force enabled because
 // the CLI enforces the explicit --force decision before creating a session.
-func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store) (*httpapi.AuthAPI, error) {
+// authCompletionHooks runs every post-login observer: the draft identity
+// capture, the account summary of a config profile, and the recovery of jobs
+// and tasks that failed without a session.
+type authCompletionHooks struct {
+	drafts   *workflow.ProfileDraftWorkflow
+	guard    *workflow.AuthGuard
+	identity profileIdentityCapture
+}
+
+func (hooks authCompletionHooks) AuthCompleted(ctx context.Context, profileID core.ProfileID, browserStateReference string) error {
+	if hooks.drafts != nil {
+		if err := hooks.drafts.AuthCompleted(ctx, profileID, browserStateReference); err != nil {
+			logf("profile draft capture failed for %s: %v", profileID, err)
+		}
+	}
+	if err := hooks.identity.capture(ctx, profileID, browserStateReference); err != nil {
+		logf("profile identity capture failed for %s: %v", profileID, err)
+	}
+	if hooks.guard != nil {
+		return hooks.guard.AuthCompleted(ctx, profileID, browserStateReference)
+	}
+	return nil
+}
+
+// profileIdentityCapture stores the account summary of a profile that lives in
+// the read-only config file: the dashboard then shows the account without the
+// operator editing the config.
+type profileIdentityCapture struct {
+	reader func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error)
+	store  interface {
+		SaveProfileIdentity(ctx context.Context, profileID core.ProfileID, identity core.ProfileIdentity, now time.Time) error
+	}
+	clock workflow.Clock
+}
+
+func (capture profileIdentityCapture) capture(ctx context.Context, profileID core.ProfileID, stateFile string) error {
+	if capture.reader == nil || capture.store == nil || strings.TrimSpace(stateFile) == "" {
+		return nil
+	}
+	reader, err := capture.reader(profileID, stateFile)
+	if err != nil {
+		return err
+	}
+	snapshot, err := reader.ReadProfileIdentity(ctx, profileID)
+	if err != nil {
+		return err
+	}
+	identity := core.ProfileIdentity{
+		DisplayName: strings.TrimSpace(snapshot.DisplayName),
+		Email:       strings.TrimSpace(snapshot.Email),
+		Phone:       strings.TrimSpace(snapshot.Phone),
+		AccountHash: strings.TrimSpace(snapshot.AccountHash),
+		CapturedAt:  snapshot.CapturedAt,
+	}
+	if identity.DisplayName == "" && identity.Email == "" && identity.Phone == "" && identity.AccountHash == "" {
+		return nil
+	}
+	return capture.store.SaveProfileIdentity(ctx, profileID, identity, capture.clock.Now())
+}
+
+func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter, store *storesqlite.Store, drafts *workflow.ProfileDraftWorkflow, guard *workflow.AuthGuard) (*httpapi.AuthAPI, error) {
 	baseURL := strings.TrimSpace(os.Getenv("BROWSER_WORKER_URL"))
 	token := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN"))
 	if baseURL == "" || token == "" {
@@ -1258,13 +1435,13 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 		})
 	}
 	if len(settings) == 0 {
-		logf("browser worker is configured but no HH profile has a state file; interactive auth API is disabled")
-		return nil, nil
+		logf("browser worker is configured but no HH profile has a state file yet; only profile drafts can log in")
 	}
 	driver, err := hh.NewLoginDriver(client, settings)
 	if err != nil {
 		return nil, err
 	}
+	driver.SetProfileResolver(draftLoginSettings{drafts: drafts})
 	service, err := auth.NewService(
 		store, auth.NewMemoryChallengeStore(), driver,
 		&auth.FileCredentialWriter{Force: true}, &auth.FileBrowserStateWriter{},
@@ -1273,10 +1450,20 @@ func configureAuthAPI(cfg appconfig.Config, instances map[string]adapter.Adapter
 	if err != nil {
 		return nil, err
 	}
+	service.SetCompletionHook(authCompletionHooks{
+		drafts: drafts, guard: guard,
+		identity: profileIdentityCapture{
+			reader: func(profileID core.ProfileID, stateFile string) (adapter.ProfileIdentityReader, error) {
+				return hh.NewBrowserReadClient(profileID, stateFile, "", nil)
+			},
+			store: store, clock: workflow.SystemClock{},
+		},
+	})
 	authAPI, err := httpapi.NewAuthAPI(service, profileStateFiles(cfg))
 	if err != nil {
 		return nil, err
 	}
+	authAPI.ConfigureStateResolver(drafts)
 	logoutTargets := make(map[core.ProfileID]auth.LogoutTarget)
 	for _, profile := range cfg.Profiles {
 		if strings.TrimSpace(profile.CredentialsRef) == "" && strings.TrimSpace(profile.StateFile) == "" {
@@ -1532,13 +1719,6 @@ func applyServerEnvironment(cfg *appconfig.Config, lookupEnv func(string) (strin
 	return nil
 }
 
-const (
-	contactFirstNamePath      = "/web_profile/firstName"
-	contactLastNamePath       = "/web_profile/lastName"
-	contactEmailPath          = "/web/email"
-	contactCommunicationsPath = "/web_profile/communicationMethods"
-)
-
 // resolveProfileContacts reads the sender name and contacts from the platform
 // profile once at startup, then lets the optional config block fill the gaps.
 // The platform stays the source of truth for the name; config remains a
@@ -1549,60 +1729,58 @@ func resolveProfileContacts(cfg appconfig.Config, instances map[string]adapter.A
 		if !profile.Enabled {
 			continue
 		}
-		profileID := core.ProfileID(profile.Tag)
-		fallback := configProfileContacts(profile)
-		if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
-			resolved[profileID] = fallback
-			continue
-		}
-		instance := instances[profile.Adapter]
-		if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
-			if _, err := binder.BindBrowserSession(profileID, profile.StateFile); err != nil {
-				logf("profile %q contacts: browser session failed, using config: %v", profile.Tag, err)
-				resolved[profileID] = fallback
-				continue
-			}
-		}
-		reader, ok := instance.(adapter.ProfileStateReader)
-		if !ok {
-			resolved[profileID] = fallback
-			continue
-		}
-		observation, err := reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
-			ProfileID: profileID, Paths: profileContactPaths(profile.Resume),
-		})
-		if err != nil {
-			logf("profile %q contacts: platform read failed, using config: %v", profile.Tag, err)
-			resolved[profileID] = fallback
-			continue
-		}
-		contacts := profileContactsFromObservation(observation, profile.Resume)
-		if contacts.FirstName == "" {
-			contacts.FirstName = fallback.FirstName
-		}
-		if contacts.LastName == "" {
-			contacts.LastName = fallback.LastName
-		}
-		if contacts.Email == "" {
-			contacts.Email = fallback.Email
-		}
-		if contacts.Telegram == "" {
-			contacts.Telegram = fallback.Telegram
-		}
-		resolved[profileID] = contacts
-		logf("profile %q contacts resolved: %s", profile.Tag, contactFieldNames(contacts))
+		resolved[core.ProfileID(profile.Tag)] = resolveProfileContactsFor(profile, instances)
 	}
 	return resolved
 }
 
-func profileContactPaths(resumeID string) []string {
-	prefix := "/resumes/" + resumeID
-	return []string{
-		prefix + contactEmailPath,
-		prefix + contactFirstNamePath,
-		prefix + contactLastNamePath,
-		prefix + contactCommunicationsPath,
+// resolveProfileContactsFor reads the sender name and contacts of one profile
+// from the platform once, then lets the optional config block fill the gaps.
+func resolveProfileContactsFor(profile appconfig.Profile, instances map[string]adapter.Adapter) applicationoperator.ApplicationProfileContext {
+	profileID := core.ProfileID(profile.Tag)
+	fallback := configProfileContacts(profile)
+	if !profile.Enabled {
+		return fallback
 	}
+	if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
+		return fallback
+	}
+	instance := instances[profile.Adapter]
+	if instance == nil {
+		return fallback
+	}
+	if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
+		if _, err := binder.BindBrowserSession(profileID, profile.StateFile); err != nil {
+			logf("profile %q contacts: browser session failed, using config: %v", profile.Tag, err)
+			return fallback
+		}
+	}
+	reader, ok := instance.(adapter.ProfileStateReader)
+	if !ok {
+		return fallback
+	}
+	observation, err := reader.ReadProfileState(context.Background(), adapter.ProfileStateReadRequest{
+		ProfileID: profileID, Paths: profileContactPaths(profile.Resume),
+	})
+	if err != nil {
+		logf("profile %q contacts: platform read failed, using config: %v", profile.Tag, err)
+		return fallback
+	}
+	contacts := profileContactsFromObservation(observation, profile.Resume)
+	if contacts.FirstName == "" {
+		contacts.FirstName = fallback.FirstName
+	}
+	if contacts.LastName == "" {
+		contacts.LastName = fallback.LastName
+	}
+	if contacts.Email == "" {
+		contacts.Email = fallback.Email
+	}
+	if contacts.Telegram == "" {
+		contacts.Telegram = fallback.Telegram
+	}
+	logf("profile %q contacts resolved: %s", profile.Tag, contactFieldNames(contacts))
+	return contacts
 }
 
 func configProfileContacts(profile appconfig.Profile) applicationoperator.ApplicationProfileContext {
@@ -1615,54 +1793,19 @@ func configProfileContacts(profile appconfig.Profile) applicationoperator.Applic
 	}
 }
 
-// profileContactsFromObservation extracts the first non-empty value from the
-// observed contact fields. HH wraps most scalar fields in arrays and objects.
-func profileContactsFromObservation(observation core.ProfileStateObservation, resumeID string) applicationoperator.ApplicationProfileContext {
-	prefix := "/resumes/" + resumeID
-	read := func(path string, extract func(any) string) string {
-		raw, exists, err := observation.ValueAt(path)
-		if err != nil || !exists || string(raw) == "null" {
-			return ""
-		}
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return ""
-		}
-		return extract(value)
-	}
-	return applicationoperator.ApplicationProfileContext{
-		FirstName: read(prefix+contactFirstNamePath, firstObservedContactValue("string", "name", "value")),
-		LastName:  read(prefix+contactLastNamePath, firstObservedContactValue("string", "name", "value")),
-		Email:     read(prefix+contactEmailPath, firstObservedContactValue("string", "value", "email")),
-		Telegram:  read(prefix+contactCommunicationsPath, firstObservedContactValue("telegram")),
-	}
+func profileContactPaths(resumeID string) []string {
+	return hh.ProfileContactPaths(resumeID)
 }
 
-func firstObservedContactValue(keys ...string) func(any) string {
-	return func(value any) string {
-		switch item := value.(type) {
-		case string:
-			return strings.TrimSpace(item)
-		case []any:
-			for _, child := range item {
-				if found := firstObservedContactValue(keys...)(child); found != "" {
-					return found
-				}
-			}
-		case map[string]any:
-			for _, key := range keys {
-				raw, exists := item[key]
-				if !exists {
-					continue
-				}
-				if text, ok := raw.(string); ok {
-					if text = strings.TrimSpace(text); text != "" {
-						return text
-					}
-				}
-			}
-		}
-		return ""
+// profileContactsFromObservation maps the HH profile document onto the letter
+// context; the HH field layout lives in the adapter.
+func profileContactsFromObservation(observation core.ProfileStateObservation, resumeID string) applicationoperator.ApplicationProfileContext {
+	contacts := hh.ContactsFromProfileState(observation, resumeID)
+	return applicationoperator.ApplicationProfileContext{
+		FirstName: contacts.FirstName,
+		LastName:  contacts.LastName,
+		Email:     contacts.Email,
+		Telegram:  contacts.Telegram,
 	}
 }
 
@@ -2165,6 +2308,10 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 	for _, search := range cfg.Searches {
 		searches[search.Tag] = search
 	}
+	configuredProfiles := make(map[core.ProfileID]appconfig.Profile, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		configuredProfiles[core.ProfileID(profile.Tag)] = profile
+	}
 	routes := make([]workflow.ApplicationCampaignRoute, 0)
 	registered := make(map[core.SearchID]struct{})
 	ownedRoutes := make(map[core.SearchID]struct{})
@@ -2198,35 +2345,66 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			}
 		}
 		var platform core.Platform
+		jobRouteIDs := make([]core.SearchID, 0, len(expandedRoutes))
 		for _, value := range expandedRoutes {
 			search := searches[value]
-			searchID := core.SearchID(search.Tag)
 			instance := instances[search.Adapter]
 			if platform == "" {
 				platform = core.Platform(instance.Name())
 			}
-			if _, exists := registered[searchID]; exists {
-				continue
+			// A resume placeholder expands the route into one search per resume
+			// of every capable profile, so one search object serves several
+			// accounts without repetition in the config. A concrete resume (and
+			// every other source) keeps a single route under the first profile
+			// with read access.
+			type routeVariant struct {
+				profileID core.ProfileID
+				query     json.RawMessage
 			}
-			var searchProfileID core.ProfileID
-			for _, profile := range search.Profiles {
-				profileID := core.ProfileID(profile)
-				runtime := profiles[profileID]
-				if runtime.canReadVacancies() {
-					searchProfileID = profileID
-					break
+			variants := make([]routeVariant, 0, len(search.Profiles))
+			if hasResumePlaceholder(search.Query) {
+				for _, profile := range search.Profiles {
+					profileID := core.ProfileID(profile)
+					if !profiles[profileID].canReadVacancies() {
+						continue
+					}
+					resolved, err := resumeQueryVariants(search.Query, configuredProfiles[profileID])
+					if err != nil {
+						return nil, nil, nil, configuredJobs, fmt.Errorf("job %q route %q: %w", job.Tag, search.Tag, err)
+					}
+					for _, query := range resolved {
+						variants = append(variants, routeVariant{profileID: profileID, query: query})
+					}
+				}
+			} else {
+				for _, profile := range search.Profiles {
+					profileID := core.ProfileID(profile)
+					if profiles[profileID].canReadVacancies() {
+						variants = append(variants, routeVariant{profileID: profileID, query: search.Query})
+						break
+					}
 				}
 			}
-			if searchProfileID == "" {
+			if len(variants) == 0 {
 				logf("application campaign route %q is disabled until one of its profiles has read access", search.Tag)
 				runnable = false
 				continue
 			}
-			routes = append(routes, workflow.ApplicationCampaignRoute{
-				SearchID: searchID, Platform: core.Platform(instance.Name()), SearchProfileID: searchProfileID,
-				Query: search.Query, Searcher: instance,
-			})
-			registered[searchID] = struct{}{}
+			for index, variant := range variants {
+				routeID := core.SearchID(search.Tag)
+				if index > 0 {
+					routeID = core.SearchID(fmt.Sprintf("%s#%d", search.Tag, index+1))
+				}
+				jobRouteIDs = append(jobRouteIDs, routeID)
+				if _, exists := registered[routeID]; exists {
+					continue
+				}
+				routes = append(routes, workflow.ApplicationCampaignRoute{
+					SearchID: routeID, Platform: core.Platform(instance.Name()), SearchProfileID: variant.profileID,
+					Query: variant.query, Searcher: instance,
+				})
+				registered[routeID] = struct{}{}
+			}
 		}
 		if !runnable {
 			continue
@@ -2235,13 +2413,14 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 		for _, value := range job.Action.Profiles {
 			profileIDs = append(profileIDs, core.ProfileID(value))
 		}
-		routeIDs := make([]core.SearchID, 0, len(expandedRoutes))
-		for _, value := range expandedRoutes {
-			routeID := core.SearchID(value)
+		routeIDs := make([]core.SearchID, 0, len(jobRouteIDs))
+		for _, routeID := range jobRouteIDs {
 			routeIDs = append(routeIDs, routeID)
 			ownedRoutes[routeID] = struct{}{}
 		}
-		targetSuccessful := job.Action.TargetSuccessful
+		// The daily limit caps the target per profile: one account's limit must not
+		// lower another account's campaign.
+		targets := make(map[core.ProfileID]int, len(profileIDs))
 		for _, value := range job.Action.Profiles {
 			var configured appconfig.Profile
 			for _, candidate := range cfg.Profiles {
@@ -2254,30 +2433,147 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			if configured.Tag == "" || instance == nil {
 				continue
 			}
-			limit := configured.Applications.EffectiveDailyLimit(instance.Name())
-			if limit > 0 && targetSuccessful > limit {
+			target := job.Action.TargetSuccessful
+			if limit := configured.Applications.EffectiveDailyLimit(instance.Name()); limit > 0 && target > limit {
 				logf("campaign %q target %d is capped to the daily limit %d of profile %q",
-					job.Tag, targetSuccessful, limit, configured.Tag)
-				targetSuccessful = limit
+					job.Tag, target, limit, configured.Tag)
+				target = limit
 			}
+			targets[core.ProfileID(configured.Tag)] = target
 		}
-		payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
-			job.Tag, profileIDs, routeIDs, targetSuccessful, job.Action.MaxInFlight,
-		))
-		if err != nil {
-			return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q: %w", job.Tag, err)
-		}
-		for index, trigger := range job.Triggers {
-			minimum, maximum := trigger.Jitter.Durations()
-			definitions = append(definitions, jobscheduler.Definition{
-				JobTag: job.Tag, TriggerIndex: index, Expression: trigger.Expression, Timezone: trigger.Timezone,
-				ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileIDs[0],
-				Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
-			})
+		// One schedule per profile, like every other multi-profile job: each
+		// account gets its own campaign run, pause and budget gate, so the
+		// dashboard can count and control profiles separately.
+		for profileIndex, profileID := range profileIDs {
+			target := job.Action.TargetSuccessful
+			if capped, exists := targets[profileID]; exists {
+				target = capped
+			}
+			payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
+				job.Tag, []core.ProfileID{profileID}, routeIDs, target, job.Action.MaxInFlight,
+			))
+			if err != nil {
+				return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q for profile %q: %w", job.Tag, profileID, err)
+			}
+			for index, trigger := range job.Triggers {
+				minimum, maximum := trigger.Jitter.Durations()
+				definitions = append(definitions, jobscheduler.Definition{
+					JobTag: job.Tag, TriggerIndex: triggerIndexForProfile(index, profileIndex, len(job.Triggers)),
+					Expression: trigger.Expression, Timezone: trigger.Timezone,
+					ActionType: core.TaskApplicationCampaign, Platform: platform, ProfileID: profileID,
+					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
+				})
+			}
 		}
 		configuredJobs++
 	}
 	return routes, definitions, ownedRoutes, configuredJobs, nil
+}
+
+// mustProfileStoreDirectory resolves the fragment directory or fails fast at
+// startup: a missing directory simply means no fragments yet.
+func mustProfileStoreDirectory(cfg appconfig.Config, configPath string) string {
+	directory, err := profileStoreDirectory(cfg, configPath)
+	if err != nil {
+		log.Fatalf("resolve profile store directory: %v", err)
+	}
+	return directory
+}
+
+// configProfileTags lists the declared profile tags of a config.
+func configProfileTags(cfg appconfig.Config) []core.ProfileID {
+	tags := make([]core.ProfileID, 0, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		tags = append(tags, core.ProfileID(profile.Tag))
+	}
+	return tags
+}
+
+// activityMaintainQuery returns the vacancy source of the activity maintenance
+// job: the operator's override when the profile declares one, otherwise a
+// filterless global search. The job only needs vacancies to open, not the
+// profile's narrow job search, so the default keeps a practically endless pool
+// of fresh cards.
+var activityMaintainDefaultQuery = json.RawMessage(`{"source":"global"}`)
+
+func activityMaintainQuery(profile appconfig.Profile) json.RawMessage {
+	if query := profile.ActivityMaintain.Query; len(query) != 0 {
+		return query
+	}
+	return activityMaintainDefaultQuery
+}
+
+// hasResumePlaceholder reports whether the search resolves its resume per
+// profile instead of naming one concrete resume.
+func hasResumePlaceholder(query json.RawMessage) bool {
+	var parsed struct {
+		Source string `json:"source"`
+		Resume string `json:"resume"`
+	}
+	if err := json.Unmarshal(query, &parsed); err != nil {
+		return false
+	}
+	return parsed.Source == "similar_resume" &&
+		(parsed.Resume == hh.ResumePlaceholderProfile || parsed.Resume == hh.ResumePlaceholderAll)
+}
+
+// resumeQueryVariants expands the resume placeholder of a search for the
+// profile that will run it. A concrete resume and other sources pass through
+// unchanged; $profile yields the profile's own resume and $all yields one query
+// per resume declared by the profile.
+func resumeQueryVariants(query json.RawMessage, profile appconfig.Profile) ([]json.RawMessage, error) {
+	var parsed struct {
+		Source string `json:"source"`
+		Resume string `json:"resume"`
+	}
+	if err := json.Unmarshal(query, &parsed); err != nil {
+		return nil, err
+	}
+	if parsed.Source != "similar_resume" ||
+		(parsed.Resume != hh.ResumePlaceholderProfile && parsed.Resume != hh.ResumePlaceholderAll) {
+		return []json.RawMessage{query}, nil
+	}
+	// The normalized resume list is the source of truth; alias values cover a
+	// profile that was assembled without the config loader, for example in
+	// tests, where only the legacy fields are set.
+	resumes := make([]string, 0, len(profile.Resumes)+1)
+	if primary := strings.TrimSpace(profile.Resume); primary != "" {
+		resumes = append(resumes, primary)
+	}
+	if parsed.Resume == hh.ResumePlaceholderAll {
+		for _, id := range profile.ResumeIDs() {
+			if id != "" && !slices.Contains(resumes, id) {
+				resumes = append(resumes, id)
+			}
+		}
+		aliases := make([]string, 0, len(profile.ResumeAliases))
+		for _, value := range profile.ResumeAliases {
+			aliases = append(aliases, value)
+		}
+		sort.Strings(aliases)
+		for _, value := range aliases {
+			if value != "" && !slices.Contains(resumes, value) {
+				resumes = append(resumes, value)
+			}
+		}
+	}
+	if len(resumes) == 0 {
+		return nil, fmt.Errorf("profile %q has no resume for %s", profile.Tag, parsed.Resume)
+	}
+	variants := make([]json.RawMessage, 0, len(resumes))
+	for _, resume := range resumes {
+		document := make(map[string]any, 8)
+		if err := json.Unmarshal(query, &document); err != nil {
+			return nil, err
+		}
+		document["resume"] = resume
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			return nil, err
+		}
+		variants = append(variants, encoded)
+	}
+	return variants, nil
 }
 
 type profileRuntime struct {
@@ -2356,7 +2652,16 @@ func (status *configReloadStatus) snapshot() httpapi.ConfigStatus {
 	return status.status
 }
 
-func watchConfigReload(ctx context.Context, configPath string, scheduler *jobscheduler.Scheduler, build func(appconfig.Config) ([]jobscheduler.Definition, error), refresh func(appconfig.Config) error, status *configReloadStatus) {
+func watchConfigReload(
+	ctx context.Context,
+	configPath string,
+	scheduler *jobscheduler.Scheduler,
+	bind func(appconfig.Config) error,
+	build func(appconfig.Config) ([]jobscheduler.Definition, error),
+	refresh func(appconfig.Config) error,
+	applyDefinitions func([]jobscheduler.Definition),
+	status *configReloadStatus,
+) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGHUP)
 	defer signal.Stop(signals)
@@ -2384,6 +2689,11 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 		if current == lastDigest {
 			return
 		}
+		if err := bind(fresh); err != nil {
+			logf("config reload rejected: %v", err)
+			status.recordError(err.Error())
+			return
+		}
 		if err := refresh(fresh); err != nil {
 			logf("config reload rejected: %v", err)
 			status.recordError(err.Error())
@@ -2399,6 +2709,9 @@ func watchConfigReload(ctx context.Context, configPath string, scheduler *jobsch
 			logf("config reload failed: %v", err)
 			status.recordError(err.Error())
 			return
+		}
+		if applyDefinitions != nil {
+			applyDefinitions(definitions)
 		}
 		lastDigest = current
 		status.record(current, len(definitions))
@@ -2432,8 +2745,13 @@ func serve(ctx context.Context, cfg appconfig.Config, handler http.Handler, conv
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// No write deadline: browser RPCs may legitimately take up to two
+		// minutes and the auth challenge stream is long-lived. A shorter
+		// deadline silently cuts the response, and the client sees only an
+		// empty reply instead of the real error. Slow clients stay bounded by
+		// the read timeouts.
+		WriteTimeout: 0,
+		IdleTimeout:  60 * time.Second,
 	}
 	result := make(chan error, 1)
 	workerErrors := make(chan error, len(workers))
@@ -2681,6 +2999,166 @@ func profileActivityDefinitions(cfg appconfig.Config, instances map[string]adapt
 					Payload: payload, Priority: job.Priority, JitterMin: minimum, JitterMax: maximum,
 				})
 			}
+		}
+	}
+	return definitions, nil
+}
+
+const (
+	// systemJobPrefix groups the schedules generated from the per-profile
+	// policies. Pausing the prefix addresses every generated job of a profile.
+	systemJobPrefix = "system"
+	// recentChatPollPages bounds the fast conversation poll to the newest chats;
+	// the unread pass inside discovery still covers the whole catalog.
+	recentChatPollPages = 3
+	// recentChatPollInterval is the internal cadence of that fast poll.
+	recentChatPollInterval = 2 * time.Minute
+	// sessionRefreshInterval keeps the stored HH browser session warm.
+	sessionRefreshInterval = 4 * time.Hour
+	// validationRefreshInterval rechecks vacancies that wait for a
+	// questionnaire or a test, so closed ones stop waiting for input.
+	validationRefreshInterval = 24 * time.Hour
+	validationRefreshCount    = 25
+	validationRefreshMinAge   = 24 * time.Hour
+	// defaultResumeTouchInterval raises the resume to keep it visible.
+	defaultResumeTouchInterval = 4 * time.Hour
+	// defaultActivityMaintainInterval browses candidate vacancies for activity.
+	defaultActivityMaintainInterval = time.Hour
+	activityMaintainCount           = 5
+	activityMaintainPause           = 20 * time.Second
+	// defaultApplicationCleanupInterval rechecks rejected and stale
+	// applications; the cleanup job itself stays opt-in.
+	defaultApplicationCleanupInterval = 3 * time.Hour
+)
+
+// systemJobDescriptions are the built-in names of the generated system jobs.
+// configJobDescriptions collects the operator-facing job names: the declared
+// descriptions plus the built-in labels of the generated system jobs. It is
+// rebuilt on config reload, so renaming a job in the config shows up without a
+// restart.
+func configJobDescriptions(cfg appconfig.Config) map[string]string {
+	descriptions := make(map[string]string, len(cfg.Jobs)+len(systemJobDescriptions))
+	for _, job := range cfg.Jobs {
+		if description := strings.TrimSpace(job.Description); description != "" {
+			descriptions[job.Tag] = description
+		}
+	}
+	for tag, description := range systemJobDescriptions {
+		descriptions[tag] = description
+	}
+	return descriptions
+}
+
+var systemJobDescriptions = map[string]string{
+	systemJobPrefix + ".state.chats":        "Снятие состояния HH: обход чатов",
+	systemJobPrefix + ".state.poll":         "Снятие состояния HH: быстрый опрос непрочитанных",
+	systemJobPrefix + ".state.applications": "Снятие состояния HH: состояния откликов",
+	systemJobPrefix + ".state.activity":     "Снятие состояния HH: активность и метрики",
+	systemJobPrefix + ".session":            "Обновление сессии HH",
+	systemJobPrefix + ".validation":         "Перепроверка вакансий с анкетами и тестами",
+	systemJobPrefix + ".resume-touch":       "Подъём резюме",
+	systemJobPrefix + ".activity-maintain":  "Просмотр вакансий-кандидатов для активности",
+	systemJobPrefix + ".cleanup":            "Очистка отказов и устаревших откликов",
+}
+
+// systemJobTags lists every generated system job. The dashboard groups them
+// separately from the jobs declared in the configuration.
+func systemJobTags() []string {
+	tags := make([]string, 0, len(systemJobDescriptions))
+	for tag := range systemJobDescriptions {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
+// profileSystemCapabilities reports which generated jobs a profile can run.
+// A nil check means the capability was not evaluated by the caller.
+type profileSystemCapabilities struct {
+	sessionRefresh     func(core.ProfileID) bool
+	validationCheck    func(core.ProfileID) bool
+	resumeTouch        func(core.ProfileID) bool
+	activityMaintain   func(core.ProfileID) bool
+	applicationCleanup func(core.ProfileID) bool
+}
+
+func capabilityAllows(check func(core.ProfileID) bool, profileID core.ProfileID) bool {
+	return check == nil || check(profileID)
+}
+
+// profileSystemDefinitions turns the per-profile policies into the system
+// schedules that keep an account fresh and healthy: the state harvest
+// (conversations, application states, activity), the HH session refresh, the
+// recheck of vacancies with pending questionnaires or tests, the resume touch,
+// activity maintenance and the opt-in application cleanup. Operators configure
+// only the policies; these jobs are never declared in the config themselves.
+func profileSystemDefinitions(cfg appconfig.Config, capabilities profileSystemCapabilities) ([]jobscheduler.Definition, error) {
+	definitions := make([]jobscheduler.Definition, 0)
+	for profileIndex, profile := range cfg.Profiles {
+		if !profile.Enabled {
+			continue
+		}
+		profileID := core.ProfileID(profile.Tag)
+		resumeID := strings.TrimSpace(profile.Resume)
+		harvestInterval := profile.StateHarvest.JobInterval(time.Hour)
+		type systemEntry struct {
+			suffix  string
+			action  core.TaskType
+			payload any
+			every   time.Duration
+			policy  appconfig.SystemJobPolicy
+		}
+		entries := make([]systemEntry, 0, 8)
+		if profile.StateHarvest.JobEnabled(true) {
+			entries = append(entries,
+				systemEntry{"state.chats", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID}, harvestInterval, profile.StateHarvest},
+				systemEntry{"state.poll", core.TaskConversationDiscover, core.ConversationDiscoverPayload{ProfileID: profileID, MaxPages: recentChatPollPages}, recentChatPollInterval, profile.StateHarvest},
+				systemEntry{"state.applications", core.TaskApplicationStateSync, core.ApplicationStateSyncPayload{ProfileID: profileID}, harvestInterval, profile.StateHarvest},
+			)
+			if resumeID != "" {
+				entries = append(entries, systemEntry{"state.activity", core.TaskProfileActivityObserve, core.ProfileActivityObservePayload{ProfileID: profileID, ResumeID: resumeID}, harvestInterval, profile.StateHarvest})
+			} else {
+				logf("system jobs: profile %q has no resume, activity snapshots are skipped", profile.Tag)
+			}
+		}
+		if capabilityAllows(capabilities.sessionRefresh, profileID) {
+			entries = append(entries, systemEntry{"session", core.TaskProfileSessionRefresh, core.ProfileSessionRefreshPayload{ProfileID: profileID}, sessionRefreshInterval, appconfig.SystemJobPolicy{}})
+		}
+		if capabilityAllows(capabilities.validationCheck, profileID) {
+			entries = append(entries, systemEntry{"validation", core.TaskApplicationValidationCheck, core.ApplicationValidationRefreshPayload{
+				ProfileID: profileID, Count: validationRefreshCount, MinAge: core.Duration(validationRefreshMinAge),
+			}, validationRefreshInterval, appconfig.SystemJobPolicy{}})
+		}
+		if profile.ResumeTouch.JobEnabled(true) && resumeID != "" && capabilityAllows(capabilities.resumeTouch, profileID) {
+			entries = append(entries, systemEntry{"resume-touch", core.TaskResumeTouch, core.ResumeTouchPayload{ProfileID: profileID, ResumeID: resumeID}, profile.ResumeTouch.JobInterval(defaultResumeTouchInterval), profile.ResumeTouch})
+		}
+		if profile.ActivityMaintain.JobEnabled(true) && capabilityAllows(capabilities.activityMaintain, profileID) {
+			// The handler opens real vacancies from a search query; without one
+			// it has no candidates and the job becomes a no-op.
+			entries = append(entries, systemEntry{"activity-maintain", core.TaskProfileActivityMaintain, core.ProfileActivityMaintainPayload{
+				ProfileID: profileID, Count: activityMaintainCount, Pause: core.Duration(activityMaintainPause),
+				Query: activityMaintainQuery(profile),
+			}, profile.ActivityMaintain.JobInterval(defaultActivityMaintainInterval), profile.ActivityMaintain})
+		}
+		if profile.ApplicationCleanup.JobEnabled(false) && capabilityAllows(capabilities.applicationCleanup, profileID) {
+			entries = append(entries, systemEntry{
+				"cleanup", core.TaskApplicationRetention, profile.ApplicationCleanup.Retention.Payload(profileID),
+				profile.ApplicationCleanup.JobInterval(defaultApplicationCleanupInterval), profile.ApplicationCleanup.SystemJobPolicy,
+			})
+		}
+		for _, entry := range entries {
+			payload, err := json.Marshal(entry.payload)
+			if err != nil {
+				return nil, fmt.Errorf("encode system job payload for profile %q: %w", profile.Tag, err)
+			}
+			jitterMin, jitterMax := entry.policy.JobJitter(entry.every)
+			definitions = append(definitions, jobscheduler.Definition{
+				JobTag:       systemJobPrefix + "." + entry.suffix,
+				TriggerIndex: triggerIndexForProfile(0, profileIndex, 1),
+				Interval:     entry.every, ActionType: entry.action, Platform: core.Platform(hh.Name),
+				ProfileID: profileID, Payload: payload,
+				JitterMin: jitterMin, JitterMax: jitterMax,
+			})
 		}
 	}
 	return definitions, nil

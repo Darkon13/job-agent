@@ -94,6 +94,9 @@ func (client *BrowserReadClient) searchWeb(ctx context.Context, query SearchQuer
 	if err != nil {
 		return core.SearchPage{}, err
 	}
+	if isCaptchaURL(finalURL) {
+		return core.SearchPage{}, captchaError("vacancies.search.browser")
+	}
 	if isLoginURL(finalURL) {
 		return core.SearchPage{}, operationError(core.ErrorUnauthorized, "vacancies.search.browser", "HH browser session requires authentication", nil)
 	}
@@ -171,6 +174,9 @@ func (client *BrowserReadClient) ReadVacancy(ctx context.Context, profileID core
 			}
 		}
 		return core.Vacancy{}, err
+	}
+	if isCaptchaURL(finalURL) {
+		return core.Vacancy{}, captchaError("vacancies.read.browser")
 	}
 	if isLoginURL(finalURL) {
 		return core.Vacancy{}, operationError(core.ErrorUnauthorized, "vacancies.read.browser", "HH browser session requires authentication", nil)
@@ -318,6 +324,9 @@ func (client *BrowserReadClient) ReadProfileState(ctx context.Context, request a
 		if err != nil {
 			return core.ProfileStateObservation{}, err
 		}
+		if isCaptchaURL(finalURL) {
+			return core.ProfileStateObservation{}, captchaError(operation)
+		}
 		if isLoginURL(finalURL) {
 			return core.ProfileStateObservation{}, operationError(core.ErrorUnauthorized, operation, "HH browser session requires authentication", nil)
 		}
@@ -434,6 +443,21 @@ func vacancyIDFromURL(value string) string {
 
 func isLoginURL(value *url.URL) bool {
 	return value != nil && strings.Contains(value.Path, "/account/login")
+}
+
+// isCaptchaURL reports the anti-bot challenge page. HH serves it after a burst
+// of requests, so the page is not a broken parse: the operation must go to
+// manual confirmation and retry later instead of failing permanently.
+func isCaptchaURL(value *url.URL) bool {
+	return value != nil && strings.Contains(value.Path, "/account/captcha")
+}
+
+func captchaError(operation string) error {
+	return &core.OperationError{
+		Category: core.ErrorConfirmationRequired, Operation: operation, Platform: Name,
+		Message:  "HH asks for a captcha before showing the page",
+		Metadata: map[string]string{"code": "captcha_required"},
+	}
 }
 
 func findHTMLByQA(root *html.Node, value string) *html.Node {

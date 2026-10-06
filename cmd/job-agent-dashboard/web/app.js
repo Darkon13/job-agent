@@ -4,25 +4,25 @@ const state = {
   applicationOffset: 0, applicationTotal: 0, applicationGroups: {}, applicationRequest: 0, applicationLoading: false,
   summary: null, selectedConversation: null, selectedMessages: [], jobs: [], applicationObjects: [],
   applicationFilter: "", applicationQuery: "", applicationSort: "updated_desc", selectedApplications: new Set(), applicationActionBusy: false, applicationActionMessage: "",
-  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
+  conversationQuery: "", conversationFilter: "", conversationSort: "updated_desc", conversationRequest: 0, conversationReadBusy: new Set(), markAllReadBusy: false, conversationAnswerBusy: "",
   conversationItems: [], conversationTotal: 0, conversationUnreadTotal: 0, conversationLoading: false, conversationSearchTimer: 0, conversationPinnedIndex: 0,
-  reviewSendProfiles: new Set(),
   cache: { summary: null, applications: null, conversations: new Map(), reviews: null },
   messageRequest: new Map(), messageSignatures: new Map(),
   localReads: new Map(),
-  profileResources: [], profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
+  profileResources: [], profileStateError: "", profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false, reviewFocusPending: false,
   browserCheck: null, captchaCheckRemaining: [],
 };
 const elements = Object.fromEntries([
-  "application-filters", "application-items", "application-filter-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-bulk-action", "application-run-action", "tasks", "jobs", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
+  "application-filters", "application-items", "application-filter-state", "application-action-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
   "connection-dot", "connection-state", "runtime-version", "updated-at", "refresh", "mark-all-read", "conversation-bulk-state", "reply-form", "account-switcher",
   "reply", "send", "action-state",
-  "profile-resources", "profile-state-state",
+
   "review-state", "review-filter", "review-search", "review-more", "review-refresh", "review-sessions", "review-session-title", "review-session-meta", "review-prompt", "review-send",
   "browser-check", "browser-check-state", "browser-check-image", "browser-check-answer", "browser-check-submit", "browser-check-refresh-image", "browser-check-cancel",
   "conversation-page-state", "account-captcha", "account-captcha-button", "account-captcha-label", "browser-check-controls",
+  "account-auth", "account-auth-button", "account-auth-label",
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), document.querySelector(`#${id}`)]));
 const taskTypeLabels = {
   "vacancy.search_page": "Получить страницу вакансий", "application.campaign": "Запустить рассылку откликов", "application.submit": "Отправить отклик", "application.remove": "Убрать отклик", "application.retention": "Очистка устаревших и отказов",
@@ -49,7 +49,55 @@ const decisionLabels = { qualified: "Проверки пройдены", respons
 const failureLabels = { temporary_failure: "Временная ошибка — будет повтор", rate_limited: "Платформа ограничила частоту запросов", quota_exceeded: "Исчерпан дневной лимит", unauthorized: "Нужно обновить авторизацию", validation_required: "Платформа запросила дополнительные данные", permanent_failure: "Платформа отклонила операцию", ambiguous_result: "Результат отправки нужно сверить" };
 
 function text(tag, value, className = "") { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; }
+// hideEmptySection keeps the dashboard free of empty blocks: a section without
+// data disappears instead of occupying the page with an empty table.
+function hideEmptySection(id, visible) {
+  const section = document.getElementById(id);
+  if (section) section.hidden = !visible;
+}
+
 function plainText(value) { return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(); }
+// Questionnaires come with simple markup (bold, lists, links). Only that safe
+// subset is rendered: every other element is unwrapped and every attribute is
+// dropped, so a malicious questionnaire cannot inject markup or scripts.
+const safeQuestionTags = new Set(["B", "STRONG", "I", "EM", "U", "S", "BR", "P", "UL", "OL", "LI", "SPAN", "DIV", "A"]);
+
+function sanitizeQuestionNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent);
+  if (node.nodeType !== Node.ELEMENT_NODE) return document.createTextNode("");
+  if (!safeQuestionTags.has(node.tagName)) {
+    const fragment = document.createDocumentFragment();
+    for (const child of node.childNodes) fragment.append(sanitizeQuestionNode(child));
+    return fragment;
+  }
+  const element = document.createElement(node.tagName.toLowerCase());
+  if (node.tagName === "A") {
+    const href = node.getAttribute("href") || "";
+    if (/^https?:/i.test(href)) {
+      element.href = href; element.target = "_blank"; element.rel = "noopener noreferrer";
+    }
+  }
+  for (const child of node.childNodes) element.append(sanitizeQuestionNode(child));
+  return element;
+}
+
+// questionHTML renders the questionnaire text as sanitized HTML.
+function questionHTML(value, className = "") {
+  const template = document.createElement("template");
+  template.innerHTML = String(value ?? "");
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  for (const node of template.content.childNodes) span.append(sanitizeQuestionNode(node));
+  return span;
+}
+
+// bankAnswerLabel renders the reviewed answer the bank already holds.
+function bankAnswerLabel(answer) {
+  if (!answer) return "";
+  const parts = [...(answer.selected_options || [])];
+  if (answer.text) parts.push(answer.text);
+  return parts.join(" · ");
+}
 function statusCell(value, className = "") { const cell = document.createElement("td"); cell.append(text("span", value, `status ${className}`.trim())); return cell; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "medium" }).format(new Date(value)) : "—"; }
 function taskTypeLabel(value) { return taskTypeLabels[value] || value; }
@@ -97,23 +145,6 @@ function applicationReason(item) {
   }
 }
 
-function renderStats(summary = {}) {
-  const applications = summary.applications || [];
-  const metrics = [
-    { value: total(applications, (item) => (item.status === "submitted" || item.decision_code === "already_applied") && item.decision_code !== "imported_appltool"), label: "Отклики отправлены", filter: "sent" },
-    { value: total(applications, (item) => applicationGroup(item) === "queued"), label: "Ожидают отправки", filter: "queued" },
-    { value: total(applications, (item) => applicationGroup(item) === "needs_input"), label: "Нужно участие", filter: "needs_input" },
-    { value: summary.conversation_stats?.active || 0, label: "Активные диалоги", target: "conversations-title" },
-  ];
-  elements.stats.replaceChildren(...metrics.map((metric) => {
-    const card = document.createElement(metric.filter || metric.target ? "button" : "article"); card.className = "stat-card";
-    card.append(text("strong", String(metric.value)), text("span", metric.label));
-    if (metric.filter) card.addEventListener("click", () => setApplicationFilter(metric.filter));
-    if (metric.target) card.addEventListener("click", () => document.querySelector(`#${metric.target}`)?.scrollIntoView({ behavior: "smooth" }));
-    return card;
-  }));
-}
-
 function applicationMatchesFilter(item) {
   if (state.applicationFilter === "sent" && !applicationIsSent(item)) return false;
   if (state.applicationFilter && state.applicationFilter !== "sent" && applicationGroup(item) !== state.applicationFilter) return false;
@@ -134,23 +165,29 @@ function renderApplicationFilters(items = []) {
   }));
 }
 function visibleApplicationObjects() { return state.applicationObjects; }
-function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed"].includes(item.status); }
+function applicationCanRemove(item) { return ["waiting_validation", "waiting_approval", "submitted", "dry_run", "skipped", "failed", "ready"].includes(item.status); }
+
+// setApplicationActionMessage keeps the applications header in sync with the
+// last operator action: without it a click that cannot finish looks silent.
+function setApplicationActionMessage(message) {
+  state.applicationActionMessage = message;
+  if (elements.applicationActionState) elements.applicationActionState.textContent = message || "";
+}
 
 async function captureQuestionnaire(item, button) {
   button.disabled = true;
-  state.applicationActionMessage = "Запрашиваю анкету у HH…";
-  updateApplicationSelection(state.applicationObjects);
+  setApplicationActionMessage("Запрашиваю анкету у HH…");
   try {
     const key = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `questionnaire-${Date.now()}`;
     const response = await fetch(`/api/v1/applications/${encodeURIComponent(item.id)}/questionnaire`, {
       method: "POST", headers: { "Idempotency-Key": key },
     });
     if (!response.ok) throw new Error(String(response.status));
-    state.applicationActionMessage = "";
+    setApplicationActionMessage("");
     const vacancyID = String(item.vacancy_url || "").match(/\/vacancy\/(\d+)/)?.[1] || "";
     await focusReviewSession(vacancyID, item.profile_id);
   } catch (error) {
-    state.applicationActionMessage = `Не удалось запросить анкету: ${error.message}`;
+    setApplicationActionMessage(`Не удалось запросить анкету: ${error.message}`);
   }
   button.disabled = false;
   updateApplicationSelection(state.applicationObjects);
@@ -172,12 +209,14 @@ async function focusReviewSession(vacancyID, profileID) {
     document.getElementById("review-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  // The captured questionnaire may fall outside the active review filters.
-  if (elements.reviewFilter.value || state.reviewQuery) {
-    elements.reviewFilter.value = ""; elements.reviewSearch.value = ""; state.reviewQuery = "";
-  }
+  // The captured questionnaire may fall outside the loaded page: with hundreds
+  // of sessions the right card is otherwise never fetched. The list is narrowed
+  // to this vacancy instead, which also shows the operator why one card is left.
+  elements.reviewFilter.value = "";
+  state.reviewQuery = vacancyID;
+  elements.reviewSearch.value = vacancyID;
   state.reviewSelected = null; state.reviewFocusPending = true;
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 90000;
   try {
     for (;;) {
       await refreshReviewSessions();
@@ -188,7 +227,7 @@ async function focusReviewSession(vacancyID, profileID) {
         return;
       }
       if (Date.now() >= deadline) {
-        elements.reviewState.textContent = "HH ещё готовит анкету — обновите список проверок";
+        elements.reviewState.textContent = "HH не отдал анкету — проверьте «Неразрешённые ошибки задач»";
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -247,6 +286,18 @@ function updateCaptchaWarning() {
   elements.accountCaptchaLabel.textContent = `Нужно ввести капчу: ${profileDisplayName(target)}${count > 1 ? ` (${count})` : ""}`;
   elements.accountCaptchaButton.textContent = "Ввести капчу";
 }
+// updateAuthWarning surfaces profiles whose HH session was rejected: the
+// operator must sign in again before applications or campaigns can work.
+function updateAuthWarning() {
+  const warnings = state.summary?.auth_warnings || [];
+  const target = warnings.find((item) => item.profile_id === state.account) || warnings[0] || null;
+  elements.accountAuth.hidden = !target;
+  if (!target) return;
+  elements.accountAuth.dataset.profile = target.profile_id;
+  const count = Number(target.count || 0);
+  elements.accountAuthLabel.textContent = `HH отклонил сессию: ${profileDisplayName(target.profile_id)}${count > 1 ? ` (${count})` : ""} — нужен повторный вход`;
+}
+
 // startCaptchaCheck runs one browser check for the profile and then retries
 // the remaining parked applications: the platform guard is per account, so the
 // operator enters the captcha once instead of per application.
@@ -364,57 +415,217 @@ async function refreshApplications({ append = false } = {}) {
 function changeApplicationQuery() {
   state.applicationOffset = 0; state.selectedApplications.clear(); state.applicationActionMessage = ""; return refreshApplications();
 }
+// updateApplicationSelection keeps the compact selection bar and the row
+// highlight in sync with the selected set.
 function updateApplicationSelection(items = visibleApplicationObjects()) {
-  const visibleIDs = items.filter(applicationCanRemove).map((item) => item.id);
-  elements.applicationSelectAll.disabled = state.applicationActionBusy || !visibleIDs.length;
-  const selectedVisible = visibleIDs.filter((id) => state.selectedApplications.has(id)).length;
-  elements.applicationSelectAll.checked = visibleIDs.length > 0 && selectedVisible === visibleIDs.length;
-  elements.applicationSelectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIDs.length;
-  elements.applicationSelectionState.textContent = state.applicationActionMessage || (state.selectedApplications.size ? `Выбрано: ${state.selectedApplications.size}` : "Ничего не выбрано");
-  elements.applicationBulkAction.disabled = state.applicationActionBusy;
-  elements.applicationRunAction.disabled = state.selectedApplications.size === 0 || !elements.applicationBulkAction.value || state.applicationActionBusy;
+  const known = new Set(items.map((item) => item.id));
+  for (const id of [...state.selectedApplications]) if (!known.has(id)) state.selectedApplications.delete(id);
+  const count = state.selectedApplications.size;
+  if (elements.applicationSelectionBar) elements.applicationSelectionBar.hidden = count === 0;
+  if (elements.applicationSelectionState) elements.applicationSelectionState.textContent = count ? `Выбрано: ${count}` : "Ничего не выбрано";
+  if (elements.applicationRemoveSelected) elements.applicationRemoveSelected.disabled = count === 0 || state.applicationActionBusy;
 }
+
+async function removeSelectedApplications() {
+  const ids = [...state.selectedApplications];
+  if (!ids.length || state.applicationActionBusy) return;
+  if (!globalThis.confirm(`Убрать выбранные отклики (${ids.length})? Локальные записи и чаты будут удалены.`)) return;
+  state.applicationActionBusy = true;
+  updateApplicationSelection();
+  try {
+    const result = await enqueue("/api/v1/applications/remove", { application_ids: ids });
+    const failures = (result.results || []).filter((entry) => entry.error);
+    state.applicationActionMessage = failures.length
+      ? `Не удалось убрать: ${failures.length}`
+      : `Создано задач: ${result.created}.`;
+    state.selectedApplications.clear();
+    await refreshSummary();
+    await refreshApplications();
+  } catch (error) {
+    state.applicationActionMessage = error.message;
+  } finally {
+    state.applicationActionBusy = false;
+    updateApplicationSelection();
+  }
+}
+
 function renderApplicationObjects() {
-  const existingIDs = new Set(state.applicationObjects.map((item) => item.id));
-  for (const id of state.selectedApplications) if (!existingIDs.has(id)) state.selectedApplications.delete(id);
   const items = visibleApplicationObjects();
+  // A filter or search that matches nothing must not hide the section and its
+  // own controls.
+  const filtered = Boolean(state.applicationFilter || state.applicationQuery);
+  hideEmptySection("applications-section", state.applicationTotal > 0 || filtered);
   elements.applicationFilterState.textContent = `${state.applicationTotal ? state.applicationOffset + 1 : 0}–${state.applicationOffset + items.length} из ${state.applicationTotal} по фильтру`;
+  elements.applicationActionState.textContent = state.applicationActionMessage || "";
   updateApplicationProfileColumn();
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Под этот фильтр откликов нет"); cell.colSpan = 8; row.append(cell); elements.applicationItems.replaceChildren(row); updateApplicationSelection(items); return; }
-  elements.applicationItems.replaceChildren(...items.map((item) => {
+  if (!items.length) {
     const row = document.createElement("tr");
-    const selection = document.createElement("td"); const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.className = "application-select"; checkbox.disabled = !applicationCanRemove(item) || state.applicationActionBusy; checkbox.checked = state.selectedApplications.has(item.id); checkbox.setAttribute("aria-label", `Выбрать ${item.vacancy_title || item.id}`);
-    checkbox.addEventListener("change", () => { if (checkbox.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); updateApplicationSelection(items); }); selection.append(checkbox);
-    const vacancy = document.createElement("td"); vacancy.append(text("strong", item.vacancy_title || "Без названия"));
-    const action = document.createElement("td"); action.className = "task-actions"; const url = safeExternalURL(item.vacancy_url);
-    const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
-    const needsInput = validationSkipped || item.status === "waiting_validation";
-    const vacancyID = (url || "").match(/\/vacancy\/(\d+)/)?.[1];
-    if (needsInput && item.platform === "hh") {
-      const questionnaire = text("button", "Анкета", "secondary compact"); questionnaire.type = "button";
-      questionnaire.disabled = state.applicationActionBusy;
-      questionnaire.addEventListener("click", () => captureQuestionnaire(item, questionnaire));
-      action.append(questionnaire);
-    }
-    if (url) {
-      if (action.childNodes.length) action.append(document.createTextNode(" "));
-      const link = text("a", needsInput ? "Вакансия ↗" : "Открыть ↗", "table-link"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; action.append(link);
-    }
-    if (["waiting_validation", "failed"].includes(item.status) || validationSkipped) {
-      if (action.childNodes.length) action.append(document.createTextNode(" "));
-      const retry = text("button", "Повторить", "secondary compact"); retry.type = "button"; retry.disabled = state.applicationActionBusy;
-      retry.addEventListener("click", () => retryApplication(item, retry)); action.append(retry);
-    }
-    if (!action.childNodes.length) action.textContent = "—";
-    const group = applicationGroup(item);
-    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
-    profileCell.append(text("strong", profileDisplayName(item.profile_id)));
-    const profileTag = text("small", item.profile_id, "muted"); profileTag.style.display = "block"; profileCell.append(profileTag);
-    row.append(selection, vacancy, text("td", item.employer || "—"), profileCell, statusCell(applicationGroupLabels[group], `status-${group}`), text("td", applicationReason(item)), text("td", formatDate(item.updated_at)), action);
-    return row;
-  }));
+    const cell = text("td", "Под этот фильтр откликов нет");
+    cell.colSpan = 5;
+    row.append(cell);
+    elements.applicationItems.replaceChildren(row);
+    return;
+  }
+  elements.applicationItems.replaceChildren(...items.map((item) => renderApplicationRow(item)));
   updateApplicationSelection(items);
 }
+
+// questionnaireDecisionCodes are the decisions the operator resolves by
+// answering the vacancy questionnaire. Other validation decisions (a platform
+// refusal, a captcha, an unsupported flow) must not offer the capture action.
+const questionnaireDecisionCodes = new Set(["questionnaire_required", "vacancy_test_required", "platform_validation_required"]);
+
+function applicationNeedsInput(item) {
+  return questionnaireDecisionCodes.has(item.decision_code) && (item.status === "waiting_validation" || item.status === "skipped");
+}
+
+// applicationValidationBlocked covers the applications waiting on a platform
+// decision that the questionnaire cannot resolve: their status stays a blocked
+// button instead of a working call to action.
+function applicationValidationBlocked(item) {
+  return item.status === "waiting_validation" || item.status === "skipped";
+}
+
+function applicationCanRetry(item) {
+  const validationSkipped = item.status === "skipped" && ["questionnaire_required", "vacancy_test_required", "platform_validation_required"].includes(item.decision_code);
+  return ["waiting_validation", "failed"].includes(item.status) || validationSkipped;
+}
+
+// rowIcon renders a small square icon button for row actions.
+function rowIcon(kind, title, handler) {
+  const button = text("button", "", `row-icon ${kind}`);
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.disabled = state.applicationActionBusy;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("d", kind === "retry"
+    ? "M13.2 8a5.2 5.2 0 1 1-1.7-3.9M13.4 2v3.2h-3.2"
+    : "M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); handler(); });
+  return button;
+}
+
+// applicationStatusCell renders the status; a questionnaire that needs the
+// operator becomes the call to action itself.
+function applicationStatusCell(item) {
+  const group = applicationGroup(item);
+  const cell = document.createElement("td");
+  cell.className = "application-state";
+  if (applicationNeedsInput(item) && item.platform === "hh") {
+    const button = text("button", "", `status status-${group} status-action`);
+    button.type = "button";
+    button.disabled = state.applicationActionBusy;
+    button.title = "Открыть анкету и ответить на вопросы";
+    button.append(text("span", applicationGroupLabels[group]), text("small", "анкета", "status-hint"));
+    button.addEventListener("click", (event) => { event.stopPropagation(); captureQuestionnaire(item, button); });
+    cell.append(button);
+  } else if (applicationValidationBlocked(item) && item.platform === "hh") {
+    // The decision cannot be answered by a questionnaire: show the state but
+    // keep the action blocked so it never enqueues a capture that must die.
+    const button = text("button", "", `status status-${group} status-action`);
+    button.type = "button";
+    button.disabled = true;
+    button.title = `${applicationReason(item) || "Действие недоступно"} — анкета недоступна`;
+    button.append(text("span", applicationGroupLabels[group]));
+    cell.append(button);
+  } else {
+    cell.append(text("span", applicationGroupLabels[group], `status status-${group}`));
+  }
+  const reason = applicationReason(item);
+  if (reason) cell.append(text("div", reason, "muted application-reason"));
+  return cell;
+}
+
+function applicationRowActions(item) {
+  const actions = [];
+  if (applicationCanRetry(item)) {
+    actions.push(rowIcon("retry", "Повторить подготовку и отправку отклика", () => retryApplication(item)));
+  }
+  if (applicationCanRemove(item)) {
+    actions.push(rowIcon("remove", "Убрать отклик из рабочего списка", () => removeApplication(item)));
+  }
+  return actions;
+}
+
+// renderApplicationRow keeps the row narrow: the vacancy link and company share
+// one cell, the status carries the reason, and clicking the row toggles its
+// selection for the bulk actions.
+function renderApplicationRow(item) {
+  const row = document.createElement("tr");
+  row.className = "application-row";
+  if (state.selectedApplications.has(item.id)) row.classList.add("selected");
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, input, label, select")) return;
+    if (state.selectedApplications.has(item.id)) state.selectedApplications.delete(item.id);
+    else state.selectedApplications.add(item.id);
+    row.classList.toggle("selected", state.selectedApplications.has(item.id));
+    updateApplicationSelection();
+  });
+
+  const url = safeExternalURL(item.vacancy_url);
+  const vacancy = document.createElement("td");
+  vacancy.className = "application-vacancy";
+  if (url) {
+    const link = text("a", item.vacancy_title || "Без названия", "application-vacancy-link");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    vacancy.append(link);
+  } else {
+    vacancy.append(text("strong", item.vacancy_title || "Без названия"));
+  }
+  vacancy.append(text("div", item.employer || "Компания не определена", "muted"));
+
+  const profileCell = document.createElement("td");
+  profileCell.className = "application-profile";
+  profileCell.append(text("strong", profileDisplayName(item.profile_id)));
+  profileCell.append(text("small", item.profile_id, "muted"));
+
+  const actions = document.createElement("td");
+  actions.className = "task-actions";
+  const buttons = applicationRowActions(item);
+  if (buttons.length) actions.append(...buttons);
+  else actions.textContent = "—";
+
+  row.append(vacancy, profileCell, applicationStatusCell(item), text("td", formatDate(item.updated_at)), actions);
+  return row;
+}
+
+async function removeApplication(item) {
+  const title = item.vacancy_title || item.employer || item.id;
+  if (!globalThis.confirm(`Убрать «${title}» из рабочего списка? Локальная запись и чат будут удалены.`)) return;
+  state.selectedApplications.delete(item.id);
+  state.applicationActionBusy = true;
+  renderApplicationObjects();
+  try {
+    const result = await enqueue("/api/v1/applications/remove", { application_ids: [item.id] });
+    const failures = (result.results || []).filter((entry) => entry.error);
+    state.applicationActionMessage = failures.length
+      ? `Не удалось убрать: ${failures[0].error}`
+      : `Задача на удаление создана (${result.created}).`;
+    await refreshSummary();
+    await refreshApplications();
+  } catch (error) {
+    state.applicationActionMessage = error.message;
+  } finally {
+    state.applicationActionBusy = false;
+    renderApplicationObjects();
+  }
+}
+
 // The profile column is redundant while one account is selected: every row
 // belongs to it. It returns with the combined "all profiles" view.
 function updateApplicationProfileColumn() {
@@ -422,11 +633,41 @@ function updateApplicationProfileColumn() {
   if (table) table.classList.toggle("profile-hidden", Boolean(state.account));
 }
 function renderTasks(items = []) {
-  const queued = items.filter((item) => !["completed", "dismissed"].includes(item.status));
-  if (!queued.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 4; row.append(cell); elements.tasks.replaceChildren(row); return; }
-  elements.tasks.replaceChildren(...queued.map((item) => {
-    const row = document.createElement("tr"); row.append(text("td", taskTypeLabel(item.type)), statusCell(taskStatusLabel(item.status), `task-${item.status}`), text("td", String(item.priority)), text("td", String(item.count))); return row;
+  hideEmptySection("tasks-section", items.length > 0);
+  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Очередь пуста"); cell.colSpan = 6; row.append(cell); elements.tasks.replaceChildren(row); return; }
+  elements.tasks.replaceChildren(...items.map((item) => {
+    const row = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.className = "task-actions";
+    actions.append(rowIcon("cancel", "Отменить задачу: она не будет выполнена", () => cancelTask(item)));
+    const profile = text("td", item.profile_id ? profileDisplayName(item.profile_id) : "—");
+    const availability = document.createElement("td");
+    const countdown = text("span", "", "countdown");
+    countdown.dataset.nextRun = item.available_at;
+    availability.append(countdown);
+    row.append(
+      text("td", taskTypeLabel(item.type)),
+      statusCell(taskStatusLabel(item.status), `task-${item.status}`),
+      profile,
+      availability,
+      text("td", String(item.attempts)),
+      actions,
+    );
+    return row;
   }));
+}
+
+// cancelTask removes a queued task from the execution queue; running and
+// finished tasks are rejected by the backend.
+async function cancelTask(item) {
+  if (!globalThis.confirm(`Отменить задачу «${taskTypeLabel(item.type)}»? Она не будет выполнена.`)) return;
+  try {
+    await enqueue(`/api/v1/tasks/${encodeURIComponent(item.id)}/cancel`, { reason: "cancelled from the dashboard" });
+    elements.connectionState.textContent = `Задача «${taskTypeLabel(item.type)}» отменена`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  }
 }
 function durationParts(value) {
   const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(value || "");
@@ -488,11 +729,33 @@ function jobParameterSummary(item) {
   if (payload.resume_id || payload.resume) parts.push(`резюме: ${payload.resume_id || payload.resume}`);
   return parts.join(" · ");
 }
+// jobCronLabel turns the common cron shapes into a short human cadence, for
+// example "каждый час"; the raw expression stays in the tooltip.
+function jobCronLabel(expression) {
+  const parts = String(expression || "").trim().split(/\s+/);
+  if (parts.length !== 5) return "";
+  const [minute, hour, , , weekday] = parts;
+  if (minute === "0" && hour === "*") return "каждый час";
+  if (/^\*\/\d+$/.test(minute) && hour === "*") return `каждые ${minute.slice(2)} мин`;
+  if (/^\d+$/.test(minute) && hour === "*") return `каждый час в :${minute.padStart(2, "0")}`;
+  if (/^\d+$/.test(minute) && /^\*\/\d+$/.test(hour)) return `каждые ${hour.slice(2)} ч в :${minute.padStart(2, "0")}`;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) {
+    const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+    return weekday === "*" ? `каждый день в ${time}` : `по дням недели ${weekday} в ${time}`;
+  }
+  return "";
+}
+
 function jobScheduleLines(item) {
   const seen = new Set();
   const lines = [];
   for (const schedule of item.schedules || []) {
-    const parts = [`${schedule.expression} · ${schedule.timezone}`];
+    // Interval schedules are timers ("каждые 30 мин"); cron schedules get a
+    // human cadence plus the raw expression and timezone.
+    const cadence = schedule.interval
+      ? `каждые ${formatDuration(schedule.interval)}`
+      : [jobCronLabel(schedule.expression), schedule.expression, schedule.timezone].filter(Boolean).join(" · ");
+    const parts = [cadence];
     if (schedule.jitter_min || schedule.jitter_max) {
       const min = schedule.jitter_min ? formatDuration(schedule.jitter_min) : "0 с";
       const max = schedule.jitter_max ? formatDuration(schedule.jitter_max) : min;
@@ -505,50 +768,252 @@ function jobScheduleLines(item) {
   }
   return lines;
 }
-function jobNextRunCell(item) {
-  const cell = document.createElement("td");
+// jobCountdownNode shows only the remaining time; the schedule itself lives in
+// the tooltip behind the question mark.
+function jobCountdownNode(item) {
   const runs = (item.schedules || []).map((schedule) => schedule.next_run_at).filter(Boolean).sort();
-  if (!runs.length) { cell.append(text("span", "вручную", "muted")); return cell; }
+  if (!runs.length) return text("span", "вручную", "muted");
   const value = text("span", "", "countdown");
   value.dataset.nextRun = runs[0];
-  cell.append(value);
-  const first = (item.schedules || []).find((schedule) => schedule.next_run_at === runs[0]);
-  if (first && (first.jitter_min || first.jitter_max)) cell.append(text("span", " + jitter", "muted"));
-  return cell;
+  return value;
 }
+
+function jobScheduleTitle(item) {
+  const lines = jobScheduleLines(item);
+  return lines.length ? lines.join("; ") : "запускается только вручную";
+}
+
+function jobPausedProfiles(item) {
+  return new Set((item.pauses || []).map((entry) => entry.profile_id).filter(Boolean));
+}
+
+// jobActivityBadge counts bound profiles and how many of them are not paused,
+// for example 1/3 when one of three profiles is paused.
+function jobActivityBadge(item) {
+  const profiles = jobProfiles(item);
+  const paused = jobPausedProfiles(item);
+  const active = profiles.filter((profileID) => !paused.has(profileID)).length;
+  const badge = text("span", `${active}/${profiles.length}`, "job-badge");
+  badge.title = `активных профилей: ${active} из ${profiles.length}`;
+  if (profiles.length && active === 0) badge.classList.add("paused");
+  return badge;
+}
+
+function jobPauseNotes(item) {
+  const reasons = [...new Set((item.pauses || []).map((entry) => entry.reason === "auth_required" ? "требуется вход" : "пауза оператора"))];
+  const names = [...new Set((item.pauses || []).map((entry) => profileDisplayName(entry.profile_id)))];
+  return `${reasons.join(", ")}${names.length ? ` (${names.join(", ")})` : ""}`;
+}
+
+// jobStateButton renders OK/PAUSED and toggles the pause for one profile or for
+// the whole job when no profile is given.
+const lockIconPath = "M5.2 7V5.6a2.8 2.8 0 0 1 5.6 0V7h.6c.6 0 1 .4 1 1v4.4c0 .6-.4 1-1 1H4.6c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1h.6zm1.4 0h2.8V5.6a1.4 1.4 0 0 0-2.8 0V7z";
+
+function lockIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "11");
+  svg.setAttribute("height", "11");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", lockIconPath);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+
+// jobStateControl returns the state button and, for a read-only system state, a
+// separate lock icon next to it.
+function jobStateControl(item, profileID = "") {
+  const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
+  const button = jobStateButton(item, profileID);
+  if (!item.system || paused) return [button];
+  const lock = text("span", "", "job-lock");
+  lock.title = "состояние задаёт сервис: системная джоба встаёт на паузу сама (например, при разлогине)";
+  lock.setAttribute("aria-label", "переключение недоступно");
+  lock.append(lockIcon());
+  return [button, lock];
+}
+
+function jobStateButton(item, profileID = "") {
+  const paused = profileID ? jobPausedProfiles(item).has(profileID) : Boolean(item.paused);
+  const button = text("button", paused ? "PAUSED" : "OK", `job-state ${paused ? "paused" : "ok"}`);
+  button.type = "button";
+  if (item.system && !paused) {
+    button.disabled = true;
+    button.title = "состояние задаёт сервис: системная джоба встаёт на паузу сама (например, при разлогине)";
+    button.setAttribute("aria-label", "OK, переключение недоступно");
+  } else {
+    button.disabled = state.jobBusy.has(item.tag);
+    button.title = paused
+      ? `снять паузу${profileID ? ` для ${profileDisplayName(profileID)}` : ""}`
+      : `поставить на паузу${profileID ? ` для ${profileDisplayName(profileID)}` : " для всех профилей"}`;
+    button.addEventListener("click", (event) => { event.stopPropagation(); toggleJobPause(item, !paused, profileID); });
+  }
+  if (!profileID && paused && item.pauses?.length) button.title += `: ${jobPauseNotes(item)}`;
+  return button;
+}
+
+const playIconPath = "M4.5 3.1v9.8l8.4-4.9z";
+
+function jobRunButton(item, profileID = "") {
+  const button = text("button", "", "job-run");
+  button.type = "button";
+  button.disabled = state.jobBusy.has(item.tag);
+  button.title = profileID ? `запустить для ${profileDisplayName(profileID)}` : "запустить для всех профилей";
+  button.setAttribute("aria-label", button.title);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", playIconPath);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); runJob(item, profileID); });
+  return button;
+}
+
+// jobEditButton opens the fragment editor of a dashboard-managed job.
+function jobEditButton(item) {
+  const button = text("button", "", "job-edit");
+  button.type = "button";
+  button.title = "Изменить джобу";
+  button.setAttribute("aria-label", button.title);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M11.3 2.1l2.6 2.6-7.5 7.5-3 .4.4-3 7.5-7.5z");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.4");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.append(path);
+  button.append(svg);
+  button.addEventListener("click", (event) => { event.stopPropagation(); openJobEditor(item); });
+  return button;
+}
+
+function toggleJobExpanded(tag) {
+  if (state.expandedJobs.has(tag)) state.expandedJobs.delete(tag);
+  else state.expandedJobs.add(tag);
+  renderJobs(state.jobs);
+}
+
 function renderJobs(items = []) {
   items = state.account ? items.filter((item) => jobProfiles(item).includes(state.account)) : items;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 6; row.append(cell); elements.jobs.replaceChildren(row); return; }
-  elements.jobs.replaceChildren(...items.map((item) => {
-    const row = document.createElement("tr");
-    const action = document.createElement("td");
-    action.append(text("div", taskTypeLabel(item.task_type)));
-    for (const line of jobParameterLines(item)) action.append(text("div", line, "muted"));
-    const schedule = document.createElement("td");
-    const lines = jobScheduleLines(item);
-    if (lines.length) schedule.append(...lines.map((line) => text("div", line)));
-    else schedule.append(text("span", "вручную", "muted"));
-    const run = document.createElement("td");
-    const button = text("button", "Запустить", "secondary compact"); button.type = "button"; button.disabled = state.jobBusy.has(item.tag);
-    button.addEventListener("click", () => runJob(item)); run.append(button);
-    const profileCell = document.createElement("td"); profileCell.className = "application-profile";
-    const names = jobProfiles(item).map(profileDisplayName);
-    if (names.length) profileCell.append(...names.map((name) => text("div", name)));
-    else profileCell.append(text("span", "—", "muted"));
-    const jobCell = document.createElement("td");
-    if (item.description) {
-      jobCell.append(text("div", item.description));
-      jobCell.append(text("small", item.tag, "muted"));
+  const groups = [
+    { system: false, body: elements.jobsUser, button: elements.jobsPauseUser, key: "group:user" },
+    { system: true, body: elements.jobsSystem, button: elements.jobsPauseSystem, key: "group:system" },
+  ];
+  for (const group of groups) {
+    const groupItems = items.filter((item) => Boolean(item.system) === group.system).sort((left, right) => String(left.tag).localeCompare(String(right.tag)));
+    const pausedCount = groupItems.filter((item) => item.paused).length;
+    if (group.system) {
+      // System jobs are paused by the service itself; the operator only gets a
+      // recovery action when something already paused them.
+      group.button.hidden = pausedCount === 0;
+      group.button.textContent = "Снять паузу со всех";
+      group.button.dataset.paused = "1";
+      group.button.disabled = state.jobBusy.has(group.key);
     } else {
-      jobCell.append(text("div", item.tag));
+      group.button.textContent = pausedCount === groupItems.length && groupItems.length ? "Снять паузу со всех" : "Поставить все на паузу";
+      group.button.disabled = state.jobBusy.has(group.key) || groupItems.length === 0;
+      group.button.dataset.paused = pausedCount === groupItems.length && groupItems.length ? "1" : "";
     }
-    row.append(jobCell, action, profileCell, schedule, jobNextRunCell(item), run);
-    return row;
-  }));
+    if (!groupItems.length) {
+      const row = document.createElement("tr"); const cell = text("td", "Нет доступных jobs: проверьте enabled, авторизацию и capabilities профиля"); cell.colSpan = 4; row.append(cell);
+      group.body.replaceChildren(row);
+      continue;
+    }
+    group.body.replaceChildren(...groupItems.map((item) => renderJobRow(item)).flat());
+  }
   updateCountdowns();
 }
+// renderJobRow renders the compact job line; clicking it reveals the
+// per-profile details. The returned slice holds the detail row when the job is
+// expanded.
+function renderJobRow(item) {
+    const row = document.createElement("tr");
+    const expanded = state.expandedJobs.has(item.tag);
+    row.className = expanded ? "job-row expanded" : "job-row";
+    row.setAttribute("aria-expanded", String(expanded));
+    row.addEventListener("click", () => toggleJobExpanded(item.tag));
+
+    const jobCell = document.createElement("td");
+    const title = document.createElement("div");
+    title.className = "job-title";
+    title.append(text("span", item.description || item.tag));
+    if (jobProfiles(item).length > 1) title.append(jobActivityBadge(item));
+    jobCell.append(title);
+    const subtitle = [item.description ? item.tag : "", taskTypeLabel(item.task_type)].filter(Boolean).join(" · ");
+    if (subtitle) jobCell.append(text("small", subtitle, "muted"));
+
+    const scheduleCell = document.createElement("td");
+    scheduleCell.className = "job-schedule-cell";
+    scheduleCell.append(jobCountdownNode(item));
+    if (jobScheduleLines(item).length) {
+      const help = text("span", "?", "job-help");
+      help.title = jobScheduleTitle(item);
+      help.setAttribute("aria-label", `расписание: ${jobScheduleTitle(item)}`);
+      scheduleCell.append(help);
+    }
+
+    const stateCell = document.createElement("td");
+    stateCell.append(...jobStateControl(item));
+
+    const runCell = document.createElement("td");
+    runCell.className = "job-run-cell";
+    if (item.editable) runCell.append(jobEditButton(item));
+    runCell.append(jobRunButton(item));
+
+    row.append(jobCell, scheduleCell, stateCell, runCell);
+    if (!expanded) return [row];
+    return [row, ...renderJobDetailRows(item)];
+}
+// renderJobDetailRows shows the per-profile lines inside one cell: the info
+// stays on the left and the state and run controls on the right, so the parent
+// row keeps its columns and the block reads as part of the same job.
+function renderJobDetailRows(item) {
+  const commands = Array.isArray(item.commands) ? item.commands : [];
+  const profiles = jobProfiles(item);
+  const row = document.createElement("tr");
+  row.className = "job-detail-row";
+  const cell = document.createElement("td");
+  cell.colSpan = 4;
+  const list = document.createElement("div");
+  list.className = "job-detail-list";
+  for (const profileID of profiles) {
+    const line = document.createElement("div");
+    line.className = "job-detail-line";
+    const info = document.createElement("div");
+    info.className = "job-detail-info-cell";
+    info.append(text("strong", profileDisplayName(profileID)));
+    const command = commands.find((entry) => entry.profile_id === profileID);
+    const summary = command ? jobParameterSummary({ payload: command.payload }) : "";
+    if (summary) info.append(text("div", summary, "muted job-detail-info"));
+    const actions = document.createElement("div");
+    actions.className = "job-detail-actions";
+    actions.append(...jobStateControl(item, profileID), jobRunButton(item, profileID));
+    line.append(info, actions);
+    list.append(line);
+  }
+  if (!profiles.length) list.append(text("div", "нет привязанных профилей", "muted"));
+  list.append(text("div", `расписание: ${jobScheduleTitle(item)}`, "muted job-detail-schedule"));
+  cell.append(list);
+  row.append(cell);
+  return [row];
+}
+
 function renderFailedTasks(items = []) {
+  const total = items.length;
   items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
+  hideEmptySection("failed-tasks-section", total > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Неразрешённых ошибок нет"); cell.colSpan = 7; row.append(cell); elements.failedTasks.replaceChildren(row); return; }
   elements.failedTasks.replaceChildren(...items.map((item) => {
     const row = document.createElement("tr");
@@ -564,8 +1029,11 @@ function renderFailedTasks(items = []) {
   }));
 }
 function renderCampaigns(items = []) {
+  hideEmptySection("campaigns-section", items.length > 0);
   if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Запусков пока нет"); cell.colSpan = 6; row.append(cell); elements.campaigns.replaceChildren(row); return; }
-  elements.campaigns.replaceChildren(...items.map((item) => {
+  // The panel is informational: only the last few runs stay on the main page.
+  const visible = items.slice(0, 5);
+  elements.campaigns.replaceChildren(...visible.map((item) => {
     const row = document.createElement("tr");
     const grouped = new Map();
     for (const entry of item.applications || []) { const group = applicationGroup(entry); grouped.set(group, (grouped.get(group) || 0) + Number(entry.count || 0)); }
@@ -575,41 +1043,290 @@ function renderCampaigns(items = []) {
     return row;
   }));
 }
-function renderActivity(items = []) {
-  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  if (!items.length) { const row = document.createElement("tr"); const cell = text("td", "Подтверждённых действий пока нет"); cell.colSpan = 5; row.append(cell); elements.activity.replaceChildren(row); return; }
-  elements.activity.replaceChildren(...items.map((item) => {
+// profileCatalogIdentity renders the cached account facts of a profile.
+function profileCatalogIdentity(entry) {
+  const identity = entry.identity;
+  if (!identity) return "аккаунт ещё не входил";
+  const parts = [identity.display_name, identity.email, identity.phone].map(plainText).filter(Boolean);
+  if (identity.account_hash) parts.push(`аккаунт ${identity.account_hash}`);
+  return parts.length ? parts.join(" · ") : "данные аккаунта пусты";
+}
+
+// profileCatalogResumes renders the declared resume list of a profile.
+function profileCatalogResumes(entry) {
+  const resumes = entry.resumes || [];
+  if (!resumes.length) return "резюме нет";
+  return resumes.map((resume) => {
+    const label = resume.title ? `${resume.title} (${compactID(resume.id)})` : compactID(resume.id);
+    return resume.primary ? `${label} — основное` : label;
+  }).join(", ");
+}
+
+// profileSnapshots returns the activity snapshots of one profile, newest first.
+function profileSnapshots(profileID) {
+  return (state.summary?.activity_snapshots || [])
+    .filter((item) => item.profile_id === profileID)
+    .sort((left, right) => String(right.observed_at || "").localeCompare(String(left.observed_at || "")));
+}
+
+function profileFacts(profileID) {
+  return (state.summary?.activity || []).filter((item) => item.profile_id === profileID);
+}
+
+function profileLatestSnapshot(profileID) {
+  return profileSnapshots(profileID)[0] || null;
+}
+
+// profileScoreColor maps the activity score to a red-to-green hue so the
+// colour scale stays readable for any percentage.
+function profileScoreColor(score) {
+  const bounded = Math.max(0, Math.min(100, Number(score) || 0));
+  return `hsl(${Math.round(bounded * 1.35)} 70% 62%)`;
+}
+
+function profileMetric(label, value, delta = "", color = "") {
+  const block = document.createElement("div");
+  block.className = "metric";
+  block.append(text("span", label, "metric-label"));
+  const row = document.createElement("div");
+  row.className = "metric-value";
+  const strong = text("strong", value);
+  if (color) strong.style.color = color;
+  row.append(strong);
+  if (delta) row.append(text("small", delta, "metric-delta"));
+  block.append(row);
+  return block;
+}
+
+// profileMetrics renders the collected gauges as labelled counters; the
+// detailed snapshots live in the expanded row.
+function profileMetrics(profileID) {
+  const snapshot = profileLatestSnapshot(profileID);
+  if (!snapshot) return text("span", "нет данных", "muted");
+  const grid = document.createElement("div");
+  grid.className = "metric-grid";
+  if (typeof snapshot.score === "number") {
+    grid.append(profileMetric("активность", `${snapshot.score}%`, "", profileScoreColor(snapshot.score)));
+  }
+  grid.append(profileMetric("просмотры", counter(snapshot.views), snapshot.new_views ? `+${snapshot.new_views}` : ""));
+  grid.append(profileMetric("приглашения", counter(snapshot.invitations), snapshot.new_invitations ? `+${snapshot.new_invitations}` : ""));
+  if (snapshot.search_shows !== null && snapshot.search_shows !== undefined) {
+    grid.append(profileMetric("показы", String(snapshot.search_shows)));
+  }
+  return grid;
+}
+
+function profileRowSession(session) {
+  if (!session || !session.present) return "нет";
+  return session.modified_at ? `есть (${formatDate(session.modified_at)})` : "есть";
+}
+
+function profileResumesSummary(entry) {
+  const resumes = entry.resumes || [];
+  if (!resumes.length) return "нет";
+  const primary = resumes.find((resume) => resume.primary) || resumes[0];
+  const label = primary.title || compactID(primary.id);
+  return resumes.length > 1 ? `${label} +${resumes.length - 1}` : label;
+}
+
+// renderProfiles merges the config catalog, the collected metrics and the
+// activity facts into one expandable row per profile.
+function renderProfiles() {
+  const container = document.getElementById("profile-rows");
+  if (!container) return;
+  let entries = state.profileCatalog || [];
+  if (state.account) entries = entries.filter((entry) => entry.tag === state.account);
+  const stateLabel = document.getElementById("profiles-state");
+  if (stateLabel) stateLabel.textContent = entries.length ? `Профилей: ${entries.length}` : "Профилей нет";
+  if (!entries.length) {
     const row = document.createElement("tr");
-    row.append(text("td", profileDisplayName(item.profile_id)), text("td", item.platform), text("td", activityKindLabels[item.kind] || item.kind), text("td", String(item.count)), text("td", formatDate(item.last_occurred_at)));
-    return row;
-  }));
+    const cell = text("td", "Профили не объявлены. Добавьте первый в блоке ниже.", "muted");
+    cell.colSpan = 5;
+    row.append(cell);
+    container.replaceChildren(row);
+    return;
+  }
+  container.replaceChildren(...entries.map((entry) => renderProfileRow(entry)).flat());
+}
+
+function renderProfileRow(entry) {
+  const row = document.createElement("tr");
+  const expanded = state.expandedProfiles.has(entry.tag);
+  row.className = expanded ? "profile-row expanded" : "profile-row";
+  row.setAttribute("aria-expanded", String(expanded));
+  row.addEventListener("click", () => toggleProfileExpanded(entry.tag));
+
+  const profile = document.createElement("td");
+  const heading = document.createElement("div");
+  heading.className = "job-title";
+  heading.append(text("span", profileDisplayName(entry.tag)));
+  if (!entry.enabled) heading.append(text("span", "выключен", "job-badge"));
+  profile.append(heading);
+  profile.append(text("small", `${entry.tag} · ${entry.adapter || "—"}/${entry.platform || "—"}`, "muted"));
+
+  const resumes = document.createElement("td");
+  resumes.className = "profile-resumes";
+  resumes.append(text("span", profileResumesSummary(entry)));
+
+  const metrics = document.createElement("td");
+  metrics.className = "profile-metrics";
+  metrics.append(profileMetrics(entry.tag));
+
+  const session = document.createElement("td");
+  session.append(text("span", profileRowSession(entry.session)));
+
+  const source = document.createElement("td");
+  source.append(text("span", entry.source || "config", "muted"));
+
+  row.append(profile, resumes, metrics, session, source);
+  if (!expanded) return [row];
+  return [row, renderProfileDetail(entry)];
+}
+
+function renderProfileDetail(entry) {
+  const row = document.createElement("tr");
+  row.className = "profile-detail-row";
+  const cell = document.createElement("td");
+  cell.colSpan = 5;
+
+  const identity = document.createElement("div");
+  identity.className = "profile-detail-line";
+  identity.append(text("strong", "Аккаунт"));
+  identity.append(text("div", profileCatalogIdentity(entry), "muted"));
+  cell.append(identity);
+
+  const resumes = document.createElement("div");
+  resumes.className = "profile-detail-line";
+  resumes.append(text("strong", "Резюме"));
+  resumes.append(text("div", profileCatalogResumes(entry), "muted"));
+  cell.append(resumes);
+
+  const snapshots = profileSnapshots(entry.tag);
+  if (snapshots.length) {
+    // The history is long; three recent samples are enough for a trend.
+    const recent = snapshots.slice(0, 3);
+    cell.append(profileDetailTable("Снимки HH", ["Снято", "Окно", "Активность", "Показы", "Просмотры", "Приглашения"],
+      recent.map((item) => [
+        formatDate(item.observed_at),
+        item.period_days === undefined || item.period_days === null ? "—" : `${item.period_days} д`,
+        item.score === undefined || item.score === null ? "—" : `${item.score}%`,
+        counter(item.search_shows),
+        item.new_views ? `${counter(item.views)} (+${item.new_views})` : counter(item.views),
+        item.new_invitations ? `${counter(item.invitations)} (+${item.new_invitations})` : counter(item.invitations),
+      ])));
+    if (snapshots.length > recent.length) {
+      cell.append(text("div", `показаны последние ${recent.length} из ${snapshots.length} снимков`, "muted profile-detail-note"));
+    }
+  }
+
+  const facts = profileFacts(entry.tag);
+  if (facts.length) {
+    cell.append(profileDetailTable("Подтверждённые действия профиля", ["Действие", "Платформа", "Количество", "Последнее"],
+      facts.map((item) => [activityKindLabels[item.kind] || item.kind, item.platform, String(item.count), formatDate(item.last_occurred_at)])));
+  }
+
+  const jobs = (state.jobs || []).filter((item) => jobProfiles(item).includes(entry.tag));
+  if (jobs.length) {
+    const line = document.createElement("div");
+    line.className = "profile-detail-line";
+    line.append(text("strong", "Джобы профиля"));
+    const list = document.createElement("div");
+    list.className = "profile-detail-jobs";
+    for (const job of jobs) {
+      const item = document.createElement("div");
+      item.className = "profile-detail-job";
+      item.append(text("span", job.description || job.tag));
+      const paused = jobPausedProfiles(job).has(entry.tag);
+      item.append(text("span", paused ? "PAUSED" : "OK", `job-state job-state-static ${paused ? "paused" : "ok"}`));
+      item.append(jobCountdownNode(job));
+      list.append(item);
+    }
+    line.append(list);
+    cell.append(line);
+  }
+
+  // The account state import loads every negotiation and the full chat
+  // catalog, including responses that were sent outside this service.
+  const accountState = document.createElement("div");
+  accountState.className = "profile-detail-line";
+  accountState.append(text("strong", "Состояние аккаунта"));
+  const importButton = text("button", "Загрузить отклики и чаты", "secondary compact");
+  importButton.type = "button";
+  importButton.disabled = state.profileBusy.has(entry.tag);
+  importButton.addEventListener("click", () => importProfileState(entry, importButton));
+  const importState = text("span", state.profileMessages.get(`import:${entry.tag}`) || "", "muted");
+  accountState.append(importButton, importState);
+  cell.append(accountState);
+
+  // The desired state of the profile lives in its expansion: paths, plan
+  // builder, revisions and the one-off editor.
+  const resources = (state.profileResources || []).filter((resource) => resource.profile_id === entry.tag);
+  if (resources.length || state.profileStateError) {
+    const line = document.createElement("div");
+    line.className = "profile-detail-line";
+    line.append(text("strong", "Desired state"));
+    if (state.profileStateError) line.append(text("div", state.profileStateError, "muted"));
+    if (resources.length) {
+      const grid = document.createElement("div");
+      grid.className = "resource-grid";
+      grid.append(...resources.map((resource) => profileResourceCard(resource)));
+      line.append(grid);
+    }
+    cell.append(line);
+  }
+
+  row.append(cell);
+  return row;
+}
+
+// importProfileState asks the backend to load the platform account state into
+// the local database; the work happens in the background as a durable task.
+async function importProfileState(entry, button) {
+  button.disabled = true;
+  state.profileMessages.set(`import:${entry.tag}`, "Ставлю задачу импорта…");
+  renderProfiles();
+  try {
+    const key = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `import-${Date.now()}`;
+    const response = await fetch(`/api/v1/profiles/${encodeURIComponent(entry.tag)}/import`, {
+      method: "POST", headers: { "Idempotency-Key": key },
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    state.profileMessages.set(`import:${entry.tag}`, "Импорт поставлен в очередь: отклики и чаты загрузятся в фоне");
+  } catch (error) {
+    state.profileMessages.set(`import:${entry.tag}`, `Не удалось запустить импорт: ${error.message}`);
+  }
+  renderProfiles();
+}
+
+function profileDetailTable(caption, headers, rows) {
+  const block = document.createElement("div");
+  block.className = "profile-detail-line";
+  block.append(text("strong", caption));
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.append(...headers.map((label) => text("th", label)));
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  for (const values of rows) {
+    const tr = document.createElement("tr");
+    tr.append(...values.map((value) => text("td", String(value ?? "—"))));
+    body.append(tr);
+  }
+  table.append(head, body);
+  wrap.append(table);
+  block.append(wrap);
+  return block;
+}
+
+function toggleProfileExpanded(tag) {
+  if (state.expandedProfiles.has(tag)) state.expandedProfiles.delete(tag);
+  else state.expandedProfiles.add(tag);
+  renderProfiles();
 }
 function counter(value) { return value === null || value === undefined ? "—" : String(value); }
-function renderActivityObservations(items = []) {
-  items = state.account ? items.filter((item) => item.profile_id === state.account) : items;
-  const latest = [];
-  const seen = new Set();
-  for (const item of items) {
-    const key = `${item.platform}\u0000${item.profile_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key); latest.push(item);
-  }
-  if (!latest.length) { elements.activityObservations.replaceChildren(text("p", "Метрики ещё не снимались. Запустите job «Обновить метрики резюме».", "empty panel")); return; }
-  elements.activityObservations.replaceChildren(...latest.map((item) => {
-    const card = document.createElement("article"); card.className = "panel activity-card";
-    const heading = document.createElement("div"); heading.className = "panel-heading";
-    const identity = document.createElement("div"); const resume = text("p", `${item.platform} · резюме ${compactID(item.resume_id)}`, "muted"); resume.title = item.resume_id; identity.append(text("h2", profileDisplayName(item.profile_id)), resume);
-    heading.append(identity, text("span", item.period_days === undefined ? "период не указан" : `${item.period_days} дней`, "tag")); card.append(heading);
-    const metrics = document.createElement("div"); metrics.className = "activity-metrics";
-    const cards = [];
-    if (typeof item.score === "number") cards.push(["Активность", `${item.score}%`, ""]);
-    cards.push(["Показы в поиске", counter(item.search_shows), ""], ["Просмотры", counter(item.views), item.new_views ? `+${item.new_views}` : ""], ["Приглашения", counter(item.invitations), item.new_invitations ? `+${item.new_invitations}` : ""]);
-    cards.forEach(([label, value, delta]) => {
-      const metric = document.createElement("div"); metric.append(text("span", label), text("strong", value), delta ? text("small", delta) : document.createTextNode("")); metrics.append(metric);
-    });
-    card.append(metrics, text("p", `Снято ${formatDate(item.observed_at)}`, "muted")); return card;
-  }));
-}
 // visibleConversations sorts the server-filtered page. The open conversation
 // stays pinned at the top even when a filter no longer matches it: reading a
 // chat must not yank it out of sight until the operator selects another one.
@@ -661,6 +1378,10 @@ function applyLocalReads(items = []) {
 }
 
 function renderConversations(items = state.conversationItems) {
+  // The section hides only when the account has no chats at all: hiding it on
+  // an empty filtered view would take away the filter controls themselves.
+  const filtered = Boolean(elements.conversationFilter.value || state.conversationQuery);
+  hideEmptySection("conversations-section", (state.conversationItems || []).length > 0 || filtered);
   updateMarkAllRead(items);
   const visible = visibleConversations(items);
   if (state.selectedConversation) {
@@ -669,7 +1390,7 @@ function renderConversations(items = state.conversationItems) {
   }
   const loaded = state.conversationItems.length;
   elements.conversationPageState.textContent = state.conversationTotal ? `Показано ${loaded} из ${state.conversationTotal}` : "";
-  if (!visible.length) { elements.conversations.replaceChildren(text("p", items.length ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
+  if (!visible.length) { elements.conversations.replaceChildren(text("p", filtered ? "Под этот фильтр диалогов нет" : "Диалогов пока нет", "empty")); return; }
   elements.conversations.replaceChildren(...visible.map((item) => {
     const button = document.createElement("button"); button.type = "button"; button.className = `conversation${state.selectedConversation?.id === item.id ? " active" : ""}`;
     const heading = document.createElement("span"); heading.className = "conversation-heading";
@@ -686,7 +1407,12 @@ function renderConversations(items = state.conversationItems) {
 // list. Filters and the search run in SQL, so pagination stays correct for
 // thousands of dialogs.
 async function refreshConversations({ append = false } = {}) {
-  if (state.conversationLoading) return;
+  if (append && state.conversationLoading) return;
+  // Non-append refreshes are sequenced instead of dropped: a filter change must
+  // not be swallowed by an in-flight poll, and an older response must never
+  // overwrite a newer list.
+  const requestID = (state.conversationRequest || 0) + 1;
+  state.conversationRequest = requestID;
   state.conversationLoading = true;
   const offset = append ? state.conversationItems.length : 0;
   const params = new URLSearchParams({ limit: "50", offset: String(offset) });
@@ -705,6 +1431,7 @@ async function refreshConversations({ append = false } = {}) {
   }
   try {
     const page = await request(`/api/v1/conversations?${params}`);
+    if (state.conversationRequest !== requestID) return;
     const applied = append ? { items: page.items || [], hiddenUnread: 0 } : applyLocalReads(page.items || []);
     state.conversationItems = append ? [...state.conversationItems, ...applied.items] : applied.items;
     state.conversationTotal = Number(page.total || 0);
@@ -725,8 +1452,10 @@ async function refreshConversations({ append = false } = {}) {
     renderConversations(state.conversationItems);
     renderAccountSwitcher(state.summary?.profiles || []);
   } catch (error) {
-    state.conversationTotal = state.conversationItems.length;
-    elements.conversationBulkState.textContent = error.message;
+    if (state.conversationRequest === requestID) {
+      state.conversationTotal = state.conversationItems.length;
+      elements.conversationBulkState.textContent = error.message;
+    }
   } finally {
     state.conversationLoading = false;
   }
@@ -840,9 +1569,12 @@ async function sendQuestionnaireOption(message, option) {
   renderMessages(state.selectedMessages);
 }
 
-function renderProfileResources() {
-  if (!state.profileResources.length) { elements.profileResources.replaceChildren(text("p", "Desired-state ресурсов пока нет.", "empty panel")); return; }
-  elements.profileResources.replaceChildren(...state.profileResources.map((resource) => {
+// renderProfileResources re-renders the profile table: the desired-state cards
+// are part of the profile expansion now.
+function renderProfileResources() { renderProfiles(); }
+
+function profileResourceCard(resource) {
+  {
     const card = document.createElement("article"); card.className = "panel resource-card";
     const heading = document.createElement("div"); heading.className = "panel-heading";
     const identity = document.createElement("div"); identity.append(text("h2", resource.tag), text("p", `${profileDisplayName(resource.profile_id)} · ${resource.ownership}`, "muted"));
@@ -907,7 +1639,7 @@ function renderProfileResources() {
       applyButton.addEventListener("click", () => applyProfileState(resource, plan, applyButton)); actions.append(applyButton);
     }
     card.append(actions); return card;
-  }));
+  }
 }
 
 async function refreshProfileResources() {
@@ -924,11 +1656,11 @@ async function refreshProfileResources() {
       }
     }
     state.profileResources = resources;
-    elements.profileStateState.textContent = `${state.profileResources.length} ресурсов`;
+    state.profileStateError = "";
     renderProfileResources();
   } catch (error) {
-    elements.profileStateState.textContent = error.message;
-    elements.profileResources.replaceChildren(text("p", "Не удалось загрузить desired state.", "empty panel"));
+    state.profileStateError = `Desired state не загрузился: ${error.message}`;
+    renderProfileResources();
   }
 }
 
@@ -992,6 +1724,7 @@ async function reconcileProfileState(resource) {
 }
 
 function profileDisplayName(profileID) {
+  if (state.draftLabels?.has(profileID)) return state.draftLabels.get(profileID);
   const profiles = state.summary?.profiles || [];
   const entry = profiles.find((item) => item && item.id === profileID);
   return (entry && entry.display_name) || profileID;
@@ -1017,7 +1750,11 @@ function renderConfigState(status) {
 function renderAccountSwitcher(profiles = []) {
   const labels = new Map();
   for (const item of profiles) {
-    if (item && item.id) labels.set(item.id, item.display_name || item.id);
+    if (!item || !item.id) continue;
+    // The resume count tells two accounts of the same person apart without
+    // opening the profile section.
+    const count = Number(item.resumes) || 0;
+    labels.set(item.id, `${item.display_name || item.id}${count ? ` · ${count} резюме` : ""}`);
   }
   for (const item of state.conversationItems || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
   for (const item of state.summary?.activity || []) if (item.profile_id) labels.set(item.profile_id, labels.get(item.profile_id) || item.profile_id);
@@ -1041,6 +1778,8 @@ const reviewPageSize = 50;
 
 async function refreshReviewSessions(options = {}) {
   const append = options.append === true;
+  if (state.reviewLoading) return;
+  state.reviewLoading = true;
   const parameters = new URLSearchParams({ limit: String(reviewPageSize), offset: String(append ? state.reviewSessions.length : 0) });
   if (elements.reviewFilter.value) parameters.set("status", elements.reviewFilter.value);
   if (state.account) parameters.set("profile_id", state.account);
@@ -1056,14 +1795,15 @@ async function refreshReviewSessions(options = {}) {
     state.reviewSessions = append ? [...state.reviewSessions, ...items] : items;
     if (!append) state.cache.reviews = { key: cacheKey, at: Date.now(), items: state.reviewSessions };
     state.reviewHasMore = items.length === reviewPageSize;
-    elements.reviewMore.hidden = !state.reviewHasMore;
     elements.reviewState.textContent = state.reviewSessions.length
-      ? `Сессий: ${state.reviewSessions.length}${state.reviewHasMore ? "+" : ""}`
-      : "Нет сессий";
+      ? `Анкет: ${state.reviewSessions.length}${state.reviewHasMore ? "+" : ""}`
+      : "Анкет нет";
     renderReviewSessions();
   } catch (error) {
     elements.reviewState.textContent = error.message;
     elements.reviewSessions.replaceChildren(text("p", "Не удалось загрузить проверки.", "empty panel"));
+  } finally {
+    state.reviewLoading = false;
   }
 }
 
@@ -1100,10 +1840,17 @@ function reviewVacancyID(session) {
 }
 // sendReviewApplication enqueues the submit retry for the selected profile: a
 // filled questionnaire is attached by the application pipeline itself.
+// reviewSendTargets sends the filled questionnaire from every profile that has
+// a session for this vacancy: the operator chooses the questionnaire, not the
+// accounts.
 function reviewSendTargets() {
-  const selected = [...state.reviewSendProfiles];
-  if (selected.length) return selected;
-  return state.reviewSelected ? [state.reviewSelected.profile_id] : [];
+  const session = state.reviewSelected;
+  if (!session) return [];
+  const vacancyID = reviewVacancyID(session);
+  const profiles = [...new Set((state.reviewSessions || [])
+    .filter((item) => reviewVacancyID(item) === vacancyID)
+    .map((item) => item.profile_id))].filter(Boolean);
+  return profiles.length ? profiles : [session.profile_id];
 }
 function updateReviewSendButton() {
   const targets = reviewSendTargets();
@@ -1154,8 +1901,14 @@ function reviewVacancyKey(session) {
 function renderReviewSessions() {
   const layout = elements.reviewSessions.closest(".review-layout");
   const sessions = state.reviewSessions || [];
+  const filtered = Boolean(elements.reviewFilter.value || state.reviewQuery);
+  // A filter that matches nothing must not hide its own controls.
+  hideEmptySection("review-section", sessions.length > 0 || filtered);
   if (layout) layout.classList.toggle("empty", !sessions.length);
-  if (!sessions.length) { elements.reviewSessions.replaceChildren(text("p", "Проверок нет.", "empty")); return; }
+  if (!sessions.length) {
+    elements.reviewSessions.replaceChildren(text("p", filtered ? "Под фильтр ничего не подошло." : "Проверок нет.", "empty"));
+    return;
+  }
   if (!state.reviewSelected || !sessions.some((item) => item.id === state.reviewSelected.id)) {
     // While a captured questionnaire is still being looked up, keep the list
     // unselected instead of jumping to the top card.
@@ -1170,36 +1923,27 @@ function renderReviewSessions() {
     groups.get(key).sessions.push(session);
   }
   elements.reviewSessions.replaceChildren(...[...groups.values()].map((group) => {
-    const card = document.createElement("div"); card.className = "review-vacancy";
-    const heading = document.createElement("div"); heading.className = "review-vacancy-heading";
+    const card = document.createElement("div");
+    card.className = "review-vacancy";
+    const selected = group.sessions.find((item) => item.id === state.reviewSelected?.id);
+    if (selected) card.classList.add("active");
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "review-vacancy-pick";
+    const heading = document.createElement("div");
+    heading.className = "review-vacancy-heading";
     heading.append(text("strong", group.vacancy.title || "Без названия"));
     heading.append(text("small", group.vacancy.employer || "Компания не определена", "muted"));
-    card.append(heading);
-    const profiles = document.createElement("div"); profiles.className = "review-vacancy-profiles";
-    for (const session of group.sessions) {
-      const chip = document.createElement("label");
-      chip.className = `review-profile${state.reviewSelected?.id === session.id ? " active" : ""}`;
-      const control = document.createElement("input"); control.type = "checkbox";
-      control.checked = state.reviewSendProfiles.has(session.profile_id);
-      control.addEventListener("change", () => {
-        if (control.checked) state.reviewSendProfiles.add(session.profile_id);
-        else state.reviewSendProfiles.delete(session.profile_id);
-        updateReviewSendButton();
-      });
-      const name = document.createElement("button"); name.type = "button"; name.className = "review-profile-name";
-      name.append(text("span", profileDisplayName(session.profile_id)));
-      name.append(text("small", reviewStatusLabel(session.status)));
-      name.addEventListener("click", () => selectReviewSession(session));
-      chip.append(control, name);
-      profiles.append(chip);
-    }
-    card.append(profiles);
-    const selected = group.sessions.find((item) => item.id === state.reviewSelected?.id);
+    pick.append(heading);
+    const profiles = [...new Set(group.sessions.map((item) => item.profile_id))];
+    pick.append(text("small", profiles.length > 1 ? `профилей: ${profiles.length}` : `профиль: ${profileDisplayName(profiles[0])}`, "muted"));
+    pick.addEventListener("click", () => selectReviewSession(selected || group.sessions[0]));
+    card.append(pick);
     if (selected) {
-      const cancel = document.createElement("button");
-      cancel.type = "button"; cancel.className = "secondary compact review-cancel";
-      cancel.textContent = "Убрать"; cancel.disabled = state.reviewBusy;
-      cancel.addEventListener("click", () => cancelReviewSession(selected));
+      const cancel = text("button", "Убрать", "secondary compact review-cancel");
+      cancel.type = "button";
+      cancel.disabled = state.reviewBusy;
+      cancel.addEventListener("click", (event) => { event.stopPropagation(); cancelReviewSession(selected); });
       card.append(cancel);
     }
     return card;
@@ -1248,10 +1992,12 @@ function renderReviewPrompt() {
     return;
   }
   const form = document.createElement("form"); form.className = "review-form";
-  form.append(text("p", plainText(prompt.question.text), "review-question"));
+  form.append(questionHTML(prompt.question.text, "review-question"));
   const kindLabels = { single: "один вариант", multiple: "несколько вариантов", text: "текстовый ответ" };
   const remaining = Array.isArray(detail.questions) ? detail.questions.length : 0;
-  form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · в банке ответа ещё нет${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
+  const bankText = bankAnswerLabel(prompt.question.bank_answer);
+  form.append(text("p", `Тип ответа: ${kindLabels[kind] || kind} · ${bankText ? "в банке уже есть ответ" : "в банке ответа ещё нет"}${remaining > 1 ? ` · осталось вопросов: ${remaining}` : ""}`, "muted"));
+  if (bankText) form.append(text("p", `✓ ответ уже есть в банке: ${bankText}`, "review-bank-hint"));
   const bankLabel = document.createElement("label"); bankLabel.className = "review-option";
   const bankControl = document.createElement("input"); bankControl.type = "checkbox"; bankControl.checked = true; bankControl.id = "review-bank";
   bankLabel.append(bankControl, text("span", "Сохранить ответ в банк — пригодится в других анкетах"));
@@ -1261,12 +2007,14 @@ function renderReviewPrompt() {
     input = document.createElement("textarea"); input.rows = 5; input.placeholder = "Ответ"; input.required = true;
   } else {
     input = document.createElement("div"); input.className = "review-options";
+    const bankOptions = new Set(prompt.question.bank_answer?.selected_options || []);
     for (const option of prompt.question.options || []) {
       const label = document.createElement("label"); label.className = "review-option";
       const control = document.createElement("input");
       control.type = kind === "single" ? "radio" : "checkbox";
       control.name = "review-option"; control.value = option.text;
-      label.append(control, text("span", plainText(option.text)));
+      if (bankOptions.has(option.text)) control.checked = true;
+      label.append(control, questionHTML(option.text));
       input.append(label);
     }
   }
@@ -1286,18 +2034,25 @@ function renderReviewBatch(detail) {
   let unsupported = false;
   for (const question of detail.questions) {
     const block = document.createElement("div"); block.className = "review-question-block";
-    block.append(text("p", plainText(question.text), "review-question"));
+    block.append(questionHTML(question.text, "review-question"));
+    const bankText = bankAnswerLabel(question.bank_answer);
+    if (bankText) {
+      block.append(text("p", `✓ ответ уже есть в банке: ${bankText}`, "review-bank-hint"));
+    }
     let input;
     if (question.kind === "text") {
       input = document.createElement("textarea"); input.rows = 4; input.placeholder = "Ответ"; input.required = true;
+      if (question.bank_answer?.text) input.value = question.bank_answer.text;
     } else if (question.kind === "single" || question.kind === "multiple") {
       input = document.createElement("div"); input.className = "review-options";
+      const bankOptions = new Set(question.bank_answer?.selected_options || []);
       for (const option of question.options || []) {
         const label = document.createElement("label"); label.className = "review-option";
         const control = document.createElement("input");
         control.type = question.kind === "single" ? "radio" : "checkbox";
         control.name = reviewControlName(question.id); control.value = option.text;
-        label.append(control, text("span", plainText(option.text)));
+        if (bankOptions.has(option.text)) control.checked = true;
+        label.append(control, questionHTML(option.text));
         input.append(label);
       }
     } else {
@@ -1423,11 +2178,44 @@ async function controlFailedTask(task, action) {
   }
 }
 
-async function runJob(job) {
+// toggleJobPause pauses or resumes a job: paused schedules stop creating tasks
+// and resume with an immediate run.
+// toggleJobGroupPause pauses or resumes every job of a group.
+async function toggleJobGroupPause(key, group, paused) {
+  state.jobBusy.add(key); renderJobs(state.jobs);
+  try {
+    const result = await enqueue(`/api/v1/jobs/${paused ? "pause" : "resume"}?group=${encodeURIComponent(group)}`);
+    elements.connectionState.textContent = `${group === "system" ? "Системные" : "Пользовательские"} джобы: ${result.paused ? "на паузе" : "снова выполняются"} (затронуто: ${result.affected})`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  } finally {
+    state.jobBusy.delete(key); renderJobs(state.jobs);
+  }
+}
+elements.jobsPauseUser.addEventListener("click", () => toggleJobGroupPause("group:user", "user", !elements.jobsPauseUser.dataset.paused));
+elements.jobsPauseSystem.addEventListener("click", () => toggleJobGroupPause("group:system", "system", !elements.jobsPauseSystem.dataset.paused));
+async function toggleJobPause(job, paused, profileID = "") {
   state.jobBusy.add(job.tag); renderJobs(state.jobs);
   try {
-    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/runs`);
-    elements.connectionState.textContent = `Job ${job.tag}: задача ${result.task_id} поставлена в очередь`;
+    const query = profileID ? `?profile_id=${encodeURIComponent(profileID)}` : "";
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/${paused ? "pause" : "resume"}${query}`);
+    const scope = result.profile_id ? ` (${profileDisplayName(result.profile_id)})` : "";
+    elements.connectionState.textContent = `Job ${job.tag}${scope}: ${result.paused ? "на паузе" : "снова выполняется"}`;
+    await refreshSummary();
+  } catch (error) {
+    elements.connectionState.textContent = error.message;
+  } finally {
+    state.jobBusy.delete(job.tag); renderJobs(state.jobs);
+  }
+}
+async function runJob(job, profileID = "") {
+  state.jobBusy.add(job.tag); renderJobs(state.jobs);
+  try {
+    const query = profileID ? `?profile_id=${encodeURIComponent(profileID)}` : "";
+    const result = await enqueue(`/api/v1/jobs/${encodeURIComponent(job.tag)}/runs${query}`);
+    const scope = profileID ? ` (${profileDisplayName(profileID)})` : "";
+    elements.connectionState.textContent = `Job ${job.tag}${scope}: задача ${result.task_id} поставлена в очередь`;
     await refreshSummary();
   } catch (error) {
     elements.connectionState.textContent = error.message;
@@ -1443,17 +2231,20 @@ async function refreshSummary({ background = false } = {}) {
   if (state.cache.summary) {
     state.summary = state.cache.summary;
     renderAccountSwitcher(state.summary.profiles || []);
-    renderConfigState(state.summary.config_status); renderStats(state.summary); renderTasks(state.summary.tasks || []);
-    renderCampaigns(state.summary.campaigns || []); renderActivity(state.summary.activity || []); renderActivityObservations(state.summary.activity_snapshots || []);
+    renderConfigState(state.summary.config_status); renderTasks(state.queuedTasks || []);
+    renderCampaigns(state.summary.campaigns || []); renderProfiles();
   }
   try {
-    const [summary, failures, jobs] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), refreshApplications()]);
-    state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || [];
+    const [summary, failures, jobs, queued] = await Promise.all([request("/api/v1/dashboard/summary"), request("/api/v1/tasks/failed"), request("/api/v1/jobs"), request("/api/v1/tasks/queued?limit=100"), refreshApplications()]);
+    state.summary = summary; state.cache.summary = summary; state.failedTasks = failures.items || []; state.jobs = jobs.items || []; state.queuedTasks = queued.items || [];
     renderAccountSwitcher(summary.profiles || []);
     renderAuthProfileOptions(summary.profiles || []);
+    refreshProfileCatalog();
+    refreshDrafts();
     updateCaptchaWarning();
-    renderConfigState(summary.config_status); renderStats(summary); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(summary.tasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderActivity(summary.activity || []); renderActivityObservations(summary.activity_snapshots || []); updateMarkAllRead(state.conversationItems);
-    elements.updatedAt.textContent = `Обновлено ${formatDate(summary.generated_at)}`; elements.connectionState.textContent = "Backend доступен"; elements.connectionDot.className = "dot ok";
+    updateAuthWarning();
+    renderConfigState(summary.config_status); renderApplicationFilters(state.applicationObjects); renderApplicationObjects(); renderTasks(state.queuedTasks || []); renderJobs(state.jobs); renderCampaigns(summary.campaigns || []); renderFailedTasks(state.failedTasks); renderProfiles(); updateMarkAllRead(state.conversationItems);
+    elements.connectionState.textContent = `Backend доступен · обновлено ${formatDate(summary.generated_at)}`; elements.connectionDot.className = "dot ok";
   } catch (error) { elements.connectionState.textContent = error.message; elements.connectionDot.className = "dot error"; }
   finally { if (!background) elements.refresh.disabled = false; }
 }
@@ -1557,6 +2348,14 @@ elements.reply.addEventListener("keydown", (event) => {
   event.preventDefault();
   elements.replyForm.requestSubmit();
 });
+elements.accountAuthButton.addEventListener("click", () => {
+  const profile = elements.accountAuth.dataset.profile || "";
+  if (profile) {
+    const select = document.getElementById("auth-profile");
+    if (select) select.value = profile;
+  }
+  document.getElementById("auth-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 elements.markAllRead.addEventListener("click", async () => {
   state.markAllReadBusy = true;
   const previousUnread = state.conversationItems.map((item) => item.unread_count || 0);
@@ -1579,28 +2378,14 @@ elements.markAllRead.addEventListener("click", async () => {
 let applicationSearchTimer;
 elements.applicationSearch.addEventListener("input", () => { clearTimeout(applicationSearchTimer); state.applicationQuery = elements.applicationSearch.value; state.applicationRequest++; state.applicationLoading = true; updateApplicationSelection(); applicationSearchTimer = setTimeout(changeApplicationQuery, 250); });
 elements.applicationSort.addEventListener("change", () => { state.applicationSort = elements.applicationSort.value; changeApplicationQuery(); });
-elements.applicationSelectAll.addEventListener("change", () => { for (const item of visibleApplicationObjects().filter(applicationCanRemove)) { if (elements.applicationSelectAll.checked) state.selectedApplications.add(item.id); else state.selectedApplications.delete(item.id); } renderApplicationObjects(); });
-elements.applicationBulkAction.addEventListener("change", () => updateApplicationSelection());
-elements.applicationRunAction.addEventListener("click", async () => {
-  const ids = [...state.selectedApplications];
-  if (!ids.length || elements.applicationBulkAction.value !== "remove" || state.applicationActionBusy) return;
-  state.applicationActionBusy = true; updateApplicationSelection();
-  elements.applicationSelectionState.textContent = `Создаю задачи: ${ids.length}…`;
-  try {
-    const result = await enqueue("/api/v1/applications/remove", { application_ids: ids });
-    state.selectedApplications.clear(); elements.applicationBulkAction.value = "";
-    const failures = (result.results || []).filter((item) => item.error);
-    state.applicationActionMessage = `Создано задач: ${result.created}. Уже в очереди: ${(result.tasks || []).length - result.created}.${failures.length ? ` Не поставлены: ${failures.length} — объекты недоступны или ещё обрабатываются.` : ""}`;
-    await refreshSummary();
-  } catch (error) { state.applicationActionMessage = error.message; }
-  finally { state.applicationActionBusy = false; updateApplicationSelection(); }
-});
 elements.accountCaptchaButton.addEventListener("click", () => startCaptchaCheck(elements.accountCaptcha.dataset.profile || state.account));
 elements.browserCheckSubmit.addEventListener("click", submitBrowserCheckAnswer);
 elements.browserCheckAnswer.addEventListener("keydown", (event) => { if (event.key === "Enter") submitBrowserCheckAnswer(); });
 elements.browserCheckRefreshImage.addEventListener("click", () => { if (state.browserCheck) elements.browserCheckImage.src = browserCheckImageURL(state.browserCheck); });
 elements.browserCheckCancel.addEventListener("click", cancelBrowserCheck);
-elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.selectedApplications.clear(); state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; elements.applicationBulkAction.value = ""; changeApplicationQuery(); });
+elements.applicationRemoveSelected?.addEventListener("click", removeSelectedApplications);
+elements.applicationClearSelection?.addEventListener("click", () => { state.selectedApplications.clear(); updateApplicationSelection(); renderApplicationObjects(); });
+elements.applicationReset.addEventListener("click", () => { state.applicationFilter = ""; state.applicationQuery = ""; state.applicationSort = "updated_desc"; state.applicationActionMessage = ""; elements.applicationSearch.value = ""; elements.applicationSort.value = state.applicationSort; changeApplicationQuery(); });
 elements.conversationSearch.addEventListener("input", () => { state.conversationQuery = elements.conversationSearch.value; clearTimeout(state.conversationSearchTimer); state.conversationSearchTimer = setTimeout(() => refreshConversations(), 250); });
 elements.conversationFilter.addEventListener("change", () => { state.conversationFilter = elements.conversationFilter.value; refreshConversations(); });
 elements.conversationSort.addEventListener("change", () => { state.conversationSort = elements.conversationSort.value; renderConversations(state.conversationItems); });
@@ -1609,6 +2394,14 @@ if (applicationTableScroll) applicationTableScroll.addEventListener("scroll", ()
   if (state.applicationLoading || applicationTableScroll.scrollTop + applicationTableScroll.clientHeight < applicationTableScroll.scrollHeight - 240) return;
   if (state.applicationObjects.length >= state.applicationTotal) return;
   refreshApplications({ append: true });
+});
+// The review list loads the next page when the operator scrolls to the bottom,
+// the same way the applications and conversations lists do.
+elements.reviewSessions.addEventListener("scroll", () => {
+  const list = elements.reviewSessions;
+  if (!state.reviewHasMore || state.reviewLoading) return;
+  if (list.scrollTop + list.clientHeight < list.scrollHeight - 240) return;
+  refreshReviewSessions({ append: true });
 });
 elements.conversations.addEventListener("scroll", () => {
   const list = elements.conversations;
@@ -1636,8 +2429,10 @@ elements.reviewSearch.addEventListener("input", () => {
     refreshReviewSessions();
   }, 250);
 });
-elements.reviewMore.addEventListener("click", () => refreshReviewSessions({ append: true }));
 refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); setInterval(() => { refreshSummary({ background: true }); refreshConversations(); refreshProfileResources(); refreshReviewSessions(); }, 30_000);
+// The conversation list drives unread work, so it polls on its own faster
+// cadence; the SSE above only shortens the latency further.
+setInterval(() => { if (!document.hidden) refreshConversations(); }, 10_000);
 
 // Server-sent change notifications replace most of the polling latency; the
 // interval above stays as a safety net.
@@ -1658,9 +2453,19 @@ refreshVersion(); refreshSummary(); refreshConversations(); refreshProfileResour
       }
     }, 1200);
   });
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshSummary(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshSummary(); refreshConversations(); } });
   stream.addEventListener("error", () => { /* EventSource reconnects on its own */ });
 })();
+
+// The profile onboarding state mirrors the backend drafts: the active draft
+// drives the shared login wizard, the primary map remembers the resume choice.
+if (!state.draftLabels) state.draftLabels = new Map();
+if (!state.draftPrimary) state.draftPrimary = new Map();
+if (!state.drafts) state.drafts = [];
+if (!state.activeDraft) state.activeDraft = "";
+if (!state.profileCatalog) state.profileCatalog = [];
+if (!state.expandedJobs) state.expandedJobs = new Set();
+if (!state.expandedProfiles) state.expandedProfiles = new Set();
 
 function renderAuthProfileOptions(profiles = []) {
   const select = document.getElementById("auth-profile");
@@ -1739,6 +2544,9 @@ function renderAuthProfileOptions(profiles = []) {
         : "Вход выполнен. Сессия профиля сохранена.";
       refreshSummary();
       refreshProfileResources();
+      if (state.activeDraft && state.activeDraft === session.profile_id) {
+        finishDraftSession(session.profile_id);
+      }
     } else if (session.status === "failed") {
       resultLabel.textContent = `Вход не выполнен${session.failure_message ? `: ${session.failure_message}` : ""}. Можно начать заново.`;
     } else if (session.status === "expired") {
@@ -1764,11 +2572,13 @@ function renderAuthProfileOptions(profiles = []) {
     stream.addEventListener("error", () => setState("поток прерван, нажмите «Обновить статус»"));
   };
 
-  startButton.addEventListener("click", async () => {
-    const profile = profileSelect.value;
+  // beginAuth starts one interactive session and hands it to the shared
+  // wizard. The profile onboarding block calls it for a draft tag, so both
+  // entry points drive the same steps.
+  const beginAuth = async (profile) => {
     if (!profile) {
       setState("нет доступных профилей — проверьте конфигурацию");
-      return;
+      return false;
     }
     setState("создание сессии…");
     const response = await fetch("/api/v1/auth/sessions", {
@@ -1778,12 +2588,15 @@ function renderAuthProfileOptions(profiles = []) {
     });
     if (!response.ok) {
       setState(`ошибка создания сессии: ${response.status}`);
-      return;
+      return false;
     }
     const session = await response.json();
     renderSession(session);
     subscribe(session.id);
-  });
+    return true;
+  };
+  state.startAuthSession = beginAuth;
+  startButton.addEventListener("click", () => beginAuth(profileSelect.value));
 
   refreshButton.addEventListener("click", async () => {
     if (!sessionId) return;
@@ -1797,6 +2610,17 @@ function renderAuthProfileOptions(profiles = []) {
 
   captchaRefresh.addEventListener("click", () => {
     if (sessionId) setCaptcha(sessionId);
+  });
+  // A backend restart or a transient failure must not leave the operator with
+  // a permanently broken captcha: retry the image a few times on its own.
+  let captchaAttempts = 0;
+  captcha.addEventListener("load", () => { captchaAttempts = 0; });
+  captcha.addEventListener("error", () => {
+    if (captchaRow.hidden || !sessionId || captchaAttempts >= 5) return;
+    captchaAttempts += 1;
+    globalThis.setTimeout(() => {
+      if (!captchaRow.hidden && sessionId) setCaptcha(sessionId);
+    }, 2_000 * captchaAttempts);
   });
 
   submitButton.addEventListener("click", async () => {
@@ -1844,4 +2668,424 @@ function renderAuthProfileOptions(profiles = []) {
     }
     renderSession(await response.json());
   });
+})();
+
+// --- профили: каталог и онбординг через черновики -------------------------
+
+async function refreshProfileCatalog() {
+  try {
+    const payload = await request("/api/v1/profiles");
+    state.profileCatalog = payload.items || [];
+  } catch (_) {
+    return;
+  }
+  renderProfiles();
+}
+
+function draftIdentityLabel(draft) {
+  if (!draft.identity) return "";
+  const parts = [draft.identity.display_name, draft.identity.email, draft.identity.phone].map(plainText).filter(Boolean);
+  if (draft.identity.account_hash) parts.push(`аккаунт ${draft.identity.account_hash}`);
+  return parts.join(" · ");
+}
+
+function draftStatusLabel(status) {
+  return { pending: "ожидает входа", ready: "готов к сохранению", applied: "сохранён (нужен перезапуск)" }[status] || status || "—";
+}
+
+function renderDrafts() {
+  const container = document.getElementById("draft-rows");
+  if (!container) return;
+  const drafts = state.drafts || [];
+  if (!drafts.length) {
+    const row = document.createElement("tr");
+    const cell = text("td", "Черновиков нет.", "muted");
+    cell.colSpan = 4;
+    row.append(cell);
+    container.replaceChildren(row);
+    return;
+  }
+  const rows = [];
+  for (const draft of drafts) {
+    const row = document.createElement("tr");
+    row.className = "draft-row";
+    row.append(text("td", draft.tag));
+    row.append(text("td", draftStatusLabel(draft.status)));
+    row.append(text("td", draft.identity ? draftIdentityLabel(draft) || "данные пусты" : "—"));
+    const actions = document.createElement("td");
+    actions.className = "task-actions";
+    if (draft.status !== "applied") {
+      const login = text("button", draft.status === "pending" ? "Продолжить вход" : "Войти заново", "secondary compact");
+      login.type = "button";
+      login.addEventListener("click", (event) => { event.stopPropagation(); startDraftSession(draft.tag); });
+      actions.append(login);
+      const refresh = text("button", "Снять данные", "secondary compact");
+      refresh.type = "button";
+      refresh.addEventListener("click", (event) => { event.stopPropagation(); captureDraft(draft.tag); });
+      actions.append(refresh);
+    }
+    if (draft.status === "ready") {
+      const save = text("button", "Сохранить профиль");
+      save.type = "button";
+      save.addEventListener("click", (event) => { event.stopPropagation(); applyDraft(draft.tag); });
+      actions.append(save);
+    }
+    const remove = text("button", "Удалить", "secondary compact");
+    remove.type = "button";
+    remove.addEventListener("click", (event) => { event.stopPropagation(); deleteDraft(draft.tag); });
+    actions.append(remove);
+    row.append(actions);
+    rows.push(row);
+
+    const resumes = draft.resumes || [];
+    if (draft.status === "ready" && resumes.length) {
+      const detail = document.createElement("tr");
+      detail.className = "draft-detail-row";
+      const cell = document.createElement("td");
+      cell.colSpan = 4;
+      cell.append(text("span", "Основное резюме: ", "muted"));
+      for (const resume of resumes) {
+        const label = document.createElement("label");
+        label.className = "draft-resume";
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = `draft-primary-${draft.tag}`;
+        radio.value = resume.id;
+        radio.checked = (state.draftPrimary.get(draft.tag) || resumes[0].id) === resume.id;
+        radio.addEventListener("change", () => state.draftPrimary.set(draft.tag, resume.id));
+        label.append(radio, text("span", resume.title ? `${resume.title} (${resume.id})` : resume.id));
+        cell.append(label);
+      }
+      detail.append(cell);
+      rows.push(detail);
+    }
+  }
+  container.replaceChildren(...rows);
+}
+
+function setDraftStep(message) {
+  const element = document.getElementById("draft-step");
+  if (element) element.textContent = message;
+}
+
+async function refreshDrafts() {
+  try {
+    const payload = await request("/api/v1/profile-drafts");
+    state.drafts = payload.items || [];
+  } catch (_) {
+    return;
+  }
+  renderDrafts();
+}
+
+async function startDraftSession(tag) {
+  if (!tag) {
+    const input = document.getElementById("draft-tag");
+    tag = (input?.value || "").trim().toLowerCase();
+  }
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag)) {
+    setDraftStep("Тег должен быть коротким: строчные латинские буквы, цифры, дефис или подчёркивание.");
+    return;
+  }
+  state.draftLabels.set(tag, tag);
+  state.activeDraft = tag;
+  setDraftStep(`создаю сессию для «${tag}»…`);
+  const started = typeof state.startAuthSession === "function" ? await state.startAuthSession(tag) : false;
+  if (!started) {
+    setDraftStep(`не удалось начать вход для «${tag}»; попробуйте ещё раз.`);
+    state.activeDraft = "";
+    return;
+  }
+  setDraftStep("вход начат: отвечайте на шаги в блоке «Вход в HH».");
+  const section = document.getElementById("auth-section");
+  if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function captureDraft(tag) {
+  setDraftStep(`снимаю данные аккаунта «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/refresh`, { method: "POST" });
+    setDraftStep("данные аккаунта обновлены.");
+  } catch (error) {
+    setDraftStep(`не удалось снять данные: ${error.message}`);
+  }
+  await refreshDrafts();
+}
+
+async function finishDraftSession(tag) {
+  state.activeDraft = "";
+  setDraftStep(`вход выполнен, снимаю данные аккаунта «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/refresh`, { method: "POST" });
+    setDraftStep("вход выполнен: проверьте имя, выберите основное резюме и сохраните профиль.");
+  } catch (error) {
+    setDraftStep(`вход выполнен, но данные аккаунта не снялись: ${error.message}. Нажмите «Снять данные» в черновике.`);
+  }
+  await refreshDrafts();
+  const container = document.getElementById("draft-rows");
+  if (container) container.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function applyDraft(tag) {
+  const primary = state.draftPrimary.get(tag) || "";
+  setDraftStep(`сохраняю профиль «${tag}»…`);
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ primary_resume: primary }),
+    });
+  } catch (error) {
+    setDraftStep(`не удалось сохранить профиль: ${error.message}`);
+    return;
+  }
+  await refreshDrafts();
+  await refreshProfileCatalog();
+  setDraftStep(`профиль «${tag}» сохранён, жду подключения (перезагрузка конфига)…`);
+  await waitForProfileBinding(tag);
+}
+
+// waitForProfileBinding waits for the config reload to bind the new profile:
+// the fragment appears in the catalog without a backend restart.
+async function waitForProfileBinding(tag) {
+  const started = Date.now();
+  while (Date.now() - started < 60_000) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2_000));
+    await refreshProfileCatalog();
+    if ((state.profileCatalog || []).some((entry) => entry.tag === tag)) {
+      setDraftStep(`профиль «${tag}» подключён без перезапуска.`);
+      await refreshSummary();
+      await refreshDrafts();
+      return;
+    }
+  }
+  setDraftStep(`профиль «${tag}» сохранён, но за минуту не появился в каталоге — проверьте статус перезагрузки конфига.`);
+}
+
+async function deleteDraft(tag) {
+  if (!globalThis.confirm(`Удалить черновик «${tag}»? Файл сессии останется на диске.`)) return;
+  try {
+    await request(`/api/v1/profile-drafts/${encodeURIComponent(tag)}`, { method: "DELETE" });
+    setDraftStep(`черновик «${tag}» удалён.`);
+  } catch (error) {
+    setDraftStep(`не удалось удалить черновик: ${error.message}`);
+  }
+  await refreshDrafts();
+}
+
+(() => {
+  const startButton = document.getElementById("draft-start");
+  if (!startButton) return;
+  const tagInput = document.getElementById("draft-tag");
+  const refreshButton = document.getElementById("profiles-refresh");
+  startButton.addEventListener("click", async () => {
+    const tag = (tagInput?.value || "").trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag)) {
+      setDraftStep("Тег должен быть коротким: строчные латинские буквы, цифры, дефис или подчёркивание.");
+      return;
+    }
+    setDraftStep(`создаю черновик «${tag}»…`);
+    try {
+      await request("/api/v1/profile-drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+    } catch (error) {
+      setDraftStep(`не удалось создать черновик: ${error.message}`);
+      return;
+    }
+    if (tagInput) tagInput.value = "";
+    await refreshDrafts();
+    await startDraftSession(tag);
+  });
+  refreshButton?.addEventListener("click", () => { refreshProfileCatalog(); refreshDrafts(); });
+  refreshProfileCatalog();
+  refreshDrafts();
+})();
+
+// --- редактор джоб: фрагмент в profile-store, применение через reload ------
+
+function jobEditorValue(id) {
+  const element = document.getElementById(id);
+  return element ? String(element.value || "").trim() : "";
+}
+
+function jobEditorChecked(id) {
+  const element = document.getElementById(id);
+  return !element || element.checked;
+}
+
+function jobEditorList(id) {
+  return jobEditorValue(id).split(",").map((value) => value.trim()).filter(Boolean);
+}
+
+// buildJobEditorJSON assembles a campaign job from the helper fields; the
+// textarea stays editable, so any other action type is still reachable.
+function buildJobEditorJSON() {
+  const tag = jobEditorValue("job-editor-tag");
+  if (!tag) {
+    setJobEditorStep("Укажите тег джобы.");
+    return;
+  }
+  const job = {
+    tag,
+    enabled: jobEditorChecked("job-editor-enabled"),
+    concurrency: "forbid",
+    triggers: [{ type: "cron", expression: jobEditorValue("job-editor-cron") || "0 * * * *" }],
+    action: { type: "application.campaign" },
+  };
+  const description = jobEditorValue("job-editor-description");
+  if (description) job.description = description;
+  const profiles = jobEditorList("job-editor-profiles");
+  if (profiles.length) job.action.profiles = profiles;
+  const routes = jobEditorList("job-editor-routes");
+  if (routes.length) job.action.routes = routes;
+  const target = Number(jobEditorValue("job-editor-target"));
+  if (target > 0) job.action.target_successful = target;
+  const inflight = Number(jobEditorValue("job-editor-inflight"));
+  if (inflight > 0) job.action.max_in_flight = inflight;
+  const textarea = document.getElementById("job-editor-json");
+  if (textarea) textarea.value = JSON.stringify(job, null, 2);
+  setJobEditorStep("JSON собран — проверьте его и сохраните.");
+}
+
+function setJobEditorStep(message) {
+  const element = document.getElementById("job-editor-step");
+  if (element) element.textContent = message;
+}
+
+// openJobEditor fills the panel from an existing job descriptor or clears it
+// for a new one.
+function openJobEditor(job = null) {
+  const panel = document.getElementById("job-editor");
+  if (!panel) return;
+  state.jobEditorTag = job ? job.tag : "";
+  const title = document.getElementById("job-editor-title");
+  if (title) title.textContent = job ? `Джоба ${job.tag}` : "Новая джоба";
+  const set = (id, value) => { const element = document.getElementById(id); if (element) element.value = value; };
+  set("job-editor-tag", job ? job.tag : "");
+  set("job-editor-description", job ? job.description || "" : "");
+  set("job-editor-cron", job && job.schedules && job.schedules[0] ? job.schedules[0].expression || "0 * * * *" : "0 * * * *");
+  set("job-editor-profiles", job ? (job.profiles || [job.profile_id]).filter(Boolean).join(", ") : "");
+  const payload = job && job.payload ? job.payload : {};
+  set("job-editor-routes", Array.isArray(payload.routes) ? payload.routes.join(", ") : "");
+  set("job-editor-target", payload.target_successful ? String(payload.target_successful) : "200");
+  set("job-editor-inflight", payload.max_in_flight ? String(payload.max_in_flight) : "2");
+  const enabled = document.getElementById("job-editor-enabled");
+  if (enabled) enabled.checked = job ? job.enabled !== false : true;
+  const textarea = document.getElementById("job-editor-json");
+  if (textarea) textarea.value = job ? JSON.stringify(jobEditorJobDefinition(job), null, 2) : "";
+  const remove = document.getElementById("job-editor-delete");
+  if (remove) remove.hidden = !job;
+  panel.hidden = false;
+  setJobEditorStep(job
+    ? "Правьте JSON и сохраните — фрагмент заменится."
+    : "Заполните поля и нажмите «Собрать JSON» — его можно править вручную.");
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// jobEditorJobDefinition rebuilds the config-shaped definition of an existing
+// job, so the editor starts from the same document it will save.
+function jobEditorJobDefinition(job) {
+  const definition = {
+    tag: job.tag,
+    enabled: job.enabled !== false,
+    concurrency: "forbid",
+    triggers: (job.schedules || []).map((schedule) => ({
+      type: "cron", expression: schedule.expression || "0 * * * *",
+    })),
+    action: { type: job.task_type },
+  };
+  if (job.description) definition.description = job.description;
+  if (!definition.triggers.length) definition.triggers = [{ type: "cron", expression: "0 * * * *" }];
+  const payload = job.payload || {};
+  if (job.task_type === "application.campaign") {
+    definition.action.profiles = job.profiles || [];
+    definition.action.routes = payload.routes || [];
+    if (payload.target_successful) definition.action.target_successful = payload.target_successful;
+    if (payload.max_in_flight) definition.action.max_in_flight = payload.max_in_flight;
+  } else {
+    definition.action.profiles = job.profiles || [];
+  }
+  return definition;
+}
+
+function closeJobEditor() {
+  const panel = document.getElementById("job-editor");
+  if (panel) panel.hidden = true;
+  state.jobEditorTag = "";
+}
+
+async function saveJobEditor() {
+  const textarea = document.getElementById("job-editor-json");
+  const raw = textarea ? textarea.value.trim() : "";
+  if (!raw) {
+    setJobEditorStep("JSON пуст: заполните поля и нажмите «Собрать JSON».");
+    return;
+  }
+  let job = null;
+  try {
+    job = JSON.parse(raw);
+  } catch (error) {
+    setJobEditorStep(`JSON не разобран: ${error.message}`);
+    return;
+  }
+  const tag = String(job.tag || "").trim();
+  if (!tag) {
+    setJobEditorStep("В JSON нужен tag.");
+    return;
+  }
+  const method = state.jobEditorTag === tag ? "PUT" : "POST";
+  const path = method === "PUT" ? `/api/v1/jobs/${encodeURIComponent(tag)}` : "/api/v1/jobs";
+  setJobEditorStep(`сохраняю «${tag}»…`);
+  try {
+    await request(path, { method, headers: { "Content-Type": "application/json" }, body: raw });
+  } catch (error) {
+    setJobEditorStep(`не удалось сохранить: ${error.message}`);
+    return;
+  }
+  setJobEditorStep(`джоба «${tag}» сохранена, жду применения (перезагрузка конфига)…`);
+  await waitForJobChange(tag, true);
+}
+
+async function deleteEditedJob() {
+  const tag = state.jobEditorTag;
+  if (!tag) return;
+  if (!globalThis.confirm(`Удалить джобу «${tag}»? Файл фрагмента будет удалён, расписание снимется.`)) return;
+  setJobEditorStep(`удаляю «${tag}»…`);
+  try {
+    await request(`/api/v1/jobs/${encodeURIComponent(tag)}`, { method: "DELETE" });
+  } catch (error) {
+    setJobEditorStep(`не удалось удалить: ${error.message}`);
+    return;
+  }
+  setJobEditorStep(`джоба «${tag}» удалена, жду применения…`);
+  await waitForJobChange(tag, false);
+}
+
+// waitForJobChange polls the job list until the reload applies the change.
+async function waitForJobChange(tag, present) {
+  const started = Date.now();
+  while (Date.now() - started < 60_000) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 2_000));
+    await refreshSummary();
+    const found = (state.jobs || []).some((item) => item.tag === tag);
+    if (found === present) {
+      setJobEditorStep(present ? `джоба «${tag}» применена.` : `джоба «${tag}» больше не запускается.`);
+      if (!present) closeJobEditor();
+      return;
+    }
+  }
+  setJobEditorStep("изменение не применилось за минуту — проверьте статус перезагрузки конфига.");
+}
+
+(() => {
+  const open = document.getElementById("job-editor-open");
+  if (!open) return;
+  open.addEventListener("click", () => openJobEditor(null));
+  document.getElementById("job-editor-build")?.addEventListener("click", buildJobEditorJSON);
+  document.getElementById("job-editor-save")?.addEventListener("click", saveJobEditor);
+  document.getElementById("job-editor-delete")?.addEventListener("click", deleteEditedJob);
+  document.getElementById("job-editor-cancel")?.addEventListener("click", closeJobEditor);
 })();

@@ -98,6 +98,107 @@ func (gate fixedGate) Allow(context.Context, scheduler.Definition) (bool, error)
 	return gate.allow, gate.err
 }
 
+func TestSchedulerRunsIntervalJobsFromTheirOwnCadence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	clock := &mutableClock{now: time.Date(2026, 9, 27, 8, 0, 0, 0, time.UTC)}
+	service, err := scheduler.New(store, store, clock, &sequenceIDs{})
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	payload, _ := json.Marshal(map[string]string{"profile_id": "primary"})
+	definition := scheduler.Definition{
+		JobTag: "state-harvest", TriggerIndex: 0, Interval: 30 * time.Minute,
+		ActionType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary", Payload: payload,
+	}
+	if err := service.Sync(ctx, []scheduler.Definition{definition}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	// The first run lands one interval after the sync, not on a calendar edge.
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 0 {
+		t.Fatalf("early reconcile: count=%d err=%v", count, err)
+	}
+	clock.now = clock.now.Add(31 * time.Minute)
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
+		t.Fatalf("interval reconcile: count=%d err=%v", count, err)
+	}
+	// The next run keeps the cadence from the reconcile moment.
+	entries, err := store.Schedules(ctx)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("schedules=%#v err=%v", entries, err)
+	}
+	if want := clock.now.Add(30 * time.Minute); !entries[0].NextRunAt.Equal(want) {
+		t.Fatalf("next run = %s, want %s", entries[0].NextRunAt, want)
+	}
+	if entries[0].Interval != 30*time.Minute {
+		t.Fatalf("interval was not persisted: %#v", entries[0])
+	}
+}
+
+type mutablePauses struct{ items []scheduler.Pause }
+
+func (pauses *mutablePauses) JobPauses(context.Context) ([]scheduler.Pause, error) {
+	return pauses.items, nil
+}
+
+func TestSchedulerSkipsPausedJobsUntilResumed(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	clock := &mutableClock{now: time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)}
+	service, err := scheduler.New(store, store, clock, &sequenceIDs{})
+	if err != nil {
+		t.Fatalf("new scheduler: %v", err)
+	}
+	pauses := &mutablePauses{items: []scheduler.Pause{{JobTag: "system.state.chats", ProfileID: "primary", Reason: "operator"}}}
+	service.SetPauseStore(pauses)
+	payload, _ := json.Marshal(map[string]string{"profile_id": "primary"})
+	if err := service.Sync(ctx, []scheduler.Definition{{
+		JobTag: "system.state.chats", TriggerIndex: 0, Interval: 10 * time.Minute,
+		ActionType: core.TaskConversationDiscover, Platform: "hh", ProfileID: "primary", Payload: payload,
+	}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	clock.now = clock.now.Add(11 * time.Minute)
+	if _, err := service.ReconcileDue(ctx); err != nil {
+		t.Fatalf("paused reconcile: %v", err)
+	}
+	if lease, found, err := store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "paused-worker", TaskType: core.TaskConversationDiscover, Now: clock.now, LeaseDuration: time.Minute,
+	}); err != nil || found {
+		t.Fatalf("paused job created a task: lease=%#v found=%t err=%v", lease, found, err)
+	}
+	// A paused schedule keeps its cadence instead of piling up in the due
+	// queue: the next run is one interval later, and resuming runs it then.
+	entries, err := store.Schedules(ctx)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("schedules=%#v err=%v", entries, err)
+	}
+	if want := clock.now.Add(10 * time.Minute); !entries[0].NextRunAt.Equal(want) {
+		t.Fatalf("paused schedule next run=%s want=%s", entries[0].NextRunAt, want)
+	}
+	pauses.items = nil
+	clock.now = clock.now.Add(11 * time.Minute)
+	if count, err := service.ReconcileDue(ctx); err != nil || count != 1 {
+		t.Fatalf("resumed reconcile: count=%d err=%v", count, err)
+	}
+}
+
 func TestSchedulerGateSkipsOccurrenceWithoutCreatingTask(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "job-agent.db")

@@ -18,15 +18,18 @@ import (
 type Definition struct {
 	JobTag       string
 	TriggerIndex int
-	Expression   string
-	Timezone     string
-	ActionType   core.TaskType
-	Platform     core.Platform
-	ProfileID    core.ProfileID
-	Payload      json.RawMessage
-	Priority     core.TaskPriority
-	JitterMin    time.Duration
-	JitterMax    time.Duration
+	// Expression and Timezone describe a cron schedule; Interval describes a
+	// timer schedule. Exactly one of the two forms must be set.
+	Expression string
+	Timezone   string
+	Interval   time.Duration
+	ActionType core.TaskType
+	Platform   core.Platform
+	ProfileID  core.ProfileID
+	Payload    json.RawMessage
+	Priority   core.TaskPriority
+	JitterMin  time.Duration
+	JitterMax  time.Duration
 }
 
 type Entry struct {
@@ -46,6 +49,21 @@ type IDGenerator interface {
 	NewID(prefix string) (string, error)
 }
 
+// Pause is one paused (job, profile) pair.
+type Pause struct {
+	JobTag    string
+	ProfileID core.ProfileID
+	Reason    string
+	CreatedAt time.Time
+}
+
+// PauseStore lists paused (job, profile) pairs. A paused schedule is skipped
+// and stays due, so resuming runs it right away instead of waiting for the
+// next occurrence.
+type PauseStore interface {
+	JobPauses(ctx context.Context) ([]Pause, error)
+}
+
 // Gate decides whether a due schedule may create its task. A denied entry is
 // skipped for this occurrence while the schedule still advances: the next cron
 // time gets a fresh decision.
@@ -54,11 +72,18 @@ type Gate interface {
 }
 
 type Scheduler struct {
-	store Store
-	queue broker.TaskQueue
-	clock Clock
-	ids   IDGenerator
-	gate  Gate
+	store  Store
+	queue  broker.TaskQueue
+	clock  Clock
+	ids    IDGenerator
+	gate   Gate
+	pauses PauseStore
+}
+
+// SetPauseStore attaches the store that reports paused jobs. Without it every
+// due schedule runs.
+func (scheduler *Scheduler) SetPauseStore(pauses PauseStore) {
+	scheduler.pauses = pauses
 }
 
 // SetGate attaches an optional gate that can pause scheduled task creation,
@@ -96,11 +121,33 @@ func (scheduler *Scheduler) ReconcileDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	paused := map[string]struct{}{}
+	if scheduler.pauses != nil {
+		items, err := scheduler.pauses.JobPauses(ctx)
+		if err != nil {
+			return 0, err
+		}
+		for _, item := range items {
+			paused[item.JobTag+"\x00"+string(item.ProfileID)] = struct{}{}
+		}
+	}
 	advanced := 0
 	for _, entry := range entries {
 		schedule, err := parseSchedule(entry.Definition)
 		if err != nil {
 			return advanced, err
+		}
+		if _, isPaused := paused[entry.JobTag+"\x00"+string(entry.ProfileID)]; isPaused {
+			// A paused schedule keeps its cadence instead of piling up in the
+			// due queue; resuming triggers the job explicitly.
+			changed, err := scheduler.store.AdvanceSchedule(ctx, entry.JobTag, entry.TriggerIndex, entry.NextRunAt, schedule.Next(now), now)
+			if err != nil {
+				return advanced, err
+			}
+			if changed {
+				advanced++
+			}
+			continue
 		}
 		next := schedule.Next(now)
 		active, err := scheduler.store.HasActiveScheduledTask(ctx, entry.JobTag, entry.ProfileID)
@@ -159,9 +206,15 @@ func (scheduler *Scheduler) enqueue(ctx context.Context, entry Entry, now time.T
 }
 
 func (definition Definition) Validate() error {
-	if definition.JobTag == "" || definition.TriggerIndex < 0 || definition.Expression == "" || definition.Timezone == "" ||
+	if definition.JobTag == "" || definition.TriggerIndex < 0 ||
 		definition.ActionType == "" || definition.Platform == "" || definition.ProfileID == "" || len(definition.Payload) == 0 || !json.Valid(definition.Payload) {
 		return errors.New("scheduled job definition is incomplete")
+	}
+	switch {
+	case definition.Interval > 0 && definition.Expression == "":
+	case definition.Interval == 0 && definition.Expression != "" && definition.Timezone != "":
+	default:
+		return errors.New("scheduled job requires either a cron expression with timezone or an interval")
 	}
 	if definition.JitterMin < 0 || definition.JitterMax < definition.JitterMin {
 		return errors.New("scheduled job has invalid jitter bounds")
@@ -173,7 +226,19 @@ func (definition Definition) Validate() error {
 	return err
 }
 
+// intervalSchedule implements cron.Schedule for timer jobs: the next run is one
+// interval after the moment the scheduler asks, so the cadence does not depend
+// on calendar boundaries.
+type intervalSchedule struct{ every time.Duration }
+
+func (schedule intervalSchedule) Next(now time.Time) time.Time {
+	return now.Add(schedule.every)
+}
+
 func parseSchedule(definition Definition) (cron.Schedule, error) {
+	if definition.Interval > 0 {
+		return intervalSchedule{every: definition.Interval}, nil
+	}
 	if _, err := time.LoadLocation(definition.Timezone); err != nil {
 		return nil, fmt.Errorf("job %s timezone: %w", definition.JobTag, err)
 	}

@@ -7,9 +7,11 @@ Job Agent управляется декларативной конфигурац
 удобства: без них достаточно конфига и одного сохранённого входа.
 
 Готовый стартовый конфиг лежит в
-[`deploy/config.example.json`](https://github.com/Darkon13/job-agent/blob/main/deploy/config.example.json): один профиль,
-два поиска с fallback, ежедневное автоподнятие резюме и ежедневная рассылка
-откликов. Ниже — как его запустить и что означают блоки.
+[`deploy/config.example.json`](https://github.com/Darkon13/job-agent/blob/main/deploy/config.example.json):
+один профиль, два поиска с fallback и ежедневная рассылка откликов; подъём
+резюме и обслуживание сервис берёт на себя системными джобами. Боевой пример с
+политиками обслуживания — `deploy/config.full.example.json`. Ниже — как его
+запустить и что означают блоки.
 
 ## 1. Настройте конфиг
 
@@ -30,10 +32,11 @@ mkdir -p data
 ```jsonc
 {
   "adapters": [{"tag": "hh-main", "type": "hh"}],
+  "profile_store": {"dir": "/data/profile-store"},   // сюда дашборд пишет новые профили
   "profiles": [{
     "tag": "main",                       // ваш тег профиля
     "adapter": "hh-main",
-    "resume": "replace-with-hh-resume-id",
+    "resumes": [{"id": "replace-with-hh-resume-id", "primary": true}],
     "state_file": "/data/profiles/main.json",
     "applications": {
       "mode": "dry_run",                 // сначала безопасный режим
@@ -58,33 +61,14 @@ mkdir -p data
       "adapter": "hh-main",
       "profiles": ["main"],
       "priority": 50,
-      "query": {"source": "similar_resume", "resume": "replace-with-hh-resume-id", "area": ["1"]}
+      "query": {"source": "similar_resume", "resume": "$profile", "area": ["1"]}
     }
   ],
   "jobs": [
     {
-      "tag": "touch-main-resume",
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "0 10 * * *",
-          "timezone": "Europe/Moscow"
-        }
-      ],
-      "action": {
-        "type": "resume.touch",
-        "profile": "main"
-      }
-    },
-    {
       "tag": "daily-applications",
-      "triggers": [
-        {
-          "type": "cron",
-          "expression": "30 9 * * *",
-          "timezone": "Europe/Moscow"
-        }
-      ],
+      "concurrency": "forbid",
+      "triggers": [{"type": "cron", "expression": "30 9 * * *"}],
       "action": {
         "type": "application.campaign",
         "profiles": ["main"],
@@ -96,6 +80,18 @@ mkdir -p data
   ]
 }
 ```
+
+Конфиг короткий, потому что остальное сервис выводит сам:
+
+- `timezone`, `misfire` и `jitter` триггера подставляются по умолчанию
+  (`Europe/Moscow`, `run_once`, `1m..10m`), явные значения нужны только для
+  другого поведения;
+- подъём резюме, синхронизация чатов и состояний откликов, снимки метрик и
+  обновление сессии — системные джобы из политик профиля, а не записи в `jobs`
+  (см. [справочник](reference/configuration/profiles.md#системные-джобы-профиля));
+- `"resume": "$profile"` в `similar_resume` разворачивается в резюме того
+  профиля, для которого запущен поиск, поэтому один поиск обслуживает несколько
+  аккаунтов; `$all` разворачивает его по всем резюме профиля.
 
 Что здесь происходит:
 
@@ -194,7 +190,24 @@ JOB_AGENT_CONFIG_DIR=./deploy JOB_AGENT_CONFIG_NAME=config.json JOB_AGENT_DATA_D
 ```
 
 Профиль `browser` добавляет worker для входа и browser-only операций. Без него
-сервис тоже работает, но login и анкеты будут недоступны.
+сервис тоже работает, но login и анкеты будут недоступны. Стек запускает именно
+`deploy/config.json` (имя переопределяется `JOB_AGENT_CONFIG_NAME`), поэтому
+копия из шага 1 обязательна: `config.example.json` остаётся шаблоном.
+
+Останавливать стек нужно тем же профилем:
+
+```sh
+docker compose --profile browser down
+```
+
+`down` без `--profile browser` снимает только `job-agent` и `dashboard`, а
+`browser-worker` продолжает работать и удерживает сеть `job-agent_default` —
+Compose тогда сообщает `Resource is still in use`.
+
+Если хост выходит в интернет через VPN с MTU меньше 1500 (AmneziaWG — 1280),
+задайте в `.env` `JOB_AGENT_NETWORK_MTU=1280`. Иначе контейнеры теряют крупные
+TLS-хендшейки (например, к `hh.ru`) и вход в HH падает по таймауту, хотя сам
+хост открывает сайт.
 
 `JOB_AGENT_API_TOKEN` — необязательный общий секрет (не пользовательская
 авторизация). В Compose он рекомендован, потому что backend доступен
@@ -234,7 +247,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
     {
       "tag": "backend",
       "adapter": "hh-main",
-      "resume": "resume-id-backend",
+      "resumes": [{"id": "resume-id-backend", "primary": true}],
       "state_file": "/data/profiles/backend.json",
       "applications": {
         "mode": "submit",
@@ -247,7 +260,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
     {
       "tag": "golang",
       "adapter": "hh-main",
-      "resume": "resume-id-golang",
+      "resumes": [{"id": "resume-id-golang", "primary": true}],
       "state_file": "/data/profiles/golang.json",
       "applications": {
         "mode": "dry_run",
@@ -267,7 +280,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
   "jobs": [
     {
       "tag": "daily-applications",
-      "triggers": [{"type": "cron", "expression": "30 9 * * *", "timezone": "Europe/Moscow"}],
+      "concurrency": "forbid",
+      "triggers": [{"type": "cron", "expression": "30 9 * * *"}],
       "action": {
         "type": "application.campaign",
         "profiles": ["backend", "golang"],
@@ -286,8 +300,11 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
 - одинаковые расписания можно не дублировать: профильные действия принимают
   массив `action.profiles`, и job раскрывается по одному срабатыванию на
   профиль;
-- у каждого профиля собственные `resume`, `state_file`, `daily_limit` и
+- у каждого профиля собственные `resumes`, `state_file`, `daily_limit` и
   `submit_jitter`; один аккаунт может быть в `submit`, другой в `dry_run`;
+- поиск `similar_resume` с `"resume": "$profile"` не нужно дублировать под
+  каждый аккаунт: он разворачивается в резюме того профиля, для которого
+  запущен;
 - `searches[].profiles` и `job.action.profiles` перечисляют, какие профили
   участвуют; отклики не пересекаются благодаря ключу профиль/вакансия;
 - вход выполняется один раз для каждого профиля.
@@ -322,14 +339,18 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
 
 - два профиля с `validation_action: skip` — анкеты и тесты не занимают
   очередь, а возвращаются кнопкой «Повторить» после заполнения;
-- поиски: `global` с query-синтаксисом и серверными фильтрами плюс
-  `similar_resume` по каждому резюме;
-- рассылки откликов каждый час с `target_successful: 200` — это дневной лимит
-  площадки на профиль: run останавливается после 200 успешных отправок, а
-  запуски при исчерпанном лимите пропускаются и ждут следующего дня;
-- обслуживающие jobs: поднятие резюме и session refresh раз в 4 часа,
-  синхронизация чатов каждые 10 минут, снимок метрик резюме каждые 30 минут,
-  синхронизация состояний откликов раз в час;
+- поиски: `global-go` с query-синтаксисом и серверными фильтрами плюс один
+  `similar-resume` с `"resume": "$profile"` на оба профиля;
+- одна рассылка `periodic-applications` каждый час с `target_successful: 200`
+  на оба профиля — это дневной лимит площадки: run останавливается после 200
+  успешных отправок, а запуски при исчерпанном лимите пропускаются и ждут
+  следующего дня;
+- обслуживание описано политиками профиля, а не джобами: `state_harvest`
+  (чаты, состояния откликов и метрики), `resume_touch`, `activity_maintain` и
+  `application_cleanup` с параметрами `retention`; сервис сам создаёт из них
+  системные расписания;
+- напоминания молчащим чатам — единственная пользовательская job, кроме
+  рассылки: `follow-up-unanswered`;
 - готовые ответы для чатов в `answer_sets` и провайдер модели.
 
 Файл целиком: [`deploy/config.full.example.json`](https://github.com/Darkon13/job-agent/blob/main/deploy/config.full.example.json)
@@ -367,12 +388,26 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
           "reasoning_effort": "none"
         }
       ],
+      "profile_store": {
+        "dir": "/data/profile-store"
+      },
       "profiles": [
         {
           "tag": "primary",
           "adapter": "hh-main",
-          "resume": "0123456789abcdef0123456789abcdef01234567",
+          "resumes": [
+            {
+              "id": "0123456789abcdef0123456789abcdef01234567",
+              "primary": true
+            }
+          ],
           "state_file": "/data/profiles/primary.json",
+          "contacts": {
+            "first_name": "Иван",
+            "last_name": "Примеров",
+            "email": "user@example.test",
+            "telegram": "@example_user"
+          },
           "applications": {
             "mode": "submit",
             "message_template_file": "messages/backend.json",
@@ -403,18 +438,32 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             "answer_known": true
           },
           "enabled": true,
-          "contacts": {
-            "first_name": "Иван",
-            "last_name": "Примеров",
-            "email": "user@example.test",
-            "telegram": "@example_user"
+          "application_cleanup": {
+            "enabled": true,
+            "interval": "3h",
+            "retention": {
+              "stale_after": "720h",
+              "remove_rejected": true,
+              "remove_waiting_validation": true
+            }
           }
         },
         {
           "tag": "secondary",
           "adapter": "hh-main",
-          "resume": "fedcba9876543210fedcba9876543210fedcba98",
+          "resumes": [
+            {
+              "id": "fedcba9876543210fedcba9876543210fedcba98",
+              "primary": true
+            }
+          ],
           "state_file": "/data/profiles/secondary.json",
+          "contacts": {
+            "first_name": "Иван",
+            "last_name": "Примеров",
+            "email": "user@example.test",
+            "telegram": "@example_user"
+          },
           "applications": {
             "mode": "submit",
             "message_template_file": "messages/backend.json",
@@ -468,51 +517,18 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             "answer_known": true
           },
           "enabled": true,
-          "contacts": {
-            "first_name": "Иван",
-            "last_name": "Примеров",
-            "email": "user@example.test",
-            "telegram": "@example_user"
+          "application_cleanup": {
+            "enabled": true,
+            "interval": "3h",
+            "retention": {
+              "stale_after": "720h",
+              "remove_rejected": true,
+              "remove_waiting_validation": true
+            }
           }
         }
       ],
       "searches": [
-        {
-          "tag": "secondary-similar",
-          "adapter": "hh-main",
-          "profiles": [
-            "secondary"
-          ],
-          "priority": 100,
-          "target_applications": 200,
-          "query": {
-            "source": "similar_resume",
-            "resume": "fedcba9876543210fedcba9876543210fedcba98",
-            "area": [
-              "1"
-            ],
-            "page_size": 20,
-            "max_pages": 10
-          }
-        },
-        {
-          "tag": "primary-similar",
-          "adapter": "hh-main",
-          "profiles": [
-            "primary"
-          ],
-          "priority": 100,
-          "target_applications": 200,
-          "query": {
-            "source": "similar_resume",
-            "resume": "0123456789abcdef0123456789abcdef01234567",
-            "area": [
-              "1"
-            ],
-            "page_size": 20,
-            "max_pages": 10
-          }
-        },
         {
           "tag": "global-go",
           "adapter": "hh-main",
@@ -542,232 +558,63 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             "page_size": 20,
             "max_pages": 10
           }
+        },
+        {
+          "tag": "similar-resume",
+          "adapter": "hh-main",
+          "profiles": [
+            "primary",
+            "secondary"
+          ],
+          "priority": 100,
+          "target_applications": 200,
+          "query": {
+            "source": "similar_resume",
+            "resume": "$profile",
+            "area": [
+              "1"
+            ],
+            "page_size": 20,
+            "max_pages": 10
+          }
         }
       ],
       "jobs": [
         {
-          "tag": "refresh-sessions",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "15 */4 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "profile.session_refresh",
-            "profiles": [
-              "primary",
-              "secondary"
-            ]
-          },
-          "description": "Обновление сессий HH каждые 4 часа"
-        },
-        {
-          "tag": "touch-resumes",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "0 */4 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "resume.touch",
-            "profiles": [
-              "primary",
-              "secondary"
-            ]
-          },
-          "description": "Поднятие резюме каждые 4 часа"
-        },
-        {
-          "tag": "sync-conversations",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "*/10 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once"
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "conversation.sync",
-            "profiles": [
-              "primary",
-              "secondary"
-            ]
-          },
-          "description": "Синхронизация чатов каждые 10 минут"
-        },
-        {
-          "tag": "observe-activity",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "*/30 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once"
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "profile.activity.observe",
-            "profiles": [
-              "primary",
-              "secondary"
-            ]
-          },
-          "description": "Снимок метрик резюме каждые 30 минут"
-        },
-        {
-          "tag": "periodic-primary-applications",
+          "tag": "periodic-applications",
           "enabled": true,
           "concurrency": "forbid",
           "triggers": [
             {
               "type": "cron",
-              "expression": "0 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
+              "expression": "0 * * * *"
             }
           ],
           "action": {
             "type": "application.campaign",
             "profiles": [
-              "primary"
-            ],
-            "routes": [
-              "global-go",
-              "primary-similar"
-            ],
-            "target_successful": 200,
-            "max_in_flight": 2
-          },
-          "description": "Рассылка откликов (Антон Шумаков) каждый час"
-        },
-        {
-          "tag": "periodic-secondary-applications",
-          "enabled": true,
-          "concurrency": "forbid",
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "0 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
-            }
-          ],
-          "action": {
-            "type": "application.campaign",
-            "profiles": [
+              "primary",
               "secondary"
             ],
             "routes": [
               "global-go",
-              "secondary-similar"
+              "similar-resume"
             ],
             "target_successful": 200,
             "max_in_flight": 2
           },
-          "description": "Рассылка откликов (Антон Иванов) каждый час"
-        },
-        {
-          "tag": "sync-application-states",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "20 * * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "5m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "application.state.sync",
-            "profiles": [
-              "primary",
-              "secondary"
-            ]
-          },
-          "description": "Синхронизация состояний откликов раз в час"
-        },
-        {
-          "tag": "cleanup-rejected-applications",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "0 */3 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "10m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "application.retention",
-            "profiles": [
-              "primary",
-              "secondary"
-            ],
-            "retention": {
-              "stale_after": "720h",
-              "remove_rejected": true,
-              "remove_waiting_validation": true
-            }
-          },
-          "description": "Очистка отказов и устаревших откликов каждые 3 часа"
+          "description": "Рассылка откликов каждый час"
         },
         {
           "tag": "follow-up-unanswered",
           "enabled": true,
+          "concurrency": "forbid",
           "triggers": [
             {
               "type": "cron",
-              "expression": "0 11 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "15m"
-              }
+              "expression": "0 11 * * *"
             }
           ],
-          "concurrency": "forbid",
           "action": {
             "type": "conversation.follow_up.select",
             "profiles": [
@@ -792,33 +639,6 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             }
           },
           "description": "Напоминания во всех чатах, молчащих 5 дней"
-        },
-        {
-          "tag": "maintain-activity",
-          "description": "Просмотр вакансий-кандидатов для активности",
-          "enabled": true,
-          "triggers": [
-            {
-              "type": "cron",
-              "expression": "40 10-19 * * *",
-              "timezone": "Europe/Moscow",
-              "misfire": "run_once",
-              "jitter": {
-                "min": "1m",
-                "max": "15m"
-              }
-            }
-          ],
-          "concurrency": "forbid",
-          "action": {
-            "type": "profile.activity.maintain",
-            "profiles": [
-              "primary",
-              "secondary"
-            ],
-            "count": 5,
-            "pause": "20s"
-          }
         }
       ],
       "answer_sets": [
@@ -826,7 +646,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
         "answers/conversation/use-answers.json"
       ]
     }
-    ```
+```
 
 Файлы ответов на опросники лежат в
 [`deploy/answers/conversation/`](https://github.com/Darkon13/job-agent/tree/main/deploy/answers/conversation).

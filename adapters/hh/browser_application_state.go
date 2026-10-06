@@ -57,6 +57,9 @@ func (client *BrowserReadClient) ObserveApplicationStates(ctx context.Context, p
 		if err != nil {
 			return adapter.ApplicationStateObservationResult{}, err
 		}
+		if isCaptchaURL(finalURL) {
+			return adapter.ApplicationStateObservationResult{}, captchaError("applications.observe.browser")
+		}
 		if isLoginURL(finalURL) {
 			return adapter.ApplicationStateObservationResult{}, operationError(
 				core.ErrorUnauthorized, "applications.observe.browser",

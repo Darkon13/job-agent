@@ -90,7 +90,7 @@ func ApplicationListGroup(item ApplicationListEntry) string {
 	if item.Status == core.ApplicationWaitingValidation {
 		switch item.DecisionCode {
 		case "questionnaire_required", "vacancy_test_required", "platform_validation_required",
-			"unsupported_response_flow", "captcha_required", "response_impossible":
+			"unsupported_response_flow", "captcha_required":
 			return "needs_input"
 		}
 	}

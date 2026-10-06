@@ -42,7 +42,18 @@ type BrowserConversationClient struct {
 var _ adapter.ConversationTransport = (*BrowserConversationClient)(nil)
 var _ adapter.ConversationDiscoverer = (*BrowserConversationClient)(nil)
 
+type hhNegotiationTopic struct {
+	CurrentApplicantState string `json:"currentApplicantState"`
+}
+
+type hhChatTopicResources struct {
+	NegotiationTopics flexibleIDs `json:"NEGOTIATION_TOPIC"`
+}
+
 type hhChatListResponse struct {
+	Resources struct {
+		NegotiationTopics map[string]hhNegotiationTopic `json:"negotiation_topics"`
+	} `json:"resources"`
 	Chats struct {
 		Items    []hhChatListItem `json:"items"`
 		NextFrom flexibleID       `json:"nextFrom"`
@@ -50,14 +61,15 @@ type hhChatListResponse struct {
 }
 
 type hhChatListItem struct {
-	ID                   flexibleID       `json:"id"`
-	CurrentParticipantID string           `json:"currentParticipantId"`
-	LastMessage          *hhChatMessage   `json:"lastMessage"`
-	LastActivityTime     string           `json:"lastActivityTime"`
-	Type                 string           `json:"type"`
-	SubType              string           `json:"subType"`
-	UnreadCount          int              `json:"unreadCount"`
-	Operations           hhChatOperations `json:"operations"`
+	Resources            hhChatTopicResources `json:"resources"`
+	ID                   flexibleID           `json:"id"`
+	CurrentParticipantID string               `json:"currentParticipantId"`
+	LastMessage          *hhChatMessage       `json:"lastMessage"`
+	LastActivityTime     string               `json:"lastActivityTime"`
+	Type                 string               `json:"type"`
+	SubType              string               `json:"subType"`
+	UnreadCount          int                  `json:"unreadCount"`
+	Operations           hhChatOperations     `json:"operations"`
 }
 
 type hhChatOperations struct {
@@ -72,7 +84,8 @@ type hhChatDataResponse struct {
 		Messages             hhChatMessages     `json:"messages"`
 		WritePossibility     hhWritePossibility `json:"writePossibility"`
 		Resources            struct {
-			Vacancies flexibleIDs `json:"VACANCY"`
+			Vacancies         flexibleIDs `json:"VACANCY"`
+			NegotiationTopics flexibleIDs `json:"NEGOTIATION_TOPIC"`
 		} `json:"resources"`
 	} `json:"chat"`
 	ChatStates struct {
@@ -86,11 +99,13 @@ type hhChatDataResponse struct {
 		Subtitle string `json:"subtitle"`
 	} `json:"display"`
 	Resources struct {
-		Vacancies map[string]struct {
+		NegotiationTopics map[string]hhNegotiationTopic `json:"negotiation_topics"`
+		Vacancies         map[string]struct {
 			Name    string `json:"name"`
 			Company struct {
-				Name        string `json:"name"`
-				VisibleName string `json:"visibleName"`
+				ID          flexibleID `json:"id"`
+				Name        string     `json:"name"`
+				VisibleName string     `json:"visibleName"`
 			} `json:"company"`
 			Links struct {
 				Desktop string `json:"desktop"`
@@ -181,7 +196,7 @@ func (client *BrowserConversationClient) DiscoverConversations(ctx context.Conte
 			}
 			seenConversations[externalID] = struct{}{}
 			observation := core.ConversationObservation{
-				ExternalID: externalID, Status: core.ConversationActive, UnreadCount: item.UnreadCount,
+				ExternalID: externalID, Status: hhConversationStatus(item.Resources.NegotiationTopics, response.Resources.NegotiationTopics), UnreadCount: item.UnreadCount,
 			}
 			if item.LastMessage != nil {
 				message, include, err := mapHHMessageObservation(*item.LastMessage, item.CurrentParticipantID)
@@ -245,7 +260,7 @@ func (client *BrowserConversationClient) appendUnreadConversations(ctx context.C
 			}
 			seen[externalID] = struct{}{}
 			observation := core.ConversationObservation{
-				ExternalID: externalID, Status: core.ConversationActive, UnreadCount: item.UnreadCount,
+				ExternalID: externalID, Status: hhConversationStatus(item.Resources.NegotiationTopics, response.Resources.NegotiationTopics), UnreadCount: item.UnreadCount,
 			}
 			if item.LastMessage != nil {
 				message, include, err := mapHHMessageObservation(*item.LastMessage, item.CurrentParticipantID)
@@ -328,8 +343,24 @@ func (client *BrowserConversationClient) SyncConversation(ctx context.Context, p
 	return adapter.ConversationSyncResult{}, operationError(core.ErrorTemporaryFailure, "conversations.sync.browser", "HH message pagination exceeded its safety limit", nil)
 }
 
+// HH permits writing after a refusal. Writability and the negotiation state
+// are independent; the latest outgoing message does not reset a DISCARD badge.
+func hhConversationStatus(ids flexibleIDs, topics map[string]hhNegotiationTopic) core.ConversationStatus {
+	status := core.ConversationActive
+	for _, id := range ids {
+		switch strings.ToUpper(strings.TrimSpace(topics[id].CurrentApplicantState)) {
+		case "DISCARD":
+			return core.ConversationRejected
+		case "HIDDEN":
+			status = core.ConversationArchived
+		}
+	}
+	return status
+}
+
 func mapHHConversationPresentation(data hhChatDataResponse) core.ConversationPresentation {
 	presentation := core.ConversationPresentation{
+		Status:       hhConversationStatus(data.Chat.Resources.NegotiationTopics, data.Resources.NegotiationTopics),
 		VacancyTitle: strings.TrimSpace(data.Display.Title),
 		Employer:     strings.TrimSpace(data.Display.Subtitle),
 	}
@@ -355,6 +386,7 @@ func mapHHConversationPresentation(data hhChatDataResponse) core.ConversationPre
 		if employer != "" {
 			presentation.Employer = employer
 		}
+		presentation.EmployerID = string(vacancy.Company.ID)
 		presentation.VacancyURL = strings.TrimSpace(vacancy.Links.Desktop)
 		break
 	}
@@ -649,6 +681,39 @@ func (client *BrowserConversationClient) validateIdentity(profileID core.Profile
 	return nil
 }
 
+// hhChatQuestionPrompt reports whether a plain incoming message asks the
+// applicant something. Greetings, refusals and test links stay plain text: the
+// chat is only a questionnaire when the counterpart really asks a question.
+func hhChatQuestionPrompt(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	for _, excluded := range []string{
+		"спасибо за интерес", "большое спасибо", "к сожалению", "не готовы пригласить",
+		"закрыли эту позицию", "уже закрыта", "я ии-помощник", "откликнулись на вакансию",
+		// Cold-call and job-spam messages ask rhetorical questions, they do not
+		// screen the applicant.
+		"позвоните", "звоните", "по телефону", "whatsapp", "ватсап", "телеграм", "telegram",
+		"вахта", "подработк", "заработок", "без опыта", "бронирован",
+	} {
+		if strings.Contains(normalized, excluded) {
+			return false
+		}
+	}
+	if strings.HasSuffix(strings.TrimRight(normalized, " \t\n\r.!…)\"'»"), "?") {
+		return true
+	}
+	for _, prompt := range []string{
+		"укажите", "уточните", "ответьте", "подскажите", "расскажите", "выберите",
+	} {
+		if strings.Contains(normalized, prompt) {
+			return true
+		}
+	}
+	return false
+}
+
 func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (core.ConversationMessageObservation, bool, error) {
 	if raw.Hidden || raw.Deleted {
 		return core.ConversationMessageObservation{}, false, nil
@@ -680,6 +745,10 @@ func mapHHMessageObservation(raw hhChatMessage, currentParticipantID string) (co
 			// invitation; the chat must not be flagged as a running one.
 			kind = core.MessageSuggestion
 		}
+	} else if direction == core.MessageIncoming && hhChatQuestionPrompt(text) {
+		// Free-text questionnaires ask their questions as plain messages, so
+		// the prompt itself is the questionnaire signal.
+		kind = core.MessageQuestionnaire
 	}
 	if text == "" && len(options) == 0 {
 		kind = core.MessageSystem

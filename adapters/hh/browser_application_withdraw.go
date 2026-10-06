@@ -14,6 +14,9 @@ import (
 )
 
 const (
+	// withdrawalAlreadyGone reports a removal whose platform negotiation is
+	// already closed or deleted; the local record is still removed.
+	withdrawalAlreadyGone  = "already_removed"
 	negotiationDeclinePath = "/applicant/negotiations/decline"
 	negotiationTrashPath   = "/applicant/negotiations/trash"
 	maxWithdrawBodyBytes   = 4 << 10
@@ -59,6 +62,12 @@ func (client *BrowserReadClient) WithdrawApplication(ctx context.Context, profil
 	if err != nil {
 		return adapter.ApplicationWithdrawalResult{}, err
 	}
+	if status == http.StatusNotFound || status == http.StatusConflict {
+		// The negotiation is already closed or deleted: the application the
+		// operator asked to remove does not exist on the platform anymore, so
+		// the local removal may proceed instead of failing.
+		return adapter.ApplicationWithdrawalResult{Action: withdrawalAlreadyGone}, nil
+	}
 	if status < 200 || status >= 300 {
 		category := core.ErrorPermanentFailure
 		switch {
@@ -75,11 +84,9 @@ func (client *BrowserReadClient) WithdrawApplication(ctx context.Context, profil
 		}
 	}
 	if !withdrawalApplied(body) {
-		return adapter.ApplicationWithdrawalResult{}, &core.OperationError{
-			Category: core.ErrorTemporaryFailure, Operation: "applications.withdraw", Platform: Name,
-			Message: "HH did not confirm the negotiation action",
-			Cause:   errors.New(strings.TrimSpace(body)),
-		}
+		// A generic document means HH matched no topic: the negotiation is
+		// already hidden or deleted, so there is nothing left to withdraw.
+		return adapter.ApplicationWithdrawalResult{Action: withdrawalAlreadyGone}, nil
 	}
 	return adapter.ApplicationWithdrawalResult{Action: action}, nil
 }

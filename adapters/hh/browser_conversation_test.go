@@ -69,7 +69,7 @@ func TestBrowserConversationSyncsAllMessagePagesInChronologicalOrder(t *testing.
 			_, _ = writer.Write([]byte(`{"chat":{"id":41,"currentParticipantId":"me","resources":{"VACANCY":[42]},"messages":{"items":[
 				{"id":2,"chatId":41,"creationTime":"2026-09-07T10:00:00Z","text":"Ответ","type":"SIMPLE","participantId":"employer"},
 				{"id":3,"chatId":41,"creationTime":"2026-09-07T11:00:00Z","text":"Спасибо","type":"SIMPLE","participantId":"me"}
-			],"hasMore":true}},"chatStates":{"writeMessageState":{"allowed":true}},"display":{"title":"Go developer","subtitle":"Example fallback"},"resources":{"vacancies":{"42":{"name":"Senior Go developer","company":{"visibleName":"Example"},"links":{"desktop":"https://hh.ru/vacancy/42"}}}}}`))
+			],"hasMore":true}},"chatStates":{"writeMessageState":{"allowed":true}},"display":{"title":"Go developer","subtitle":"Example fallback"},"resources":{"vacancies":{"42":{"name":"Senior Go developer","company":{"id":4242,"visibleName":"Example"},"links":{"desktop":"https://hh.ru/vacancy/42"}}}}}`))
 			return
 		}
 		if request.URL.Query().Get("lastMessageId") != "2" {
@@ -92,7 +92,7 @@ func TestBrowserConversationSyncsAllMessagePagesInChronologicalOrder(t *testing.
 	if result.Messages[1].Direction != core.MessageIncoming || result.Messages[2].Status != core.MessageSent {
 		t.Fatalf("normalized messages = %#v", result.Messages)
 	}
-	if result.Presentation.VacancyTitle != "Senior Go developer" || result.Presentation.Employer != "Example" || result.Presentation.VacancyURL != "https://hh.ru/vacancy/42" {
+	if result.Presentation.EmployerID != "4242" || result.Presentation.VacancyTitle != "Senior Go developer" || result.Presentation.Employer != "Example" || result.Presentation.VacancyURL != "https://hh.ru/vacancy/42" {
 		t.Fatalf("presentation = %#v", result.Presentation)
 	}
 }
@@ -276,6 +276,38 @@ func TestBrowserConversationDiscoverySkipsUnreadPassWithinWindow(t *testing.T) {
 	}
 }
 
+func TestBrowserConversationClassifiesFreeTextQuestionPrompts(t *testing.T) {
+	cases := []struct {
+		name        string
+		text        string
+		participant string
+		want        core.MessageKind
+	}{
+		{"free text question", "Расскажите, пожалуйста, как долго вы занимаетесь тестированием?", "employer", core.MessageQuestionnaire},
+		{"imperative prompt", "Укажите свой желаемый уровень дохода", "employer", core.MessageQuestionnaire},
+		{"question mark", "Формат работы офис/гибрид подходит ?", "employer", core.MessageQuestionnaire},
+		{"bot greeting", "Здравствуйте, Антон! Я ИИ-помощник hh. Спасибо, что откликнулись на вакансию.", "employer", core.MessageText},
+		{"refusal", "К сожалению, сейчас мы не готовы пригласить вас на следующий этап.", "employer", core.MessageText},
+		{"outgoing question", "Как дела?", "me", core.MessageText},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			var raw hhChatMessage
+			fixture := fmt.Sprintf(`{"id":21,"creationTime":"2026-09-27T09:00:00Z","text":%q,"type":"SIMPLE","participantId":%q}`, item.text, item.participant)
+			if err := json.Unmarshal([]byte(fixture), &raw); err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			observation, include, err := mapHHMessageObservation(raw, "me")
+			if err != nil || !include {
+				t.Fatalf("include=%v err=%v", include, err)
+			}
+			if observation.Kind != item.want {
+				t.Fatalf("kind=%s want=%s", observation.Kind, item.want)
+			}
+		})
+	}
+}
+
 func TestBrowserConversationTreatsDuplicateSendAsDelivered(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -322,5 +354,32 @@ func TestBrowserConversationTreatsInvitationPromptAsSuggestion(t *testing.T) {
 	observation, include, err = mapHHMessageObservation(questionnaire, "me")
 	if err != nil || !include || observation.Kind != core.MessageQuestionnaire {
 		t.Fatalf("questionnaire kind=%s include=%v err=%v", observation.Kind, include, err)
+	}
+}
+
+func TestBrowserConversationRejectionSurvivesLaterOutgoing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/chatik/api/chats":
+			fmt.Fprint(w, `{"chats":{"items":[{"id":41,"currentParticipantId":"me","resources":{"NEGOTIATION_TOPIC":[7]},"lastMessage":{"id":2,"chatId":41,"creationTime":"2026-09-07T11:00:00Z","text":"Why was I rejected?","type":"SIMPLE","participantId":"me"}}]},"resources":{"negotiation_topics":{"7":{"currentApplicantState":"DISCARD"}}}}`)
+		case "/chatik/api/chat_data":
+			fmt.Fprint(w, `{"chat":{"id":41,"currentParticipantId":"me","resources":{"NEGOTIATION_TOPIC":[7]},"messages":{"items":[{"id":1,"chatId":41,"creationTime":"2026-09-07T10:00:00Z","text":"Declined","type":"SIMPLE","participantId":"employer"},{"id":2,"chatId":41,"creationTime":"2026-09-07T11:00:00Z","text":"Why was I rejected?","type":"SIMPLE","participantId":"me"}]}},"chatStates":{"writeMessageState":{"allowed":true}},"resources":{"negotiation_topics":{"7":{"currentApplicantState":"DISCARD"}}}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestBrowserConversationClient(t, server, adapter.BrowserConversationOptions{})
+	catalog, err := client.DiscoverConversations(context.Background(), "primary", adapter.ConversationDiscoveryOptions{})
+	if err != nil || len(catalog.Conversations) != 1 || catalog.Conversations[0].Status != core.ConversationRejected {
+		t.Fatalf("catalog=%#v err=%v", catalog, err)
+	}
+	result, err := client.SyncConversation(context.Background(), "primary", "chat-1", "41")
+	if err != nil || result.Presentation.Status != core.ConversationRejected {
+		t.Fatalf("sync=%#v err=%v", result, err)
+	}
+	if result.Messages[len(result.Messages)-1].Direction != core.MessageOutgoing {
+		t.Fatal("fixture must end with an outgoing")
 	}
 }

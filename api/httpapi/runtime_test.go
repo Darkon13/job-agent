@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ type runtimeRepository struct {
 	conversations      []core.Conversation
 	openQuestionnaires []core.ConversationID
 	tailoring          *core.ApplicationTailoring
+	authWarnings       []storage.AuthWarning
 	err                error
 }
 
@@ -37,6 +40,10 @@ func (repository *runtimeRepository) Stats(context.Context) (storage.RuntimeStat
 
 func (repository *runtimeRepository) TaskCounts(context.Context) ([]storage.TaskCount, error) {
 	return repository.tasks, repository.err
+}
+
+func (repository *runtimeRepository) AuthWarningProfiles(context.Context, time.Time) ([]storage.AuthWarning, error) {
+	return repository.authWarnings, repository.err
 }
 
 func (repository *runtimeRepository) ApplicationCounts(context.Context) ([]storage.ApplicationCount, error) {
@@ -191,6 +198,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		conversations:      []core.Conversation{{ID: "conversation-1", ProfileID: "primary", Platform: "hh", ApplicationID: application.ID, UnreadCount: 2}},
 		openQuestionnaires: []core.ConversationID{"conversation-1"},
 		tailoring:          &tailoring,
+		authWarnings:       []storage.AuthWarning{{ProfileID: "primary", Count: 2, LastAt: now}},
 	}
 	api, err := NewRuntimeAPI(repository, nil)
 	if err != nil {
@@ -223,7 +231,7 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 		t.Fatalf("cache control: %q", got)
 	}
 	want := `"generated_at":"2026-09-06T16:00:00Z"`
-	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"conversation_stats":{"total":1,"unread":2,"active":0}`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`) {
+	if body := response.Body.String(); !containsAll(body, want, `"vacancies":12`, `"type":"application.submit"`, `"priority":90`, `"kind":"application.submitted"`, `"search_shows":35`, `"conversation_stats":{"total":1,"unread":2,"active":0}`, `"id":"campaign-1"`, `"status":"target_reached"`, `"decision_code":"qualified"`, `"auth_warnings":[{"profile_id":"primary","count":2`) {
 		t.Fatalf("unexpected summary: %s", body)
 	}
 	if body := response.Body.String(); strings.Contains(body, `"conversation-1"`) {
@@ -250,6 +258,44 @@ func TestRuntimeAPIReportsHealthReadinessAndSummary(t *testing.T) {
 }
 
 func intPointer(value int) *int { return &value }
+
+func TestRuntimeAPISummaryHidesAuthWarningsAfterRelogin(t *testing.T) {
+	now := time.Date(2026, 9, 28, 16, 0, 0, 0, time.UTC)
+	stateFile := filepath.Join(t.TempDir(), "profiles", "main.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o700); err != nil {
+		t.Fatalf("create profile directory: %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte(`{"cookies":[]}`), 0o600); err != nil {
+		t.Fatalf("write state file: %v", err)
+	}
+	// The sign-in rewrites the state file after the failed tasks, so the
+	// warning from before it is no longer actionable.
+	if err := os.Chtimes(stateFile, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatalf("touch state file: %v", err)
+	}
+	repository := &runtimeRepository{
+		authWarnings: []storage.AuthWarning{
+			{ProfileID: "main", Count: 19, LastAt: now},
+			{ProfileID: "other", Count: 3, LastAt: now},
+		},
+	}
+	api, err := NewRuntimeAPI(repository, nil)
+	if err != nil {
+		t.Fatalf("new runtime API: %v", err)
+	}
+	api.now = func() time.Time { return now }
+	api.SetStatePaths(map[core.ProfileID]string{"main": stateFile})
+	response := httptest.NewRecorder()
+	api.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(
+		response, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/summary", nil))
+	body := response.Body.String()
+	if strings.Contains(body, `"profile_id":"main"`) {
+		t.Fatalf("stale warning survived the relogin: %s", body)
+	}
+	if !strings.Contains(body, `"profile_id":"other"`) {
+		t.Fatalf("warning without a fresh session must stay: %s", body)
+	}
+}
 
 func TestRuntimeAPIReadinessDoesNotLeakStorageError(t *testing.T) {
 	api, err := NewRuntimeAPI(&runtimeRepository{err: errors.New("database /secret/path failed")}, nil)
