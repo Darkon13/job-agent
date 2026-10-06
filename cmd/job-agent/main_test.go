@@ -532,6 +532,61 @@ func TestConfigureApplicationCampaignsBuildsScheduledRoute(t *testing.T) {
 	}
 }
 
+func TestConfigureApplicationCampaignsSchedulesEveryProfileSeparately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	if err := storesqlite.MigrateUp(path); err != nil {
+		t.Fatalf("migrate sqlite: %v", err)
+	}
+	store, err := storesqlite.Open(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	reader := &profileReaderStub{}
+	cfg := appconfig.Config{
+		Searches: []appconfig.Search{{
+			Tag: "golang", Adapter: "platform", Profiles: []string{"primary"}, Query: json.RawMessage(`{}`),
+		}},
+		Jobs: []appconfig.Job{{
+			Tag: "hourly", Enabled: true, Concurrency: appconfig.JobConcurrencyForbid,
+			Triggers: []appconfig.JobTrigger{{Type: "cron", Expression: "0 * * * *", Timezone: "Europe/Moscow", Misfire: "run_once"}},
+			Action: appconfig.JobAction{
+				Type: appconfig.JobActionApplicationCampaign, Profiles: []string{"primary", "secondary"}, Routes: []string{"golang"},
+				TargetSuccessful: 20, MaxInFlight: 2,
+			},
+		}},
+	}
+	_, definitions, _, jobs, err := configureApplicationCampaigns(
+		cfg, map[string]adapter.Adapter{"platform": &profileAdapterStub{reader: reader}},
+		map[core.ProfileID]profileRuntime{
+			"primary":   {Status: core.ProfileEnabled, Reader: reader},
+			"secondary": {Status: core.ProfileEnabled, Reader: reader},
+		}, store,
+	)
+	if err != nil || jobs != 1 {
+		t.Fatalf("configure campaigns: jobs=%d err=%v", jobs, err)
+	}
+	if len(definitions) != 2 {
+		t.Fatalf("definitions=%#v", definitions)
+	}
+	seen := make(map[core.ProfileID]core.ApplicationCampaignPayload, 2)
+	indices := make(map[int]struct{}, 2)
+	for _, definition := range definitions {
+		var payload core.ApplicationCampaignPayload
+		if err := json.Unmarshal(definition.Payload, &payload); err != nil || payload.Validate() != nil {
+			t.Fatalf("payload=%#v decode_err=%v validation_err=%v", payload, err, payload.Validate())
+		}
+		if len(payload.Profiles) != 1 || payload.Profiles[0] != definition.ProfileID {
+			t.Fatalf("definition profile=%q payload=%#v", definition.ProfileID, payload)
+		}
+		seen[definition.ProfileID] = payload
+		indices[definition.TriggerIndex] = struct{}{}
+	}
+	if len(seen) != 2 || len(indices) != 2 {
+		t.Fatalf("profiles=%#v trigger indices=%#v", seen, indices)
+	}
+}
+
 func TestConfigureApplicationCampaignsRequiresEveryProfileAPIReader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "job-agent.db")
 	if err := storesqlite.MigrateUp(path); err != nil {
@@ -699,5 +754,89 @@ func TestBuildAPIHandlerOrdersAuthMetricsAndObservability(t *testing.T) {
 	}
 	if !traceSeen {
 		t.Fatal("access log did not record the incoming request id")
+	}
+}
+
+func TestResumeQueryVariantsExpandsPlaceholders(t *testing.T) {
+	profile := appconfig.Profile{
+		Tag: "primary", Resume: "resume-1",
+		ResumeAliases: map[string]string{"extra": "resume-3", "backend": "resume-2"},
+	}
+	concrete := json.RawMessage(`{"source":"similar_resume","resume":"resume-9"}`)
+	if hasResumePlaceholder(concrete) {
+		t.Fatal("a concrete resume must not be a placeholder")
+	}
+	variants, err := resumeQueryVariants(concrete, profile)
+	if err != nil || len(variants) != 1 || !bytes.Contains(variants[0], []byte("resume-9")) {
+		t.Fatalf("concrete resume variants=%#v err=%v", variants, err)
+	}
+	own := json.RawMessage(`{"source":"similar_resume","resume":"$profile","area":["113"]}`)
+	if !hasResumePlaceholder(own) {
+		t.Fatal("$profile must be a placeholder")
+	}
+	variants, err = resumeQueryVariants(own, profile)
+	if err != nil || len(variants) != 1 ||
+		!bytes.Contains(variants[0], []byte(`"resume":"resume-1"`)) || bytes.Contains(variants[0], []byte("$profile")) {
+		t.Fatalf("$profile variants=%#v err=%v", variants, err)
+	}
+	all := json.RawMessage(`{"source":"similar_resume","resume":"$all"}`)
+	variants, err = resumeQueryVariants(all, profile)
+	if err != nil || len(variants) != 3 {
+		t.Fatalf("$all variants=%#v err=%v", variants, err)
+	}
+	for index, want := range []string{"resume-1", "resume-2", "resume-3"} {
+		if !bytes.Contains(variants[index], []byte(want)) {
+			t.Fatalf("variant %d = %s, want %s", index, variants[index], want)
+		}
+	}
+	if _, err := resumeQueryVariants(all, appconfig.Profile{Tag: "empty"}); err == nil {
+		t.Fatal("expected a profile without resumes to fail")
+	}
+}
+
+func TestActivityMaintainDefinitionsUseTheFilterlessSearchByDefault(t *testing.T) {
+	cfg := appconfig.Config{
+		Adapters: []appconfig.AdapterConfig{{Tag: "platform", Type: "platform"}},
+		Profiles: []appconfig.Profile{{Tag: "primary", Adapter: "platform", Enabled: true}},
+	}
+	definitions, err := profileSystemDefinitions(cfg, profileSystemCapabilities{})
+	if err != nil {
+		t.Fatalf("definitions: %v", err)
+	}
+	var maintain *jobscheduler.Definition
+	for index := range definitions {
+		if definitions[index].JobTag == "system.activity-maintain" {
+			maintain = &definitions[index]
+		}
+	}
+	if maintain == nil {
+		t.Fatal("activity-maintain definition is missing")
+	}
+	var payload core.ProfileActivityMaintainPayload
+	if err := json.Unmarshal(maintain.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	// The default opens any vacancies: the metric only needs cards to view.
+	if string(payload.Query) != `{"source":"global"}` {
+		t.Fatalf("default activity-maintain query = %s", payload.Query)
+	}
+
+	// An explicit policy query wins.
+	cfg.Profiles[0].ActivityMaintain = appconfig.SystemJobPolicy{Query: json.RawMessage(`{"source":"global","text":"Golang"}`)}
+	definitions, err = profileSystemDefinitions(cfg, profileSystemCapabilities{})
+	if err != nil {
+		t.Fatalf("definitions with an override: %v", err)
+	}
+	for index := range definitions {
+		if definitions[index].JobTag != "system.activity-maintain" {
+			continue
+		}
+		payload = core.ProfileActivityMaintainPayload{}
+		if err := json.Unmarshal(definitions[index].Payload, &payload); err != nil {
+			t.Fatalf("override payload: %v", err)
+		}
+		if string(payload.Query) != `{"source":"global","text":"Golang"}` {
+			t.Fatalf("override activity-maintain query = %s", payload.Query)
+		}
 	}
 }

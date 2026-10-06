@@ -67,6 +67,9 @@ func TestConversationFollowUpSelectionHandlerSchedulesEligibleReminder(t *testin
 }
 
 type fakeConversationTransport struct {
+	syncResult       *adapter.ConversationSyncResult
+	syncError        error
+	syncCalls        int
 	now              time.Time
 	commands         []adapter.ConversationSendCommand
 	discovery        adapter.ConversationDiscoveryResult
@@ -87,6 +90,13 @@ func (*fakeConversationTransport) MarkConversationRead(context.Context, core.Pro
 }
 
 func (transport *fakeConversationTransport) SyncConversation(context.Context, core.ProfileID, core.ConversationID, string) (adapter.ConversationSyncResult, error) {
+	transport.syncCalls++
+	if transport.syncError != nil {
+		return adapter.ConversationSyncResult{}, transport.syncError
+	}
+	if transport.syncResult != nil {
+		return *transport.syncResult, nil
+	}
 	return adapter.ConversationSyncResult{ObservedAt: transport.now}, nil
 }
 
@@ -396,5 +406,109 @@ func TestConversationDiscoverHandlerToleratesStaleObservationTime(t *testing.T) 
 	}
 	if len(queue.Tasks()) != 1 || queue.Tasks()[0].Type != core.TaskConversationSync {
 		t.Fatalf("sync tasks=%#v", queue.Tasks())
+	}
+}
+
+func TestConversationHandlersCompleteWhenChatIsGone(t *testing.T) {
+	ctx := context.Background()
+	handlers, _, _, _, transport, clock := newConversationHandlersFixture(t)
+	now := clock.Now()
+	syncPayload, err := json.Marshal(core.ConversationIDPayload{ConversationID: "conversation-gone"})
+	if err != nil {
+		t.Fatalf("marshal sync payload: %v", err)
+	}
+	syncTask, err := core.NewTask(core.NewTaskParams{
+		ID: "task-sync-gone", Type: core.TaskConversationSync, IdempotencyKey: "sync-gone",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-gone",
+		Payload: syncPayload, AvailableAt: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("new sync task: %v", err)
+	}
+	if err := handlers.Sync(ctx, syncTask); err != nil {
+		t.Fatalf("a chat removed with its application must complete the sync: %v", err)
+	}
+	sendPayload, err := json.Marshal(core.ConversationSendPayload{
+		ConversationID: "conversation-gone", Content: core.MessageContent{Text: "Здравствуйте"},
+	})
+	if err != nil {
+		t.Fatalf("marshal send payload: %v", err)
+	}
+	sendTask, err := core.NewTask(core.NewTaskParams{
+		ID: "task-send-gone", Type: core.TaskConversationSend, IdempotencyKey: "send-gone",
+		Source: "test", Platform: "hh", ProfileID: "profile-1", CorrelationID: "correlation-gone",
+		Payload: sendPayload, AvailableAt: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("new send task: %v", err)
+	}
+	if err := handlers.Send(ctx, sendTask); err != nil {
+		t.Fatalf("a missing chat must complete the send: %v", err)
+	}
+	if len(transport.commands) != 0 {
+		t.Fatalf("transport must not receive sends for a missing chat: %#v", transport.commands)
+	}
+}
+
+func TestConversationFollowUpFreshReadCancelsIncomingAndFailedReadDoesNotSend(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("read_failure_%t", failure), func(t *testing.T) {
+			ctx := context.Background()
+			handlers, flow, repository, _, transport, clock := newConversationHandlersFixture(t)
+			anchor := clock.now
+			followUp, _, err := flow.ScheduleFollowUp(ctx, workflow.ScheduleFollowUpRequest{
+				ConversationID: "conversation-1", AnchorAt: anchor, RunAt: anchor.Add(time.Minute),
+				Content:        core.MessageContent{Text: "Reminder"},
+				Policy:         core.FollowUpPolicy{CancelOnIncoming: true, RequireActiveConversation: true, MaxFollowUps: 1},
+				IdempotencyKey: "fresh-read-1",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock.now = anchor.Add(2 * time.Minute)
+			transport.syncResult = &adapter.ConversationSyncResult{ObservedAt: clock.now, Messages: []core.ConversationMessage{
+				{ID: "new-incoming", ConversationID: "conversation-1", ExternalID: "new-ext", Direction: core.MessageIncoming,
+					Kind: core.MessageText, Status: core.MessageObserved, Text: "Already answered", OccurredAt: anchor.Add(time.Minute)},
+			}}
+			if failure {
+				transport.syncError = fmt.Errorf("temporary read failure")
+			}
+			err = handlers.FollowUp(ctx, followUpTask(t, followUp))
+			if (err != nil) != failure {
+				t.Fatalf("error = %v", err)
+			}
+			if len(transport.commands) != 0 || transport.syncCalls != 1 {
+				t.Fatalf("sends=%d reads=%d", len(transport.commands), transport.syncCalls)
+			}
+			stored, err := repository.FollowUp(ctx, followUp.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !failure && (stored.Status != core.FollowUpCancelled || stored.CancelReason != core.FollowUpIncomingReceived) {
+				t.Fatalf("timer = %#v", stored)
+			}
+		})
+	}
+}
+
+func TestConversationFollowUpFreshRejectionCancelsWithoutSending(t *testing.T) {
+	ctx := context.Background()
+	handlers, flow, repository, _, transport, clock := newConversationHandlersFixture(t)
+	anchor := clock.now
+	timer, _, err := flow.ScheduleFollowUp(ctx, workflow.ScheduleFollowUpRequest{
+		ConversationID: "conversation-1", AnchorAt: anchor, RunAt: anchor.Add(time.Minute),
+		Content: core.MessageContent{Text: "Reminder"}, Policy: core.FollowUpPolicy{CancelOnIncoming: true, RequireActiveConversation: true, MaxFollowUps: 1}, IdempotencyKey: "fresh-rejection",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.now = anchor.Add(2 * time.Minute)
+	transport.syncResult = &adapter.ConversationSyncResult{ObservedAt: clock.now, Presentation: core.ConversationPresentation{Status: core.ConversationRejected}}
+	if err := handlers.FollowUp(ctx, followUpTask(t, timer)); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := repository.FollowUp(ctx, timer.ID)
+	if err != nil || saved.Status != core.FollowUpCancelled || saved.CancelReason != core.FollowUpConversationInactive || len(transport.commands) != 0 {
+		t.Fatalf("timer=%#v sends=%d err=%v", saved, len(transport.commands), err)
 	}
 }

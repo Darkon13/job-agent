@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,7 @@ const (
 	TaskProfileSessionRefresh      TaskType = "profile.session_refresh"
 	TaskProfileBootstrap           TaskType = "profile.bootstrap"
 	TaskProfileStateReconcile      TaskType = "profile_state.reconcile"
+	TaskProfileStateImport         TaskType = "profile.state.import"
 	TaskProfileStateApply          TaskType = "profile_state.apply"
 	TaskSkillVerificationStart     TaskType = "skill_verification.start"
 	TaskSkillVerificationSync      TaskType = "skill_verification.sync"
@@ -227,6 +229,33 @@ func (task *Task) Fail(operationError *OperationError, now time.Time) error {
 
 // RestartFailed explicitly reopens a terminal failure. It resets the bounded
 // worker-attempt counter because the operator has started a new retry cycle.
+// Requeue returns a settled task to the queue after an explicit operator
+// action. Unlike RestartFailed it also revives a dismissed attempt, because the
+// fresh request outranks the earlier dismissal; completed and queued tasks are
+// never touched.
+func (task *Task) Requeue(now time.Time) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	switch task.Status {
+	case TaskFailed, TaskDismissed:
+	default:
+		return errors.New("only a failed or dismissed task can be requeued")
+	}
+	if now.IsZero() || now.Before(task.UpdatedAt) {
+		return errors.New("task requeue time must not move backwards")
+	}
+	if task.Deadline != nil && !now.Before(*task.Deadline) {
+		return errors.New("task deadline has expired")
+	}
+	task.Status = TaskNew
+	task.Attempts = 0
+	task.AvailableAt = now
+	task.UpdatedAt = now
+	task.Failure = nil
+	return nil
+}
+
 func (task *Task) RestartFailed(now time.Time) error {
 	if task == nil {
 		return errors.New("task is nil")
@@ -245,6 +274,31 @@ func (task *Task) RestartFailed(now time.Time) error {
 	task.AvailableAt = now
 	task.UpdatedAt = now
 	task.Failure = nil
+	return nil
+}
+
+// CancelQueued records an explicit operator decision to remove a task that has
+// not started from the queue. The reason stays in the failure fields for
+// diagnostics; a task that already runs or is settled cannot be cancelled.
+func (task *Task) CancelQueued(reason string, now time.Time) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	switch task.Status {
+	case TaskNew, TaskRetryScheduled:
+	default:
+		return fmt.Errorf("only a queued task can be cancelled, not %s", task.Status)
+	}
+	if now.IsZero() || now.Before(task.UpdatedAt) {
+		return errors.New("task cancellation time must not move backwards")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "cancelled by the operator"
+	}
+	task.Status = TaskDismissed
+	task.Failure = &TaskFailure{Category: ErrorPermanentFailure, Message: reason}
+	task.UpdatedAt = now
 	return nil
 }
 

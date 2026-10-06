@@ -288,6 +288,13 @@ func (api *RuntimeAPI) captureQuestionnaire(response http.ResponseWriter, reques
 		writeProblem(response, http.StatusNotFound, "application not found")
 		return
 	}
+	// A platform refusal, captcha or unsupported flow is not answered by a
+	// questionnaire: the capture would only die and confuse the operator.
+	if (application.Status == core.ApplicationWaitingValidation || application.Status == core.ApplicationSkipped) &&
+		application.DecisionCode != "" && !core.QuestionnaireDecisionActionable(application.DecisionCode) {
+		writeProblem(response, http.StatusConflict, "the platform decision cannot be answered by a questionnaire: "+application.DecisionCode)
+		return
+	}
 	created, err := api.questionnaires.EnqueueCapture(
 		request.Context(), application.Key.ProfileID, application.Key.Vacancy.Platform,
 		application.Key.Vacancy.ExternalID, "dashboard-questionnaire",

@@ -12,6 +12,8 @@ var (
 	ErrLeaseLost           = errors.New("task lease is no longer active")
 	ErrTaskNotFound        = errors.New("task not found")
 	ErrTaskNotFailed       = errors.New("task is not failed")
+	ErrTaskNotRequeueable  = errors.New("task is not failed or dismissed")
+	ErrTaskNotCancellable  = errors.New("task is not queued and cannot be cancelled")
 	ErrTaskDeadlineExpired = errors.New("task deadline has expired")
 	ErrTaskControlConflict = errors.New("task changed during operator control")
 )
@@ -33,6 +35,11 @@ type TaskControlStore interface {
 	TaskByID(ctx context.Context, id core.TaskID) (core.Task, error)
 	RestartFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
 	DismissFailedTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
+	// RequeueTask returns a failed or dismissed task to the queue after an
+	// explicit operator retry.
+	RequeueTask(ctx context.Context, idempotencyKey string, now time.Time) (core.Task, error)
+	// CancelQueuedTask removes a task that has not started from the queue.
+	CancelQueuedTask(ctx context.Context, idempotencyKey, reason string, now time.Time) (core.Task, error)
 }
 
 type ClaimParams struct {

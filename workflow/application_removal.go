@@ -56,7 +56,11 @@ func (workflow *ApplicationRemovalWorkflow) EnqueueRemoval(ctx context.Context, 
 	}
 	switch application.Status {
 	case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval, core.ApplicationSubmitted,
-		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed:
+		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed,
+		// A prepared application has never reached the platform, so removing it
+		// is a local decision; the queue leftovers of an old search config are
+		// exactly this case.
+		core.ApplicationReady:
 	default:
 		return core.Task{}, false, fmt.Errorf("application %s is still active in status %s", application.ID, application.Status)
 	}

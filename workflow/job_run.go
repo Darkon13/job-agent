@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/broker"
@@ -43,8 +44,9 @@ type JobRunDefinition struct {
 // window that follows.
 type JobSchedule struct {
 	TriggerIndex int       `json:"trigger_index"`
-	Expression   string    `json:"expression"`
-	Timezone     string    `json:"timezone"`
+	Expression   string    `json:"expression,omitempty"`
+	Interval     string    `json:"interval,omitempty"`
+	Timezone     string    `json:"timezone,omitempty"`
 	NextRunAt    time.Time `json:"next_run_at"`
 	JitterMin    string    `json:"jitter_min,omitempty"`
 	JitterMax    string    `json:"jitter_max,omitempty"`
@@ -71,11 +73,37 @@ type JobRunDescriptor struct {
 }
 
 type JobRunWorkflow struct {
+	mu          sync.RWMutex
 	tasks       broker.TaskStore
 	clock       Clock
 	ids         IDGenerator
 	definitions map[string]JobRunDefinition
 	descriptors []JobRunDescriptor
+}
+
+// ReplaceDefinitions swaps the runnable job set, for example when a config
+// reload adds jobs or binds a profile that generates new system jobs. Running
+// tasks keep the definition they were created from.
+func (workflow *JobRunWorkflow) ReplaceDefinitions(definitions []JobRunDefinition) error {
+	if workflow == nil {
+		return errors.New("job run workflow is nil")
+	}
+	replacement := make(map[string]JobRunDefinition, len(definitions))
+	descriptors := make([]JobRunDescriptor, 0, len(definitions))
+	for _, definition := range definitions {
+		if err := definition.validate(); err != nil {
+			return err
+		}
+		copied := JobRunDefinition{Tag: definition.Tag, Commands: cloneJobRunCommands(definition.Commands)}
+		replacement[copied.Tag] = copied
+		descriptors = append(descriptors, copied.descriptor())
+	}
+	sort.Slice(descriptors, func(i, j int) bool { return descriptors[i].Tag < descriptors[j].Tag })
+	workflow.mu.Lock()
+	workflow.definitions = replacement
+	workflow.descriptors = descriptors
+	workflow.mu.Unlock()
+	return nil
 }
 
 func NewJobRunWorkflow(tasks broker.TaskStore, clock Clock, ids IDGenerator, definitions []JobRunDefinition) (*JobRunWorkflow, error) {
@@ -102,10 +130,26 @@ func (workflow *JobRunWorkflow) Definitions() []JobRunDescriptor {
 	if workflow == nil {
 		return nil
 	}
+	workflow.mu.RLock()
+	defer workflow.mu.RUnlock()
 	return append([]JobRunDescriptor(nil), workflow.descriptors...)
 }
 
+// Run enqueues every command of the job.
 func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string) (core.Task, bool, error) {
+	return workflow.run(ctx, tag, "", requestKey)
+}
+
+// RunProfile runs only the commands of one profile, so the dashboard can start
+// a job for a single account.
+func (workflow *JobRunWorkflow) RunProfile(ctx context.Context, tag string, profileID core.ProfileID, requestKey string) (core.Task, bool, error) {
+	if strings.TrimSpace(string(profileID)) == "" {
+		return core.Task{}, false, errors.New("job run requires a profile")
+	}
+	return workflow.run(ctx, tag, profileID, requestKey)
+}
+
+func (workflow *JobRunWorkflow) run(ctx context.Context, tag string, profileID core.ProfileID, requestKey string) (core.Task, bool, error) {
 	if workflow == nil {
 		return core.Task{}, false, errors.New("job run requires workflow")
 	}
@@ -114,13 +158,22 @@ func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string)
 	if tag == "" || requestKey == "" {
 		return core.Task{}, false, errors.New("job run requires tag and idempotency key")
 	}
+	workflow.mu.RLock()
 	definition, exists := workflow.definitions[tag]
+	workflow.mu.RUnlock()
 	if !exists {
 		return core.Task{}, false, fmt.Errorf("%w: %s", ErrJobRunNotFound, tag)
 	}
 	var first core.Task
 	anyCreated := false
+	matched := 0
 	for index, command := range definition.Commands {
+		// A profile-scoped run keeps the original command index in the
+		// idempotency key, so it cannot collide with another profile's command.
+		if profileID != "" && command.ProfileID != profileID {
+			continue
+		}
+		matched++
 		taskID, err := workflow.ids.NewID("task")
 		if err != nil {
 			return core.Task{}, false, err
@@ -149,10 +202,13 @@ func (workflow *JobRunWorkflow) Run(ctx context.Context, tag, requestKey string)
 				return core.Task{}, false, fmt.Errorf("load idempotent job run: %w", err)
 			}
 		}
-		if index == 0 {
+		if matched == 1 {
 			first = task
 		}
 		anyCreated = anyCreated || created
+	}
+	if profileID != "" && matched == 0 {
+		return core.Task{}, false, fmt.Errorf("%w: %s has no command for profile %s", ErrJobRunNotFound, tag, profileID)
 	}
 	return first, anyCreated, nil
 }

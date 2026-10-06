@@ -187,6 +187,25 @@ docker compose up -d
 Config/data монтируются как `/config` и `/data`; dashboard слушает
 `127.0.0.1:18081` и проксирует API, backend порт наружу не публикуется.
 
+Память на таком сервере почти целиком занимает browser worker: headless
+Chromium с контекстами профилей — это ~2.5 ГБ, и именно он, а не обвязка
+образа, определяет потребление. Если браузерные операции не нужны постоянно:
+
+- уменьшите `BROWSER_WORKER_MAX_IN_FLIGHT` (по умолчанию 4): меньше
+  одновременных страниц — меньше памяти;
+- останавливайте воркер на время пиковой нагрузки
+  (`docker compose stop browser-worker`): backend продолжает работать через
+  API, а browser-only операции ждут запуска; сессии профилей сохраняются в
+  `/data/browser-profiles`, повторный вход не требуется;
+- после длительной работы полезен перезапуск контейнера: Chromium накапливает
+  память, а профили персистентны.
+
+```yaml
+  browser-worker:
+    environment:
+      BROWSER_WORKER_MAX_IN_FLIGHT: "2"
+```
+
 ## Runtime lease
 
 Симптом: при старте `another job-agent instance already holds the runtime

@@ -11,10 +11,26 @@ import (
 var (
 	ErrRevisionConflict             = errors.New("repository revision conflict")
 	ErrProfileMutationLocked        = errors.New("profile already has an active mutation workflow")
+	ErrApplicationNotFound          = errors.New("application not found")
 	ErrApplicationTailoringNotFound = errors.New("application tailoring not found")
 	ErrAuthSessionNotFound          = errors.New("auth session not found")
 	ErrApplicationRemoved           = errors.New("application was removed from the working set")
+	ErrConversationNotFound         = errors.New("conversation not found")
+	ErrProfileDraftNotFound         = errors.New("profile draft not found")
 )
+
+// ProfileDraftRepository stores dashboard-managed profiles before they become
+// config fragments in the profile store.
+type ProfileDraftRepository interface {
+	// CreateProfileDraft inserts a draft unless the tag is already taken; the
+	// boolean reports whether a new row was created.
+	CreateProfileDraft(ctx context.Context, draft core.ProfileDraft) (core.ProfileDraft, bool, error)
+	// SaveProfileDraft replaces a draft using compare-and-swap on its revision.
+	SaveProfileDraft(ctx context.Context, draft core.ProfileDraft, expectedRevision uint64) error
+	ProfileDraft(ctx context.Context, tag string) (core.ProfileDraft, error)
+	ProfileDrafts(ctx context.Context) ([]core.ProfileDraft, error)
+	DeleteProfileDraft(ctx context.Context, tag string) error
+}
 
 // RuntimeStats is an aggregate view intended for health checks and operator
 // dashboards. It deliberately contains counts only and never task payloads,
@@ -47,6 +63,23 @@ type TaskCount struct {
 	Count    int               `json:"count"`
 }
 
+// JobPause is one paused (job, profile) pair. Manual pauses use the operator
+// reason; the deauthorization sweep records auth_required.
+type JobPause struct {
+	JobTag    string         `json:"job_tag"`
+	ProfileID core.ProfileID `json:"profile_id"`
+	Reason    string         `json:"reason,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+// AuthWarning reports profiles whose tasks recently failed because the platform
+// rejected the stored session. The dashboard shows it as a sign-in banner.
+type AuthWarning struct {
+	ProfileID core.ProfileID `json:"profile_id"`
+	Count     int            `json:"count"`
+	LastAt    time.Time      `json:"last_at"`
+}
+
 // FailedTaskSummary is an operator-safe task view. It intentionally excludes
 // payload, source, idempotency key and correlation data.
 type FailedTaskSummary struct {
@@ -60,6 +93,23 @@ type FailedTaskSummary struct {
 
 type FailedTaskRepository interface {
 	ListFailedTasks(ctx context.Context, limit int) ([]FailedTaskSummary, error)
+}
+
+// QueuedTaskSummary is one task that has not started yet. The operator sees the
+// public id, so a single queued task can be cancelled.
+type QueuedTaskSummary struct {
+	ID          core.TaskID       `json:"id"`
+	Type        core.TaskType     `json:"type"`
+	Status      core.TaskStatus   `json:"status"`
+	ProfileID   core.ProfileID    `json:"profile_id,omitempty"`
+	Priority    core.TaskPriority `json:"priority"`
+	Attempts    int               `json:"attempts"`
+	AvailableAt time.Time         `json:"available_at"`
+	CreatedAt   time.Time         `json:"created_at"`
+}
+
+type QueuedTaskRepository interface {
+	ListQueuedTasks(ctx context.Context, limit int) ([]QueuedTaskSummary, error)
 }
 
 type ApplicationCount struct {
@@ -282,8 +332,13 @@ type ConversationFilter struct {
 	// UnreadOnly and QuestionnaireOnly mirror the dashboard filters.
 	UnreadOnly        bool
 	QuestionnaireOnly bool
-	Limit             int
-	Offset            int
+	// LinkedOnly keeps the conversations that belong to the working set, that
+	// is the chats linked to one of our applications. HH returns the whole
+	// account history in its catalog, so a plain count is not comparable with
+	// the applications count.
+	LinkedOnly bool
+	Limit      int
+	Offset     int
 }
 
 // ConversationCounts summarizes a filtered conversation set without loading it.

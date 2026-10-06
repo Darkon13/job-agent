@@ -215,7 +215,7 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 	application, err := scanApplication(tx.QueryRowContext(ctx, `SELECT id, profile_id, platform, external_id, status, attempts, external_negotiation_id,
 		failure_category, failure_message, decision_code, decision_reason, prepared_resume_id, prepared_message,
 		preparation_provenance, created_at, updated_at, prepared_at, submitted_at FROM applications WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, storage.ErrApplicationNotFound) {
 		var tombstone core.ApplicationTombstone
 		var removedAtUnix int64
 		err = tx.QueryRowContext(ctx, `SELECT application_id, profile_id, platform, external_id, reason, removed_at, status
@@ -233,7 +233,10 @@ func (store *Store) RemoveApplication(ctx context.Context, id core.ApplicationID
 	}
 	switch application.Status {
 	case core.ApplicationWaitingValidation, core.ApplicationWaitingApproval, core.ApplicationSubmitted,
-		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed:
+		core.ApplicationDryRun, core.ApplicationSkipped, core.ApplicationFailed,
+		// A prepared application has never reached the platform; removing it is
+		// a local decision.
+		core.ApplicationReady:
 	default:
 		return core.ApplicationTombstone{}, false, fmt.Errorf("application %s is still active in status %s", id, application.Status)
 	}
@@ -389,6 +392,9 @@ func scanApplication(row rowScanner) (core.Application, error) {
 		&application.FailureCategory, &application.FailureMessage, &application.DecisionCode,
 		&application.DecisionReason, &application.PreparedResumeID, &application.PreparedMessage, &preparationProvenance,
 		&createdAt, &updatedAt, &preparedAt, &submittedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.Application{}, storage.ErrApplicationNotFound
+		}
 		return core.Application{}, err
 	}
 	if err := unmarshalApplicationPreparationProvenance(preparationProvenance, &application.PreparationProvenance); err != nil {
@@ -538,6 +544,70 @@ func (store *Store) TaskCounts(ctx context.Context) ([]TaskCount, error) {
 	return counts, nil
 }
 
+// AuthWarningProfiles groups recent unauthorized task failures by profile so
+// the dashboard can tell the operator to sign in again.
+func (store *Store) AuthWarningProfiles(ctx context.Context, since time.Time) ([]storage.AuthWarning, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT profile_id, COUNT(*), MAX(updated_at)
+		FROM tasks
+		WHERE failure_category = ? AND status IN ('failed', 'retry_scheduled')
+			AND profile_id <> '' AND updated_at >= ?
+		GROUP BY profile_id ORDER BY MAX(updated_at) DESC`, string(core.ErrorUnauthorized), since.UnixNano())
+	if err != nil {
+		return nil, fmt.Errorf("load auth warnings: %w", err)
+	}
+	defer rows.Close()
+	warnings := make([]storage.AuthWarning, 0)
+	for rows.Next() {
+		var (
+			profileID core.ProfileID
+			count     int
+			lastAt    int64
+		)
+		if err := rows.Scan(&profileID, &count, &lastAt); err != nil {
+			return nil, fmt.Errorf("scan auth warning: %w", err)
+		}
+		warnings = append(warnings, storage.AuthWarning{
+			ProfileID: profileID, Count: count, LastAt: time.Unix(0, lastAt).UTC(),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate auth warnings: %w", err)
+	}
+	return warnings, nil
+}
+
+// ListQueuedTasks returns the tasks that have not started yet, oldest first, so
+// the operator can cancel a specific one.
+func (store *Store) ListQueuedTasks(ctx context.Context, limit int) ([]storage.QueuedTaskSummary, error) {
+	if limit < 1 || limit > 200 {
+		return nil, errors.New("queued task limit must be between 1 and 200")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, type, status, profile_id, priority, attempts,
+		available_at, created_at
+		FROM tasks WHERE status IN (?, ?) ORDER BY available_at, created_at, id LIMIT ?`,
+		core.TaskNew, core.TaskRetryScheduled, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list queued tasks: %w", err)
+	}
+	defer rows.Close()
+	items := make([]storage.QueuedTaskSummary, 0)
+	for rows.Next() {
+		var item storage.QueuedTaskSummary
+		var availableAt, createdAt int64
+		if err := rows.Scan(&item.ID, &item.Type, &item.Status, &item.ProfileID, &item.Priority,
+			&item.Attempts, &availableAt, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan queued task: %w", err)
+		}
+		item.AvailableAt = time.Unix(0, availableAt).UTC()
+		item.CreatedAt = time.Unix(0, createdAt).UTC()
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued tasks: %w", err)
+	}
+	return items, nil
+}
+
 func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.FailedTaskSummary, error) {
 	if limit < 1 || limit > 200 {
 		return nil, errors.New("failed task limit must be between 1 and 200")
@@ -548,6 +618,31 @@ func (store *Store) ListFailedTasks(ctx context.Context, limit int) ([]storage.F
 	if err != nil {
 		return nil, fmt.Errorf("list failed tasks: %w", err)
 	}
+	return scanFailedTasks(rows)
+}
+
+// FailedAuthTasks lists the tasks that failed because the profile had no usable
+// platform session. The oldest failures come first: after a sign-in the
+// recovery retries them in the order they originally happened.
+func (store *Store) FailedAuthTasks(ctx context.Context, profileID core.ProfileID, limit int) ([]storage.FailedTaskSummary, error) {
+	if profileID == "" {
+		return nil, errors.New("failed auth tasks require a profile")
+	}
+	if limit < 1 || limit > 500 {
+		return nil, errors.New("failed auth task limit must be between 1 and 500")
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id, type, profile_id, attempts,
+		failure_category, failure_message, updated_at
+		FROM tasks WHERE status = ? AND profile_id = ? AND failure_category = ?
+		ORDER BY updated_at, id LIMIT ?`,
+		core.TaskFailed, profileID, core.ErrorUnauthorized, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list failed auth tasks: %w", err)
+	}
+	return scanFailedTasks(rows)
+}
+
+func scanFailedTasks(rows *sql.Rows) ([]storage.FailedTaskSummary, error) {
 	defer rows.Close()
 	items := make([]storage.FailedTaskSummary, 0)
 	for rows.Next() {

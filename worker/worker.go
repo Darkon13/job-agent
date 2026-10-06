@@ -58,11 +58,26 @@ func (config Config) Validate() error {
 	return nil
 }
 
+// AuthGuard reacts to a task that failed because the profile has no usable
+// platform session, for example by pausing the job that produced it. It runs
+// once per failed task, after the failure is recorded.
+type AuthGuard func(ctx context.Context, task core.Task) error
+
 type Worker struct {
 	consumer broker.TaskConsumer
 	handler  Handler
 	clock    Clock
 	config   Config
+	guard    AuthGuard
+}
+
+// SetAuthGuard attaches the reaction to authorization failures. Without it an
+// unauthorized task only fails, and its job keeps creating doomed tasks.
+func (worker *Worker) SetAuthGuard(guard AuthGuard) {
+	if worker == nil {
+		return
+	}
+	worker.guard = guard
 }
 
 func New(consumer broker.TaskConsumer, handler Handler, clock Clock, config Config) (*Worker, error) {
@@ -152,6 +167,12 @@ func (worker *Worker) finish(ctx context.Context, lease broker.TaskLease, handle
 		return worker.consumer.Complete(ctx, lease, now)
 	}
 	operationError := normalizeError(handlerErr, lease.Task.Type)
+	if operationError.Category == core.ErrorUnauthorized && worker.guard != nil {
+		if guardErr := worker.guard(ctx, lease.Task); guardErr != nil {
+			slog.Default().Warn("auth guard failed",
+				"task", lease.Task.ID, "profile", lease.Task.ProfileID, "error", guardErr)
+		}
+	}
 	if retryable(operationError.Category) && lease.Task.Attempts < worker.config.MaxAttempts {
 		retryAt := worker.retryAt(*operationError, lease.Task.Attempts, now)
 		slog.Default().Warn("task retry scheduled",
@@ -169,7 +190,7 @@ func (worker *Worker) retryAt(operationError core.OperationError, attempts int, 
 	if operationError.RetryAfter != nil && operationError.RetryAfter.After(now) {
 		return *operationError.RetryAfter
 	}
-	if operationError.Category == core.ErrorUnauthorized || operationError.Category == core.ErrorValidationRequired || operationError.Category == core.ErrorConfirmationRequired {
+	if operationError.Category == core.ErrorValidationRequired || operationError.Category == core.ErrorConfirmationRequired {
 		return now.Add(worker.config.BlockedRetryDelay)
 	}
 	delay := worker.config.RetryBaseDelay
@@ -241,7 +262,10 @@ func handlerFailureMessage(err error) string {
 func retryable(category core.ErrorCategory) bool {
 	switch category {
 	case core.ErrorTemporaryFailure, core.ErrorRateLimited, core.ErrorQuotaExceeded,
-		core.ErrorUnauthorized, core.ErrorValidationRequired, core.ErrorConfirmationRequired, core.ErrorAmbiguousResult:
+		core.ErrorValidationRequired, core.ErrorConfirmationRequired, core.ErrorAmbiguousResult:
+		// Unauthorized is intentionally absent: the stored session cannot heal
+		// on its own, and repeated attempts only spam the platform until the
+		// operator signs in again.
 		return true
 	default:
 		return false

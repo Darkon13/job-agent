@@ -143,6 +143,129 @@ func TestLoginDriverIdentifierLeadsToOTPChallenge(t *testing.T) {
 	}
 }
 
+func TestLoginDriverIdentifierAcceptsPhoneNumber(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch request.Selector {
+		case loginOTPInput:
+			return nil
+		case loginCaptchaImage, loginPasswordExpand:
+			return errors.New("element is not visible")
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	outcome, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "+7 999 123-45-67",
+	})
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if outcome.Request == nil || outcome.Request.Challenge == nil || outcome.Request.Challenge.Kind != core.AuthChallengeOTP {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	var filled, filledEmail, switched bool
+	for _, call := range fake.CallsOf("locator") {
+		request := call.Request.(browser.LocatorRequest)
+		if request.Selector == loginPhoneInput && request.Action == "fill" && request.Value == "9991234567" {
+			filled = true
+		}
+		if request.Selector == loginEmailInput && request.Action == "fill" {
+			filledEmail = true
+		}
+		if request.Selector == loginPhoneTypeLabel && request.Action == "click" {
+			switched = true
+		}
+	}
+	if !filled || filledEmail || !switched {
+		t.Fatalf("phone step not driven: filled=%v filledEmail=%v switched=%v", filled, filledEmail, switched)
+	}
+}
+
+func TestLoginDriverIdentifierAdvancesFromAccountTypeStep(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	accountStep := true
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch request.Selector {
+		case loginOTPInput:
+			return nil
+		case loginCaptchaImage, loginPasswordExpand:
+			return errors.New("element is not visible")
+		case loginEmailInput, loginPhoneInput:
+			if accountStep {
+				return errors.New("element is not visible")
+			}
+			return nil
+		case loginSubmitButton:
+			if request.Action == "click" {
+				accountStep = false
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	if _, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "user@example.com",
+	}); err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	order := make([]string, 0, 2)
+	for _, call := range fake.CallsOf("locator") {
+		request := call.Request.(browser.LocatorRequest)
+		if request.Action == "click" && request.Selector == loginSubmitButton {
+			order = append(order, "submit")
+		}
+		if request.Action == "fill" && request.Selector == loginEmailInput {
+			order = append(order, "fill")
+		}
+	}
+	if len(order) < 2 || order[0] != "submit" || order[1] != "fill" {
+		t.Fatalf("credential form was not reached first: %v", order)
+	}
+}
+
+func TestLoginDriverFallsBackToEnterWhenSubmitClickIsBlocked(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch {
+		case request.Selector == loginSubmitButton && request.Action == "click":
+			return errors.New("element intercepts pointer events")
+		case request.Selector == loginOTPInput:
+			return nil
+		case request.Selector == loginCaptchaImage, request.Selector == loginPasswordExpand:
+			return errors.New("element is not visible")
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	outcome, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if outcome.Request == nil || outcome.Request.Challenge == nil || outcome.Request.Challenge.Kind != core.AuthChallengeOTP {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+	fallback := false
+	for _, call := range fake.CallsOf("locator") {
+		request := call.Request.(browser.LocatorRequest)
+		if request.Selector == loginSubmitButton && request.Action == "press" && request.Value == "Enter" {
+			fallback = true
+		}
+	}
+	if !fallback {
+		t.Fatalf("blocked submit click did not fall back to Enter")
+	}
+}
+
 func TestLoginDriverCaptchaReturnsScreenshotChallenge(t *testing.T) {
 	fake := browsertest.New()
 	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
@@ -164,6 +287,32 @@ func TestLoginDriverCaptchaReturnsScreenshotChallenge(t *testing.T) {
 	if challenge == nil || challenge.Kind != core.AuthChallengeCaptcha || challenge.MediaType != "image/png" ||
 		string(challenge.Payload) != string(fake.ScreenshotData) {
 		t.Fatalf("challenge = %#v", challenge)
+	}
+}
+
+func TestLoginDriverRechecksWhenCaptchaVanishesAfterAccept(t *testing.T) {
+	fake := browsertest.New()
+	fake.PageResult = browser.PageInfo{URL: defaultLoginURL, HasPage: true}
+	fake.Errors = map[string]error{"screenshot": &browser.Error{Code: "timeout", Message: "waiting for locator to be visible"}}
+	fake.LocatorFunc = func(_ core.ProfileID, request browser.LocatorRequest) error {
+		switch request.Selector {
+		case loginCaptchaImage, loginOTPInput:
+			return nil
+		case loginPasswordExpand:
+			return errors.New("element is not visible")
+		default:
+			return nil
+		}
+	}
+	driver := loginDriverFixture(t, fake)
+	outcome, err := driver.Continue(context.Background(), loginSession(t, core.AuthSessionWaitingIdentifier), auth.Input{
+		Kind: auth.InputIdentifier, Value: "user@example.com",
+	})
+	if err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	if outcome.Request == nil || outcome.Request.Challenge == nil || outcome.Request.Challenge.Kind != core.AuthChallengeOTP {
+		t.Fatalf("outcome = %#v", outcome)
 	}
 }
 
@@ -238,5 +387,42 @@ func TestLoginDriverPasswordBranchIsUnsupported(t *testing.T) {
 		Kind: auth.InputPassword, Value: "secret",
 	}); err == nil {
 		t.Fatal("expected password continuation to be unsupported")
+	}
+}
+
+// draftLoginResolver stands in for the backend resolver that answers for a
+// profile draft with only the state file known.
+type draftLoginResolver struct {
+	stateFile string
+}
+
+func (resolver draftLoginResolver) LoginSettings(profileID core.ProfileID) (LoginSettings, bool) {
+	if profileID != "secondary" {
+		return LoginSettings{}, false
+	}
+	return LoginSettings{ProfileID: profileID, StateFile: resolver.stateFile}, true
+}
+
+func TestLoginDriverResolverFillsLoginURLForDrafts(t *testing.T) {
+	fake := browsertest.New()
+	driver, err := NewLoginDriver(fake, nil)
+	if err != nil {
+		t.Fatalf("new login driver: %v", err)
+	}
+	driver.sleep = func(context.Context, time.Duration) error { return nil }
+	driver.SetProfileResolver(draftLoginResolver{stateFile: "/tmp/draft.json"})
+	if _, err := driver.Start(context.Background(), "secondary"); err != nil {
+		t.Fatalf("draft start: %v", err)
+	}
+	gotoCalls := fake.CallsOf("goto")
+	if len(gotoCalls) != 1 {
+		t.Fatalf("goto calls = %#v", gotoCalls)
+	}
+	request, ok := gotoCalls[0].Request.(browser.GotoRequest)
+	if !ok || request.URL != defaultLoginURL {
+		t.Fatalf("goto request = %#v", gotoCalls[0].Request)
+	}
+	if _, err := driver.Start(context.Background(), "unknown"); err == nil {
+		t.Fatal("expected an unknown profile to fail")
 	}
 }

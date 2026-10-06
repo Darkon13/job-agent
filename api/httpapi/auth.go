@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Darkon13/job-agent/auth"
@@ -23,12 +24,31 @@ type AuthController interface {
 	ChallengePayload(context.Context, core.AuthSessionID) (auth.ChallengePayload, error)
 }
 
+// ProfileStateResolver resolves the browser state target of a profile at
+// session start. It complements the config-derived paths with profile drafts.
+type ProfileStateResolver interface {
+	ProfileStateFile(ctx context.Context, profileID core.ProfileID) (string, bool)
+}
+
 type AuthAPI struct {
+	mu             sync.RWMutex
 	controller     AuthController
 	eventsInterval time.Duration
 	logout         *auth.LogoutService
 	logoutTargets  map[core.ProfileID]auth.LogoutTarget
 	statePaths     map[core.ProfileID]string
+	states         ProfileStateResolver
+}
+
+// SetStatePaths replaces the declared browser state targets, for example when a
+// config reload adds a profile to the running service.
+func (api *AuthAPI) SetStatePaths(paths map[core.ProfileID]string) {
+	if api == nil {
+		return
+	}
+	api.mu.Lock()
+	api.statePaths = paths
+	api.mu.Unlock()
 }
 
 func NewAuthAPI(controller AuthController, statePaths map[core.ProfileID]string) (*AuthAPI, error) {
@@ -52,6 +72,14 @@ func (api *AuthAPI) Handler(next http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/v1/profiles/{profile}/logout", api.logoutProfile)
 	mux.Handle("/", next)
 	return mux
+}
+
+// ConfigureStateResolver attaches a draft-aware state path resolver.
+func (api *AuthAPI) ConfigureStateResolver(resolver ProfileStateResolver) {
+	if api == nil {
+		return
+	}
+	api.states = resolver
 }
 
 // ConfigureLogout attaches the local secret removal. Without it the logout
@@ -179,7 +207,7 @@ func (api *AuthAPI) start(response http.ResponseWriter, request *http.Request) {
 	// when the client does not name an explicit output.
 	browserStateReference := strings.TrimSpace(body.BrowserStateReference)
 	if browserStateReference == "" && strings.TrimSpace(body.CredentialReference) == "" {
-		browserStateReference = strings.TrimSpace(api.statePaths[body.ProfileID])
+		browserStateReference = api.browserStateTarget(request.Context(), body.ProfileID)
 	}
 	session, err := api.controller.Start(request.Context(), auth.StartRequest{
 		Platform: body.Platform, ProfileID: body.ProfileID,
@@ -192,6 +220,26 @@ func (api *AuthAPI) start(response http.ResponseWriter, request *http.Request) {
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusCreated, session)
+}
+
+// browserStateTarget prefers the declared profile state file and falls back to
+// a profile draft, so the dashboard can log in before the profile exists in the
+// config.
+func (api *AuthAPI) browserStateTarget(ctx context.Context, profileID core.ProfileID) string {
+	api.mu.RLock()
+	declared := strings.TrimSpace(api.statePaths[profileID])
+	api.mu.RUnlock()
+	if declared != "" {
+		return declared
+	}
+	if api.states == nil {
+		return ""
+	}
+	path, ok := api.states.ProfileStateFile(ctx, profileID)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(path)
 }
 
 func (api *AuthAPI) read(response http.ResponseWriter, request *http.Request) {

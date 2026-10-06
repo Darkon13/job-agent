@@ -78,18 +78,35 @@ func TestBrowserWithdrawalDeclinesPendingAndTrashesClosedTopics(t *testing.T) {
 	}
 }
 
-func TestBrowserWithdrawalRejectsUnappliedAction(t *testing.T) {
+func TestBrowserWithdrawalTreatsUnappliedActionAsAlreadyGone(t *testing.T) {
 	client := newWithdrawFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte(`<?xml version='1.0' encoding='utf-8'?><doc/>`))
 	}))
-	_, err := client.WithdrawApplication(context.Background(), "primary", core.ApplicationPlatformState{
+	result, err := client.WithdrawApplication(context.Background(), "primary", core.ApplicationPlatformState{
 		ExternalNegotiationID: "5565658117", Disposition: core.ApplicationDispositionRejected,
 	})
-	if err == nil {
-		t.Fatal("a generic <doc/> answer must not count as an applied withdrawal")
+	if err != nil {
+		t.Fatalf("a generic <doc/> answer means the negotiation is gone, not a retry: %v", err)
 	}
-	if !core.ErrorIsCategory(err, core.ErrorTemporaryFailure) {
-		t.Fatalf("unapplied action category = %v", err)
+	if result.Action != withdrawalAlreadyGone {
+		t.Fatalf("action = %q, want %q", result.Action, withdrawalAlreadyGone)
+	}
+}
+
+func TestBrowserWithdrawalTreatsMissingNegotiationAsAlreadyGone(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusConflict} {
+		client := newWithdrawFixture(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+			response.WriteHeader(status)
+		}))
+		result, err := client.WithdrawApplication(context.Background(), "primary", core.ApplicationPlatformState{
+			ExternalNegotiationID: "5565658117", Disposition: core.ApplicationDispositionRejected,
+		})
+		if err != nil {
+			t.Fatalf("status %d must mean the negotiation is gone, not an error: %v", status, err)
+		}
+		if result.Action != withdrawalAlreadyGone {
+			t.Fatalf("status %d action = %q, want %q", status, result.Action, withdrawalAlreadyGone)
+		}
 	}
 }
 

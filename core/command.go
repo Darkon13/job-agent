@@ -558,6 +558,19 @@ type ConversationSendPayload struct {
 	Content        MessageContent `json:"content"`
 }
 
+// ProfileImportPayload loads the whole platform account state into the local
+// database: every negotiation and the full conversation catalog.
+type ProfileImportPayload struct {
+	ProfileID ProfileID `json:"profile_id"`
+}
+
+func (payload ProfileImportPayload) Validate() error {
+	if payload.ProfileID == "" {
+		return errors.New("profile import payload requires profile")
+	}
+	return nil
+}
+
 type ConversationDiscoverPayload struct {
 	ProfileID ProfileID `json:"profile_id"`
 	// MaxPages bounds the recent-activity window of the frequent poll; zero

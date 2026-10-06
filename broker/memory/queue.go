@@ -112,10 +112,65 @@ func (queue *Queue) RestartFailedTask(ctx context.Context, key string, now time.
 	})
 }
 
+func (queue *Queue) CancelQueuedTask(ctx context.Context, key, reason string, now time.Time) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if key == "" || now.IsZero() {
+		return core.Task{}, errors.New("queued task cancellation requires idempotency key and current time")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	task, exists := queue.tasks[key]
+	if !exists {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	switch task.Status {
+	case core.TaskNew, core.TaskRetryScheduled:
+	default:
+		return core.Task{}, broker.ErrTaskNotCancellable
+	}
+	if err := task.CancelQueued(reason, now); err != nil {
+		return core.Task{}, err
+	}
+	queue.tasks[key] = task
+	return cloneTask(task), nil
+}
+
 func (queue *Queue) DismissFailedTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
 	return queue.controlFailedTask(ctx, key, now, func(task *core.Task) error {
 		return task.DismissFailure(now)
 	})
+}
+
+func (queue *Queue) RequeueTask(ctx context.Context, key string, now time.Time) (core.Task, error) {
+	return queue.controlSettledTask(ctx, key, now, func(task *core.Task) error {
+		return task.Requeue(now)
+	})
+}
+
+func (queue *Queue) controlSettledTask(ctx context.Context, key string, now time.Time, update func(*core.Task) error) (core.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Task{}, err
+	}
+	if key == "" || now.IsZero() || update == nil {
+		return core.Task{}, errors.New("settled task control requires idempotency key, current time and update")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	task, exists := queue.tasks[key]
+	if !exists {
+		return core.Task{}, broker.ErrTaskNotFound
+	}
+	if task.Status != core.TaskFailed && task.Status != core.TaskDismissed {
+		return core.Task{}, broker.ErrTaskNotRequeueable
+	}
+	if err := update(&task); err != nil {
+		return core.Task{}, err
+	}
+	queue.tasks[key] = task
+	delete(queue.leases, task.ID)
+	return cloneTask(task), nil
 }
 
 func (queue *Queue) controlFailedTask(ctx context.Context, key string, now time.Time, update func(*core.Task) error) (core.Task, error) {

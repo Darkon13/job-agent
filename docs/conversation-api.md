@@ -205,3 +205,20 @@ Conversation pipeline публикует нормализованные собы
 Payload события содержит ID и структурированные метаданные, но не полную
 приватную историю переписки. Полный текст остаётся в conversation storage и
 удаляется согласно настроенной retention policy.
+
+Перед исполнением native follow-up worker синхронно обновляет историю чата
+и повторяет проверки входящего, cooldown и deadline. Ошибка свежего чтения
+блокирует отправку; этот preflight не запускает `answer_known`. Между чтением
+и платформенным POST остаётся неатомарная гонка.
+
+Conversation и presentation включают необязательный `employer_id` — стабильную
+идентичность компании на платформе. HH browser sync читает его из
+`resources.vacancies[].company.id`; SQLite сохраняет его между рестартами
+(migration 38).
+
+HH discovery и live sync нормализуют актуальный negotiation status из
+resources.negotiation_topics: DISCARD → rejected, HIDDEN → archived.
+Последнее исходящее сообщение и разрешение писать в чат не снимают отказ.
+Presentation может передать status вместе с остальными metadata; пустое
+значение сохраняет текущий status. Native follow-up повторяет проверку после
+fresh sync и отменяется для rejected/archived conversation.

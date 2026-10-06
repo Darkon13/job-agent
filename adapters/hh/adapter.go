@@ -32,6 +32,15 @@ const (
 
 // SearchQuery belongs to the HH adapter because platform filters are not part
 // of the common domain contract.
+const (
+	// ResumePlaceholderProfile resolves to the resume of the profile that runs
+	// the search.
+	ResumePlaceholderProfile = "$profile"
+	// ResumePlaceholderAll expands the search into one route per resume of the
+	// profile.
+	ResumePlaceholderAll = "$all"
+)
+
 type SearchQuery struct {
 	Source             SearchSource `json:"source"`
 	Resume             string       `json:"resume,omitempty"`
@@ -259,6 +268,11 @@ func (a *Adapter) ValidateSearch(raw json.RawMessage) error {
 	case SearchSourceSimilarResume:
 		if query.Resume == "" {
 			return errors.New("hh similar_resume search requires resume")
+		}
+		// Resume placeholders are resolved per profile before the search runs
+		// (see the campaign route planner).
+		if query.Resume != ResumePlaceholderProfile && query.Resume != ResumePlaceholderAll && strings.Contains(query.Resume, "$") {
+			return errors.New("hh similar_resume search has an unknown resume placeholder")
 		}
 		if query.Vacancy != "" {
 			return errors.New("hh similar_resume search must not specify vacancy")

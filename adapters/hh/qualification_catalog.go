@@ -46,6 +46,9 @@ func (client *BrowserReadClient) SyncQualifications(ctx context.Context, profile
 	if err != nil {
 		return nil, err
 	}
+	if isCaptchaURL(finalURL) {
+		return nil, captchaError("skill_verifications.catalog")
+	}
 	if isLoginURL(finalURL) {
 		return nil, operationError(core.ErrorUnauthorized, "skill_verifications.catalog", "HH browser session requires authentication", nil)
 	}

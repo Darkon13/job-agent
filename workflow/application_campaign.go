@@ -131,7 +131,51 @@ func (handler *ApplicationCampaignHandler) Handle(ctx context.Context, task core
 	if campaign.Status != core.ApplicationCampaignRunning {
 		return nil
 	}
+	// The campaign owns questionnaire management: review sessions whose every
+	// question is already covered by the reviewed bank are submitted here
+	// instead of a separate scheduled job, so the next tick can attach them.
+	if err := handler.enqueueAnswerCovered(ctx, task, campaign); err != nil {
+		return err
+	}
 	return handler.runTick(ctx, campaign, task.Priority)
+}
+
+// campaignAnswerCoveredLimit bounds how many covered questionnaires one campaign
+// run resumes.
+const campaignAnswerCoveredLimit = 25
+
+// enqueueAnswerCovered asks the questionnaire handler to submit every review
+// session of the profile whose answers are already known. The task key is tied
+// to the campaign run, so a repeated tick enqueues nothing.
+func (handler *ApplicationCampaignHandler) enqueueAnswerCovered(ctx context.Context, task core.Task, campaign core.ApplicationCampaign) error {
+	if task.ProfileID == "" || task.Platform == "" {
+		return nil
+	}
+	id, err := handler.ids.NewID("task")
+	if err != nil {
+		return err
+	}
+	correlationID, err := handler.ids.NewID("correlation")
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(core.ApplicationAnswerCoveredPayload{ProfileID: task.ProfileID, Limit: campaignAnswerCoveredLimit})
+	if err != nil {
+		return err
+	}
+	queued, err := core.NewTask(core.NewTaskParams{
+		ID: core.TaskID(id), Type: core.TaskApplicationAnswerCovered,
+		IdempotencyKey: "campaign-answer-covered:" + string(campaign.ID),
+		Source:         "campaign:" + campaign.JobTag, Platform: task.Platform, ProfileID: task.ProfileID,
+		CorrelationID: core.CorrelationID(correlationID), Payload: payload, Priority: task.Priority,
+	}, handler.clock.Now())
+	if err != nil {
+		return err
+	}
+	if _, err := handler.tasks.Enqueue(ctx, queued); err != nil {
+		return fmt.Errorf("enqueue covered questionnaire answers: %w", err)
+	}
+	return nil
 }
 
 func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, task core.Task, payload core.ApplicationCampaignPayload) (core.ApplicationCampaign, bool, error) {

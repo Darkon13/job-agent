@@ -292,6 +292,22 @@ func TestTaskClaimFailedProfileStateApplyBlocksUntilRestarted(t *testing.T) {
 	if err != nil || !found || lease.Task.ID != application.ID || lease.Task.Attempts != 1 {
 		t.Fatalf("claim after dismissal: found=%t lease=%#v err=%v", found, lease, err)
 	}
+	// An explicit operator retry revives even a dismissed task and makes it
+	// block dependent applications again.
+	requeued, err := store.RequeueTask(ctx, apply.IdempotencyKey, now.Add(7*time.Second))
+	if err != nil || requeued.Status != core.TaskNew || requeued.Attempts != 0 || requeued.Failure != nil {
+		t.Fatalf("requeue dismissed apply: task=%#v err=%v", requeued, err)
+	}
+	if _, err := store.RequeueTask(ctx, apply.IdempotencyKey, now.Add(8*time.Second)); !errors.Is(err, broker.ErrTaskNotRequeueable) {
+		t.Fatalf("requeue queued apply: err=%v", err)
+	}
+	lease, found, err = store.Claim(ctx, broker.ClaimParams{
+		WorkerID: "profile-worker", TaskType: core.TaskProfileStateApply,
+		Now: now.Add(8 * time.Second), LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || lease.Task.ID != apply.ID {
+		t.Fatalf("claim requeued apply: found=%t lease=%#v err=%v", found, lease, err)
+	}
 }
 
 func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
@@ -338,6 +354,41 @@ func TestTaskRetryAndDeadlineSweepAreDurable(t *testing.T) {
 	}
 }
 
+func TestStoreAuthWarningProfiles(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 26, 17, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "task-auth", Type: core.TaskApplicationSubmit, IdempotencyKey: "key-auth",
+		Source: "test", Platform: "hh", ProfileID: "primary",
+		CorrelationID: "correlation-auth", Payload: json.RawMessage(`{}`),
+	}, now)
+	if err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+	if _, err := store.Enqueue(ctx, task); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	lease, found, err := store.Claim(ctx, broker.ClaimParams{WorkerID: "worker", Now: now, LeaseDuration: time.Minute})
+	if err != nil || !found {
+		t.Fatalf("claim: found=%v err=%v", found, err)
+	}
+	if err := store.Fail(ctx, lease, &core.OperationError{Category: core.ErrorUnauthorized, Operation: "application.submit"}, now.Add(time.Second)); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	warnings, err := store.AuthWarningProfiles(ctx, now.Add(-time.Hour))
+	if err != nil || len(warnings) != 1 || warnings[0].ProfileID != "primary" || warnings[0].Count != 1 {
+		t.Fatalf("warnings=%#v err=%v", warnings, err)
+	}
+	if stale, err := store.AuthWarningProfiles(ctx, now.Add(time.Hour)); err != nil || len(stale) != 0 {
+		t.Fatalf("window was not applied: %#v err=%v", stale, err)
+	}
+}
+
 func sqliteTask(t *testing.T, id core.TaskID, key string, now time.Time, deadline *time.Time) core.Task {
 	t.Helper()
 	task, err := core.NewTask(core.NewTaskParams{
@@ -349,6 +400,52 @@ func sqliteTask(t *testing.T, id core.TaskID, key string, now time.Time, deadlin
 		t.Fatalf("new task: %v", err)
 	}
 	return task
+}
+
+func TestFailedAuthTasksListsOnlyUnauthorizedFailuresOfTheProfile(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 28, 18, 0, 0, 0, time.UTC)
+	store, err := openStore(filepath.Join(t.TempDir(), "queue.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	unauthorized := sqliteTask(t, "task-auth", "key-auth", now, nil)
+	unauthorized.Type, unauthorized.ProfileID = core.TaskConversationDiscover, "main"
+	temporary := sqliteTask(t, "task-temp", "key-temp", now, nil)
+	temporary.Type, temporary.ProfileID = core.TaskConversationSync, "main"
+	foreign := sqliteTask(t, "task-other", "key-other", now, nil)
+	foreign.ProfileID = "secondary"
+	for _, task := range []core.Task{unauthorized, temporary, foreign} {
+		if _, err := store.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue %s: %v", task.ID, err)
+		}
+	}
+	fail := func(taskType core.TaskType, category core.ErrorCategory) {
+		t.Helper()
+		lease, found, err := store.Claim(ctx, broker.ClaimParams{
+			WorkerID: "worker", TaskType: taskType, Now: now.Add(time.Second), LeaseDuration: time.Minute,
+		})
+		if err != nil || !found {
+			t.Fatalf("claim %s: found=%t err=%v", taskType, found, err)
+		}
+		if err := store.Fail(ctx, lease, &core.OperationError{
+			Category: category, Operation: string(taskType), Message: "failed",
+		}, now.Add(2*time.Second)); err != nil {
+			t.Fatalf("fail %s: %v", taskType, err)
+		}
+	}
+	fail(core.TaskConversationDiscover, core.ErrorUnauthorized)
+	fail(core.TaskConversationSync, core.ErrorTemporaryFailure)
+	fail(core.TaskApplicationSubmit, core.ErrorUnauthorized)
+
+	items, err := store.FailedAuthTasks(ctx, "main", 10)
+	if err != nil {
+		t.Fatalf("failed auth tasks: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != unauthorized.ID {
+		t.Fatalf("failed auth tasks = %#v", items)
+	}
 }
 
 func TestTaskRetryPreservesAttemptsForPacing(t *testing.T) {

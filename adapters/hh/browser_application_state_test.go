@@ -108,6 +108,22 @@ func TestBrowserVacancyReadReportsClosedVacancy(t *testing.T) {
 	}
 }
 
+func TestBrowserVacancyReadReportsCaptchaAsConfirmation(t *testing.T) {
+	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		// HH redirects a rate-limited read to its anti-bot challenge page.
+		if request.URL.Path != "/account/captcha" {
+			http.Redirect(response, request, "/account/captcha?backurl=%2Fvacancy%2F42", http.StatusFound)
+			return
+		}
+		_, _ = response.Write([]byte(`<html><body>challenge</body></html>`))
+	}))
+	_, err := client.ReadVacancy(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"})
+	var operationError *core.OperationError
+	if !errors.As(err, &operationError) || operationError.Category != core.ErrorConfirmationRequired || operationError.Metadata["code"] != "captcha_required" {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
 func TestBrowserObservationDeduplicatesPaginationOverlap(t *testing.T) {
 	client := newBrowserReadClientFixture(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Query().Get("page") {
