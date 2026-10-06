@@ -103,9 +103,15 @@ func (workflow *JobFragmentWorkflow) Delete(ctx context.Context, tag string) err
 	return nil
 }
 
-// Exists reports whether the dashboard manages the job with this tag.
+// Exists reports whether the dashboard manages the job with this tag. The tag
+// is validated like on save/delete so a caller cannot probe files outside the
+// fragment directory.
 func (workflow *JobFragmentWorkflow) Exists(tag string) bool {
-	_, err := os.Stat(workflow.fragmentPath(strings.TrimSpace(tag)))
+	tag = strings.TrimSpace(tag)
+	if !safeJobTag(tag) {
+		return false
+	}
+	_, err := os.Stat(workflow.fragmentPath(tag))
 	return err == nil
 }
 
@@ -113,8 +119,12 @@ func (workflow *JobFragmentWorkflow) fragmentPath(tag string) string {
 	return filepath.Join(workflow.directory, "job-"+tag+".json")
 }
 
-// safeJobTag keeps the tag usable as a file name.
+// safeJobTag keeps the tag usable as a file name: it must be a local path
+// component, so neither absolute paths nor ".." traversal reach the filesystem.
 func safeJobTag(tag string) bool {
+	if !filepath.IsLocal(tag) {
+		return false
+	}
 	for _, symbol := range tag {
 		switch {
 		case symbol >= 'a' && symbol <= 'z', symbol >= 'A' && symbol <= 'Z',
