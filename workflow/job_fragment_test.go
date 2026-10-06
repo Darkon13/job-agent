@@ -69,3 +69,24 @@ func TestJobFragmentWorkflowWritesAndDeletesFragments(t *testing.T) {
 		t.Fatalf("second delete error = %v", err)
 	}
 }
+
+func TestJobFragmentWorkflowExistsRejectsTraversalTags(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "profile-store")
+	workflow, err := NewJobFragmentWorkflow(directory, func(json.RawMessage) error { return nil })
+	if err != nil {
+		t.Fatalf("new workflow: %v", err)
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	// A file one level above the store must stay invisible to Exists.
+	outside := filepath.Join(filepath.Dir(directory), "secret.json")
+	if err := os.WriteFile(outside, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("plant outside file: %v", err)
+	}
+	for _, tag := range []string{"../../../secret", "../escape", "..", "a/b", `a\b`, ""} {
+		if workflow.Exists(tag) {
+			t.Fatalf("Exists(%q) must be false", tag)
+		}
+	}
+}
