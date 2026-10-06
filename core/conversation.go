@@ -101,14 +101,17 @@ type ConversationObservation struct {
 }
 
 type ConversationPresentation struct {
-	VacancyTitle string `json:"vacancy_title,omitempty"`
-	Employer     string `json:"employer,omitempty"`
-	VacancyURL   string `json:"vacancy_url,omitempty"`
+	Status       ConversationStatus `json:"status,omitempty"`
+	EmployerID   string             `json:"employer_id,omitempty"`
+	VacancyTitle string             `json:"vacancy_title,omitempty"`
+	Employer     string             `json:"employer,omitempty"`
+	VacancyURL   string             `json:"vacancy_url,omitempty"`
 }
 
 func (presentation ConversationPresentation) normalized() ConversationPresentation {
 	presentation.VacancyTitle = strings.TrimSpace(presentation.VacancyTitle)
 	presentation.Employer = strings.TrimSpace(presentation.Employer)
+	presentation.EmployerID = strings.TrimSpace(presentation.EmployerID)
 	presentation.VacancyURL = strings.TrimSpace(presentation.VacancyURL)
 	return presentation
 }
@@ -170,6 +173,7 @@ func (message ConversationMessage) Validate() error {
 }
 
 type Conversation struct {
+	EmployerID     string             `json:"employer_id,omitempty"`
 	ID             ConversationID     `json:"id"`
 	Platform       Platform           `json:"platform"`
 	ProfileID      ProfileID          `json:"profile_id"`
@@ -201,13 +205,26 @@ func (conversation *Conversation) ObservePresentation(presentation ConversationP
 		return false, errors.New("conversation presentation time must not move backwards")
 	}
 	presentation = presentation.normalized()
+	switch presentation.Status {
+	case "", ConversationActive, ConversationClosed, ConversationRejected, ConversationArchived:
+	default:
+		return false, errors.New("invalid conversation presentation status")
+	}
 	changed := false
+	if presentation.Status != "" && presentation.Status != conversation.Status {
+		conversation.Status = presentation.Status
+		changed = true
+	}
 	if presentation.VacancyTitle != "" && presentation.VacancyTitle != conversation.VacancyTitle {
 		conversation.VacancyTitle = presentation.VacancyTitle
 		changed = true
 	}
 	if presentation.Employer != "" && presentation.Employer != conversation.Employer {
 		conversation.Employer = presentation.Employer
+		changed = true
+	}
+	if presentation.EmployerID != "" && presentation.EmployerID != conversation.EmployerID {
+		conversation.EmployerID = presentation.EmployerID
 		changed = true
 	}
 	if presentation.VacancyURL != "" && presentation.VacancyURL != conversation.VacancyURL {

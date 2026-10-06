@@ -144,3 +144,40 @@ func TestStoreReusesConversationWithTheSameExternalID(t *testing.T) {
 		t.Fatalf("missing conversation error = %v", err)
 	}
 }
+
+func TestStorePersistsConversationEmployerIDAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "job-agent.db")
+	store, err := openStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := core.NewConversation("employer-chat", "hh", "profile-1", "external-employer-chat", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.EmployerID = "4242"
+	if _, _, err := store.CreateConversation(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	expected := row.Revision
+	if _, err := row.ObservePresentation(core.ConversationPresentation{EmployerID: "4243"}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConversation(ctx, row, expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = openStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stored, err := store.Conversation(ctx, row.ID)
+	if err != nil || stored.EmployerID != "4243" {
+		t.Fatalf("row=%#v err=%v", stored, err)
+	}
+}

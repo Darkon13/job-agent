@@ -174,6 +174,22 @@ func (handlers *ConversationHandlers) FollowUp(ctx context.Context, task core.Ta
 		_, err := handlers.workflow.CancelFollowUp(ctx, followUp.ID, core.FollowUpConversationInactive)
 		return err
 	}
+	// The local catalog may be older than a reply that just arrived. Refresh
+	// synchronously and repeat all timer guards; a failed read must not send.
+	if err := handlers.syncConversation(ctx, conversation, false); err != nil {
+		return err
+	}
+	followUp, outcome, err = handlers.workflow.PrepareFollowUp(ctx, followUp.ID)
+	if err != nil {
+		return err
+	}
+	if outcome != workflow.FollowUpReady {
+		return nil
+	}
+	conversation, found, err = handlers.loadConversation(ctx, followUp.ConversationID)
+	if err != nil || !found {
+		return err
+	}
 	text, err := handlers.resolver.Resolve(ctx, conversation, followUp.Content)
 	if err != nil {
 		return err
@@ -320,6 +336,10 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	if !found {
 		return nil
 	}
+	return handlers.syncConversation(ctx, conversation, true)
+}
+
+func (handlers *ConversationHandlers) syncConversation(ctx context.Context, conversation core.Conversation, answerKnown bool) error {
 	transport, err := handlers.transports.Resolve(conversation.ProfileID)
 	if err != nil {
 		return err
@@ -360,7 +380,10 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 			}
 		}
 	}
-	return handlers.answerKnownQuestion(ctx, conversation, result.Messages)
+	if answerKnown {
+		return handlers.answerKnownQuestion(ctx, conversation, result.Messages)
+	}
+	return nil
 }
 
 // answerKnownQuestion enqueues one idempotent text reply when the earliest

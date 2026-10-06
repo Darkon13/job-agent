@@ -218,3 +218,18 @@ func TestConversationCatalogUnreadSurvivesUnreadMessageSync(t *testing.T) {
 		t.Fatalf("unread counter was dropped: %#v", conversation)
 	}
 }
+
+func TestConversationPresentationStatusIsOptionalAndValidated(t *testing.T) {
+	now := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	chat := testConversation(t, now)
+	if changed, err := chat.ObservePresentation(ConversationPresentation{Status: ConversationRejected}, now.Add(time.Minute)); err != nil || !changed || chat.Status != ConversationRejected {
+		t.Fatalf("changed=%v chat=%#v err=%v", changed, chat, err)
+	}
+	if changed, err := chat.ObservePresentation(ConversationPresentation{Employer: "Example"}, now.Add(2*time.Minute)); err != nil || !changed || chat.Status != ConversationRejected {
+		t.Fatalf("optional status changed rejection: %#v err=%v", chat, err)
+	}
+	revision := chat.Revision
+	if _, err := chat.ObservePresentation(ConversationPresentation{Status: "invalid", Employer: "Other"}, now.Add(3*time.Minute)); err == nil || chat.Revision != revision || chat.Employer != "Example" {
+		t.Fatal("invalid status must fail without mutation")
+	}
+}
