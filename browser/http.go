@@ -185,6 +185,17 @@ func (client *HTTPClient) Page(ctx context.Context, profileID core.ProfileID) (P
 	return info, nil
 }
 
+func (client *HTTPClient) Apply(ctx context.Context, profileID core.ProfileID, request ApplyRequest) (ApplyResult, error) {
+	var result ApplyResult
+	err := client.withProfile(ctx, profileID, "browser.page.apply", func() error {
+		return client.fetch(ctx, http.MethodPost, profilePath(profileID)+"/apply", request, &result)
+	})
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
+}
+
 func (client *HTTPClient) Content(ctx context.Context, profileID core.ProfileID, request ContentRequest) (ContentResult, error) {
 	var result ContentResult
 	err := client.withProfile(ctx, profileID, "browser.page.content", func() error {

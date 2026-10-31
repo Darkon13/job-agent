@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -95,6 +96,7 @@ type Adapter struct {
 	browserApplicationClients  map[core.ProfileID]*BrowserApplicationClient
 	browserConversationClients map[core.ProfileID]*BrowserConversationClient
 	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
+	worker                     *browser.HTTPClient
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
@@ -128,6 +130,13 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 		browserConversationClients: make(map[core.ProfileID]*BrowserConversationClient),
 		browserProfileStateClients: make(map[core.ProfileID]*BrowserProfileStateClient),
 	}, nil
+}
+
+// SetBrowserWorker даёт адаптеру доступ к браузерному воркеру для UI-откликов.
+func (a *Adapter) SetBrowserWorker(client *browser.HTTPClient) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.worker = client
 }
 
 func (a *Adapter) BindBrowserConversationSession(profileID core.ProfileID, stateFile string, options adapter.BrowserConversationOptions) (adapter.ConversationTransport, error) {
@@ -242,6 +251,7 @@ func (a *Adapter) BindBrowserApplicationSession(profileID core.ProfileID, stateF
 		return existing, nil
 	}
 	client := newBrowserApplicationClient(reader, options)
+	client.worker = a.worker
 	a.browserApplicationClients[profileID] = client
 	return client, nil
 }

@@ -483,6 +483,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("create browser worker client: %v", err)
 	}
+	if browserClient != nil {
+		for _, instance := range instances {
+			if setter, ok := instance.(interface{ SetBrowserWorker(*browser.HTTPClient) }); ok {
+				setter.SetBrowserWorker(browserClient)
+			}
+		}
+	}
 	var browserSubmissionDriver *hh.BrowserSubmissionDriver
 	if browserClient != nil {
 		submissionDriver, err := hh.NewBrowserSubmissionDriver(browserClient)

@@ -33,7 +33,14 @@ export type ApplyRequest = {
   timeout_ms?: number
 }
 
-export type ApplyResult = { ok: boolean; url: string; error?: string }
+export type ApplyResult = {
+  ok: boolean
+  url: string
+  error?: string
+  state?: string
+  already_applied?: boolean
+  negotiation_id?: string
+}
 
 export type LocatorRequest = {
   action: string
@@ -267,6 +274,26 @@ export class BrowserManager {
           await popup.waitForLoadState("domcontentloaded").catch(() => undefined)
           formPage = popup
         }
+        const pageText = async () =>
+          (await formPage.content())
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+        const text0 = await pageText()
+        const negotiation = () => (text0.match(/applicant\/negotiations\/(\d+)/) ||
+          text0.match(/chat\/(\d+)/) || [])[1] || ""
+        if (/Вы уже откликались/i.test(text0)) {
+          return { ok: true, url: formPage.url(), already_applied: true, negotiation_id: negotiation() }
+        }
+        if (/Вакансия в архиве|Вакансия закрыта|не принимает отклики|больше не принимает/i.test(text0)) {
+          return { ok: false, url: formPage.url(), state: "archived", error: "vacancy is archived or closed" }
+        }
+        if (/пройти тест|ответить на вопросы|ответьте на вопросы|заполнить анкету/i.test(text0)) {
+          return { ok: false, url: formPage.url(), state: "questionnaire", error: "questionnaire required" }
+        }
+        if (/Вы откликнулись|Отклик отправлен|отклик успешно/i.test(text0)) {
+          return { ok: true, url: formPage.url(), negotiation_id: negotiation() }
+        }
         const textarea = formPage
           .locator('textarea[data-qa*="letter"], textarea[name="letter"], textarea')
           .first()
@@ -279,6 +306,9 @@ export class BrowserManager {
           .first()
         await submit.waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined)
         if (!(await submit.isVisible().catch(() => false))) {
+          if (/Вы откликнулись|Отклик отправлен|отклик успешно/i.test(await pageText())) {
+            return { ok: true, url: formPage.url() }
+          }
           return { ok: false, url: formPage.url(), error: "submit button not found" }
         }
         await submit.click({ timeout })
@@ -289,7 +319,15 @@ export class BrowserManager {
           .replace(/\s+/g, " ")
         const confirmed = /Вы откликнулись|Отклик отправлен|отклик успешно/i.test(text)
         const failure = text.match(/(Не отправилось[^.]{0,140}|Вы уже откликались[^.]{0,140}|лимит откликов[^.]{0,140})/i)
-        return { ok: confirmed, url: formPage.url(), error: confirmed ? undefined : (failure?.[1] ?? "no confirmation") }
+        const finalText = await pageText()
+        const finalNegotiation = (finalText.match(/applicant\/negotiations\/(\d+)/) ||
+          finalText.match(/chat\/(\d+)/) || [])[1] || ""
+        return {
+          ok: confirmed,
+          url: formPage.url(),
+          negotiation_id: finalNegotiation || undefined,
+          error: confirmed ? undefined : (failure?.[1] ?? "no confirmation"),
+        }
       }),
     )
   }

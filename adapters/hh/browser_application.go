@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -30,6 +31,7 @@ type BrowserApplicationClient struct {
 	reader     *BrowserReadClient
 	options    adapter.BrowserApplicationOptions
 	webBaseURL string
+	worker     *browser.HTTPClient
 	mu         sync.Mutex
 }
 
@@ -300,6 +302,42 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, fmt.Errorf("encode HH visibility countries: %w", err)
 	}
 
+	// Основной путь: реальная отправка через UI browser-worker (новая вкладка,
+	// форма письма, подтверждение). Внутренний POST остаётся резервом.
+	if client.worker != nil {
+		target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + url.PathEscape(command.Vacancy.ExternalID)
+		applied, applyErr := client.worker.Apply(ctx, client.reader.profileID, browser.ApplyRequest{
+			URL: target, Message: command.Message, TimeoutMS: 45000,
+		})
+		if applyErr != nil {
+			return adapter.ApplicationSubmitResult{}, applyErr
+		}
+		if !applied.OK {
+			switch applied.State {
+			case "archived":
+				return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "vacancy_closed",
+					"HH vacancy is archived or closed")
+			case "questionnaire":
+				return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "questionnaire_required",
+					"HH vacancy requires a questionnaire before applying")
+			default:
+				return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+					"HH UI application was not confirmed: "+strings.TrimSpace(applied.Error), nil)
+			}
+		}
+		if id := strings.TrimSpace(applied.NegotiationID); id != "" {
+			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
+		}
+		if id := client.verifySubmittedNegotiation(ctx, command); id != "" {
+			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
+		}
+		if applied.AlreadyApplied {
+			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+				"HH reports an existing response without a negotiation id", nil)
+		}
+		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+			"HH UI application was not confirmed by negotiation id", nil)
+	}
 	fields := map[string]string{
 		"vacancy_id":       command.Vacancy.ExternalID,
 		"resume_hash":      resumeHash,

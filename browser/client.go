@@ -55,6 +55,21 @@ type PageInfo struct {
 	HasPage bool   `json:"has_page"`
 }
 
+type ApplyRequest struct {
+	URL       string `json:"url"`
+	Message   string `json:"message"`
+	TimeoutMS int    `json:"timeout_ms,omitempty"`
+}
+
+type ApplyResult struct {
+	OK             bool   `json:"ok"`
+	URL            string `json:"url"`
+	Error          string `json:"error,omitempty"`
+	State          string `json:"state,omitempty"`
+	AlreadyApplied bool   `json:"already_applied,omitempty"`
+	NegotiationID  string `json:"negotiation_id,omitempty"`
+}
+
 type ContentRequest struct {
 	TimeoutMS int `json:"timeout_ms,omitempty"`
 }
