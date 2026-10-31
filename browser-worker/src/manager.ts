@@ -27,6 +27,14 @@ export type ContentRequest = { timeout_ms?: number }
 
 export type ScreenshotRequest = { selector?: string; full_page?: boolean; timeout_ms?: number }
 
+export type ApplyRequest = {
+  url: string
+  message: string
+  timeout_ms?: number
+}
+
+export type ApplyResult = { ok: boolean; url: string; error?: string }
+
 export type LocatorRequest = {
   action: string
   selector: string
@@ -241,6 +249,51 @@ export class BrowserManager {
     )
   }
 
+  async apply(profileID: string, request: ApplyRequest): Promise<ApplyResult> {
+    const target = this.httpURL(request.url)
+    const timeout = this.timeout(request.timeout_ms)
+    return this.withLock(profileID, () =>
+      this.withSlot(async () => {
+        const state = await this.requireContext(profileID)
+        const page = await this.page(profileID)
+        await page.goto(target, { waitUntil: "domcontentloaded", timeout })
+        const link = page.locator('[data-qa="vacancy-response-link-top"]').first()
+        await link.waitFor({ state: "visible", timeout })
+        const popupPromise = state.context.waitForEvent("page", { timeout: 6000 }).catch(() => null)
+        await link.click({ timeout })
+        let formPage = page
+        const popup = await popupPromise
+        if (popup) {
+          await popup.waitForLoadState("domcontentloaded").catch(() => undefined)
+          formPage = popup
+        }
+        const textarea = formPage
+          .locator('textarea[data-qa*="letter"], textarea[name="letter"], textarea')
+          .first()
+        await textarea.waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined)
+        if (await textarea.isVisible().catch(() => false)) {
+          await textarea.fill(request.message, { timeout })
+        }
+        const submit = formPage
+          .locator('[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button[type="submit"], button:has-text("Отправить")')
+          .first()
+        await submit.waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined)
+        if (!(await submit.isVisible().catch(() => false))) {
+          return { ok: false, url: formPage.url(), error: "submit button not found" }
+        }
+        await submit.click({ timeout })
+        await formPage.waitForTimeout(2500)
+        const text = (await formPage.content())
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+        const confirmed = /Вы откликнулись|Отклик отправлен|отклик успешно/i.test(text)
+        const failure = text.match(/(Не отправилось[^.]{0,140}|Вы уже откликались[^.]{0,140}|лимит откликов[^.]{0,140})/i)
+        return { ok: confirmed, url: formPage.url(), error: confirmed ? undefined : (failure?.[1] ?? "no confirmation") }
+      }),
+    )
+  }
+
   async shutdown(): Promise<void> {
     for (const [profileID, state] of this.profiles) {
       await this.persistState(profileID, state).catch(() => undefined)
@@ -277,7 +330,7 @@ export class BrowserManager {
   private async page(profileID: string): Promise<Page> {
     const state = await this.requireContext(profileID)
     const pages = openPages(state)
-    if (pages.length > 0) return pages[0]
+    if (pages.length > 0) return pages[pages.length - 1]
     return state.context.newPage()
   }
 

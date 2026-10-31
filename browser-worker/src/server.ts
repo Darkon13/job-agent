@@ -106,6 +106,19 @@ async function handle(
         response.end(screenshot)
         return
       }
+      case "POST apply": {
+        const body = await readObject(request, config.maxBodyBytes)
+        sendJSON(
+          response,
+          200,
+          await manager.apply(profileID, {
+            url: requireString(body.url, "url"),
+            message: requireString(body.message, "message"),
+            timeout_ms: optionalInteger(body.timeout_ms, "timeout_ms"),
+          }),
+        )
+        return
+      }
       case "POST locator": {
         const body = await readObject(request, config.maxBodyBytes)
         await manager.locator(profileID, {
