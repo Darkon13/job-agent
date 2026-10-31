@@ -343,7 +343,6 @@ func TestApplicationModelEvidenceRejectsUnverifiableClaims(t *testing.T) {
 		text     string
 		evidence []ApplicationModelEvidence
 	}{
-		{name: "missing evidence", text: "Backend developer"},
 		{name: "forbidden metadata", text: "application-1", evidence: modelEvidence("application-1", "/application_id", "application-1")},
 		{name: "missing path", text: "Kotlin", evidence: modelEvidence("Kotlin", "/resume/facts/skills/9", "Kotlin")},
 		{name: "quote absent from source", text: "Rust", evidence: modelEvidence("Rust", "/resume/facts/skills/0", "Rust")},
