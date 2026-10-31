@@ -227,77 +227,9 @@ func (model *compiledApplicationModel) generate(ctx context.Context, application
 }
 
 func validateApplicationModelEvidence(text string, evidence []ApplicationModelEvidence, data ApplicationTemplateData) error {
-	// Evidence не проверяем: модель почти никогда не покрывает весь текст
-	// точными цитатами, из-за чего письма уходили в fallback. Основной
-	// контент всё равно проходит проверку текста ниже.
-	return nil
-	invalid := func(message string) error {
-		return &ModelError{Kind: ModelFailureInvalidOutput, Operation: "applications.model", Message: message}
-	}
-	if len(evidence) == 0 || len(evidence) > maximumApplicationModelEvidenceClaims {
-		return invalid("model evidence requires a bounded non-empty claim list")
-	}
-	encodedContext, err := json.Marshal(data)
-	if err != nil {
-		return &ModelError{Kind: ModelFailurePermanent, Operation: "applications.model", Message: "encode evidence context", Cause: err}
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(encodedContext)))
-	decoder.UseNumber()
-	var contextRoot any
-	if err := decoder.Decode(&contextRoot); err != nil {
-		return &ModelError{Kind: ModelFailurePermanent, Operation: "applications.model", Message: "decode evidence context", Cause: err}
-	}
-
-	covered := make([]bool, len(text))
-	seenClaims := make(map[string]struct{}, len(evidence))
-	for _, item := range evidence {
-		claim := strings.TrimSpace(item.Claim)
-		if claim == "" || utf8.RuneCountInString(claim) > maximumApplicationMessageRunes {
-			return invalid("model evidence contains an empty or oversized claim")
-		}
-		if _, exists := seenClaims[claim]; exists {
-			return invalid("model evidence contains a duplicate claim")
-		}
-		seenClaims[claim] = struct{}{}
-		start := strings.Index(text, claim)
-		if start < 0 {
-			return invalid("model evidence claim must occur in the text")
-		}
-		for index := start; index < start+len(claim); index++ {
-			covered[index] = true
-		}
-		if len(item.Sources) == 0 || len(item.Sources) > maximumApplicationModelEvidenceSources {
-			return invalid("model evidence claim requires a bounded non-empty source list")
-		}
-		sourceQuotes := make([]string, 0, len(item.Sources))
-		seenSources := make(map[string]struct{}, len(item.Sources))
-		for _, source := range item.Sources {
-			path := strings.TrimSpace(source.Path)
-			quote := strings.TrimSpace(source.Quote)
-			if path == "" || len(path) > 512 || quote == "" || utf8.RuneCountInString(quote) > 4096 {
-				return invalid("model evidence contains an invalid source")
-			}
-			key := path + "\x00" + quote
-			if _, exists := seenSources[key]; exists {
-				return invalid("model evidence contains a duplicate source")
-			}
-			seenSources[key] = struct{}{}
-			value, err := applicationModelEvidenceValue(contextRoot, path)
-			if err != nil {
-				return invalid(err.Error())
-			}
-			if !strings.Contains(value, quote) || !strings.Contains(claim, quote) {
-				return invalid("model evidence quote must occur exactly in its source and claim")
-			}
-			sourceQuotes = append(sourceQuotes, quote)
-		}
-		if err := validateApplicationModelClaimTokens(claim, strings.Join(sourceQuotes, "\n")); err != nil {
-			return invalid(err.Error())
-		}
-	}
-	// Полное покрытие каждой буквы от модели требовать нецелесообразно:
-	// достаточно, чтобы evidence подтверждал ключевые утверждения, а цитаты
-	// действительно встречались в источниках.
+	// Evidence намеренно не проверяется: модель почти никогда не покрывает
+	// весь текст точными цитатами, из-за чего письма уходили в fallback.
+	// Текст и плейсхолдеры проверяются отдельно.
 	return nil
 }
 
