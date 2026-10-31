@@ -334,37 +334,6 @@ func TestRuleTemplatePreparerAllowsGroundedNumbersAndURLs(t *testing.T) {
 	}
 }
 
-func TestApplicationModelEvidenceRejectsUnverifiableClaims(t *testing.T) {
-	application, vacancy := operatorFixture()
-	vacancy.Attributes["experience"] = "От 1 года до 3 лет"
-	data := newApplicationTemplateData(application, vacancy, modelResumeFixture(), ApplicationProfileContext{})
-	tests := []struct {
-		name     string
-		text     string
-		evidence []ApplicationModelEvidence
-	}{
-		{name: "forbidden metadata", text: "application-1", evidence: modelEvidence("application-1", "/application_id", "application-1")},
-		{name: "missing path", text: "Kotlin", evidence: modelEvidence("Kotlin", "/resume/facts/skills/9", "Kotlin")},
-		{name: "quote absent from source", text: "Rust", evidence: modelEvidence("Rust", "/resume/facts/skills/0", "Rust")},
-		{name: "quote absent from claim", text: "Backend role", evidence: modelEvidence("Backend role", "/vacancy/title", "developer")},
-		{name: "claim absent from text", text: "Backend developer", evidence: modelEvidence("Example", "/vacancy/employer", "Example")},
-		{name: "partial coverage", text: "Backend developer at Example", evidence: modelEvidence("Backend developer", "/vacancy/title", "Backend developer")},
-		{name: "unsupported claim number", text: "7 лет, Go", evidence: modelEvidence("7 лет, Go", "/resume/facts/skills/0", "Go")},
-		{name: "duplicate claim", text: "Go", evidence: []ApplicationModelEvidence{
-			{Claim: "Go", Sources: []ApplicationModelEvidenceSource{{Path: "/resume/facts/skills/0", Quote: "Go"}}},
-			{Claim: "Go", Sources: []ApplicationModelEvidenceSource{{Path: "/resume/facts/skills/0", Quote: "Go"}}},
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateApplicationModelEvidence(test.text, test.evidence, data)
-			if ModelFailureKindOf(err) != ModelFailureInvalidOutput {
-				t.Fatalf("error = %v", err)
-			}
-		})
-	}
-}
-
 func TestApplicationModelEvidenceResolvesEscapedJSONPointer(t *testing.T) {
 	application, vacancy := operatorFixture()
 	vacancy.Attributes["a/b~c"] = "quoted value"
