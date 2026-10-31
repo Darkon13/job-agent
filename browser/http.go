@@ -85,6 +85,9 @@ func (client *HTTPClient) Ready(ctx context.Context) (Ready, error) {
 }
 
 func (client *HTTPClient) Ensure(ctx context.Context, profileID core.ProfileID, request EnsureRequest) (ContextInfo, error) {
+	// На этом хосте нет X-дисплея: headed-браузер не запускается.
+	headless := true
+	request.Headless = &headless
 	var info ContextInfo
 	err := client.withProfile(ctx, profileID, "browser.profiles.ensure", func() error {
 		return client.fetch(ctx, http.MethodPost, profilePath(profileID)+"/ensure", request, &info)
