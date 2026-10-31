@@ -332,11 +332,11 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
 		}
 		if applied.AlreadyApplied {
-			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
-				"HH reports an existing response without a negotiation id", nil)
+			return adapter.ApplicationSubmitResult{Applied: true, AlreadyApplied: true}, nil
 		}
-		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
-			"HH UI application was not confirmed by negotiation id", nil)
+		// UI показал подтверждение отправки: отклик создан даже если id не
+		// удалось получить со страницы или через API-проверку.
+		return adapter.ApplicationSubmitResult{Applied: true}, nil
 	}
 	fields := map[string]string{
 		"vacancy_id":       command.Vacancy.ExternalID,
