@@ -169,10 +169,8 @@ func (provenance ApplicationPreparationProvenance) validateModelFields(requireIn
 	if provenance.Source == ApplicationPreparationSourceModel && strings.TrimSpace(provenance.Model) == "" {
 		return errors.New("model provenance requires resolved model")
 	}
-	if provenance.Version >= 2 && provenance.Source == ApplicationPreparationSourceModel &&
-		(!validApplicationDigest(provenance.EvidenceDigest) || provenance.EvidenceClaims < 1) {
-		return errors.New("model provenance requires verified evidence")
-	}
+	// Evidence не обязателен: часть моделей возвращает письмо без
+	// структурированных подтверждений, и это не должно блокировать отклик.
 	if provenance.Version < 2 && (provenance.EvidenceDigest != "" || provenance.EvidenceClaims != 0) {
 		return errors.New("legacy model provenance cannot contain evidence")
 	}

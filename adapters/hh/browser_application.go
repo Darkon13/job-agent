@@ -253,9 +253,12 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, err
 	}
 	if preflightAlreadyApplied(preflight) || contains(preflight.ResponseStatus.UsedResumeIDs, command.ResumeID) {
-		return adapter.ApplicationSubmitResult{
-			ExternalNegotiationID: negotiationID(preflight.ResponseStatus.Negotiations), Applied: true, AlreadyApplied: true,
-		}, nil
+		id := negotiationID(preflight.ResponseStatus.Negotiations)
+		if id == "" {
+			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+				"HH suggests an existing response but returned no negotiation id", nil)
+		}
+		return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true, AlreadyApplied: true}, nil
 	}
 	if err := client.preflightBlocker(preflight, "applications.submit.browser"); err != nil {
 		return adapter.ApplicationSubmitResult{}, err
@@ -272,7 +275,12 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "resume_not_suitable", "configured resume cannot be used for this vacancy")
 	}
 	if containsAny(preflight.ResponseStatus.UsedResumeIDs, aliases) {
-		return adapter.ApplicationSubmitResult{ExternalNegotiationID: negotiationID(preflight.ResponseStatus.Negotiations), Applied: true, AlreadyApplied: true}, nil
+		id := negotiationID(preflight.ResponseStatus.Negotiations)
+		if id == "" {
+			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+				"HH suggests an existing response but returned no negotiation id", nil)
+		}
+		return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true, AlreadyApplied: true}, nil
 	}
 	if preflight.ResponseStatus.LetterMaxLength > 0 && len([]rune(command.Message)) > preflight.ResponseStatus.LetterMaxLength {
 		return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "cover_letter_too_long", "cover letter exceeds the current HH form limit")
@@ -303,7 +311,39 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		"lux":         "true",
 		"withoutTest": "no",
 	}
-	return client.postApplication(ctx, command, fields)
+	result, err := client.postApplication(ctx, command, fields)
+	if err != nil || !result.Applied || result.ExternalNegotiationID != "" {
+		return result, err
+	}
+	// HH ответил success без id: перечитываем preflight и ищем negotiation id,
+	// иначе отклик нельзя считать подтверждённым.
+	if id := client.verifySubmittedNegotiation(ctx, command); id != "" {
+		result.ExternalNegotiationID = id
+		return result, nil
+	}
+	return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, "applications.submit.browser",
+		"HH reported success but did not expose a negotiation id", nil)
+}
+
+func (client *BrowserApplicationClient) verifySubmittedNegotiation(ctx context.Context, command adapter.ApplicationSubmitCommand) string {
+	for attempt := 0; attempt < 3; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(time.Second):
+		}
+		preflight, err := client.preflight(ctx, command.Vacancy)
+		if err != nil {
+			continue
+		}
+		if id := negotiationID(preflight.ResponseStatus.Negotiations); id != "" {
+			return id
+		}
+		if contains(preflight.ResponseStatus.UsedResumeIDs, command.ResumeID) {
+			return ""
+		}
+	}
+	return ""
 }
 
 func (client *BrowserApplicationClient) ReconcileApplication(ctx context.Context, command adapter.ApplicationReconcileCommand) (adapter.ApplicationReconcileResult, error) {
@@ -680,10 +720,10 @@ func classifyBrowserApplicationPOST(response *http.Response, data []byte) (adapt
 		return classifyBrowserApplicationPayloadFailure(operation, failure)
 	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		if nestedBool(payload, "success") || externalID != "" {
+		if externalID != "" {
 			return adapter.ApplicationSubmitResult{ExternalNegotiationID: externalID, Applied: true}, nil
 		}
-		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorAmbiguousResult, operation, "HH returned no definitive browser application result", nil)
+		return adapter.ApplicationSubmitResult{Applied: true}, nil
 	}
 	if response.StatusCode == http.StatusTooManyRequests {
 		failure := operationError(core.ErrorRateLimited, operation, "HH browser application was rate limited", nil)

@@ -129,6 +129,23 @@ func runAuthLogin(ctx context.Context, args []string, output io.Writer, client *
 
 type authPrompter func(label string) (string, error)
 
+// defaultAuthOutputs возвращает пути по умолчанию, если пользователь их не
+// задал: /data, когда доступен (контейнер), иначе ./data. Пути совпадают с
+// state_file/credentials_ref профиля.
+func defaultAuthOutputs(platform, profile, stateOutput, credentialOutput string) (string, string) {
+	base := "/data"
+	if _, err := os.Stat(base); err != nil {
+		base = "./data"
+	}
+	if strings.TrimSpace(stateOutput) == "" {
+		stateOutput = filepath.Join(base, "profiles", profile+".json")
+	}
+	if strings.TrimSpace(credentialOutput) == "" {
+		credentialOutput = filepath.Join(base, "credentials", platform+"-"+profile+".json")
+	}
+	return stateOutput, credentialOutput
+}
+
 func runAuthLoginWith(ctx context.Context, args []string, output io.Writer, client *http.Client, prompt authPrompter) error {
 	flags := flag.NewFlagSet("job-agent auth login", flag.ContinueOnError)
 	flags.SetOutput(output)
@@ -148,8 +165,21 @@ func runAuthLoginWith(ctx context.Context, args []string, output io.Writer, clie
 	if strings.TrimSpace(*profile) == "" {
 		return errors.New("usage: job-agent auth login --profile <tag> [--state-output file] [--credential-output file]")
 	}
-	if strings.TrimSpace(*stateOutput) == "" && strings.TrimSpace(*credentialOutput) == "" {
-		return errors.New("auth login requires --state-output and/or --credential-output")
+	// По умолчанию пишем туда же, куда смотрит профиль: /data — каталог данных
+	// в контейнере, ./data — локальный запуск.
+	stateDefault, credentialDefault := defaultAuthOutputs(*platform, *profile, *stateOutput, *credentialOutput)
+	*stateOutput = stateDefault
+	*credentialOutput = credentialDefault
+	for _, path := range []string{*stateOutput, *credentialOutput} {
+		if path == "" {
+			continue
+		}
+		dir := filepath.Dir(path)
+		if dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return fmt.Errorf("create auth output directory: %w", err)
+			}
+		}
 	}
 	mode := strings.ToLower(strings.TrimSpace(*presenterMode))
 	if mode != "" && mode != "auto" && mode != "terminal" {

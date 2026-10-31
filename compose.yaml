@@ -36,6 +36,8 @@ services:
       # container network endpoint with a bearer token.
       JOB_AGENT_API_TOKEN: ${JOB_AGENT_API_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
       BROWSER_WORKER_URL: ${BROWSER_WORKER_URL:-http://browser-worker:8088}
       BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"

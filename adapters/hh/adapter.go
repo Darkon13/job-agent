@@ -196,6 +196,14 @@ func (a *Adapter) NewProfileReader(profileID core.ProfileID, credentialsRef stri
 	return client, nil
 }
 
+// UnbindProfileReader убирает API-клиент профиля, когда креды недоступны и
+// работа идёт через браузерную сессию.
+func (a *Adapter) UnbindProfileReader(profileID core.ProfileID) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.clients, profileID)
+}
+
 func (a *Adapter) BindBrowserSession(profileID core.ProfileID, stateFile string) (adapter.VacancyReader, error) {
 	client, err := NewBrowserReadClient(profileID, stateFile, a.config.UserAgent, nil)
 	if err != nil {

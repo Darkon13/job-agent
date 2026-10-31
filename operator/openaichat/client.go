@@ -37,6 +37,7 @@ type Config struct {
 	Model           string
 	MaxOutputTokens int
 	ReasoningEffort string
+	Headers         map[string]string
 	HTTPClient      HTTPClient
 }
 
@@ -46,6 +47,7 @@ type Client struct {
 	model           string
 	maxOutputTokens int
 	reasoningEffort string
+	headers         map[string]string
 	httpClient      HTTPClient
 }
 
@@ -92,9 +94,14 @@ func New(config Config) (*Client, error) {
 	default:
 		return nil, errors.New("chat completions reasoning effort must be none, low, medium or high")
 	}
+	headers := make(map[string]string, len(config.Headers))
+	for name, value := range config.Headers {
+		headers[name] = value
+	}
 	return &Client{
 		endpoint: endpoint, apiKey: apiKey, model: model,
-		maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort, httpClient: httpClient,
+		maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort,
+		headers: headers, httpClient: httpClient,
 	}, nil
 }
 
@@ -330,6 +337,9 @@ func (client *Client) createCompletion(ctx context.Context, operation, instructi
 	httpRequest.Header.Set("Authorization", "Bearer "+client.apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
+	for name, value := range client.headers {
+		httpRequest.Header.Set(name, value)
+	}
 
 	response, err := client.httpClient.Do(httpRequest)
 	if err != nil {

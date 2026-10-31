@@ -1742,6 +1742,12 @@ func resolveProfileContactsFor(profile appconfig.Profile, instances map[string]a
 	if !profile.Enabled {
 		return fallback
 	}
+	// Явные контакты из конфига приоритетнее данных платформы: пользователь
+	// может указать в письмах другой Telegram/email, чем в профиле HH.
+	if !fallback.IsZero() {
+		logf("profile %q contacts from config", profile.Tag)
+		return fallback
+	}
 	if strings.TrimSpace(profile.Resume) == "" || strings.TrimSpace(profile.StateFile) == "" {
 		return fallback
 	}
@@ -1898,6 +1904,7 @@ func buildApplicationModels(configs []appconfig.ModelProviderConfig, lookupEnv f
 			model, err = openaichat.New(openaichat.Config{
 				BaseURL: configured.BaseURL, APIKey: apiKey, Model: configured.Model,
 				MaxOutputTokens: configured.MaxOutputTokens, ReasoningEffort: configured.ReasoningEffort,
+				Headers: configured.Headers,
 			})
 		default:
 			err = fmt.Errorf("unsupported model provider type %q", configured.Type)
@@ -2595,11 +2602,21 @@ func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Prof
 			profiles[profileID] = profileRuntime{Status: core.ProfileDisabled}
 			continue
 		}
-		profiles[profileID] = profileRuntime{Status: core.ProfileEnabled}
+		runtime := profileRuntime{Status: core.ProfileEnabled}
+		instance := instances[profile.Adapter]
+		// Читать вакансии можно и через браузерную сессию: она не требует
+		// OAuth-кредов и достаточно для dry_run-кампаний.
+		if profile.StateFile != "" {
+			if binder, ok := instance.(adapter.BrowserSessionBinder); ok {
+				if browserReader, err := binder.BindBrowserSession(profileID, profile.StateFile); err == nil && browserReader != nil {
+					runtime.BrowserReader = browserReader
+				}
+			}
+		}
+		profiles[profileID] = runtime
 		if profile.CredentialsRef == "" {
 			continue
 		}
-		instance := instances[profile.Adapter]
 		factory, ok := instance.(adapter.ProfileReaderFactory)
 		if !ok {
 			return nil, fmt.Errorf("adapter %q does not support authenticated profile reads", profile.Adapter)
@@ -2612,6 +2629,14 @@ func probeProfileAuthorizations(ctx context.Context, configured []appconfig.Prof
 		identity, err := reader.ReadProfile(probeCtx, profileID)
 		cancel()
 		if core.ErrorIsCategory(err, core.ErrorUnauthorized) {
+			if runtime.BrowserReader != nil {
+				// Браузерная сессия валидна: работаем через неё, а нерабочий
+				// API-клиент снимаем, иначе поиск выбирает его и падает.
+				if unbinder, ok := instance.(interface{ UnbindProfileReader(core.ProfileID) }); ok {
+					unbinder.UnbindProfileReader(profileID)
+				}
+				continue
+			}
 			profiles[profileID] = profileRuntime{Status: core.ProfileAuthRequired, Reader: reader}
 			continue
 		}

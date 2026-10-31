@@ -77,13 +77,14 @@ const (
 const CurrentConfigSchemaVersion = 1
 
 type ModelProviderConfig struct {
-	Tag             string `json:"tag"`
-	Type            string `json:"type"`
-	Model           string `json:"model"`
-	BaseURL         string `json:"base_url,omitempty"`
-	APIKeyEnv       string `json:"api_key_env,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Tag             string            `json:"tag"`
+	Type            string            `json:"type"`
+	Model           string            `json:"model"`
+	BaseURL         string            `json:"base_url,omitempty"`
+	APIKeyEnv       string            `json:"api_key_env,omitempty"`
+	MaxOutputTokens int               `json:"max_output_tokens,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
 }
 
 func (config ModelProviderConfig) APIKeyEnvironment() string {

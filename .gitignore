@@ -17,3 +17,7 @@ browser-worker/dist/
 /docs/project-status.md
 
 /.env
+
+# Local deployment config and resume facts (personal)
+/deploy/config.json
+/deploy/facts/
