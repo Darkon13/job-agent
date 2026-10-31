@@ -222,7 +222,10 @@ func (driver *LoginDriver) challenge(ctx context.Context, setting LoginSettings)
 		}
 		return outcome, true, nil
 	}
-	if driver.visible(ctx, setting.ProfileID, loginPasswordExpand) {
+	// Ссылка «Войти с паролем» есть и на стартовой странице входа: пароль
+	// считаем запрошенным только когда форма идентификатора уже ушла.
+	if driver.visible(ctx, setting.ProfileID, loginPasswordExpand) &&
+		!driver.visible(ctx, setting.ProfileID, loginEmailInput) {
 		return auth.Outcome{}, true, &core.OperationError{
 			Category: core.ErrorUnsupported, Operation: "auth.login.password",
 			Message: "HH asked for a password; password login is not supported",
@@ -245,13 +248,13 @@ func (driver *LoginDriver) waitNextStep(ctx context.Context, setting LoginSettin
 		if driver.authenticated(ctx, setting) {
 			return driver.exportState(ctx, setting)
 		}
-		if outcome, found, err := driver.challenge(ctx, setting); found || err != nil {
-			return outcome, err
-		}
 		if driver.visible(ctx, setting.ProfileID, loginOTPInput) {
 			return auth.Outcome{Request: &auth.Request{Challenge: &auth.Challenge{
 				Kind: core.AuthChallengeOTP, Prompt: "Введите код из письма или SMS",
 			}}}, nil
+		}
+		if outcome, found, err := driver.challenge(ctx, setting); found || err != nil {
+			return outcome, err
 		}
 		if err := driver.sleep(ctx, loginPollInterval); err != nil {
 			return auth.Outcome{}, err
