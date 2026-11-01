@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 
 	"github.com/Darkon13/job-agent/adapters/hhapi"
 )
@@ -51,6 +52,10 @@ func main() {
 				return "", err
 			}
 			fmt.Println("IMAGE:/tmp/hh-captcha.png")
+			if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+				_ = exec.Command("xdg-open", "/tmp/hh-captcha.png").Start()
+			}
+			fmt.Print("Введите текст с картинки: ")
 			return bufio.NewReader(os.Stdin).ReadString('\n')
 		})
 		if err != nil {
