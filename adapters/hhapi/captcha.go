@@ -152,7 +152,7 @@ func ModelOCR(ctx context.Context, image []byte, apiKey, baseURL, model string) 
 		"model":            model,
 		"reasoning_effort": "none",
 		"temperature":      0,
-		"max_tokens":       100,
+		"max_tokens":       1000,
 		"messages": []any{map[string]any{
 			"role": "user",
 			"content": []any{
@@ -170,6 +170,7 @@ func ModelOCR(ctx context.Context, image []byte, apiKey, baseURL, model string) 
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-opencode-session", "job-agent-local")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
@@ -179,7 +180,8 @@ func ModelOCR(ctx context.Context, image []byte, apiKey, baseURL, model string) 
 	var result struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -190,6 +192,9 @@ func ModelOCR(ctx context.Context, image []byte, apiKey, baseURL, model string) 
 		return "", fmt.Errorf("model: empty response")
 	}
 	text := strings.TrimSpace(result.Choices[0].Message.Content)
+	if text == "" {
+		text = strings.TrimSpace(result.Choices[0].Message.ReasoningContent)
+	}
 	if text == "" {
 		return "", fmt.Errorf("model: empty text")
 	}
