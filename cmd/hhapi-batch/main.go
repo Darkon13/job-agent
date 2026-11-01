@@ -73,7 +73,8 @@ func main() {
 			continue
 		}
 		if vacErr == nil && c.message == "" && apiKey != "" {
-			prompt := fmt.Sprintf("Ты пишешь сопроводительное письмо под вакансию. В САМОМ НАЧАЛЕ письма обязательно две строки контактов: Telegram и Email кандидата, затем пустая строка. Формат строго: 1 вступление (почему вакансия интересна), 3–5 буллетов «— » (каждый закрывает требование работодателя конкретным опытом из фактов: что делал, чем, результат), 1 финал. 700–1200 знаков. Не пересказывай вакансию и не описывай компанию. Если опыта нет — не выдумывай. Контакты кандидата взять из фактов, телефон не указывать.\n\nФАКТЫ:\n%s\n\nВАКАНСИЯ: %s (%s)\n\n%s", string(facts), vacancy.Name, vacancy.Employer.Name, truncate(vacancy.Description, 4000))
+			promptTemplate := loadPrompt()
+			prompt := fmt.Sprintf(promptTemplate, string(facts), vacancy.Name, vacancy.Employer.Name, truncate(vacancy.Description, 4000))
 			if letter, genErr := hhapi.GenerateText(context.Background(), apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash", prompt); genErr == nil {
 				c.message = letter
 				_, _ = db.Exec(`UPDATE applications SET prepared_message=?, prepared_at=?, updated_at=? WHERE profile_id='main' AND external_id=?`, letter, time.Now().UnixNano(), time.Now().UnixNano(), c.id)
@@ -174,6 +175,13 @@ func tailor(client *hhapi.Client, vacancyID, resumeID string) func() {
 	return func() {
 		_ = client.UpdateResume(ctx, resumeID, hhapi.ResumePatch{Skills: &baseline.Skills, SkillSet: &baseline.SkillSet})
 	}
+}
+
+func loadPrompt() string {
+	if data, err := os.ReadFile("deploy/facts/letter-prompt.txt"); err == nil && len(data) > 0 {
+		return string(data)
+	}
+	return "Сопроводительное письмо под вакансию: 1 вступление, 3–5 буллетов «— » с опытом из фактов, финал. Контакты кандидата — в начале, телефон не указывать.\n\nФАКТЫ:\n%s\n\nВАКАНСИЯ: %s (%s)\n\n%s"
 }
 
 func truncate(value string, limit int) string {
