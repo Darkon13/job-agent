@@ -307,11 +307,13 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
 	// практически не появляется благодаря родному Android UA).
 	if client.api != nil {
+		restoreResume, _ := client.api.Tailor(ctx, command.ResumeID, command.Vacancy.ExternalID)
 		negotiation, err := client.api.Apply(ctx, hhapi.ApplyRequest{
 			VacancyID: command.Vacancy.ExternalID,
 			ResumeID:  command.ResumeID,
 			Message:   command.Message,
 		})
+		restoreResume()
 		if err == nil {
 			return adapter.ApplicationSubmitResult{ExternalNegotiationID: negotiation.ID, Applied: true}, nil
 		}

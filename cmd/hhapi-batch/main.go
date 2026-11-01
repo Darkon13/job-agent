@@ -53,6 +53,7 @@ func main() {
 
 	sent, skipped, failed := 0, 0, 0
 	for _, c := range list {
+		restore := tailor(client, c.id, *resume)
 		result, err := client.Apply(context.Background(), hhapi.ApplyRequest{
 			VacancyID: c.id, ResumeID: *resume, Message: c.message,
 		})
@@ -74,9 +75,59 @@ func main() {
 				fmt.Printf("FAIL %s %v\n", c.id, err)
 			}
 		}
+		restore()
 		time.Sleep(time.Duration(1000+rand.Intn(2000)) * time.Millisecond)
 	}
 	fmt.Printf("done: sent=%d skipped=%d failed=%d\n", sent, skipped, failed)
+}
+
+// tailor добавляет навыки вакансии в резюме и возвращает функцию восстановления.
+func tailor(client *hhapi.Client, vacancyID, resumeID string) func() {
+	ctx := context.Background()
+	baseline, err := client.Resume(ctx, resumeID)
+	if err != nil {
+		return func() {}
+	}
+	vacancy, err := client.Vacancy(ctx, vacancyID)
+	if err != nil {
+		return func() {}
+	}
+	seen := map[string]bool{}
+	var tags []string
+	for _, skill := range vacancy.KeySkills {
+		name := strings.TrimSpace(skill.Name)
+		if name != "" && !seen[strings.ToLower(name)] {
+			seen[strings.ToLower(name)] = true
+			tags = append(tags, name)
+		}
+	}
+	for _, name := range baseline.SkillSet {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		tags = append(tags, name)
+	}
+	if len(tags) > 30 {
+		tags = tags[:30]
+	}
+	text := baseline.Skills
+	if len(vacancy.KeySkills) > 0 {
+		var names []string
+		for _, skill := range vacancy.KeySkills {
+			names = append(names, skill.Name)
+		}
+		text = strings.TrimRight(text, " \n") + "\n\nПод вакансию «" + vacancy.Name + "»: " + strings.Join(names, ", ")
+	}
+	patch := hhapi.ResumePatch{Skills: &text, SkillSet: &tags}
+	if err := client.UpdateResume(ctx, resumeID, patch); err != nil {
+		return func() {}
+	}
+	fmt.Printf("TAILOR %s tags=%d\n", vacancyID, len(tags))
+	return func() {
+		_ = client.UpdateResume(ctx, resumeID, hhapi.ResumePatch{Skills: &baseline.Skills, SkillSet: &baseline.SkillSet})
+	}
 }
 
 func classify(err error) string {
