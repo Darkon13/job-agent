@@ -307,6 +307,10 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
 	// практически не появляется благодаря родному Android UA).
 	if client.api != nil {
+		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && vacancy.BlockedCompany() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
+				"HH employer is in the blacklist")
+		}
 		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && !vacancy.Remote() {
 			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
 				"HH vacancy does not allow remote work")

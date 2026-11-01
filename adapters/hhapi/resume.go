@@ -24,9 +24,24 @@ type Vacancy struct {
 	WorkFormat  []struct {
 		ID string `json:"id"`
 	} `json:"work_format"`
+	Employer struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"employer"`
 	KeySkills []struct {
 		Name string `json:"name"`
 	} `json:"key_skills"`
+}
+
+// BlockedCompany исключает нежелательных работодателей.
+func (v Vacancy) BlockedCompany() bool {
+	name := strings.ToLower(v.Employer.Name)
+	for _, blocked := range []string{"сбер", "sber", "алабуга", "alabuga", "контур", "kontur"} {
+		if strings.Contains(name, blocked) {
+			return true
+		}
+	}
+	return false
 }
 
 // Remote сообщает, что вакансия допускает удалённую работу.
