@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Darkon13/job-agent/adapters/hhapi"
@@ -21,6 +22,9 @@ func main() {
 		log.Fatal("usage: hhapi-auth -user EMAIL [-password PASS] [-token FILE]")
 	}
 	ctx := context.Background()
+	if err := os.MkdirAll(filepath.Dir(*tokenFile), 0o700); err != nil {
+		log.Fatal(err)
+	}
 	client, err := hhapi.New(*tokenFile)
 	if err != nil {
 		log.Fatal(err)
