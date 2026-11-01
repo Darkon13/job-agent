@@ -278,12 +278,12 @@ export class BrowserManager {
         await link.waitFor({ state: "visible", timeout })
         const popupPromise = state.context.waitForEvent("page", { timeout: 6000 }).catch(() => null)
         await link.click({ timeout })
-        let formPage = page
         const popup = await popupPromise
-        if (popup) {
-          await popup.waitForLoadState("domcontentloaded").catch(() => undefined)
-          formPage = popup
+        if (!popup) {
+          return { ok: false, url: page.url(), error: "response form did not open" }
         }
+        await popup.waitForLoadState("domcontentloaded").catch(() => undefined)
+        const formPage = popup
         const pageText = async () => {
           const visible = await formPage.locator("body").innerText().catch(() => "")
           return String(visible).replace(/\s+/g, " ")
@@ -327,10 +327,7 @@ export class BrowserManager {
         }
         await submit.click({ timeout })
         await formPage.waitForTimeout(2500)
-        const text = (await formPage.content())
-          .replace(/<script[\s\S]*?<\/script>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
+        const text = await pageText()
         const confirmed = /Вы откликнулись|Отклик отправлен|отклик успешно/i.test(text)
         const failure = text.match(/(Не отправилось[^.]{0,140}|Вы уже откликались[^.]{0,140}|лимит откликов[^.]{0,140})/i)
         const finalText = await pageText()
