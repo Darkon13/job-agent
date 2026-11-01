@@ -16,6 +16,7 @@ x-runtime: &runtime
 x-runtime-volumes: &runtime-volumes
   - ${JOB_AGENT_CONFIG_DIR:-./deploy}:/config:ro
   - ${JOB_AGENT_DATA_DIR:-./data}:/data
+  - ${HOME}/.config/job-agent:/data/hh-config:rw
 
 services:
   job-agent:
@@ -40,6 +41,7 @@ services:
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
       BROWSER_WORKER_URL: ${BROWSER_WORKER_URL:-http://browser-worker:8088}
       BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
+      HH_API_TOKEN_FILE: /data/hh-config/hh-token.json
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
     volumes: *runtime-volumes
     expose:

@@ -16,9 +16,6 @@ import (
 const (
 	apiBaseURL   = "https://api.hh.ru"
 	oauthBaseURL = "https://hh.ru/oauth"
-	// API HH доверяет родному UA Android-приложения; с браузерным UA
-	// каждый отклик получает captcha_required.
-	apiUserAgent = "ru.hh.android/7.137.10990, Device: ETAIY1TDQC, Android OS: 14 (UUID: 4f6f3f0e-8f2a-4c1e-9d3b-2a7e5c6b8d10)"
 	userAgent    = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/118.0.0.0 Mobile Safari/537.36"
 )
 
@@ -39,10 +36,11 @@ type Client struct {
 	tokenFile string
 	mu        sync.Mutex
 	token     Token
+	userAgent string
 }
 
 func New(tokenFile string) (*Client, error) {
-	c := &Client{http: &http.Client{Timeout: 30 * time.Second}, tokenFile: tokenFile}
+	c := &Client{http: &http.Client{Timeout: 30 * time.Second}, tokenFile: tokenFile, userAgent: nativeUserAgent()}
 	data, err := os.ReadFile(tokenFile)
 	if err == nil {
 		if err := json.Unmarshal(data, &c.token); err != nil {
@@ -108,7 +106,7 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", apiUserAgent)
+	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

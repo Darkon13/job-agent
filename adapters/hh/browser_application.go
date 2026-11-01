@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/adapters/hhapi"
 	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
@@ -32,6 +33,7 @@ type BrowserApplicationClient struct {
 	options    adapter.BrowserApplicationOptions
 	webBaseURL string
 	worker     *browser.HTTPClient
+	api        *hhapi.Client
 	mu         sync.Mutex
 }
 
@@ -302,8 +304,31 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, fmt.Errorf("encode HH visibility countries: %w", err)
 	}
 
-	// Основной путь: реальная отправка через UI browser-worker (новая вкладка,
-	// форма письма, подтверждение). Внутренний POST остаётся резервом.
+	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
+	// практически не появляется благодаря родному Android UA).
+	if client.api != nil {
+		negotiation, err := client.api.Apply(ctx, hhapi.ApplyRequest{
+			VacancyID: command.Vacancy.ExternalID,
+			ResumeID:  command.ResumeID,
+			Message:   command.Message,
+		})
+		if err == nil {
+			return adapter.ApplicationSubmitResult{ExternalNegotiationID: negotiation.ID, Applied: true}, nil
+		}
+		var captcha *hhapi.CaptchaRequiredError
+		if errors.As(err, &captcha) {
+			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorRateLimited, "applications.submit.hhapi",
+				"HH requires captcha for the mobile API", nil)
+		}
+		if strings.Contains(err.Error(), "already_applied") {
+			return adapter.ApplicationSubmitResult{AlreadyApplied: true, Applied: true}, nil
+		}
+		if strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "test_required",
+				"HH vacancy requires a test before applying")
+		}
+		return adapter.ApplicationSubmitResult{}, err
+	}
 	if client.worker != nil {
 		target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + url.PathEscape(command.Vacancy.ExternalID)
 		applied, applyErr := client.worker.Apply(ctx, client.reader.profileID, browser.ApplyRequest{

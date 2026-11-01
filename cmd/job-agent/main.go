@@ -23,6 +23,7 @@ import (
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hh"
+	"github.com/Darkon13/job-agent/adapters/hhapi"
 	"github.com/Darkon13/job-agent/api/httpapi"
 	"github.com/Darkon13/job-agent/auth"
 	"github.com/Darkon13/job-agent/broker"
@@ -488,6 +489,18 @@ func main() {
 			if setter, ok := instance.(interface{ SetBrowserWorker(*browser.HTTPClient) }); ok {
 				setter.SetBrowserWorker(browserClient)
 			}
+		}
+	}
+	if tokenFile := hhAPITokenFile(); tokenFile != "" {
+		if apiClient, err := hhapi.New(tokenFile); err == nil {
+			for _, instance := range instances {
+				if setter, ok := instance.(interface{ SetAPIClient(*hhapi.Client) }); ok {
+					setter.SetAPIClient(apiClient)
+				}
+			}
+			log.Printf("HH mobile API transport enabled (%s)", tokenFile)
+		} else {
+			log.Printf("HH mobile API transport disabled: %v", err)
 		}
 	}
 	var browserSubmissionDriver *hh.BrowserSubmissionDriver
@@ -2889,6 +2902,21 @@ func sessionRefreshDefinitions(cfg appconfig.Config, refreshers *taskworker.Sess
 		}
 	}
 	return definitions, nil
+}
+
+func hhAPITokenFile() string {
+	if path := strings.TrimSpace(os.Getenv("HH_API_TOKEN_FILE")); path != "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".config", "job-agent", "hh-token.json")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
 }
 
 func browserWorkerHTTPClient() (*browser.HTTPClient, error) {

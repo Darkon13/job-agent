@@ -55,7 +55,7 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (Negotiation, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Force-App-Access", "true")
 	req.Header.Set("X-HH-App-Active", "true")
-	req.Header.Set("User-Agent", apiUserAgent)
+	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

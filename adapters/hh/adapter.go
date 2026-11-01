@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
+	"github.com/Darkon13/job-agent/adapters/hhapi"
 	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
@@ -97,6 +98,7 @@ type Adapter struct {
 	browserConversationClients map[core.ProfileID]*BrowserConversationClient
 	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
 	worker                     *browser.HTTPClient
+	api                        *hhapi.Client
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
@@ -133,6 +135,13 @@ func New(raw json.RawMessage) (adapter.Adapter, error) {
 }
 
 // SetBrowserWorker даёт адаптеру доступ к браузерному воркеру для UI-откликов.
+// SetAPIClient включает прямой мобильный API HH для откликов.
+func (a *Adapter) SetAPIClient(client *hhapi.Client) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.api = client
+}
+
 func (a *Adapter) SetBrowserWorker(client *browser.HTTPClient) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -252,6 +261,7 @@ func (a *Adapter) BindBrowserApplicationSession(profileID core.ProfileID, stateF
 	}
 	client := newBrowserApplicationClient(reader, options)
 	client.worker = a.worker
+	client.api = a.api
 	a.browserApplicationClients[profileID] = client
 	return client, nil
 }
