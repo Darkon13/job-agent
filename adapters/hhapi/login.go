@@ -122,8 +122,13 @@ func (s *LoginSession) postForm(ctx context.Context, path string, form url.Value
 	if err != nil {
 		return nil, err
 	}
+	sp, _ := url.Parse(s.loginURL)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("X-XSRFToken", s.xsrf)
+	req.Header.Set("Origin", sp.Scheme+"://"+sp.Host)
 	req.Header.Set("X-Hhtmfrom", "")
 	req.Header.Set("X-Hhtmsource", "account_login")
 	req.Header.Set("Referer", s.loginURL)
