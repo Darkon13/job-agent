@@ -241,10 +241,14 @@ func (s *LoginSession) FinishOAuth(ctx context.Context, c *Client, clientID, cli
 	if backurl == "" {
 		return errors.New("hh login: backurl missing")
 	}
-	target := backurl
-	if u, err := url.Parse(backurl); err != nil || !u.IsAbs() {
+	back, err := url.Parse(backurl)
+	if err != nil {
+		return fmt.Errorf("hh login: parse backurl: %w", err)
+	}
+	target := back.String()
+	if !back.IsAbs() {
 		base := &url.URL{Scheme: sp.Scheme, Host: sp.Host}
-		target = base.ResolveReference(&url.URL{Path: backurl, RawQuery: u.RawQuery}).String()
+		target = base.ResolveReference(back).String()
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	req.Header.Set("User-Agent", userAgent)
