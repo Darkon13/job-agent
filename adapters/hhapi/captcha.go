@@ -128,7 +128,14 @@ func captchaKey(ctx context.Context, client *http.Client, reference *url.URL, xs
 
 func setXHR(req *http.Request, reference *url.URL, xsrf string) {
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("sec-ch-ua", `"Chromium";v="118", "Google Chrome";v="118", "Not=A?Brand";v="99"`)
+	req.Header.Set("sec-ch-ua-mobile", "?1")
+	req.Header.Set("sec-ch-ua-platform", `"Android"`)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("X-XSRFToken", xsrf)
 	req.Header.Set("Origin", "https://hh.ru")
