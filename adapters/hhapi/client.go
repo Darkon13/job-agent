@@ -16,6 +16,9 @@ import (
 const (
 	apiBaseURL   = "https://api.hh.ru"
 	oauthBaseURL = "https://hh.ru/oauth"
+	// API HH доверяет родному UA Android-приложения; с браузерным UA
+	// каждый отклик получает captcha_required.
+	apiUserAgent = "ru.hh.android/7.137.10990, Device: ETAIY1TDQC, Android OS: 14 (UUID: 4f6f3f0e-8f2a-4c1e-9d3b-2a7e5c6b8d10)"
 	userAgent    = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/118.0.0.0 Mobile Safari/537.36"
 )
 
@@ -105,7 +108,7 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", apiUserAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
