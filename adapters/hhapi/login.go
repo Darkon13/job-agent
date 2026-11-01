@@ -105,6 +105,9 @@ func findString(value any, key string) (string, bool) {
 }
 
 func (s *LoginSession) trustFlags(payload map[string]any) (string, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
 	payload["ts"] = time.Now().UnixMilli()
 	plain, err := json.Marshal(payload)
 	if err != nil {
