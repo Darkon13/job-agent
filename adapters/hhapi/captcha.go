@@ -81,7 +81,6 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 		return fmt.Errorf("hh captcha: empty answer")
 	}
 
-	time.Sleep(12 * time.Second)
 	payload := url.Values{
 		"captchaText":  {text},
 		"captchaKey":   {key},
@@ -106,7 +105,7 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 }
 
 func captchaKey(ctx context.Context, client *http.Client, reference *url.URL, xsrf string) (string, error) {
-	target := "https://hh.ru/captcha?lang=EN"
+	target := "https://hh.ru/captcha?lang=RU"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	setXHR(req, reference, xsrf)
 	resp, err := client.Do(req)
