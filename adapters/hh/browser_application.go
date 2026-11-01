@@ -307,6 +307,10 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
 	// практически не появляется благодаря родному Android UA).
 	if client.api != nil {
+		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && !vacancy.Remote() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
+				"HH vacancy does not allow remote work")
+		}
 		restoreResume, _ := client.api.Tailor(ctx, command.ResumeID, command.Vacancy.ExternalID)
 		negotiation, err := client.api.Apply(ctx, hhapi.ApplyRequest{
 			VacancyID: command.Vacancy.ExternalID,
@@ -315,12 +319,16 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		})
 		restoreResume()
 		if err == nil {
-			return adapter.ApplicationSubmitResult{ExternalNegotiationID: negotiation.ID, Applied: true}, nil
+			id := negotiation.ID
+			if id == "" {
+				id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID)
+			}
+			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
 		}
 		var captcha *hhapi.CaptchaRequiredError
 		if errors.As(err, &captcha) {
 			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorRateLimited, "applications.submit.hhapi",
-				"HH requires captcha for the mobile API", nil)
+				"HH requires captcha for the mobile API: "+err.Error(), nil)
 		}
 		if strings.Contains(err.Error(), "already_applied") {
 			return adapter.ApplicationSubmitResult{AlreadyApplied: true, Applied: true}, nil

@@ -18,11 +18,31 @@ type ResumePatch struct {
 }
 
 type Vacancy struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	WorkFormat  []struct {
+		ID string `json:"id"`
+	} `json:"work_format"`
 	KeySkills []struct {
 		Name string `json:"name"`
 	} `json:"key_skills"`
+}
+
+// Remote сообщает, что вакансия допускает удалённую работу.
+func (v Vacancy) Remote() bool {
+	for _, format := range v.WorkFormat {
+		if format.ID == "REMOTE" {
+			return true
+		}
+	}
+	text := strings.ToLower(v.Description)
+	for _, marker := range []string{"удален", "удалён", "remote", "из любого города", "дистанцион"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) Resume(ctx context.Context, id string) (Resume, error) {

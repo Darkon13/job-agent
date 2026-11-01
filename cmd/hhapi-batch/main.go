@@ -53,6 +53,13 @@ func main() {
 
 	sent, skipped, failed := 0, 0, 0
 	for _, c := range list {
+		vacancy, vacErr := client.Vacancy(context.Background(), c.id)
+		if vacErr == nil && !vacancy.Remote() {
+			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='not_remote', decision_reason='вакансия без удалёнки', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
+			skipped++
+			fmt.Printf("SKIP %s not_remote\n", c.id)
+			continue
+		}
 		restore := tailor(client, c.id, *resume)
 		result, err := client.Apply(context.Background(), hhapi.ApplyRequest{
 			VacancyID: c.id, ResumeID: *resume, Message: c.message,
