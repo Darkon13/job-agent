@@ -81,6 +81,7 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 		return fmt.Errorf("hh captcha: empty answer")
 	}
 
+	time.Sleep(12 * time.Second)
 	payload := url.Values{
 		"captchaText":  {text},
 		"captchaKey":   {key},
