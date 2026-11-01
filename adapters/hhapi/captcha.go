@@ -1,7 +1,9 @@
 package hhapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -142,4 +144,54 @@ func setXHR(req *http.Request, reference *url.URL, xsrf string) {
 	req.Header.Set("Referer", reference.String())
 	req.Header.Set("X-Hhtmfrom", "")
 	req.Header.Set("X-Hhtmsource", "account_captcha")
+}
+
+// ModelOCR распознаёт текст капчи через vision-модель OpenAI-совместимого API.
+func ModelOCR(ctx context.Context, image []byte, apiKey, baseURL, model string) (string, error) {
+	payload := map[string]any{
+		"model":            model,
+		"reasoning_effort": "none",
+		"temperature":      0,
+		"max_tokens":       100,
+		"messages": []any{map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "text", "text": "Выведи только текст с картинки капчи, без пояснений и кавычек."},
+				map[string]any{"type": "image_url", "image_url": map[string]any{
+					"url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(image),
+				}},
+			},
+		}},
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", err
+	}
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("model: empty response")
+	}
+	text := strings.TrimSpace(result.Choices[0].Message.Content)
+	if text == "" {
+		return "", fmt.Errorf("model: empty text")
+	}
+	return text, nil
 }

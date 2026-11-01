@@ -493,6 +493,13 @@ func main() {
 	}
 	if tokenFile := hhAPITokenFile(); tokenFile != "" {
 		if apiClient, err := hhapi.New(tokenFile); err == nil {
+			if apiKey := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")); apiKey != "" {
+				apiClient.SetCaptchaSolver(func(ctx context.Context, captchaURL string) error {
+					return hhapi.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
+						return hhapi.ModelOCR(ctx, image, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash")
+					})
+				})
+			}
 			for _, instance := range instances {
 				if setter, ok := instance.(interface{ SetAPIClient(*hhapi.Client) }); ok {
 					setter.SetAPIClient(apiClient)

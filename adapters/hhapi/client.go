@@ -32,11 +32,12 @@ type CaptchaRequiredError struct {
 func (e *CaptchaRequiredError) Error() string { return "hh captcha required: " + e.URL }
 
 type Client struct {
-	http      *http.Client
-	tokenFile string
-	mu        sync.Mutex
-	token     Token
-	userAgent string
+	http          *http.Client
+	tokenFile     string
+	mu            sync.Mutex
+	token         Token
+	userAgent     string
+	captchaSolver func(context.Context, string) error
 }
 
 func New(tokenFile string) (*Client, error) {

@@ -2,6 +2,7 @@ package hhapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,10 +23,39 @@ type Negotiation struct {
 	ID string `json:"id"`
 }
 
+// SetCaptchaSolver задаёт обработчик captcha_url: он должен пройти капчу.
+func (c *Client) SetCaptchaSolver(solver func(context.Context, string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.captchaSolver = solver
+}
+
 // Apply sends a response with a cover letter through the mobile API.
 // HH expects form-urlencoded fields, not JSON.
 func (c *Client) Apply(ctx context.Context, request ApplyRequest) (Negotiation, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		result, err := c.applyOnce(ctx, request)
+		if err == nil {
+			return result, nil
+		}
+		var captcha *CaptchaRequiredError
+		c.mu.Lock()
+		solver := c.captchaSolver
+		c.mu.Unlock()
+		if errors.As(err, &captcha) && solver != nil {
+			if solveErr := solver(ctx, captcha.URL); solveErr != nil {
+				return Negotiation{}, solveErr
+			}
+			continue
+		}
+		return Negotiation{}, err
+	}
+	return Negotiation{}, fmt.Errorf("hh api: captcha attempts exhausted")
+}
+
+func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiation, error) {
 	c.mu.Lock()
+	c.userAgent = nativeUserAgent()
 	if c.token.AccessToken == "" || (c.token.ExpiresAt > 0 && time.Now().Unix() >= c.token.ExpiresAt) {
 		if c.token.RefreshToken == "" {
 			c.mu.Unlock()
@@ -92,4 +122,25 @@ func parseCaptcha(body []byte) error {
 		}
 	}
 	return nil
+}
+
+// NegotiationID ищет id отклика по вакансии среди последних переговоров.
+func (c *Client) NegotiationID(ctx context.Context, vacancyID string) string {
+	var page struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Vacancy struct {
+				ID string `json:"id"`
+			} `json:"vacancy"`
+		} `json:"items"`
+	}
+	if err := c.Request(ctx, "GET", "/negotiations?per_page=50", nil, &page); err != nil {
+		return ""
+	}
+	for _, item := range page.Items {
+		if item.Vacancy.ID == vacancyID {
+			return item.ID
+		}
+	}
+	return ""
 }
