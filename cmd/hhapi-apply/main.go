@@ -52,8 +52,10 @@ func main() {
 				return "", err
 			}
 			fmt.Println("IMAGE:/tmp/hh-captcha.png")
-			if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
-				_ = exec.Command("xdg-open", "/tmp/hh-captcha.png").Start()
+			if _, err := exec.LookPath("chafa"); err == nil {
+				show := exec.Command("chafa", "--size", "60x18", "/tmp/hh-captcha.png")
+				show.Stdout = os.Stdout
+				_ = show.Run()
 			}
 			fmt.Print("Введите текст с картинки: ")
 			return bufio.NewReader(os.Stdin).ReadString('\n')
