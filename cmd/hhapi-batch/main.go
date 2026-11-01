@@ -64,6 +64,12 @@ func main() {
 			sent++
 			fmt.Printf("OK %s\n", c.id)
 		} else {
+			var captcha *hhapi.CaptchaRequiredError
+			if errors.As(err, &captcha) {
+				fmt.Printf("CAPTCHA:%s\n", captcha.URL)
+				fmt.Println("Реши: go run ./cmd/hhapi-captcha -url '<URL>' и запусти батч снова")
+				return
+			}
 			state := classify(err)
 			if state != "" {
 				_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code=?, decision_reason=?, updated_at=? WHERE profile_id='main' AND external_id=?`,
