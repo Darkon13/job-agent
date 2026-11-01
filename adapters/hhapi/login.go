@@ -29,24 +29,21 @@ type LoginSession struct {
 	pubKey   *rsa.PublicKey
 }
 
-func (c *Client) newLoginClient() (*http.Client, error) {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{Timeout: 60 * time.Second, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+func (c *Client) newLoginJar() (http.CookieJar, error) {
+	return cookiejar.New(nil)
 }
 
 // BeginLogin открывает страницу OAuth-логина и извлекает xsrf/публичный ключ.
 func (c *Client) BeginLogin(ctx context.Context, clientID string) (*LoginSession, error) {
-	hc, err := c.newLoginClient()
+	jar, err := c.newLoginJar()
 	if err != nil {
 		return nil, err
 	}
+	follow := &http.Client{Timeout: 60 * time.Second, Jar: jar}
 	loginURL := AuthorizeURL(clientID, "", "") + "&" + authorizeParams
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	req.Header.Set("User-Agent", userAgent)
-	resp, err := hc.Do(req)
+	resp, err := follow.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +79,8 @@ func (c *Client) BeginLogin(ctx context.Context, clientID string) (*LoginSession
 	if !ok {
 		return nil, errors.New("hh login page: trust key is not RSA")
 	}
-	return &LoginSession{client: hc, loginURL: resp.Request.URL.String(), xsrf: xsrf, pubKey: key}, nil
+	noRedirect := &http.Client{Timeout: 60 * time.Second, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &LoginSession{client: noRedirect, loginURL: resp.Request.URL.String(), xsrf: xsrf, pubKey: key}, nil
 }
 
 func findString(value any, key string) (string, bool) {
