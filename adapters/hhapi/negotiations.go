@@ -55,7 +55,6 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (Negotiation, 
 
 func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiation, error) {
 	c.mu.Lock()
-	c.userAgent = nativeUserAgent()
 	if c.token.AccessToken == "" || (c.token.ExpiresAt > 0 && time.Now().Unix() >= c.token.ExpiresAt) {
 		if c.token.RefreshToken == "" {
 			c.mu.Unlock()

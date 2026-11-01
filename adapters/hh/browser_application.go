@@ -331,8 +331,11 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		}
 		var captcha *hhapi.CaptchaRequiredError
 		if errors.As(err, &captcha) {
-			return adapter.ApplicationSubmitResult{}, operationError(core.ErrorRateLimited, "applications.submit.hhapi",
-				"HH requires captcha for the mobile API: "+err.Error(), nil)
+			retryAt := time.Now().Add(2 * time.Hour)
+			return adapter.ApplicationSubmitResult{}, &core.OperationError{
+				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
+				Platform: command.Vacancy.Platform, Message: "HH requires captcha: " + err.Error(), RetryAfter: &retryAt,
+			}
 		}
 		if strings.Contains(err.Error(), "already_applied") {
 			return adapter.ApplicationSubmitResult{AlreadyApplied: true, Applied: true}, nil
