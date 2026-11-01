@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -94,15 +95,17 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 	if err != nil {
 		return err
 	}
+	body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 1<<20))
+	_ = os.WriteFile("/tmp/hh-captcha-submit.html", body2, 0o600)
 	resp2.Body.Close()
 	if resp2.StatusCode == http.StatusFound || resp2.StatusCode == http.StatusOK || resp2.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	return fmt.Errorf("hh captcha: submit status %d", resp2.StatusCode)
+	return fmt.Errorf("hh captcha: submit status %d: %s", resp2.StatusCode, string(body2))
 }
 
 func captchaKey(ctx context.Context, client *http.Client, reference *url.URL, xsrf string) (string, error) {
-	target := "https://hh.ru/captcha?lang=RU"
+	target := "https://hh.ru/captcha?lang=EN"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	setXHR(req, reference, xsrf)
 	resp, err := client.Do(req)
