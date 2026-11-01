@@ -198,6 +198,16 @@ export class BrowserManager {
     )
   }
 
+  async text(profileID: string, selector: string): Promise<{ text: string; url: string }> {
+    return this.withLock(profileID, () =>
+      this.withSlot(async () => {
+        const page = await this.page(profileID)
+        const text = await page.locator(selector).first().textContent({ timeout: 15000 }).catch(() => "")
+        return { text: text ?? "", url: page.url() }
+      }),
+    )
+  }
+
   async screenshot(profileID: string, request: ScreenshotRequest): Promise<Buffer> {
     const timeout = this.timeout(request.timeout_ms)
     const selector = (request.selector ?? "").trim()
@@ -274,11 +284,10 @@ export class BrowserManager {
           await popup.waitForLoadState("domcontentloaded").catch(() => undefined)
           formPage = popup
         }
-        const pageText = async () =>
-          (await formPage.content())
-            .replace(/<script[\s\S]*?<\/script>/gi, " ")
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ")
+        const pageText = async () => {
+          const visible = await formPage.locator("body").innerText().catch(() => "")
+          return String(visible).replace(/\s+/g, " ")
+        }
         const text0 = await pageText()
         const negotiation = () => (text0.match(/applicant\/negotiations\/(\d+)/) ||
           text0.match(/chat\/(\d+)/) || [])[1] || ""
@@ -294,6 +303,11 @@ export class BrowserManager {
         if (/Вы откликнулись|Отклик отправлен|отклик успешно/i.test(text0)) {
           return { ok: true, url: formPage.url(), negotiation_id: negotiation() }
         }
+        await formPage
+          .getByText("Добавить", { exact: true })
+          .first()
+          .click({ timeout: 5000 })
+          .catch(() => undefined)
         const textarea = formPage
           .locator('textarea[data-qa*="letter"], textarea[name="letter"], textarea')
           .first()
@@ -302,7 +316,7 @@ export class BrowserManager {
           await textarea.fill(request.message, { timeout })
         }
         const submit = formPage
-          .locator('[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button[type="submit"], button:has-text("Отправить")')
+          .locator('[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button[type="submit"], button:has-text("Отправить"), button:has-text("Откликнуться")')
           .first()
         await submit.waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined)
         if (!(await submit.isVisible().catch(() => false))) {

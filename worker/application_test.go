@@ -531,7 +531,7 @@ func TestApplicationHandlerTreatsAlreadyAppliedAsIdempotentSuccess(t *testing.T)
 	application, err := repository.Application(context.Background(), core.ApplicationKey{
 		ProfileID: "profile-1", Vacancy: core.VacancyKey{Platform: "hh", ExternalID: "42"},
 	})
-	if err != nil || application.Status != core.ApplicationSubmitted || application.ExternalNegotiationID != "" {
+	if err != nil || application.Status != core.ApplicationSkipped || application.DecisionCode != "already_applied" || application.ExternalNegotiationID != "" {
 		t.Fatalf("stored application: %#v err=%v", application, err)
 	}
 }

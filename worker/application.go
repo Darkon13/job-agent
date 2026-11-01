@@ -608,6 +608,20 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if result.ExternalNegotiationID == "" && !result.Applied && !result.AlreadyApplied {
 		return handler.finishFailure(ctx, application, plan, errors.New("application transport returned empty negotiation id"))
 	}
+	if result.AlreadyApplied {
+		application.DecisionCode = "already_applied"
+		application.DecisionReason = "На вакансию уже был отправлен отклик"
+		if err := application.Transition(core.ApplicationSkipped, handler.clock.Now()); err != nil {
+			return err
+		}
+		if err := handler.repository.SaveApplication(ctx, application, core.ApplicationSubmitting); err != nil {
+			return err
+		}
+		if err := handler.releaseBudget(ctx, application, handler.clock.Now()); err != nil {
+			return err
+		}
+		return handler.restoreTailoring(ctx, application)
+	}
 	application.ExternalNegotiationID = result.ExternalNegotiationID
 	application.FailureCategory = ""
 	application.FailureMessage = ""
