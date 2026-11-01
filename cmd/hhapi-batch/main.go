@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ func main() {
 	defer db.Close()
 
 	rows, err := db.Query(`SELECT external_id, prepared_message FROM applications
-		WHERE profile_id='main' AND status IN ('ready','new') AND prepared_message!=''
+		WHERE profile_id='main' AND status IN ('ready','new')
 		ORDER BY updated_at DESC LIMIT ?`, *limit)
 	if err != nil {
 		log.Fatal(err)
@@ -51,6 +52,17 @@ func main() {
 	}
 	rows.Close()
 
+	facts, _ := os.ReadFile("deploy/facts/main.json")
+	apiKey := os.Getenv("OPENCODE_API_KEY")
+	if apiKey == "" {
+		if env, err := os.ReadFile(".env"); err == nil {
+			for _, line := range strings.Split(string(env), "\n") {
+				if strings.HasPrefix(line, "OPENCODE_API_KEY=") {
+					apiKey = strings.TrimSpace(strings.TrimPrefix(line, "OPENCODE_API_KEY="))
+				}
+			}
+		}
+	}
 	sent, skipped, failed := 0, 0, 0
 	for _, c := range list {
 		vacancy, vacErr := client.Vacancy(context.Background(), c.id)
@@ -60,10 +72,24 @@ func main() {
 			fmt.Printf("SKIP %s company_blocked\n", c.id)
 			continue
 		}
+		if vacErr == nil && c.message == "" && apiKey != "" {
+			prompt := fmt.Sprintf("Ты пишешь сопроводительное письмо под вакансию. Формат строго: 1 вступление (почему вакансия интересна), 3–5 буллетов «— » (каждый закрывает требование работодателя конкретным опытом из фактов: что делал, чем, результат), 1 финал. 700–1200 знаков. Не пересказывай вакансию и не описывай компанию. Если опыта нет — не выдумывай. Контакты: Telegram @candidate, email candidate@example.com, без телефона.\n\nФАКТЫ:\n%s\n\nВАКАНСИЯ: %s (%s)\n\n%s", string(facts), vacancy.Name, vacancy.Employer.Name, truncate(vacancy.Description, 4000))
+			if letter, genErr := hhapi.GenerateText(context.Background(), apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash", prompt); genErr == nil {
+				c.message = letter
+				_, _ = db.Exec(`UPDATE applications SET prepared_message=?, prepared_at=?, updated_at=? WHERE profile_id='main' AND external_id=?`, letter, time.Now().UnixNano(), time.Now().UnixNano(), c.id)
+				fmt.Printf("LETTER %s %d\n", c.id, len(letter))
+			} else {
+				fmt.Printf("LETTER_FAIL %s %v\n", c.id, genErr)
+			}
+		}
 		if vacErr == nil && !vacancy.Remote() {
 			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='not_remote', decision_reason='вакансия без удалёнки', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
 			skipped++
 			fmt.Printf("SKIP %s not_remote\n", c.id)
+			continue
+		}
+		if strings.TrimSpace(c.message) == "" {
+			fmt.Printf("SKIP %s no_letter\n", c.id)
 			continue
 		}
 		restore := tailor(client, c.id, *resume)
@@ -79,6 +105,7 @@ func main() {
 		} else {
 			var captcha *hhapi.CaptchaRequiredError
 			if errors.As(err, &captcha) {
+				_ = os.WriteFile("data/captcha-pending.txt", []byte(captcha.URL), 0o600)
 				fmt.Printf("CAPTCHA:%s\n", captcha.URL)
 				fmt.Println("Реши: go run ./cmd/hhapi-captcha -url '<URL>' и запусти батч снова")
 				return
@@ -95,7 +122,7 @@ func main() {
 			}
 		}
 		restore()
-		time.Sleep(time.Duration(1000+rand.Intn(2000)) * time.Millisecond)
+		time.Sleep(time.Duration(45+rand.Intn(46)) * time.Second)
 	}
 	fmt.Printf("done: sent=%d skipped=%d failed=%d\n", sent, skipped, failed)
 }
@@ -147,6 +174,13 @@ func tailor(client *hhapi.Client, vacancyID, resumeID string) func() {
 	return func() {
 		_ = client.UpdateResume(ctx, resumeID, hhapi.ResumePatch{Skills: &baseline.Skills, SkillSet: &baseline.SkillSet})
 	}
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func classify(err error) string {
