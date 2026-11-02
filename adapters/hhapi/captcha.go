@@ -103,6 +103,9 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 	if resp2.StatusCode == http.StatusFound || resp2.StatusCode == http.StatusOK || resp2.StatusCode == http.StatusNoContent {
 		return nil
 	}
+	if len(body2) > 160 {
+		body2 = body2[:160]
+	}
 	return fmt.Errorf("hh captcha: submit status %d: %s", resp2.StatusCode, string(body2))
 }
 

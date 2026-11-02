@@ -330,6 +330,13 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
 		}
 		var captcha *hhapi.CaptchaRequiredError
+		if strings.Contains(err.Error(), "hh captcha:") {
+			retryAt := time.Now().Add(2 * time.Hour)
+			return adapter.ApplicationSubmitResult{}, &core.OperationError{
+				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
+				Platform: command.Vacancy.Platform, Message: "HH captcha was not accepted", RetryAfter: &retryAt,
+			}
+		}
 		if errors.As(err, &captcha) {
 			retryAt := time.Now().Add(2 * time.Hour)
 			return adapter.ApplicationSubmitResult{}, &core.OperationError{
