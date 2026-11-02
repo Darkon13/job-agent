@@ -66,6 +66,12 @@ func main() {
 	sent, skipped, failed := 0, 0, 0
 	for _, c := range list {
 		vacancy, vacErr := client.Vacancy(context.Background(), c.id)
+		if vacErr == nil && vacancy.BlockedRole() {
+			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='role_blocked', decision_reason='роль вне профиля', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
+			skipped++
+			fmt.Printf("SKIP %s role_blocked\n", c.id)
+			continue
+		}
 		if vacErr == nil && vacancy.BlockedCompany() {
 			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='company_blocked', decision_reason='компания в чёрном списке', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
 			skipped++

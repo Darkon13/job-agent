@@ -307,6 +307,10 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
 	// практически не появляется благодаря родному Android UA).
 	if client.api != nil {
+		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && vacancy.BlockedRole() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
+				"HH vacancy is outside the target profile")
+		}
 		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && vacancy.BlockedCompany() {
 			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
 				"HH employer is in the blacklist")

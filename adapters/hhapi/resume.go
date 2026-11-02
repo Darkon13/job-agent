@@ -33,6 +33,23 @@ type Vacancy struct {
 	} `json:"key_skills"`
 }
 
+// BlockedRole отсекает роли вне профиля (фронтенд, PHP, ML/Data и т.п.).
+func (v Vacancy) BlockedRole() bool {
+	name := " " + strings.ToLower(v.Name) + " "
+	for _, term := range []string{
+		"frontend", "front-end", "фронтенд", "react", "vue", "angular", "next.js", "nuxt",
+		"php", "laravel", "symfony", "bitrix", "битрикс", "wordpress",
+		"аналитик", "analyst", "data scientist", "data engineer", "data инженер", "data-инженер",
+		"machine learning", " ml ", "ml-", "mlops", "нейросет", "нейронн", "computer vision", "nlp", "llm",
+		"c++", "с++", "embedded", "микроконтроллер", "firmware", "прошивк", "электронн", "fpga", "verilog",
+	} {
+		if strings.Contains(name, term) {
+			return true
+		}
+	}
+	return false
+}
+
 // BlockedCompany исключает нежелательных работодателей.
 func (v Vacancy) BlockedCompany() bool {
 	name := strings.ToLower(v.Employer.Name)
