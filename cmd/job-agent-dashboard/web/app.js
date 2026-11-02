@@ -118,7 +118,7 @@ function applicationGroup(item) {
     default: return "state_unknown";
     }
   }
-  if (inputDecisionCodes.has(item.decision_code) && (item.status === "waiting_validation" || item.status === "skipped")) return "needs_input";
+  if (inputDecisionCodes.has(item.decision_code) && (item.status === "waiting_validation" || item.status === "skipped" || item.status === "failed")) return "needs_input";
   if (queuedApplicationStatuses.has(item.status)) return "queued";
   return "not_sent";
 }
