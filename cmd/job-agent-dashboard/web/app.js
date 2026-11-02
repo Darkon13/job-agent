@@ -283,8 +283,8 @@ function updateCaptchaWarning() {
   elements.accountCaptcha.hidden = count === 0;
   if (count === 0) return;
   elements.accountCaptcha.dataset.profile = target;
-  elements.accountCaptchaLabel.textContent = `Нужно ввести капчу: ${profileDisplayName(target)}${count > 1 ? ` (${count})` : ""}`;
-  elements.accountCaptchaButton.textContent = "Ввести капчу";
+  elements.accountCaptchaLabel.textContent = "Нужно пройти капчу";
+  elements.accountCaptchaButton.textContent = "Пройти";
 }
 // updateAuthWarning surfaces profiles whose HH session was rejected: the
 // operator must sign in again before applications or campaigns can work.
