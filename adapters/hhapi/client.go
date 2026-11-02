@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -80,6 +81,20 @@ func (c *Client) Token() Token {
 }
 
 func (c *Client) refresh(ctx context.Context) error {
+	lock, err := os.OpenFile(c.tokenFile+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err == nil {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }()
+		if data, readErr := os.ReadFile(c.tokenFile); readErr == nil {
+			var disk Token
+			if json.Unmarshal(data, &disk) == nil && disk.AccessToken != "" && disk.AccessToken != c.token.AccessToken {
+				c.token = disk
+				if disk.ExpiresAt == 0 || time.Now().Unix() < disk.ExpiresAt {
+					return nil
+				}
+			}
+		}
+	}
 	form := map[string]string{
 		"grant_type":    "refresh_token",
 		"refresh_token": c.token.RefreshToken,
