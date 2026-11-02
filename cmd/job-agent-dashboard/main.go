@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Darkon13/job-agent/adapters/hhapi"
 	"github.com/Darkon13/job-agent/buildinfo"
 )
 
@@ -116,6 +117,47 @@ func newDashboardHandler(upstreamValue, apiToken string) (http.Handler, error) {
 	index := strings.ReplaceAll(string(indexHTML), "{{.Version}}", assetVersion)
 	static := http.FileServer(http.FS(webRoot))
 	mux := http.NewServeMux()
+	captchaFile := "/data/captcha-pending.txt"
+	mux.HandleFunc("GET /api/v1/captcha/pending", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		data, _ := os.ReadFile(captchaFile)
+		_ = json.NewEncoder(response).Encode(map[string]string{"url": strings.TrimSpace(string(data))})
+	})
+	mux.HandleFunc("GET /api/v1/captcha/image", func(response http.ResponseWriter, request *http.Request) {
+		data, _ := os.ReadFile(captchaFile)
+		captchaURL := strings.TrimSpace(string(data))
+		if captchaURL == "" {
+			http.Error(response, "captcha is not pending", http.StatusNotFound)
+			return
+		}
+		id, image, err := hhapi.StartCaptcha(request.Context(), captchaURL)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusBadGateway)
+			return
+		}
+		response.Header().Set("Content-Type", "image/png")
+		response.Header().Set("X-Captcha-Id", id)
+		_, _ = response.Write(image)
+	})
+	mux.HandleFunc("POST /api/v1/captcha/solve", func(response http.ResponseWriter, request *http.Request) {
+		var body struct {
+			ID   string `json:"id"`
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(response, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := hhapi.AnswerCaptcha(request.Context(), body.ID, body.Text); err != nil {
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(response).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = os.Remove(captchaFile)
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]bool{"ok": true})
+	})
 	mux.Handle("/api/", apiProxy)
 	mux.Handle("/healthz", apiProxy)
 	mux.Handle("/readyz", apiProxy)

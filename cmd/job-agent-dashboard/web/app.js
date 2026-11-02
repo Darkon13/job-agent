@@ -301,28 +301,58 @@ function updateAuthWarning() {
 // startCaptchaCheck runs one browser check for the profile and then retries
 // the remaining parked applications: the platform guard is per account, so the
 // operator enters the captcha once instead of per application.
-async function startCaptchaCheck(profileID = "") {
+async function startCaptchaCheck() {
   state.applicationActionBusy = true;
-  elements.accountCaptchaButton.disabled = true; elements.accountCaptchaButton.textContent = "Проверяю…";
-  state.applicationActionMessage = "Готовлю проверку HH…"; renderApplicationObjects();
+  elements.accountCaptchaButton.disabled = true;
   try {
-    const params = new URLSearchParams({ status: "waiting_validation", decision_code: "captcha_required", limit: "200" });
-    if (profileID) params.set("profile_id", profileID);
-    const listing = await request(`/api/v1/applications?${params}`);
-    const parked = (listing.items || []).filter((item) => item.decision_code === "captcha_required");
-    if (!parked.length) { state.applicationActionMessage = "Нет откликов, ожидающих проверку HH"; return; }
-    state.captchaCheckRemaining = parked.slice(1).map((item) => item.id);
-    const session = await request(`/api/v1/applications/${encodeURIComponent(parked[0].id)}/browser-check`, { method: "POST" });
-    state.browserCheck = session;
-    state.applicationActionMessage = `Проверка HH: ${browserCheckStateLabels[session.state] || session.state}`;
-    renderBrowserCheck();
-    elements.browserCheck.scrollIntoView({ behavior: "smooth", block: "center" });
-    if (session.state === "done") { await retryRemainingAfterCheck(); refreshApplications(); refreshSummary(); }
+    const pending = await request("/api/v1/captcha/pending");
+    if (!pending.url) { state.applicationActionMessage = "Капчи нет"; return; }
+    const imageResponse = await fetch("/api/v1/captcha/image", { cache: "no-store" });
+    if (!imageResponse.ok) throw new Error(await imageResponse.text());
+    const captchaId = imageResponse.headers.get("X-Captcha-Id");
+    const blob = await imageResponse.blob();
+    showCaptchaDialog(captchaId, blob);
   } catch (error) {
-    state.applicationActionMessage = `Проверка не запустилась: ${error.message}`;
+    state.applicationActionMessage = `Капча не открылась: ${error.message}`;
   } finally {
-    state.applicationActionBusy = false; updateCaptchaWarning(); renderApplicationObjects();
+    state.applicationActionBusy = false; elements.accountCaptchaButton.disabled = false;
+    updateCaptchaWarning(); renderApplicationObjects();
   }
+}
+
+function showCaptchaDialog(captchaId, blob) {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999";
+  const box = document.createElement("div");
+  box.style.cssText = "background:#1c1f26;color:#eee;padding:20px;border-radius:12px;max-width:420px;width:90%";
+  const title = document.createElement("h3"); title.textContent = "Капча HH"; title.style.margin = "0 0 12px";
+  const img = document.createElement("img"); img.src = URL.createObjectURL(blob);
+  img.style.cssText = "width:100%;border-radius:8px;background:#fff";
+  const input = document.createElement("input"); input.placeholder = "Текст с картинки";
+  input.style.cssText = "width:100%;margin:12px 0;padding:10px;border-radius:8px;border:1px solid #555;background:#111;color:#eee";
+  const row = document.createElement("div"); row.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
+  const cancel = document.createElement("button"); cancel.textContent = "Отмена";
+  const submit = document.createElement("button"); submit.textContent = "Отправить";
+  row.append(cancel, submit); box.append(title, img, input, row); overlay.append(box); document.body.append(overlay);
+  input.focus();
+  const close = () => overlay.remove();
+  cancel.onclick = close;
+  submit.onclick = async () => {
+    submit.disabled = true; submit.textContent = "Проверяю…";
+    try {
+      const response = await fetch("/api/v1/captcha/solve", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: captchaId, text: input.value.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      state.applicationActionMessage = "Капча принята, рассылка продолжается";
+      close(); refreshSummary();
+    } catch (error) {
+      submit.disabled = false; submit.textContent = "Отправить";
+      state.applicationActionMessage = `Капча не принята: ${error.message}`;
+    }
+  };
 }
 // retryRemainingAfterCheck releases the parked applications behind one manual
 // check; the durable retry pipeline confirms each platform result.
