@@ -83,12 +83,14 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 		return fmt.Errorf("hh captcha: empty answer")
 	}
 
+	quotedBack := strings.ReplaceAll(url.QueryEscape(captchaSuccessBackURL), "%2F", "/")
+	failURL := "/account/captcha?state=" + url.QueryEscape(state) + "&backurl=" + quotedBack
 	payload := url.Values{
 		"captchaText":  {text},
 		"captchaKey":   {key},
 		"captchaState": {state},
 		"backurl":      {captchaSuccessBackURL},
-		"failurl":      {"/account/captcha?state=" + url.QueryEscape(state) + "&backurl=" + url.QueryEscape(captchaSuccessBackURL)},
+		"failurl":      {failURL},
 	}
 	target := "https://hh.ru/account/captcha?" + payload.Encode()
 	submit, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
