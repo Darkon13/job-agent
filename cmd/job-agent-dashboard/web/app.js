@@ -327,7 +327,8 @@ function showCaptchaDialog(captchaId, blob) {
   const box = document.createElement("div");
   box.style.cssText = "background:#1c1f26;color:#eee;padding:20px;border-radius:12px;max-width:420px;width:90%";
   const title = document.createElement("h3"); title.textContent = "Капча HH"; title.style.margin = "0 0 12px";
-  const img = document.createElement("img"); img.src = URL.createObjectURL(blob);
+  const img = document.createElement("img");
+  const reader = new FileReader(); reader.onload = () => { img.src = String(reader.result || ""); }; reader.readAsDataURL(blob);
   img.style.cssText = "width:100%;border-radius:8px;background:#fff";
   const input = document.createElement("input"); input.placeholder = "Текст с картинки";
   input.style.cssText = "width:100%;margin:12px 0;padding:10px;border-radius:8px;border:1px solid #555;background:#111;color:#eee";
