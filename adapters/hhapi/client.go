@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ type Client struct {
 	mu            sync.Mutex
 	token         Token
 	userAgent     string
-	cookies       string
+	cookies       *cookiejar.Jar
 	captchaSolver func(context.Context, string) error
 }
 
@@ -48,7 +49,8 @@ func New(tokenFile string) (*Client, error) {
 			cookieFile = home + "/.config/job-agent/hh-cookies.txt"
 		}
 	}
-	c := &Client{http: &http.Client{Timeout: 30 * time.Second}, tokenFile: tokenFile, userAgent: nativeUserAgent(), cookies: loadCookies(cookieFile)}
+	jar := loadCookieJar(cookieFile)
+	c := &Client{http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, tokenFile: tokenFile, userAgent: nativeUserAgent(), cookies: jar}
 	data, err := os.ReadFile(tokenFile)
 	if err == nil {
 		if err := json.Unmarshal(data, &c.token); err != nil {
@@ -115,9 +117,6 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
-	if c.cookies != "" {
-		req.Header.Set("Cookie", c.cookies)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

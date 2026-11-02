@@ -85,9 +85,6 @@ func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiati
 	req.Header.Set("X-Force-App-Access", "true")
 	req.Header.Set("X-HH-App-Active", "true")
 	req.Header.Set("User-Agent", c.userAgent)
-	if c.cookies != "" {
-		req.Header.Set("Cookie", c.cookies)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
