@@ -123,7 +123,7 @@ func main() {
 			}
 		}
 		restore()
-		time.Sleep(time.Duration(45+rand.Intn(46)) * time.Second)
+		time.Sleep(time.Duration(1+rand.Intn(3)) * time.Second)
 	}
 	fmt.Printf("done: sent=%d skipped=%d failed=%d\n", sent, skipped, failed)
 }
