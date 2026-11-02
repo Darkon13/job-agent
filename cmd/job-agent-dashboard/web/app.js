@@ -12,7 +12,7 @@ const state = {
   profileResources: [], profileStateError: "", profilePlans: new Map(), profileEditors: new Map(), profileRevisions: new Map(), profileMessages: new Map(), profileBusy: new Set(), taskBusy: new Set(), jobBusy: new Set(),
   reviewSessions: [], reviewSelected: null, reviewDetail: null, reviewBusy: false, reviewMessage: "",
   reviewQuery: "", reviewHasMore: false, reviewFocusPending: false,
-  browserCheck: null, captchaCheckRemaining: [],
+  browserCheck: null, captchaCheckRemaining: [], captchaPendingUrl: "",
 };
 const elements = Object.fromEntries([
   "application-filters", "application-items", "application-filter-state", "application-action-state", "application-search", "application-sort", "application-reset", "application-select-all", "application-selection-state", "application-selection-bar", "application-remove-selected", "application-clear-selection", "application-bulk-action", "application-run-action", "tasks", "jobs-user", "jobs-system", "jobs-pause-user", "jobs-pause-system", "campaigns", "failed-tasks", "activity", "activity-observations", "stats", "conversations", "conversation-search", "conversation-filter", "conversation-sort", "messages", "chat-title", "chat-meta", "chat-vacancy-link",
@@ -280,8 +280,9 @@ function updateCaptchaWarning() {
     target = [...counts.keys()].sort((left, right) => counts.get(right) - counts.get(left))[0];
   }
   const count = target ? counts.get(target) || 0 : 0;
-  elements.accountCaptcha.hidden = count === 0;
-  if (count === 0) return;
+  const pending = Boolean(state.captchaPendingUrl);
+  elements.accountCaptcha.hidden = count === 0 && !pending;
+  if (count === 0 && !pending) return;
   elements.accountCaptcha.dataset.profile = target;
   elements.accountCaptchaLabel.textContent = "Нужно пройти капчу";
   elements.accountCaptchaButton.textContent = "Пройти";
@@ -3119,3 +3120,13 @@ async function waitForJobChange(tag, present) {
   document.getElementById("job-editor-delete")?.addEventListener("click", deleteEditedJob);
   document.getElementById("job-editor-cancel")?.addEventListener("click", closeJobEditor);
 })();
+
+async function pollCaptchaPending() {
+  try {
+    const pending = await request("/api/v1/captcha/pending");
+    state.captchaPendingUrl = pending.url || "";
+    updateCaptchaWarning();
+  } catch (_) {}
+}
+pollCaptchaPending();
+setInterval(pollCaptchaPending, 10000);
