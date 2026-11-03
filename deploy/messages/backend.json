@@ -3,11 +3,11 @@
   "templates": [
     {
       "tag": "concise",
-      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n\n{{end}}Здравствуйте! Меня заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Мой основной фокус — backend-разработка: Go, Python, REST API, PostgreSQL, Docker и автоматизированное тестирование. Буду рад обсудить задачи команды и подробнее рассказать о проектах."
+      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n{{end}}\nЗдравствуйте! Заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}.\n\n— Поддержка L1/L2: диагностика обращений, тикеты, эскалация — довожу проблемы до решения.\n— DevOps-практика: разворачивал стейджи, настраивал CI/CD (GitLab CI, GitHub Actions), Docker и Linux.\n— Тестирование: ручное и автоматизация API/UI, тест-кейсы и проверка регрессий.\n— Стек: Go, Python, PostgreSQL, REST API, Kubernetes, Ansible — применяю в фриланс- и личных проектах.\n\nБуду рад обсудить, как этот опыт закроет задачи вашей команды."
     },
     {
       "tag": "project-focus",
-      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n\n{{end}}Здравствуйте! Откликаюсь на {{.Vacancy.Title}} в {{.Vacancy.Employer}}. Разрабатываю backend-сервисы на Go и Python, работаю с PostgreSQL, Docker, REST API и автоматизированными тестами. Готов подробнее обсудить релевантные проекты и задачи команды."
+      "template": "{{if .Profile.Telegram}}Telegram: {{.Profile.Telegram}}\n{{end}}{{if .Profile.Email}}Email: {{.Profile.Email}}\n{{end}}\nЗдравствуйте! Заинтересовала вакансия {{.Vacancy.Title}} в {{.Vacancy.Employer}}.\n\n— Поддержка L1/L2: диагностика обращений, тикеты, эскалация — довожу проблемы до решения.\n— DevOps-практика: разворачивал стейджи, настраивал CI/CD (GitLab CI, GitHub Actions), Docker и Linux.\n— Тестирование: ручное и автоматизация API/UI, тест-кейсы и проверка регрессий.\n— Стек: Go, Python, PostgreSQL, REST API, Kubernetes, Ansible — применяю в фриланс- и личных проектах.\n\nБуду рад обсудить, как этот опыт закроет задачи вашей команды."
     }
   ]
 }
