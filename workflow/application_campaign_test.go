@@ -565,3 +565,37 @@ func TestApplicationCampaignStopsOnDailyBudgetExhaustion(t *testing.T) {
 		t.Fatalf("campaign = %#v", campaign)
 	}
 }
+
+func TestApplicationCampaignProgressTreatsDismissedTaskAsTerminal(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	queue := brokermemory.NewQueue()
+	handler, err := NewApplicationCampaignHandler(repository, repository, repository, queue, fixedClock{now}, &sequentialIDs{}, time.Second)
+	if err != nil {
+		t.Fatalf("new campaign handler: %v", err)
+	}
+	if err := handler.Register(ApplicationCampaignRoute{
+		SearchID: "primary", Platform: "hh", SearchProfileID: "profile",
+		Query: json.RawMessage(`{"source":"global"}`), Searcher: &fakeSearcher{page: core.SearchPage{Done: true, Vacancies: []core.Vacancy{
+			{Platform: "hh", ExternalID: "41", Title: "Go 1", State: core.VacancyStateOpen, ObservedAt: now},
+		}}},
+	}); err != nil {
+		t.Fatalf("register route: %v", err)
+	}
+	start := campaignStartTask(t, now, []core.ProfileID{"profile"}, []core.SearchID{"primary"}, 1, 1)
+	if err := handler.Handle(ctx, start); err != nil {
+		t.Fatalf("start campaign: %v", err)
+	}
+	campaignID := core.ApplicationCampaignID("campaign-" + string(start.ID))
+	tasks := applicationTasks(queue.Tasks())
+	if len(tasks) != 1 {
+		t.Fatalf("application tasks = %#v", tasks)
+	}
+	if _, err := queue.CancelQueuedTask(ctx, tasks[0].IdempotencyKey, "operator removed it", now.Add(time.Second)); err != nil {
+		t.Fatalf("cancel application task: %v", err)
+	}
+	if err := handler.Handle(ctx, campaignTickTask(t, queue, campaignID, 2)); err != nil {
+		t.Fatalf("campaign tick after dismissed task must not fail: %v", err)
+	}
+}

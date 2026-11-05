@@ -411,7 +411,7 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 			nextCheckAt = earlierTime(nextCheckAt, checkAt)
 		case core.TaskWaitingConfirmation:
 			progress.Blocked++
-		case core.TaskCompleted, core.TaskFailed:
+		case core.TaskCompleted, core.TaskFailed, core.TaskDismissed:
 			progress.Failed++
 		default:
 			return nil, core.ApplicationCampaignProgress{}, time.Time{}, fmt.Errorf("unknown application task status %q", task.Status)
