@@ -56,14 +56,19 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 	if limit <= 0 {
 		limit = 25
 	}
+	// Qualification sessions share the waiting status and are newer than the
+	// vacancy backlog. Do not let the page limit hide the vacancy sessions.
 	sessions, err := handler.reviews.ListReviewSessions(ctx, storage.ReviewSessionFilter{
-		Status: core.ReviewWaiting, ProfileID: payload.ProfileID, Platform: task.Platform, Limit: limit,
+		Status: core.ReviewWaiting, ProfileID: payload.ProfileID, Platform: task.Platform,
 	})
 	if err != nil {
 		return err
 	}
 	enqueued := 0
 	for _, session := range sessions {
+		if enqueued >= limit {
+			break
+		}
 		// Qualification sessions extend a family block and are replayed by
 		// skill_verification.start, not by a vacancy submission.
 		if session.AnswerBlockTag != "" || len(session.Questionnaire.Questions) == 0 {

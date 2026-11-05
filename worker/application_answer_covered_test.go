@@ -206,3 +206,78 @@ func TestApplicationAnswerCoveredUsesModelForMissingQuestion(t *testing.T) {
 		t.Fatalf("model answer = %#v", chain.answers[0][1])
 	}
 }
+
+func TestApplicationAnswerCoveredSkipsQualificationSessionsWhenLimited(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	qualificationDefinition, err := core.NewProgressiveTestDefinition("hh", "skill:family:level", "Qualification", nil, now)
+	if err != nil {
+		t.Fatalf("qualification definition: %v", err)
+	}
+	if _, err := repository.UpsertTestDefinition(ctx, qualificationDefinition); err != nil {
+		t.Fatalf("store qualification definition: %v", err)
+	}
+	qualification, err := core.NewReviewSession("review-qualification", qualificationDefinition, "primary", "correlation-q", now)
+	if err != nil {
+		t.Fatalf("qualification session: %v", err)
+	}
+	qualification.AnswerBlockTag = "hh-go-basic"
+	qualification.Questionnaire = core.Questionnaire{Questions: []core.Question{{ID: "q1", Text: "Question", Kind: core.QuestionText}}}
+	if _, err := repository.CreateReviewSession(ctx, qualification); err != nil {
+		t.Fatalf("create qualification session: %v", err)
+	}
+	prompt := core.ReviewPrompt{ID: "qualification-prompt", SessionID: qualification.ID, Revision: qualification.Revision, Question: qualification.Questionnaire.Questions[0], CreatedAt: now.Add(time.Second)}
+	if err := qualification.WaitForAnswer(prompt, now.Add(time.Second)); err != nil {
+		t.Fatalf("wait qualification: %v", err)
+	}
+	if err := repository.SaveReviewPrompt(ctx, qualification, prompt, qualification.Revision); err != nil {
+		t.Fatalf("save qualification prompt: %v", err)
+	}
+
+	vacancyDefinition, err := core.NewProgressiveTestDefinition("hh", "vacancy:900", "Vacancy", nil, now)
+	if err != nil {
+		t.Fatalf("vacancy definition: %v", err)
+	}
+	if _, err := repository.UpsertTestDefinition(ctx, vacancyDefinition); err != nil {
+		t.Fatalf("store vacancy definition: %v", err)
+	}
+	vacancy, err := core.NewReviewSession("review-vacancy", vacancyDefinition, "primary", "correlation-v", now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("vacancy session: %v", err)
+	}
+	vacancy.Questionnaire = core.Questionnaire{Questions: []core.Question{{ID: "v1", Text: "Vacancy question", Kind: core.QuestionText}}}
+	if _, err := repository.CreateReviewSession(ctx, vacancy); err != nil {
+		t.Fatalf("create vacancy session: %v", err)
+	}
+	vacancyPrompt := core.ReviewPrompt{ID: "vacancy-prompt", SessionID: vacancy.ID, Revision: vacancy.Revision, Question: vacancy.Questionnaire.Questions[0], CreatedAt: now.Add(3 * time.Second)}
+	if err := vacancy.WaitForAnswer(vacancyPrompt, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("wait vacancy: %v", err)
+	}
+	if err := repository.SaveReviewPrompt(ctx, vacancy, vacancyPrompt, vacancy.Revision); err != nil {
+		t.Fatalf("save vacancy prompt: %v", err)
+	}
+
+	chain := &recordingVacancyTestChain{}
+	handler, err := NewApplicationAnswerCoveredHandler(repository, staticVacancyBlocks{}, chain, fixedClock{now: now.Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	handler.ConfigureAnswerModels(map[core.ProfileID]QualificationAnswerModel{
+		"primary": fakeQuestionnaireAnswerModel{answers: map[string]core.StoredAnswer{"vacancy question": {Text: "Answer"}}},
+	})
+	payload, _ := json.Marshal(core.ApplicationAnswerCoveredPayload{ProfileID: "primary", Limit: 1})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "answer-covered-limit", Type: core.TaskApplicationAnswerCovered, IdempotencyKey: "answer-covered-limit",
+		Source: "test", Platform: "hh", ProfileID: "primary", CorrelationID: "correlation-limit", Payload: payload,
+	}, now)
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	if err := handler.Handle(ctx, task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(chain.answers) != 1 || len(chain.answers[0]) != 1 {
+		t.Fatalf("vacancy session was hidden by qualification page limit: %#v", chain.answers)
+	}
+}

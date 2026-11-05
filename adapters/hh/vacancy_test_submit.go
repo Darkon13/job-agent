@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -107,6 +108,11 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	actionURL := vacancyResponsePageURL(client.webBaseURL, key.ExternalID)
 	document, finalURL, err := client.reader.getHTML(ctx, actionURL, vacancyTestSubmitOperation)
 	if err != nil {
+		if core.ErrorIsCategory(err, core.ErrorUnauthorized) && client.worker != nil {
+			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers); fallbackErr == nil {
+				return nil
+			}
+		}
 		return err
 	}
 	if isLoginURL(finalURL) {
@@ -223,6 +229,11 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	switch {
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
+		if client.worker != nil {
+			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers); fallbackErr == nil {
+				return nil
+			}
+		}
 		return operationError(core.ErrorUnauthorized, vacancyTestSubmitOperation, "HH browser session was rejected", nil)
 	case response.StatusCode == http.StatusTooManyRequests:
 		failure := operationError(core.ErrorRateLimited, vacancyTestSubmitOperation, "HH vacancy test submission was rate limited", nil)
@@ -286,6 +297,57 @@ func (client *BrowserApplicationClient) confirmVacancyTestSubmission(ctx context
 		return operationError(core.ErrorAmbiguousResult, vacancyTestSubmitOperation, "HH did not confirm the vacancy test submission", err)
 	}
 	if _, _, err := parseVacancyTestState(rendered); err == nil {
+		return vacancyTestError("HH did not confirm the vacancy test submission")
+	}
+	return nil
+}
+
+// submitVacancyTestThroughWorker is the fallback when HH rejects the raw
+// state-file POST with 401/403. The live browser worker context is already
+// authenticated, so the popup is filled in that context instead of replaying
+// cookies from the exported state file.
+func (client *BrowserApplicationClient) submitVacancyTestThroughWorker(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
+	target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + key.ExternalID
+	form, err := client.worker.Form(ctx, profileID, target)
+	if err != nil {
+		return err
+	}
+	fields := make(map[string]browser.FormField, len(form.Fields))
+	for _, field := range form.Fields {
+		fields[field.Name] = field
+	}
+	formAnswers := make([]browser.FormAnswer, 0, len(answers))
+	for _, answer := range answers {
+		taskID := strings.TrimSpace(answer.QuestionID)
+		if taskID == "" {
+			return vacancyTestError("HH vacancy task has an empty id")
+		}
+		if text := strings.TrimSpace(answer.Text); text != "" {
+			name := "task_" + taskID + "_text"
+			if _, exists := fields[name]; !exists {
+				name = "task_" + taskID
+			}
+			formAnswers = append(formAnswers, browser.FormAnswer{Selector: `[name="` + name + `"]`, Value: text})
+			if len(answer.SelectedOptionIDs) == 0 {
+				continue
+			}
+		}
+		for _, optionID := range answer.SelectedOptionIDs {
+			selector := `input[name="task_` + taskID + `"][value="` + optionID + `"]`
+			if field, exists := fields["task_"+taskID]; exists && field.Tag == "select" {
+				selector = `[name="task_` + taskID + `"]`
+			}
+			formAnswers = append(formAnswers, browser.FormAnswer{Selector: selector, Value: optionID})
+		}
+	}
+	if len(formAnswers) == 0 {
+		return vacancyTestError("HH vacancy test fallback has no form answers")
+	}
+	result, err := client.worker.Answers(ctx, profileID, formAnswers, true)
+	if err != nil {
+		return err
+	}
+	if !result.Confirmed {
 		return vacancyTestError("HH did not confirm the vacancy test submission")
 	}
 	return nil
