@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,8 +87,8 @@ func TestResponseCacheLeavesUnconfiguredPathsAlone(t *testing.T) {
 func TestResponseCacheExpiresEntries(t *testing.T) {
 	var calls int64
 	product := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		atomic.AddInt64(&calls, 1)
-		writeJSON(response, http.StatusOK, map[string]string{"value": "payload"})
+		call := atomic.AddInt64(&calls, 1)
+		writeJSON(response, http.StatusOK, map[string]string{"value": fmt.Sprintf("payload-%d", call)})
 	})
 	cache := NewResponseCache()
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
@@ -95,9 +97,10 @@ func TestResponseCacheExpiresEntries(t *testing.T) {
 
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil))
 	now = now.Add(16 * time.Second)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil))
-	if atomic.LoadInt64(&calls) != 1 {
-		t.Fatalf("stale entry must be served instantly: calls=%d", calls)
+	stale := httptest.NewRecorder()
+	handler.ServeHTTP(stale, httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil))
+	if body := stale.Body.String(); !strings.Contains(body, "payload-1") {
+		t.Fatalf("stale entry must be served instantly: body=%q calls=%d", body, atomic.LoadInt64(&calls))
 	}
 	waitFor(t, func() bool { return atomic.LoadInt64(&calls) == 2 })
 }
