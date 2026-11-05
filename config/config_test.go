@@ -1150,3 +1150,27 @@ func TestConversationAutoReplyRequiresSendPermissionAndResumeFacts(t *testing.T)
 		t.Fatal("expected auto_reply without an openai_chat provider to fail")
 	}
 }
+
+func TestApplicationTitleIncludeAnyValidation(t *testing.T) {
+	config := Config{
+		Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+		Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+		Profiles: []Profile{{
+			Tag: "primary", Adapter: "hh-main", Enabled: true,
+			Applications: ApplicationPolicy{Qualification: ApplicationQualification{
+				TitleIncludeAny: []string{"golang", "devops"},
+			}},
+		}},
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid title filter: %v", err)
+	}
+	config.Profiles[0].Applications.Qualification.TitleIncludeAny = []string{" "}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected an empty title term to fail")
+	}
+	config.Profiles[0].Applications.Qualification.TitleIncludeAny = []string{"golang", "Golang"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected a duplicate title term to fail")
+	}
+}

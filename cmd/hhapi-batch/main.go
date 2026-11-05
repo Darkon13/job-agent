@@ -36,7 +36,8 @@ func main() {
 	defer db.Close()
 
 	rows, err := db.Query(`SELECT external_id, prepared_message FROM applications
-		WHERE profile_id='main' AND status IN ('ready','new')
+		WHERE profile_id='main' AND status='ready' AND decision_code='qualified'
+		  AND prepared_message <> ''
 		ORDER BY updated_at DESC LIMIT ?`, *limit)
 	if err != nil {
 		log.Fatal(err)

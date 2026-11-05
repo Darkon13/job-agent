@@ -683,6 +683,10 @@ type ApplicationQualification struct {
 	IncludeAll []string `json:"include_all,omitempty"`
 	ExcludeAny []string `json:"exclude_any,omitempty"`
 	ExcludeAll []string `json:"exclude_all,omitempty"`
+	// TitleIncludeAny requires at least one target-role term in the vacancy
+	// title. Search results can mention a query term only in the description,
+	// so a full-text include is not enough to keep unrelated roles out.
+	TitleIncludeAny []string `json:"title_include_any,omitempty"`
 }
 
 type ApplicationTailoringPolicy struct {
@@ -1950,10 +1954,11 @@ func (c Config) Validate() error {
 			}
 		}
 		for field, terms := range map[string][]string{
-			"include_any": profile.Applications.Qualification.IncludeAny,
-			"include_all": profile.Applications.Qualification.IncludeAll,
-			"exclude_any": profile.Applications.Qualification.ExcludeAny,
-			"exclude_all": profile.Applications.Qualification.ExcludeAll,
+			"include_any":       profile.Applications.Qualification.IncludeAny,
+			"include_all":       profile.Applications.Qualification.IncludeAll,
+			"exclude_any":       profile.Applications.Qualification.ExcludeAny,
+			"exclude_all":       profile.Applications.Qualification.ExcludeAll,
+			"title_include_any": profile.Applications.Qualification.TitleIncludeAny,
 		} {
 			seen := make(map[string]struct{}, len(terms))
 			for _, value := range terms {

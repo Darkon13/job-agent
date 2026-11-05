@@ -73,6 +73,7 @@ type RuleTemplateConfig struct {
 	IncludeAll      []string
 	ExcludeAny      []string
 	ExcludeAll      []string
+	TitleIncludeAny []string
 	StaticMessage   string
 	MessageTemplate string
 	MessagePool     *MessagePoolConfig
@@ -119,18 +120,19 @@ type compiledMessageTemplate struct {
 }
 
 type RuleTemplatePreparer struct {
-	includeAny    []string
-	includeAll    []string
-	excludeAny    []string
-	excludeAll    []string
-	staticMessage string
-	template      *template.Template
-	messagePool   *compiledMessagePool
-	model         *compiledApplicationModel
-	resume        *ApplicationResumeContext
-	profile       ApplicationProfileContext
-	employerMatch *EmployerGroupMatcher
-	employerRules []compiledEmployerRule
+	includeAny      []string
+	includeAll      []string
+	excludeAny      []string
+	excludeAll      []string
+	titleIncludeAny []string
+	staticMessage   string
+	template        *template.Template
+	messagePool     *compiledMessagePool
+	model           *compiledApplicationModel
+	resume          *ApplicationResumeContext
+	profile         ApplicationProfileContext
+	employerMatch   *EmployerGroupMatcher
+	employerRules   []compiledEmployerRule
 }
 
 type compiledMessagePool struct {
@@ -244,6 +246,10 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	if err != nil {
 		return nil, err
 	}
+	titleIncludeAny, err := normalizeTerms("title_include_any", config.TitleIncludeAny)
+	if err != nil {
+		return nil, err
+	}
 	messageSources := 0
 	if strings.TrimSpace(config.StaticMessage) != "" {
 		messageSources++
@@ -291,7 +297,8 @@ func NewRuleTemplatePreparer(config RuleTemplateConfig) (*RuleTemplatePreparer, 
 	}
 	preparer := &RuleTemplatePreparer{
 		includeAny: includeAny, includeAll: includeAll, excludeAny: excludeAny, excludeAll: excludeAll,
-		staticMessage: strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model,
+		titleIncludeAny: titleIncludeAny,
+		staticMessage:   strings.TrimSpace(config.StaticMessage), template: compiled, messagePool: messagePool, model: model,
 		resume: resume, profile: config.Profile,
 		employerMatch: config.EmployerMatcher, employerRules: employerRules,
 	}
@@ -334,6 +341,22 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 			return ApplicationPreparation{
 				Outcome: ApplicationSkip, Code: "excluded_term",
 				Reason: "vacancy contains every excluded term",
+			}, nil
+		}
+	}
+	if len(preparer.titleIncludeAny) != 0 {
+		title := strings.ToLower(vacancy.Title)
+		matched := false
+		for _, term := range preparer.titleIncludeAny {
+			if containsTerm(title, term) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return ApplicationPreparation{
+				Outcome: ApplicationSkip, Code: "include_term_missing",
+				Reason: "vacancy title contains none of the target role terms",
 			}, nil
 		}
 	}
@@ -739,6 +762,13 @@ func vacancySearchableText(vacancy core.Vacancy) string {
 }
 
 func containsTerm(text, term string) bool {
+	prefix := strings.HasSuffix(term, "*")
+	if prefix {
+		term = strings.TrimSuffix(term, "*")
+	}
+	if term == "" {
+		return false
+	}
 	for offset := 0; offset <= len(text)-len(term); {
 		index := strings.Index(text[offset:], term)
 		if index < 0 {
@@ -749,7 +779,7 @@ func containsTerm(text, term string) bool {
 		first, _ := utf8.DecodeRuneInString(term)
 		last, _ := utf8.DecodeLastRuneInString(term)
 		beforeOK := start == 0 || !isWordRune(previousRune(text[:start])) || !isWordRune(first)
-		afterOK := end == len(text) || !isWordRune(nextRune(text[end:])) || !isWordRune(last)
+		afterOK := prefix || end == len(text) || !isWordRune(nextRune(text[end:])) || !isWordRune(last)
 		if beforeOK && afterOK {
 			return true
 		}

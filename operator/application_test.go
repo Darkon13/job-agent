@@ -404,3 +404,43 @@ func TestRuleTemplatePreparerSupportsAllTermFilters(t *testing.T) {
 		t.Fatalf("exclude-all must not skip when only some terms match: preparation=%#v err=%v", result, err)
 	}
 }
+
+func TestRuleTemplatePreparerTitleIncludeAnyIgnoresDescription(t *testing.T) {
+	application, vacancy := operatorFixture()
+	preparer, err := NewRuleTemplatePreparer(RuleTemplateConfig{
+		TitleIncludeAny: []string{"golang", "devops", "backend"},
+		MessageTemplate: "Здравствуйте",
+	})
+	if err != nil {
+		t.Fatalf("new preparer: %v", err)
+	}
+	vacancy.Title = "Графический дизайнер"
+	vacancy.Attributes["description"] = "<p>Нужен Golang backend developer</p>"
+	result, err := preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if result.Outcome != ApplicationSkip || result.Code != "include_term_missing" {
+		t.Fatalf("unrelated title was not filtered: %#v", result)
+	}
+	vacancy.Title = "DevOps engineer"
+	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
+	if err != nil || result.Outcome != ApplicationApply {
+		t.Fatalf("target title was filtered: %#v err=%v", result, err)
+	}
+}
+
+func TestContainsTermPrefixWildcard(t *testing.T) {
+	if !containsTerm("Специалист технической поддержки", "поддержк*") {
+		t.Fatal("prefix wildcard did not match an inflected support title")
+	}
+	if !containsTerm("системного администратора", "системн*") {
+		t.Fatal("prefix wildcard did not match an inflected system title")
+	}
+	if containsTerm("Разработчик Node.js", "go") {
+		t.Fatal("plain word matching must not match inside another word")
+	}
+	if !containsTerm("golang разработчик", "golang*") {
+		t.Fatal("prefix wildcard did not match a role title")
+	}
+}
