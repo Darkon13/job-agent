@@ -246,6 +246,48 @@ func (client *BrowserApplicationClient) ListSuitableResumes(ctx context.Context,
 	return result, nil
 }
 
+// answerSalaryQuestionnaire закрывает анкеты, где спрашивают только ожидания.
+func (client *BrowserApplicationClient) answerSalaryQuestionnaire(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, bool) {
+	target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + url.PathEscape(command.Vacancy.ExternalID)
+	form, err := client.worker.Form(ctx, client.reader.profileID, target)
+	if err != nil {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	var answers []browser.FormAnswer
+	for _, field := range form.Fields {
+		text := strings.ToLower(field.Context + " " + field.Label)
+		if !strings.Contains(text, "ожидан") && !strings.Contains(text, "зарплат") {
+			continue
+		}
+		name := field.Name
+		if name == "" {
+			continue
+		}
+		low, high, salaryErr := client.api.SalaryRange(ctx, command.Vacancy.ExternalID)
+		if salaryErr != nil {
+			return adapter.ApplicationSubmitResult{}, false
+		}
+		value := fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high)
+		answers = append(answers, browser.FormAnswer{Selector: fmt.Sprintf(`[name="%s"]`, name), Value: value})
+	}
+	if len(answers) == 0 {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	result, err := client.worker.Answers(ctx, client.reader.profileID, answers, true)
+	if err != nil {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	id := ""
+	if result.Confirmed {
+		id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID)
+		return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, true
+	}
+	if id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID); id != "" {
+		return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, true
+	}
+	return adapter.ApplicationSubmitResult{}, false
+}
+
 func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	if err := validateApplicationCommand(client.reader.profileID, command); err != nil {
 		return adapter.ApplicationSubmitResult{}, err
@@ -335,13 +377,6 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
 		}
 		var captcha *hhapi.CaptchaRequiredError
-		if strings.Contains(err.Error(), "hh captcha:") {
-			retryAt := time.Now().Add(10 * time.Minute)
-			return adapter.ApplicationSubmitResult{}, &core.OperationError{
-				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
-				Platform: command.Vacancy.Platform, Message: "HH captcha was not accepted", RetryAfter: &retryAt,
-			}
-		}
 		if errors.As(err, &captcha) {
 			_ = os.WriteFile("/data/captcha-pending.txt", []byte(captcha.URL), 0o644)
 			retryAt := time.Now().Add(10 * time.Minute)
@@ -358,6 +393,19 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 			return adapter.ApplicationSubmitResult{}, &core.OperationError{
 				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
 				Platform: command.Vacancy.Platform, Message: "HH daily negotiations limit reached", RetryAfter: &retryAt,
+			}
+		}
+		if strings.Contains(err.Error(), "hh captcha:") {
+			retryAt := time.Now().Add(10 * time.Minute)
+			return adapter.ApplicationSubmitResult{}, &core.OperationError{
+				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
+				Platform: command.Vacancy.Platform, Message: "HH captcha was not accepted", RetryAfter: &retryAt,
+			}
+		}
+
+		if client.worker != nil && (strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") || strings.Contains(err.Error(), "questionnaire")) {
+			if result, handled := client.answerSalaryQuestionnaire(ctx, command); handled {
+				return result, nil
 			}
 		}
 		if strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") {

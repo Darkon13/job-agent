@@ -321,3 +321,50 @@ func (client *HTTPClient) request(ctx context.Context, method, path string, body
 func profilePath(profileID core.ProfileID) string {
 	return "/v1/profiles/" + url.PathEscape(string(profileID))
 }
+
+type FormField struct {
+	Tag         string   `json:"tag"`
+	Type        string   `json:"type"`
+	Name        string   `json:"name"`
+	DataQa      string   `json:"dataQa"`
+	Label       string   `json:"label"`
+	Placeholder string   `json:"placeholder"`
+	Required    bool     `json:"required"`
+	Options     []string `json:"options"`
+	Context     string   `json:"context"`
+}
+
+type FormResult struct {
+	URL    string              `json:"url"`
+	Title  string              `json:"title"`
+	Fields []FormField         `json:"fields"`
+	Radios map[string][]string `json:"radios"`
+	Text   string              `json:"text"`
+}
+
+type FormAnswer struct {
+	Selector string `json:"selector"`
+	Value    string `json:"value"`
+}
+
+type AnswersResult struct {
+	URL       string `json:"url"`
+	Confirmed bool   `json:"confirmed"`
+	Text      string `json:"text"`
+}
+
+func (client *HTTPClient) Form(ctx context.Context, profileID core.ProfileID, target string) (FormResult, error) {
+	var result FormResult
+	err := client.withProfile(ctx, profileID, "browser.form", func() error {
+		return client.fetch(ctx, http.MethodPost, profilePath(profileID)+"/form", map[string]string{"url": target}, &result)
+	})
+	return result, err
+}
+
+func (client *HTTPClient) Answers(ctx context.Context, profileID core.ProfileID, answers []FormAnswer, submit bool) (AnswersResult, error) {
+	var result AnswersResult
+	err := client.withProfile(ctx, profileID, "browser.answers", func() error {
+		return client.fetch(ctx, http.MethodPost, profilePath(profileID)+"/answers", map[string]any{"answers": answers, "submit": submit}, &result)
+	})
+	return result, err
+}
