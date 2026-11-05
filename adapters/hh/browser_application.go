@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -335,14 +336,15 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		}
 		var captcha *hhapi.CaptchaRequiredError
 		if strings.Contains(err.Error(), "hh captcha:") {
-			retryAt := time.Now().Add(2 * time.Hour)
+			retryAt := time.Now().Add(10 * time.Minute)
 			return adapter.ApplicationSubmitResult{}, &core.OperationError{
 				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
 				Platform: command.Vacancy.Platform, Message: "HH captcha was not accepted", RetryAfter: &retryAt,
 			}
 		}
 		if errors.As(err, &captcha) {
-			retryAt := time.Now().Add(2 * time.Hour)
+			_ = os.WriteFile("/data/captcha-pending.txt", []byte(captcha.URL), 0o644)
+			retryAt := time.Now().Add(10 * time.Minute)
 			return adapter.ApplicationSubmitResult{}, &core.OperationError{
 				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
 				Platform: command.Vacancy.Platform, Message: "HH requires captcha: " + err.Error(), RetryAfter: &retryAt,

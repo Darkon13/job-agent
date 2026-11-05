@@ -44,7 +44,7 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (Negotiation, 
 		c.mu.Unlock()
 		if errors.As(err, &captcha) && solver != nil {
 			if solveErr := solver(ctx, captcha.URL); solveErr != nil {
-				return Negotiation{}, solveErr
+				return Negotiation{}, fmt.Errorf("%w: %v", captcha, solveErr)
 			}
 			continue
 		}
