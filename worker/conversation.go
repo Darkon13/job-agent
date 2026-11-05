@@ -98,6 +98,7 @@ type ConversationHandlers struct {
 	clock       Clock
 	answers     *core.AnswerBlockRegistry
 	answerKnown func(core.ProfileID) bool
+	autoReplies *ConversationReplyRegistry
 }
 
 func NewConversationHandlers(repository storage.ConversationRepository, activity storage.ProfileActivityRepository, conversationWorkflow *workflow.ConversationWorkflow, transports *ConversationTransportRegistry, resolver MessageResolver, clock Clock) (*ConversationHandlers, error) {
@@ -336,7 +337,10 @@ func (handlers *ConversationHandlers) Sync(ctx context.Context, task core.Task) 
 	if !found {
 		return nil
 	}
-	return handlers.syncConversation(ctx, conversation, true)
+	if err := handlers.syncConversation(ctx, conversation, true); err != nil {
+		return err
+	}
+	return handlers.enqueueAutoReply(ctx, conversation)
 }
 
 func (handlers *ConversationHandlers) syncConversation(ctx context.Context, conversation core.Conversation, answerKnown bool) error {

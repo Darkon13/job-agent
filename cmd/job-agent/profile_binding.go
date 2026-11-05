@@ -61,6 +61,8 @@ type profileRuntimeBinder struct {
 	answerResolver          taskworker.AnswerBlockResolver
 	browserSubmissionDriver *hh.BrowserSubmissionDriver
 	knownAnswers            *knownAnswerProfiles
+	chatReplies             *taskworker.ConversationReplyRegistry
+	chatReplyFactory        func(appconfig.Profile) (taskworker.ConversationReplyGenerator, error)
 	applicationPlans        *taskworker.LiveApplicationPlans
 
 	profileStateReaders       map[core.ProfileID]adapter.ProfileStateReader
@@ -87,6 +89,19 @@ func (binder *profileRuntimeBinder) bind(profile appconfig.Profile, preparer app
 	profileID := core.ProfileID(profile.Tag)
 	if profile.Conversations.AnswerKnown {
 		binder.knownAnswers.Add(profileID)
+	}
+	if profile.Conversations.AutoReply {
+		if binder.chatReplyFactory == nil || binder.chatReplies == nil {
+			return fmt.Errorf("profile %q conversations.auto_reply requires a configured reply generator", profile.Tag)
+		}
+		generator, err := binder.chatReplyFactory(profile)
+		if err != nil {
+			return fmt.Errorf("build chat reply generator for profile %q: %w", profile.Tag, err)
+		}
+		if err := binder.chatReplies.Register(profileID, generator); err != nil {
+			return fmt.Errorf("register chat reply generator for profile %q: %w", profile.Tag, err)
+		}
+		logf("profile %q auto-replies to chat questions from resume facts", profile.Tag)
 	}
 	if profile.Answers != nil && profile.Answers.Model != nil {
 		model, err := answerModel(profile.Answers.Model, binder.applicationModels)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -491,8 +492,11 @@ func main() {
 			}
 		}
 	}
+	var hhAPIClient *hhapi.Client
 	if tokenFile := hhAPITokenFile(); tokenFile != "" {
-		if apiClient, err := hhapi.New(tokenFile); err == nil {
+		apiClient, err := hhapi.New(tokenFile)
+		if err == nil {
+			hhAPIClient = apiClient
 			if apiKey := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")); apiKey != "" {
 				apiClient.SetCaptchaSolver(func(ctx context.Context, captchaURL string) error {
 					return hhapi.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
@@ -522,6 +526,7 @@ func main() {
 			log.Printf("HH mobile API transport disabled: %v", err)
 		}
 	}
+	chatReplyFactory := buildConversationReplyFactory(cfg, hhAPIClient, os.LookupEnv)
 	var browserSubmissionDriver *hh.BrowserSubmissionDriver
 	if browserClient != nil {
 		submissionDriver, err := hh.NewBrowserSubmissionDriver(browserClient)
@@ -570,11 +575,13 @@ func main() {
 	applicationPlans := taskworker.NewLiveApplicationPlans()
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
 	knownConversationAnswers := newKnownAnswerProfiles()
+	conversationReplies := taskworker.NewConversationReplyRegistry()
 	binder := &profileRuntimeBinder{
 		instances: instances, profiles: profiles, contacts: profileContacts,
 		applicationModels: applicationModels, employerMatcher: employerMatcher,
 		answerResolver: answerResolver, browserSubmissionDriver: browserSubmissionDriver,
 		knownAnswers: knownConversationAnswers, applicationPlans: applicationPlans,
+		chatReplies: conversationReplies, chatReplyFactory: chatReplyFactory,
 		profileStateReaders: profileStateReaders, profileStateWriters: profileStateWriters,
 		profileStatePlatforms: profileStatePlatforms, conversationTransports: conversationTransports,
 		applicationTransports: applicationTransports, applicationStateObservers: applicationStateObservers,
@@ -648,6 +655,10 @@ func main() {
 		logf("known conversation answers are enabled for %d profile(s)", knownConversationAnswers.Len())
 	} else if knownConversationAnswers.Len() > 0 {
 		logf("WARNING: conversations.answer_known is set but no answer_sets are resolved; no automatic conversation answers will be sent")
+	}
+	if conversationReplies.Len() > 0 {
+		conversationHandlers.ConfigureAutoReplies(conversationReplies)
+		logf("chat auto-replies are enabled for %d profile(s)", conversationReplies.Len())
 	}
 	profileMutationLane := taskworker.NewProfileMutationLane()
 	workers, err := conversationWorkers(store, conversationHandlers, profileMutationLane)
@@ -1992,6 +2003,155 @@ func answerModel(configured *appconfig.AnswerModelPolicy, models map[string]appl
 		Tag: provider, PromptVersion: configured.PromptVersion,
 		Instruction: configured.Instruction, Timeout: timeout, Generator: generator,
 	})
+}
+
+var chatReplyVacancyPattern = regexp.MustCompile(`/vacancy/(\d+)`)
+
+// buildConversationReplyFactory wires the opt-in chat auto-reply generator to
+// the profile's resume facts and an OpenAI-compatible chat model. The model is
+// selected by answers.model.provider when set, otherwise by the first
+// openai_chat provider in the config.
+func buildConversationReplyFactory(cfg appconfig.Config, apiClient *hhapi.Client, lookupEnv func(string) (string, bool)) func(appconfig.Profile) (taskworker.ConversationReplyGenerator, error) {
+	return func(profile appconfig.Profile) (taskworker.ConversationReplyGenerator, error) {
+		facts, ok := profile.ResolvedResumeFacts()
+		if !ok {
+			return nil, errors.New("conversations.auto_reply requires resume_facts_file")
+		}
+		provider, apiKey, err := chatReplyProvider(cfg, profile, lookupEnv)
+		if err != nil {
+			return nil, err
+		}
+		factsJSON, err := json.Marshal(facts.Facts)
+		if err != nil {
+			return nil, fmt.Errorf("encode resume facts: %w", err)
+		}
+		timeout := 45 * time.Second
+		if profile.Answers != nil && profile.Answers.Model != nil {
+			if configured, timeoutErr := profile.Answers.Model.TimeoutDuration(); timeoutErr == nil && configured > 0 {
+				timeout = configured
+			}
+		}
+		baseURL := strings.TrimSpace(provider.BaseURL)
+		if baseURL == "" {
+			baseURL = "https://api.deepseek.com/v1"
+		}
+		return func(ctx context.Context, conversation core.Conversation, prompt core.ConversationMessage, history []core.ConversationMessage) (string, error) {
+			operationCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			if chatReplyIsSalaryQuestion(prompt.Text) {
+				return chatReplySalary(operationCtx, apiClient, conversation)
+			}
+			return hhapi.GenerateText(operationCtx, apiKey, baseURL, provider.Model,
+				conversationReplyPrompt(conversation, prompt.Text, history, factsJSON))
+		}, nil
+	}
+}
+
+func chatReplyProvider(cfg appconfig.Config, profile appconfig.Profile, lookupEnv func(string) (string, bool)) (appconfig.ModelProviderConfig, string, error) {
+	if lookupEnv == nil {
+		return appconfig.ModelProviderConfig{}, "", errors.New("conversations.auto_reply requires an environment lookup")
+	}
+	configuredTag := ""
+	if profile.Answers != nil && profile.Answers.Model != nil {
+		configuredTag = strings.TrimSpace(profile.Answers.Model.Provider)
+	}
+	candidates := make([]appconfig.ModelProviderConfig, 0, len(cfg.Models))
+	for _, configured := range cfg.Models {
+		if configuredTag != "" {
+			if strings.TrimSpace(configured.Tag) == configuredTag {
+				candidates = append(candidates, configured)
+			}
+			continue
+		}
+		if configured.Type == appconfig.ModelProviderOpenAIChat {
+			candidates = append(candidates, configured)
+		}
+	}
+	if len(candidates) == 0 && configuredTag != "" {
+		return appconfig.ModelProviderConfig{}, "", fmt.Errorf("conversations.auto_reply references unavailable model provider %q", configuredTag)
+	}
+	for _, configured := range candidates {
+		if configured.Type != appconfig.ModelProviderOpenAIChat {
+			continue
+		}
+		apiKey, exists := lookupEnv(configured.APIKeyEnvironment())
+		if !exists || strings.TrimSpace(apiKey) == "" {
+			return appconfig.ModelProviderConfig{}, "", fmt.Errorf(
+				"conversations.auto_reply model provider %q requires non-empty %s",
+				configured.Tag, configured.APIKeyEnvironment(),
+			)
+		}
+		return configured, apiKey, nil
+	}
+	return appconfig.ModelProviderConfig{}, "", errors.New("conversations.auto_reply requires an openai_chat model provider")
+}
+
+func conversationReplyPrompt(conversation core.Conversation, question string, history []core.ConversationMessage, facts []byte) string {
+	var builder strings.Builder
+	builder.WriteString("Ты отвечаешь работодателю в чате HH от имени кандидата.\n")
+	builder.WriteString("Ответь на последний вопрос по-русски, кратко и по делу: 1–3 предложения.\n")
+	builder.WriteString("Используй только факты из JSON ниже, ничего не выдумывай. Если в фактах нет ответа, верни ровно UNKNOWN.\n")
+	builder.WriteString("Не добавляй приветствие, подпись, контакты, markdown, списки и плейсхолдеры.\n")
+	if title := strings.TrimSpace(conversation.VacancyTitle); title != "" {
+		builder.WriteString("Вакансия: " + title)
+		if employer := strings.TrimSpace(conversation.Employer); employer != "" {
+			builder.WriteString(" — " + employer)
+		}
+		builder.WriteString("\n")
+	}
+	if len(history) > 0 {
+		builder.WriteString("\nПоследние сообщения чата:\n")
+		for _, message := range history {
+			role := "Кандидат"
+			if message.Direction == core.MessageIncoming {
+				role = "Работодатель"
+			}
+			builder.WriteString(role + ": " + truncateChatReplyText(message.Text, 500) + "\n")
+		}
+	}
+	builder.WriteString("\nФАКТЫ (JSON):\n")
+	builder.Write(facts)
+	builder.WriteString("\n\nВОПРОС:\n")
+	builder.WriteString(strings.TrimSpace(question))
+	return builder.String()
+}
+
+func chatReplyIsSalaryQuestion(text string) bool {
+	lower := strings.ToLower(text)
+	for _, term := range []string{"зарплат", "заработн", "ожидан", "оклад", "доход", "ставк", "оплат", "вилк", "з/п"} {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "сколько") &&
+		(strings.Contains(lower, "получа") || strings.Contains(lower, "хотите") ||
+			strings.Contains(lower, "рассчитыва") || strings.Contains(lower, "уровень"))
+}
+
+// chatReplySalary answers only from the vacancy salary or similar vacancies
+// computed by the mobile API. Without a known range the prompt stays for a
+// human instead of inventing a number.
+func chatReplySalary(ctx context.Context, client *hhapi.Client, conversation core.Conversation) (string, error) {
+	if client == nil {
+		return "", nil
+	}
+	match := chatReplyVacancyPattern.FindStringSubmatch(conversation.VacancyURL)
+	if len(match) != 2 {
+		return "", nil
+	}
+	low, high, err := client.SalaryRange(ctx, match[1])
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high), nil
+}
+
+func truncateChatReplyText(text string, maximum int) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) > maximum {
+		runes = runes[:maximum]
+	}
+	return string(runes)
 }
 
 func applicationMessagePool(configured appconfig.ApplicationMessagePool) *applicationoperator.MessagePoolConfig {
@@ -3586,6 +3746,7 @@ func conversationWorkers(consumer broker.TaskConsumer, handlers *taskworker.Conv
 		handler  taskworker.HandlerFunc
 	}{
 		{core.TaskConversationSend, lane.Wrap(handlers.Send)},
+		{core.TaskConversationReply, lane.Wrap(handlers.Reply)},
 		{core.TaskConversationFollowUp, lane.Wrap(handlers.FollowUp)},
 		{core.TaskConversationMarkRead, lane.Wrap(handlers.MarkRead)},
 		{core.TaskConversationDiscover, handlers.Discover},

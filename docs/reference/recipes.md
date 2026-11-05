@@ -438,6 +438,24 @@ PY
 регистру) либо `match.fingerprint`; `selected_options` — точные тексты
 кнопок. Ответы содержат личные данные — держите файлы в `data/` вне Git.
 
+Для свободных вопросов работодателя (включая ИИ-помощника HH) включите
+`auto_reply` и задайте `resume_facts_file`:
+
+```jsonc
+"conversations": {
+  "allow_send": true,
+  "auto_reply": true
+},
+"resume_facts_file": "facts/main.json",
+"answers": {
+  "model": {"provider": "opencode", "prompt_version": "v1", "instruction": "…", "timeout": "30s"}
+}
+```
+
+Модель получит только факты профиля, вопрос и короткую историю чата; ответ
+публикуется через durable `conversation.reply`. Дисквалификаторы, кнопочные
+опросники и зарплата без вычисленной вилки остаются человеку.
+
 ## Автопрогон анкет вакансий
 
 Когда анкета встречается повторно, reviewed-блок заполняется автоматически:

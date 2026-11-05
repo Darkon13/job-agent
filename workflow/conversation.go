@@ -528,6 +528,16 @@ func (workflow *ConversationWorkflow) EnqueueMessage(ctx context.Context, conver
 	return workflow.enqueueConversationCommand(ctx, conversationID, core.TaskConversationSend, payload, requestKey)
 }
 
+// EnqueueReply schedules generation and delivery of one automatic answer to an
+// observed question. The request key is the prompt identity so repeated syncs
+// reuse the same durable task instead of sending another message.
+func (workflow *ConversationWorkflow) EnqueueReply(ctx context.Context, payload core.ConversationReplyPayload, requestKey string) (core.Task, bool, error) {
+	if err := payload.Validate(); err != nil {
+		return core.Task{}, false, err
+	}
+	return workflow.enqueueConversationCommand(ctx, payload.ConversationID, core.TaskConversationReply, payload, requestKey)
+}
+
 func (workflow *ConversationWorkflow) EnqueueMarkRead(ctx context.Context, conversationID core.ConversationID, requestKey string) (core.Task, bool, error) {
 	return workflow.enqueueConversationCommand(ctx, conversationID, core.TaskConversationMarkRead, core.ConversationIDPayload{ConversationID: conversationID}, requestKey)
 }
@@ -542,6 +552,9 @@ func (workflow *ConversationWorkflow) enqueueConversationCommand(ctx context.Con
 		return core.Task{}, false, err
 	}
 	idempotencyKey, err := core.ConversationSendIdempotencyKey(conversationID, string(taskType)+"\x00"+requestKey)
+	if taskType == core.TaskConversationReply {
+		idempotencyKey, err = core.ConversationReplyIdempotencyKey(conversationID, requestKey)
+	}
 	if err != nil {
 		return core.Task{}, false, err
 	}

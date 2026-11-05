@@ -11,6 +11,9 @@ func TestDecideChatReply(t *testing.T) {
 		{"Какие технологии использовали?", true, "question"},
 		{"Готовы к тестовому?", true, "question"},
 		{"Готовы к переезду в Москву?", false, "disqualifying:переезд"},
+		{"Рассматриваете ли вы удалённый формат работы?", false, "disqualifying:удалённ"},
+		{"Готовы ли вы к оформлению по ТК?", false, "disqualifying:оформлен"},
+		{"Можете прислать телефон для связи?", false, "disqualifying:телефон"},
 		{"Спасибо, всё понятно", false, "not-a-question"},
 	}
 	for _, test := range tests {

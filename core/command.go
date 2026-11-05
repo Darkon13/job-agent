@@ -558,6 +558,22 @@ type ConversationSendPayload struct {
 	Content        MessageContent `json:"content"`
 }
 
+// ConversationReplyPayload asks the worker to generate and send one answer to
+// an unanswered platform question. The prompt identity, not the generated
+// text, is durable input: retries regenerate from the same observed message.
+type ConversationReplyPayload struct {
+	ConversationID   ConversationID `json:"conversation_id"`
+	PromptMessageID  MessageID      `json:"prompt_message_id"`
+	PromptExternalID string         `json:"prompt_external_id,omitempty"`
+}
+
+func (payload ConversationReplyPayload) Validate() error {
+	if payload.ConversationID == "" || payload.PromptMessageID == "" {
+		return errors.New("conversation reply payload requires conversation and prompt message")
+	}
+	return nil
+}
+
 // ProfileImportPayload loads the whole platform account state into the local
 // database: every negotiation and the full conversation catalog.
 type ProfileImportPayload struct {
@@ -662,6 +678,17 @@ func ConversationSendIdempotencyKey(conversationID ConversationID, requestKey st
 	}
 	digest := sha256.Sum256([]byte(string(conversationID) + "\x00" + requestKey))
 	return "conversation.send:" + hex.EncodeToString(digest[:]), nil
+}
+
+// ConversationReplyIdempotencyKey scopes one automatic answer to the observed
+// prompt. A repeated sync of the same chat returns the existing reply task
+// instead of generating a second message.
+func ConversationReplyIdempotencyKey(conversationID ConversationID, promptKey string) (string, error) {
+	if conversationID == "" || strings.TrimSpace(promptKey) == "" {
+		return "", errors.New("conversation reply idempotency requires conversation and prompt key")
+	}
+	digest := sha256.Sum256([]byte(string(conversationID) + "\x00" + promptKey))
+	return "conversation.reply:" + hex.EncodeToString(digest[:]), nil
 }
 
 func ConversationSyncIdempotencyKey(conversationID ConversationID, requestKey string) (string, error) {

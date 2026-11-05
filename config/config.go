@@ -600,6 +600,10 @@ type ConversationPolicy struct {
 	// AnswerKnown replies to a questionnaire prompt only when a reviewed
 	// conversation answer selects one of the offered text buttons.
 	AnswerKnown bool `json:"answer_known,omitempty"`
+	// AutoReply answers a plain-text recruiter question from the profile resume
+	// facts. It never handles relocation/office disqualifiers, button
+	// questionnaires or salary questions without a computed range.
+	AutoReply bool `json:"auto_reply,omitempty"`
 }
 
 // AnswerPolicy configures how unknown questions are resolved after the
@@ -1509,6 +1513,22 @@ func validateApplicationMessagePool(pool ApplicationMessagePool) error {
 	return nil
 }
 
+func hasOpenAIChatProvider(models []ModelProviderConfig, profile Profile) bool {
+	configuredTag := ""
+	if profile.Answers != nil && profile.Answers.Model != nil {
+		configuredTag = strings.TrimSpace(profile.Answers.Model.Provider)
+	}
+	for _, model := range models {
+		if model.Type != ModelProviderOpenAIChat {
+			continue
+		}
+		if configuredTag == "" || strings.TrimSpace(model.Tag) == configuredTag {
+			return true
+		}
+	}
+	return false
+}
+
 func validateModelProvider(config ModelProviderConfig) error {
 	if strings.TrimSpace(config.Tag) == "" || strings.TrimSpace(config.Model) == "" {
 		return errors.New("model provider requires tag and model")
@@ -1715,6 +1735,15 @@ func (c Config) Validate() error {
 		}
 		if profile.Conversations.AnswerKnown && !profile.Conversations.AllowSend {
 			return fmt.Errorf("profile %q conversations.answer_known requires allow_send", profile.Tag)
+		}
+		if profile.Conversations.AutoReply && !profile.Conversations.AllowSend {
+			return fmt.Errorf("profile %q conversations.auto_reply requires allow_send", profile.Tag)
+		}
+		if profile.Conversations.AutoReply && !hasResumeFacts {
+			return fmt.Errorf("profile %q conversations.auto_reply requires resume_facts_file", profile.Tag)
+		}
+		if profile.Conversations.AutoReply && !hasOpenAIChatProvider(c.Models, profile) {
+			return fmt.Errorf("profile %q conversations.auto_reply requires an openai_chat model provider", profile.Tag)
 		}
 		switch profile.Applications.ExecutionMode() {
 		case ApplicationModeDryRun, ApplicationModeApproval:

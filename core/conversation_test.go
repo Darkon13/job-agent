@@ -131,6 +131,26 @@ func TestConversationSendIdempotencyIsScopedAndStable(t *testing.T) {
 	}
 }
 
+func TestConversationReplyIdentityIsScopedToPrompt(t *testing.T) {
+	if err := (ConversationReplyPayload{}).Validate(); err == nil {
+		t.Fatal("expected an empty reply payload to fail")
+	}
+	payload := ConversationReplyPayload{ConversationID: "conversation-1", PromptMessageID: "prompt-1"}
+	if err := payload.Validate(); err != nil {
+		t.Fatalf("valid reply payload: %v", err)
+	}
+	first, err := ConversationReplyIdempotencyKey("conversation-1", "prompt-1")
+	if err != nil {
+		t.Fatalf("first reply key: %v", err)
+	}
+	again, _ := ConversationReplyIdempotencyKey("conversation-1", "prompt-1")
+	otherPrompt, _ := ConversationReplyIdempotencyKey("conversation-1", "prompt-2")
+	otherChat, _ := ConversationReplyIdempotencyKey("conversation-2", "prompt-1")
+	if first != again || first == otherPrompt || first == otherChat {
+		t.Fatalf("unexpected reply keys: first=%q again=%q otherPrompt=%q otherChat=%q", first, again, otherPrompt, otherChat)
+	}
+}
+
 func TestFollowUpPolicyUsesReadableJSONDuration(t *testing.T) {
 	encoded, err := json.Marshal(FollowUpPolicy{MaxFollowUps: 1, Cooldown: Duration(72 * time.Hour)})
 	if err != nil {

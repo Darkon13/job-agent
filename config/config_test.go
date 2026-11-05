@@ -1109,3 +1109,44 @@ func TestSystemJobJitterDefaults(t *testing.T) {
 		t.Fatal("expected a broken profile jitter to fail validation")
 	}
 }
+
+func TestConversationAutoReplyRequiresSendPermissionAndResumeFacts(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Database: DatabaseConfig{Driver: "sqlite", Path: "job-agent.db"},
+			Adapters: []AdapterConfig{{Tag: "hh-main", Type: "hh"}},
+			Models:   []ModelProviderConfig{{Tag: "chat", Type: ModelProviderOpenAIChat, Model: "chat-model"}},
+			Profiles: []Profile{{
+				Tag: "primary", Adapter: "hh-main", Enabled: true,
+				Conversations: ConversationPolicy{AutoReply: true},
+			}},
+		}
+	}
+	config := base()
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected auto_reply without allow_send to fail")
+	}
+	config = base()
+	config.Profiles[0].Conversations.AllowSend = true
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected auto_reply without resume facts to fail")
+	}
+	facts := ApplicationResumeFacts{
+		Tag: "main", ResumeID: "resume-1",
+		Facts: map[string]any{"grade": "middle", "stack": []any{"Go", "PostgreSQL"}},
+	}
+	digest, err := applicationResumeFactsDigest(facts)
+	if err != nil {
+		t.Fatalf("facts digest: %v", err)
+	}
+	facts.Digest = digest
+	config.Profiles[0].Resume = "resume-1"
+	config.Profiles[0].resolvedResumeFacts = &facts
+	if err := config.Validate(); err != nil {
+		t.Fatalf("valid auto_reply profile: %v", err)
+	}
+	config.Models = nil
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected auto_reply without an openai_chat provider to fail")
+	}
+}
