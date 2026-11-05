@@ -47,7 +47,7 @@ func main() {
 			log.Fatal(err)
 		}
 		fmt.Println("CAPTCHA:", captcha.URL)
-		err = hhapi.SolveCaptcha(ctx, captcha.URL, func(image []byte) (string, error) {
+		err = client.SolveCaptcha(ctx, captcha.URL, func(image []byte) (string, error) {
 			if err := os.WriteFile("/tmp/hh-captcha.png", image, 0o600); err != nil {
 				return "", err
 			}

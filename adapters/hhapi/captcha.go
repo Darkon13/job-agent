@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
@@ -18,13 +17,33 @@ import (
 const captchaSuccessBackURL = "hh://applicant/captchaSuccessBackUrl"
 
 // SolveCaptcha проходит отдельную страницу капчи и отправляет ответ.
-// answer получает PNG-картинку и возвращает текст с неё.
+// answer получает PNG-картинку и возвращает текст с неё. The free function
+// uses the shared cookie file: the caller (CLI or dashboard) starts a new
+// process, so it cannot keep the API client's in-memory jar.
 func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []byte) (string, error)) error {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
+	jar := loadCookieJar(cookieFilePath())
+	client := &http.Client{Timeout: 60 * time.Second, Jar: jar}
+	if err := solveCaptchaWith(ctx, client, nativeUserAgent(), captchaURL, answer); err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 60 * time.Second, Jar: jar}
+	return saveCookieJar(cookieFilePath(), jar)
+}
+
+// SolveCaptcha completes a captcha through the API client itself: the same
+// cookie jar and device User-Agent are reused, so the anti-bot state obtained
+// on the captcha page is present when Apply retries the request.
+func (c *Client) SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []byte) (string, error)) error {
+	if c == nil || c.http == nil {
+		return fmt.Errorf("hh captcha: client is nil")
+	}
+	if err := solveCaptchaWith(ctx, c.http, c.userAgent, captchaURL, answer); err != nil {
+		return err
+	}
+	c.saveCookies(true)
+	return nil
+}
+
+func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captchaURL string, answer func(image []byte) (string, error)) error {
 	follow := *client
 	follow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
@@ -48,7 +67,7 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 		return fmt.Errorf("hh captcha: state missing in %s", finalURL)
 	}
 	xsrf := ""
-	for _, cookie := range jar.Cookies(finalURL) {
+	for _, cookie := range client.Jar.Cookies(finalURL) {
 		if cookie.Name == "_xsrf" {
 			xsrf = cookie.Value
 		}
@@ -56,7 +75,7 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 	if xsrf == "" {
 		return fmt.Errorf("hh captcha: _xsrf cookie missing")
 	}
-	key, err := captchaKey(ctx, client, finalURL, xsrf)
+	key, err := captchaKey(ctx, client, userAgent, finalURL, xsrf)
 	if err != nil {
 		return err
 	}
@@ -94,7 +113,7 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 	}
 	target := "https://hh.ru/account/captcha?" + payload.Encode()
 	submit, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
-	setXHR(submit, finalURL, xsrf)
+	setXHR(submit, userAgent, finalURL, xsrf)
 	resp2, err := follow.Do(submit)
 	if err != nil {
 		return err
@@ -111,10 +130,10 @@ func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []by
 	return fmt.Errorf("hh captcha: submit status %d: %s", resp2.StatusCode, string(body2))
 }
 
-func captchaKey(ctx context.Context, client *http.Client, reference *url.URL, xsrf string) (string, error) {
+func captchaKey(ctx context.Context, client *http.Client, userAgent string, reference *url.URL, xsrf string) (string, error) {
 	target := "https://hh.ru/captcha?lang=RU"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
-	setXHR(req, reference, xsrf)
+	setXHR(req, userAgent, reference, xsrf)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -133,7 +152,7 @@ func captchaKey(ctx context.Context, client *http.Client, reference *url.URL, xs
 	return result.Key, nil
 }
 
-func setXHR(req *http.Request, reference *url.URL, xsrf string) {
+func setXHR(req *http.Request, userAgent string, reference *url.URL, xsrf string) {
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")

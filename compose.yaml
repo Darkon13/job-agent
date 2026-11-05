@@ -42,6 +42,7 @@ services:
       BROWSER_WORKER_URL: ${BROWSER_WORKER_URL:-http://browser-worker:8088}
       BROWSER_WORKER_TOKEN: ${BROWSER_WORKER_TOKEN:-}
       HH_API_TOKEN_FILE: /data/hh-config/hh-token.json
+      HH_COOKIE_FILE: /data/hh-config/hh-cookies.txt
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
     volumes: *runtime-volumes
     expose:
@@ -79,8 +80,12 @@ services:
       # Forwarded to the backend as Authorization: Bearer <token>. Keep the
       # token in the dashboard process environment, never in the browser.
       JOB_AGENT_API_TOKEN: ${JOB_AGENT_API_TOKEN:-}
+      # The dashboard solves the mobile-API captcha in its own process; it must
+      # read and persist the same anti-bot cookie jar as the backend.
+      HH_COOKIE_FILE: /data/hh-config/hh-cookies.txt
     volumes:
       - ${JOB_AGENT_DATA_DIR:-./data}:/data
+      - ${HOME}/.config/job-agent:/data/hh-config:rw
     user: "${JOB_AGENT_UID:-1000}:${JOB_AGENT_GID:-100}"
     depends_on:
       job-agent:

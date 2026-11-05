@@ -499,7 +499,7 @@ func main() {
 			hhAPIClient = apiClient
 			if apiKey := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")); apiKey != "" {
 				apiClient.SetCaptchaSolver(func(ctx context.Context, captchaURL string) error {
-					return hhapi.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
+					return apiClient.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
 						return hhapi.ModelOCR(ctx, image, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash")
 					})
 				})
@@ -1916,6 +1916,7 @@ func applicationPreparer(profile appconfig.Profile, employerMatcher *application
 		IncludeAll:      profile.Applications.Qualification.IncludeAll,
 		ExcludeAny:      profile.Applications.Qualification.ExcludeAny,
 		ExcludeAll:      profile.Applications.Qualification.ExcludeAll,
+		TitleIncludeAny: profile.Applications.Qualification.TitleIncludeAny,
 		StaticMessage:   profile.Applications.Message,
 		MessageTemplate: messageTemplate,
 		MessagePool:     messagePool,

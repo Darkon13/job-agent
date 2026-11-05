@@ -52,12 +52,14 @@ func (c *Client) tokenRequest(ctx context.Context, form map[string]string, out *
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.reloadCookies()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	c.saveCookies(false)
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("hh oauth: %d: %s", resp.StatusCode, string(body))
 	}

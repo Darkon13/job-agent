@@ -86,12 +86,14 @@ func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiati
 	req.Header.Set("X-HH-App-Active", "true")
 	req.Header.Set("User-Agent", c.userAgent)
 
+	c.reloadCookies()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Negotiation{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	c.saveCookies(true)
 	if resp.StatusCode == http.StatusForbidden {
 		if captcha := parseCaptcha(body); captcha != nil {
 			return Negotiation{}, captcha

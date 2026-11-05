@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"os"
 	"sync"
 	"syscall"
@@ -36,22 +35,28 @@ func (e *CaptchaRequiredError) Error() string { return "hh captcha required: " +
 type Client struct {
 	http          *http.Client
 	tokenFile     string
+	cookieFile    string
 	mu            sync.Mutex
 	token         Token
 	userAgent     string
-	cookies       *cookiejar.Jar
+	cookies       *persistentCookieJar
 	captchaSolver func(context.Context, string) error
+
+	cookieMu       sync.Mutex
+	cookieModTime  time.Time
+	lastCookieSave time.Time
 }
 
 func New(tokenFile string) (*Client, error) {
-	cookieFile := os.Getenv("HH_COOKIE_FILE")
-	if cookieFile == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			cookieFile = home + "/.config/job-agent/hh-cookies.txt"
-		}
-	}
+	cookieFile := cookieFilePath()
 	jar := loadCookieJar(cookieFile)
-	c := &Client{http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, tokenFile: tokenFile, userAgent: nativeUserAgent(), cookies: jar}
+	c := &Client{
+		http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, tokenFile: tokenFile,
+		cookieFile: cookieFile, userAgent: nativeUserAgent(), cookies: jar,
+	}
+	if info, err := os.Stat(cookieFile); err == nil {
+		c.cookieModTime = info.ModTime()
+	}
 	data, err := os.ReadFile(tokenFile)
 	if err == nil {
 		if err := json.Unmarshal(data, &c.token); err != nil {
@@ -133,12 +138,14 @@ func (c *Client) Request(ctx context.Context, method, path string, body any, out
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
 
+	c.reloadCookies()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	c.saveCookies(false)
 	if resp.StatusCode == http.StatusForbidden {
 		var failure struct {
 			Errors []struct {
