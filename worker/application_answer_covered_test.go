@@ -188,6 +188,7 @@ func TestApplicationAnswerCoveredUsesModelForMissingQuestion(t *testing.T) {
 			"explain experience": {Text: "Three years of Go"},
 		}},
 	})
+	handler.ConfigureRevisions(repository)
 	payload, _ := json.Marshal(core.ApplicationAnswerCoveredPayload{ProfileID: "primary"})
 	task, err := core.NewTask(core.NewTaskParams{
 		ID: "answer-covered-3", Type: core.TaskApplicationAnswerCovered, IdempotencyKey: "answer-covered-run-3",
@@ -204,6 +205,10 @@ func TestApplicationAnswerCoveredUsesModelForMissingQuestion(t *testing.T) {
 	}
 	if chain.answers[0][1].Text != "Three years of Go" {
 		t.Fatalf("model answer = %#v", chain.answers[0][1])
+	}
+	revision, exists, err := repository.LatestAnswerBlockRevision(ctx, "hh-vacancy-reviewed")
+	if err != nil || !exists || revision.Source != "model:review-3" || len(revision.Answers) != 1 || revision.Answers[0].Text != "Three years of Go" {
+		t.Fatalf("model answer revision=%#v exists=%t err=%v", revision, exists, err)
 	}
 }
 
@@ -279,5 +284,61 @@ func TestApplicationAnswerCoveredSkipsQualificationSessionsWhenLimited(t *testin
 	}
 	if len(chain.answers) != 1 || len(chain.answers[0]) != 1 {
 		t.Fatalf("vacancy session was hidden by qualification page limit: %#v", chain.answers)
+	}
+}
+
+func TestApplicationAnswerCoveredPrepareOnlyPersistsAnswersWithoutSubmit(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	repository := storagememory.NewRepository()
+	definition, err := core.NewProgressiveTestDefinition("hh", "vacancy:901", "Questionnaire", nil, now)
+	if err != nil {
+		t.Fatalf("definition: %v", err)
+	}
+	if _, err := repository.UpsertTestDefinition(ctx, definition); err != nil {
+		t.Fatalf("store definition: %v", err)
+	}
+	questionnaire := core.Questionnaire{Questions: []core.Question{{ID: "1", Text: "Question", Kind: core.QuestionText}}}
+	session, err := core.NewReviewSession("review-prepare", definition, "primary", "correlation-prepare", now)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	session.Questionnaire = questionnaire
+	if _, err := repository.CreateReviewSession(ctx, session); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	prompt := core.ReviewPrompt{ID: "prepare-prompt", SessionID: session.ID, Revision: session.Revision, Question: questionnaire.Questions[0], CreatedAt: now}
+	if err := session.WaitForAnswer(prompt, now); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if err := repository.SaveReviewPrompt(ctx, session, prompt, session.Revision); err != nil {
+		t.Fatalf("save prompt: %v", err)
+	}
+	chain := &recordingVacancyTestChain{}
+	handler, err := NewApplicationAnswerCoveredHandler(repository, staticVacancyBlocks{}, chain, fixedClock{now: now.Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	handler.ConfigureAnswerModels(map[core.ProfileID]QualificationAnswerModel{
+		"primary": fakeQuestionnaireAnswerModel{answers: map[string]core.StoredAnswer{"question": {Text: "Prepared answer"}}},
+	})
+	handler.ConfigureRevisions(repository)
+	payload, _ := json.Marshal(core.ApplicationAnswerCoveredPayload{ProfileID: "primary", PrepareOnly: true, Limit: 1})
+	task, err := core.NewTask(core.NewTaskParams{
+		ID: "answer-covered-prepare", Type: core.TaskApplicationAnswerCovered, IdempotencyKey: "answer-covered-prepare",
+		Source: "test", Platform: "hh", ProfileID: "primary", CorrelationID: "correlation-prepare", Payload: payload,
+	}, now)
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	if err := handler.Handle(ctx, task); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(chain.answers) != 0 {
+		t.Fatalf("prepare-only submitted answers: %#v", chain.answers)
+	}
+	revision, exists, err := repository.LatestAnswerBlockRevision(ctx, "hh-vacancy-reviewed")
+	if err != nil || !exists || len(revision.Answers) != 1 || revision.Answers[0].Text != "Prepared answer" {
+		t.Fatalf("prepared revision=%#v exists=%t err=%v", revision, exists, err)
 	}
 }

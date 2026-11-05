@@ -123,8 +123,9 @@ func (payload ApplicationStateSyncPayload) Validate() error {
 // observed question already has a reviewed answer in the platform bank. A
 // partially covered questionnaire stays in the review queue.
 type ApplicationAnswerCoveredPayload struct {
-	ProfileID ProfileID `json:"profile_id"`
-	Limit     int       `json:"limit,omitempty"`
+	ProfileID   ProfileID `json:"profile_id"`
+	Limit       int       `json:"limit,omitempty"`
+	PrepareOnly bool      `json:"prepare_only,omitempty"`
 }
 
 func (payload ApplicationAnswerCoveredPayload) Validate() error {

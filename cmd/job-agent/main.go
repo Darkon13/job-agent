@@ -929,6 +929,7 @@ func main() {
 		log.Fatalf("create application answer covered handler: %v", err)
 	}
 	answerCoveredHandler.ConfigureAnswerModels(vacancyAnswerModels)
+	answerCoveredHandler.ConfigureRevisions(store)
 	answerCoveredWorker, err := newTaskWorker(store, core.TaskApplicationAnswerCovered, answerCoveredHandler.Handle)
 	if err != nil {
 		log.Fatalf("create application answer covered worker: %v", err)
@@ -3660,7 +3661,7 @@ func applicationAnswerCoveredDefinitions(cfg appconfig.Config, instances map[str
 				continue
 			}
 			payload, err := json.Marshal(core.ApplicationAnswerCoveredPayload{
-				ProfileID: profileID, Limit: job.Action.Count,
+				ProfileID: profileID, Limit: job.Action.Count, PrepareOnly: job.Action.PrepareOnly,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encode job %q action: %w", job.Tag, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Darkon13/job-agent/core"
 	"github.com/Darkon13/job-agent/storage"
@@ -22,6 +23,7 @@ type ApplicationAnswerCoveredHandler struct {
 	chain        VacancyTestEnqueuer
 	clock        Clock
 	answerModels map[core.ProfileID]QualificationAnswerModel
+	revisions    storage.AnswerBlockRevisionRepository
 }
 
 func NewApplicationAnswerCoveredHandler(reviews storage.ReviewRepository, blocks AnswerBlockResolver, chain VacancyTestEnqueuer, clock Clock) (*ApplicationAnswerCoveredHandler, error) {
@@ -39,6 +41,16 @@ func (handler *ApplicationAnswerCoveredHandler) ConfigureAnswerModels(models map
 		return
 	}
 	handler.answerModels = models
+}
+
+// ConfigureRevisions persists model answers as an appended vacancy block
+// revision. The next run can then submit them from the reviewed bank even when
+// the platform popup is temporarily unavailable.
+func (handler *ApplicationAnswerCoveredHandler) ConfigureRevisions(revisions storage.AnswerBlockRevisionRepository) {
+	if handler == nil || revisions == nil {
+		return
+	}
+	handler.revisions = revisions
 }
 
 func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task core.Task) error {
@@ -64,9 +76,9 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 	if err != nil {
 		return err
 	}
-	enqueued := 0
+	prepared := 0
 	for _, session := range sessions {
-		if enqueued >= limit {
+		if prepared >= limit {
 			break
 		}
 		// Qualification sessions extend a family block and are replayed by
@@ -88,19 +100,24 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 			if model == nil {
 				continue
 			}
-			answers, err = resolveQuestionnaireWithModel(ctx, session.Platform, session.Questionnaire, block, found, model)
+			modelAnswers := make([]core.StoredAnswer, 0)
+			answers, modelAnswers, err = resolveQuestionnaireWithModel(ctx, session.Platform, session.Questionnaire, block, found, model)
 			if err != nil {
 				continue
 			}
+			handler.persistModelAnswers(ctx, session, block, found, modelAnswers)
+		}
+		prepared++
+		if payload.PrepareOnly {
+			continue
 		}
 		if _, err := handler.chain.EnqueueAnswer(ctx, session.ProfileID, session.Platform, externalID, answers, "bank:"+string(session.ID)); err != nil {
 			return err
 		}
-		enqueued++
 	}
-	if enqueued > 0 {
-		slog.Default().Info("questionnaire answers resumed",
-			"profile", payload.ProfileID, "sessions", enqueued)
+	if prepared > 0 {
+		slog.Default().Info("questionnaire answers prepared",
+			"profile", payload.ProfileID, "sessions", prepared, "submit", !payload.PrepareOnly)
 	}
 	return nil
 }
@@ -108,8 +125,9 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 // resolveQuestionnaireWithModel combines reviewed answers with model answers.
 // A single unresolved question leaves the whole session for a human; partial
 // submissions are never sent.
-func resolveQuestionnaireWithModel(ctx context.Context, platform core.Platform, questionnaire core.Questionnaire, block core.AnswerBlock, blockFound bool, model QualificationAnswerModel) ([]core.ResolvedAnswer, error) {
+func resolveQuestionnaireWithModel(ctx context.Context, platform core.Platform, questionnaire core.Questionnaire, block core.AnswerBlock, blockFound bool, model QualificationAnswerModel) ([]core.ResolvedAnswer, []core.StoredAnswer, error) {
 	answers := make([]core.ResolvedAnswer, 0, len(questionnaire.Questions))
+	modelAnswers := make([]core.StoredAnswer, 0)
 	for _, question := range questionnaire.Questions {
 		if blockFound {
 			if stored, ok := storedAnswerForQuestion(block, question); ok {
@@ -121,15 +139,44 @@ func resolveQuestionnaireWithModel(ctx context.Context, platform core.Platform, 
 		}
 		stored, err := model.Resolve(ctx, platform, question)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		resolved, err := core.ResolveStoredAnswer(question, stored)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		answers = append(answers, resolved)
+		modelAnswers = append(modelAnswers, stored)
 	}
-	return answers, nil
+	return answers, modelAnswers, nil
+}
+
+// persistModelAnswers stores the generated answers in the same append-only
+// vacancy block humans extend. The model answers carry provenance and are not
+// marked as human-reviewed; they are a local preparation for the next submit.
+func (handler *ApplicationAnswerCoveredHandler) persistModelAnswers(ctx context.Context, session core.ReviewSession, block core.AnswerBlock, blockFound bool, answers []core.StoredAnswer) {
+	if handler.revisions == nil || len(answers) == 0 {
+		return
+	}
+	tag := VacancyReviewedBlockTag(session.Platform, block, blockFound)
+	name := strings.TrimSpace(block.Name)
+	if name == "" {
+		name = "Vacancy questionnaire"
+	}
+	latest, exists, err := handler.revisions.LatestAnswerBlockRevision(ctx, tag)
+	if err == nil && exists {
+		latestDigest, digestErr := core.StoredAnswersDigest(latest.Answers)
+		answersDigest, nextErr := core.StoredAnswersDigest(answers)
+		if digestErr == nil && nextErr == nil && latestDigest == answersDigest {
+			return
+		}
+	}
+	if _, err := handler.revisions.AppendAnswerBlockRevision(ctx, core.AnswerBlockRevision{
+		BlockTag: tag, Name: name, Kind: core.AnswerBlockVacancy, Platform: session.Platform,
+		Source: "model:" + string(session.ID), Answers: answers, CreatedAt: handler.clock.Now(),
+	}); err != nil {
+		slog.Default().Warn("persist model questionnaire answers", "session", session.ID, "error", err)
+	}
 }
 
 func storedAnswerForQuestion(block core.AnswerBlock, question core.Question) (core.StoredAnswer, bool) {

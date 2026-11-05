@@ -219,6 +219,7 @@ type JobAction struct {
 	// poll job; zero keeps the full window.
 	RecentPages int           `json:"recent_pages,omitempty"`
 	Count       int           `json:"count,omitempty"`
+	PrepareOnly bool          `json:"prepare_only,omitempty"`
 	Pause       core.Duration `json:"pause,omitempty"`
 	// MinAge delays the validation refresh so fresh questionnaires keep their
 	// operator window before the recheck.
