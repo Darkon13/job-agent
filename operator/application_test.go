@@ -123,7 +123,7 @@ func TestRuleTemplatePreparerFiltersAndRenders(t *testing.T) {
 		t.Fatalf("preparation = %#v", result)
 	}
 
-	vacancy.Attributes["description"] = "<p>Ищем Team Lead</p>"
+	vacancy.Title = "Team Lead"
 	result, err = preparer.PrepareApplication(context.Background(), application, vacancy)
 	if err != nil || result.Outcome != ApplicationSkip || result.Code != "excluded_term" || result.Message != "" {
 		t.Fatalf("excluded preparation = %#v err=%v", result, err)
