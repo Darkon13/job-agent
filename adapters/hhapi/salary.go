@@ -34,6 +34,9 @@ func (c *Client) SalaryRange(ctx context.Context, vacancyID string) (int, int, e
 	if err != nil {
 		return 0, 0, err
 	}
+	if mid, ok := vacancy.SalaryMidpoint(); ok {
+		return int(mid * 0.9), int(mid * 1.1), nil
+	}
 	role := ""
 	if len(vacancy.ProfessionalRoles) > 0 {
 		role = vacancy.ProfessionalRoles[0].ID
