@@ -351,6 +351,13 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		if strings.Contains(err.Error(), "already_applied") {
 			return adapter.ApplicationSubmitResult{AlreadyApplied: true, Applied: true}, nil
 		}
+		if strings.Contains(err.Error(), "Daily negotiations limit") {
+			retryAt := time.Now().Add(24 * time.Hour)
+			return adapter.ApplicationSubmitResult{}, &core.OperationError{
+				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
+				Platform: command.Vacancy.Platform, Message: "HH daily negotiations limit reached", RetryAfter: &retryAt,
+			}
+		}
 		if strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") {
 			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "test_required",
 				"HH vacancy requires a test before applying")
