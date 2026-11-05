@@ -499,6 +499,18 @@ func main() {
 						return hhapi.ModelOCR(ctx, image, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash")
 					})
 				})
+				facts, _ := os.ReadFile("/config/facts/main.json")
+				answerer := func(ctx context.Context, vacancyID, question string) (string, error) {
+					prompt := "Ответь на вопрос работодателя в анкете отклика, по-русски, кратко и по делу (1–3 предложения).\nИспользуй только факты кандидата, ничего не выдумывай. Если вопрос про зарплату — не отвечай здесь.\n\nФАКТЫ:\n" + string(facts) + "\n\nВОПРОС:\n" + question
+					return hhapi.GenerateText(ctx, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash", prompt)
+				}
+				for _, instance := range instances {
+					if setter, ok := instance.(interface {
+						SetQuestionAnswerer(func(context.Context, string, string) (string, error))
+					}); ok {
+						setter.SetQuestionAnswerer(answerer)
+					}
+				}
 			}
 			for _, instance := range instances {
 				if setter, ok := instance.(interface{ SetAPIClient(*hhapi.Client) }); ok {

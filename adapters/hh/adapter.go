@@ -99,6 +99,7 @@ type Adapter struct {
 	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
 	worker                     *browser.HTTPClient
 	api                        *hhapi.Client
+	questionAnswerer           func(context.Context, string, string) (string, error)
 }
 
 var _ adapter.Adapter = (*Adapter)(nil)
@@ -140,6 +141,13 @@ func (a *Adapter) SetAPIClient(client *hhapi.Client) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.api = client
+}
+
+// SetQuestionAnswerer задаёт генератор ответов на вопросы анкет.
+func (a *Adapter) SetQuestionAnswerer(answerer func(context.Context, string, string) (string, error)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.questionAnswerer = answerer
 }
 
 func (a *Adapter) SetBrowserWorker(client *browser.HTTPClient) {
@@ -262,6 +270,7 @@ func (a *Adapter) BindBrowserApplicationSession(profileID core.ProfileID, stateF
 	client := newBrowserApplicationClient(reader, options)
 	client.worker = a.worker
 	client.api = a.api
+	client.questionAnswerer = a.questionAnswerer
 	a.browserApplicationClients[profileID] = client
 	return client, nil
 }

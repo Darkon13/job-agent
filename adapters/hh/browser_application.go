@@ -30,12 +30,13 @@ const maxBrowserApplicationResponse = 16 << 20
 // binding BrowserReadClient never grants permission to submit an application.
 // Every POST is preceded by a fresh, idempotent popup preflight.
 type BrowserApplicationClient struct {
-	reader     *BrowserReadClient
-	options    adapter.BrowserApplicationOptions
-	webBaseURL string
-	worker     *browser.HTTPClient
-	api        *hhapi.Client
-	mu         sync.Mutex
+	reader           *BrowserReadClient
+	options          adapter.BrowserApplicationOptions
+	webBaseURL       string
+	worker           *browser.HTTPClient
+	api              *hhapi.Client
+	questionAnswerer func(context.Context, string, string) (string, error)
+	mu               sync.Mutex
 }
 
 var _ adapter.ApplicationTransport = (*BrowserApplicationClient)(nil)
@@ -255,19 +256,29 @@ func (client *BrowserApplicationClient) answerSalaryQuestionnaire(ctx context.Co
 	}
 	var answers []browser.FormAnswer
 	for _, field := range form.Fields {
-		text := strings.ToLower(field.Context + " " + field.Label)
-		if !strings.Contains(text, "ожидан") && !strings.Contains(text, "зарплат") {
-			continue
-		}
 		name := field.Name
-		if name == "" {
+		if name == "" || (field.Tag != "textarea" && field.Type != "text") {
 			continue
 		}
-		low, high, salaryErr := client.api.SalaryRange(ctx, command.Vacancy.ExternalID)
-		if salaryErr != nil {
-			return adapter.ApplicationSubmitResult{}, false
+		question := strings.TrimSpace(field.Context + " " + field.Label)
+		text := strings.ToLower(question)
+		var value string
+		if strings.Contains(text, "ожидан") || strings.Contains(text, "зарплат") {
+			low, high, salaryErr := client.api.SalaryRange(ctx, command.Vacancy.ExternalID)
+			if salaryErr != nil {
+				return adapter.ApplicationSubmitResult{}, false
+			}
+			value = fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high)
+		} else if client.questionAnswerer != nil {
+			generated, genErr := client.questionAnswerer(ctx, command.Vacancy.ExternalID, question)
+			if genErr != nil {
+				return adapter.ApplicationSubmitResult{}, false
+			}
+			value = generated
 		}
-		value := fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high)
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
 		answers = append(answers, browser.FormAnswer{Selector: fmt.Sprintf(`[name="%s"]`, name), Value: value})
 	}
 	if len(answers) == 0 {
