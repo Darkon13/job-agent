@@ -266,6 +266,65 @@ export class BrowserManager {
     )
   }
 
+  async form(profileID: string, url: string): Promise<unknown> {
+    const target = this.httpURL(url)
+    return this.withLock(profileID, () =>
+      this.withSlot(async () => {
+        const state = await this.requireContext(profileID)
+        const page = await this.page(profileID)
+        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 45000 })
+        const link = page.locator('[data-qa="vacancy-response-link-top"]').first()
+        await link.waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined)
+        if (await link.isVisible().catch(() => false)) {
+          await link.click({ timeout: 15000 }).catch(() => undefined)
+          await page.waitForTimeout(2500)
+        }
+        const formPage = await this.page(profileID)
+        await formPage.waitForLoadState("domcontentloaded").catch(() => undefined)
+        return formPage.evaluate(() => {
+          const visible = (el: Element) => {
+            const rect = (el as HTMLElement).getBoundingClientRect()
+            return rect.width > 0 && rect.height > 0
+          }
+          const labelFor = (el: Element) => {
+            const id = el.getAttribute("id")
+            if (id) {
+              const label = document.querySelector(`label[for="${CSS.escape(id)}"]`)
+              if (label) return (label.textContent || "").trim()
+            }
+            return (el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim()
+          }
+          const fields: any[] = []
+          document.querySelectorAll("input, textarea, select").forEach((el) => {
+            const input = el as HTMLInputElement
+            if (input.type === "hidden" || !visible(input)) return
+            const options: string[] = []
+            if (input instanceof HTMLSelectElement) {
+              for (const option of Array.from(input.options)) {
+                if (option.value) options.push((option.textContent || option.value).trim())
+              }
+            }
+            fields.push({
+              tag: input.tagName.toLowerCase(), type: input.type || "",
+              name: input.name || "", dataQa: input.getAttribute("data-qa") || "",
+              label: labelFor(input), placeholder: input.placeholder || "",
+              required: input.required, options,
+            })
+          })
+          const radios = new Map<string, string[]>()
+          document.querySelectorAll('input[type=radio]').forEach((el) => {
+            const input = el as HTMLInputElement
+            if (!input.name) return
+            const list = radios.get(input.name) || []
+            list.push(input.value)
+            radios.set(input.name, list)
+          })
+          return { url: location.href, title: document.title, fields, radios: Object.fromEntries(radios) }
+        })
+      }),
+    )
+  }
+
   async apply(profileID: string, request: ApplyRequest): Promise<ApplyResult> {
     const target = this.httpURL(request.url)
     const timeout = this.timeout(request.timeout_ms)

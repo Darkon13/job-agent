@@ -111,6 +111,11 @@ async function handle(
         sendJSON(response, 200, await manager.text(profileID, requireString(body.selector, "selector")))
         return
       }
+      case "POST form": {
+        const body = await readObject(request, config.maxBodyBytes)
+        sendJSON(response, 200, await manager.form(profileID, requireString(body.url, "url")))
+        return
+      }
       case "POST apply": {
         const body = await readObject(request, config.maxBodyBytes)
         sendJSON(
