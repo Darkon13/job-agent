@@ -17,10 +17,11 @@ import (
 // runtime questionnaire and the durable questionnaire.answer task submits it.
 // Partially covered questionnaires stay in the review queue.
 type ApplicationAnswerCoveredHandler struct {
-	reviews storage.ReviewRepository
-	blocks  AnswerBlockResolver
-	chain   VacancyTestEnqueuer
-	clock   Clock
+	reviews      storage.ReviewRepository
+	blocks       AnswerBlockResolver
+	chain        VacancyTestEnqueuer
+	clock        Clock
+	answerModels map[core.ProfileID]QualificationAnswerModel
 }
 
 func NewApplicationAnswerCoveredHandler(reviews storage.ReviewRepository, blocks AnswerBlockResolver, chain VacancyTestEnqueuer, clock Clock) (*ApplicationAnswerCoveredHandler, error) {
@@ -28,6 +29,16 @@ func NewApplicationAnswerCoveredHandler(reviews storage.ReviewRepository, blocks
 		return nil, errors.New("application answer covered handler requires reviews, answer blocks, chain and clock")
 	}
 	return &ApplicationAnswerCoveredHandler{reviews: reviews, blocks: blocks, chain: chain, clock: clock}, nil
+}
+
+// ConfigureAnswerModels enables the profile-scoped model fallback for vacancy
+// questions that have no reviewed bank answer. The model still passes its local
+// option/text validator before an answer is queued.
+func (handler *ApplicationAnswerCoveredHandler) ConfigureAnswerModels(models map[core.ProfileID]QualificationAnswerModel) {
+	if handler == nil || len(models) == 0 {
+		return
+	}
+	handler.answerModels = models
 }
 
 func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task core.Task) error {
@@ -66,12 +77,16 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 		if err != nil {
 			return err
 		}
-		if !found {
-			continue
-		}
 		answers, err := core.ResolveBlockAnswers(session.Questionnaire, block)
 		if err != nil {
-			continue
+			model := handler.answerModels[payload.ProfileID]
+			if model == nil {
+				continue
+			}
+			answers, err = resolveQuestionnaireWithModel(ctx, session.Platform, session.Questionnaire, block, found, model)
+			if err != nil {
+				continue
+			}
 		}
 		if _, err := handler.chain.EnqueueAnswer(ctx, session.ProfileID, session.Platform, externalID, answers, "bank:"+string(session.ID)); err != nil {
 			return err
@@ -79,8 +94,45 @@ func (handler *ApplicationAnswerCoveredHandler) Handle(ctx context.Context, task
 		enqueued++
 	}
 	if enqueued > 0 {
-		slog.Default().Info("questionnaire answers resumed from the reviewed bank",
+		slog.Default().Info("questionnaire answers resumed",
 			"profile", payload.ProfileID, "sessions", enqueued)
 	}
 	return nil
+}
+
+// resolveQuestionnaireWithModel combines reviewed answers with model answers.
+// A single unresolved question leaves the whole session for a human; partial
+// submissions are never sent.
+func resolveQuestionnaireWithModel(ctx context.Context, platform core.Platform, questionnaire core.Questionnaire, block core.AnswerBlock, blockFound bool, model QualificationAnswerModel) ([]core.ResolvedAnswer, error) {
+	answers := make([]core.ResolvedAnswer, 0, len(questionnaire.Questions))
+	for _, question := range questionnaire.Questions {
+		if blockFound {
+			if stored, ok := storedAnswerForQuestion(block, question); ok {
+				if resolved, err := core.ResolveStoredAnswer(question, stored); err == nil {
+					answers = append(answers, resolved)
+					continue
+				}
+			}
+		}
+		stored, err := model.Resolve(ctx, platform, question)
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := core.ResolveStoredAnswer(question, stored)
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, resolved)
+	}
+	return answers, nil
+}
+
+func storedAnswerForQuestion(block core.AnswerBlock, question core.Question) (core.StoredAnswer, bool) {
+	key := core.NormalizeQuestionText(question.Text)
+	for _, answer := range block.Answers {
+		if core.NormalizeQuestionText(answer.Question) == key {
+			return answer, true
+		}
+	}
+	return core.StoredAnswer{}, false
 }

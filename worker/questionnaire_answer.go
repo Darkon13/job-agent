@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/Darkon13/job-agent/adapter"
@@ -49,12 +50,25 @@ func (registry *VacancyTestSubmitterRegistry) Count() int {
 	return len(registry.submitters)
 }
 
+// applicationLookup resolves one application by its platform key.
+type applicationLookup interface {
+	Application(ctx context.Context, key core.ApplicationKey) (core.Application, error)
+}
+
+// applicationRetryEnqueuer resets a blocked application and creates a fresh
+// durable submit task after its questionnaire was filled.
+type applicationRetryEnqueuer interface {
+	Enqueue(ctx context.Context, applicationID core.ApplicationID, requestKey string) (core.Task, bool, error)
+}
+
 // QuestionnaireAnswerHandler submits resolved vacancy questionnaire answers
 // through the bound write transport. Answers already exist when the task is
 // created; this handler never guesses or generates them.
 type QuestionnaireAnswerHandler struct {
-	submitters *VacancyTestSubmitterRegistry
-	chain      VacancyTestEnqueuer
+	submitters   *VacancyTestSubmitterRegistry
+	chain        VacancyTestEnqueuer
+	applications applicationLookup
+	retry        applicationRetryEnqueuer
 }
 
 func NewQuestionnaireAnswerHandler(submitters *VacancyTestSubmitterRegistry) (*QuestionnaireAnswerHandler, error) {
@@ -71,6 +85,16 @@ func (handler *QuestionnaireAnswerHandler) ConfigureChain(chain VacancyTestEnque
 		return
 	}
 	handler.chain = chain
+}
+
+// ConfigureRetry lets a successful questionnaire submission release the
+// blocked application through the ordinary retry workflow.
+func (handler *QuestionnaireAnswerHandler) ConfigureRetry(applications applicationLookup, retry applicationRetryEnqueuer) {
+	if handler == nil {
+		return
+	}
+	handler.applications = applications
+	handler.retry = retry
 }
 
 func (handler *QuestionnaireAnswerHandler) Handle(ctx context.Context, task core.Task) error {
@@ -93,10 +117,24 @@ func (handler *QuestionnaireAnswerHandler) Handle(ctx context.Context, task core
 	}, payload.Answers); err != nil {
 		return err
 	}
-	if handler.chain == nil {
-		return nil
+	if handler.chain != nil {
+		if _, err := handler.chain.EnqueueComplete(ctx, payload.ProfileID, payload.Platform, payload.VacancyExternalID,
+			core.TestAttemptSubmitted, payload.AttemptFingerprint, task.IdempotencyKey); err != nil {
+			return err
+		}
 	}
-	_, err = handler.chain.EnqueueComplete(ctx, payload.ProfileID, payload.Platform, payload.VacancyExternalID,
-		core.TestAttemptSubmitted, payload.AttemptFingerprint, task.IdempotencyKey)
-	return err
+	if handler.applications != nil && handler.retry != nil {
+		key := core.ApplicationKey{
+			ProfileID: payload.ProfileID,
+			Vacancy:   core.VacancyKey{Platform: payload.Platform, ExternalID: payload.VacancyExternalID},
+		}
+		application, err := handler.applications.Application(ctx, key)
+		if err == nil {
+			if _, _, retryErr := handler.retry.Enqueue(ctx, application.ID, "questionnaire:"+task.IdempotencyKey); retryErr != nil {
+				slog.Default().Warn("questionnaire submitted but application retry was not enqueued",
+					"application", application.ID, "error", retryErr)
+			}
+		}
+	}
+	return nil
 }

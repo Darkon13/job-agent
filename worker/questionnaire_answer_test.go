@@ -109,3 +109,41 @@ func TestQuestionnaireAnswerPropagatesAdapterError(t *testing.T) {
 }
 
 var _ adapter.VacancyTestSubmitter = (*stubVacancyTestSubmitter)(nil)
+
+type questionnaireApplicationLookup struct{}
+
+func (questionnaireApplicationLookup) Application(_ context.Context, _ core.ApplicationKey) (core.Application, error) {
+	return core.Application{ID: "application-1"}, nil
+}
+
+type questionnaireRetryRecorder struct{ ids []core.ApplicationID }
+
+func (recorder *questionnaireRetryRecorder) Enqueue(_ context.Context, applicationID core.ApplicationID, _ string) (core.Task, bool, error) {
+	recorder.ids = append(recorder.ids, applicationID)
+	return core.Task{}, true, nil
+}
+
+func TestQuestionnaireAnswerReleasesBlockedApplication(t *testing.T) {
+	submitter := &stubVacancyTestSubmitter{}
+	submitters := NewVacancyTestSubmitterRegistry()
+	if err := submitters.Register("primary", submitter); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	handler, err := NewQuestionnaireAnswerHandler(submitters)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	handler.ConfigureChain(&recordingVacancyTestChain{})
+	recorder := &questionnaireRetryRecorder{}
+	handler.ConfigureRetry(questionnaireApplicationLookup{}, recorder)
+	payload := core.QuestionnaireAnswerPayload{
+		ProfileID: "primary", Platform: "hh", VacancyExternalID: "42",
+		Answers: []core.ResolvedAnswer{{QuestionID: "1", Text: "answer"}},
+	}
+	if err := handler.Handle(context.Background(), questionnaireAnswerTask(t, payload)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(recorder.ids) != 1 || recorder.ids[0] != "application-1" {
+		t.Fatalf("retried applications = %#v", recorder.ids)
+	}
+}

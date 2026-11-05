@@ -571,6 +571,7 @@ func main() {
 	qualificationAttempts := taskworker.NewQualificationAttemptRegistry()
 	qualificationPlatforms := make(map[core.ProfileID]core.Platform)
 	qualificationAnswerModels := make(map[core.ProfileID]taskworker.QualificationAnswerModel)
+	vacancyAnswerModels := make(map[core.ProfileID]taskworker.QualificationAnswerModel)
 	activityObservers := taskworker.NewProfileActivityObserverRegistry()
 	applicationPlans := taskworker.NewLiveApplicationPlans()
 	applicationTailoringPlans := make(map[core.ProfileID]taskworker.ApplicationTailoringPlan)
@@ -590,7 +591,8 @@ func main() {
 		testCapturers: testCapturers, testSubmitters: testSubmitters,
 		qualificationReaders: qualificationReaders, qualificationAttempts: qualificationAttempts,
 		qualificationPlatforms: qualificationPlatforms, qualificationAnswerModels: qualificationAnswerModels,
-		activityObservers: activityObservers, applicationTailoringPlans: applicationTailoringPlans,
+		vacancyAnswerModels: vacancyAnswerModels,
+		activityObservers:   activityObservers, applicationTailoringPlans: applicationTailoringPlans,
 	}
 	for _, profile := range cfg.Profiles {
 		preparer, err := applicationPreparer(profile, employerMatcher, applicationModels, profileContacts[core.ProfileID(profile.Tag)])
@@ -867,6 +869,7 @@ func main() {
 			log.Fatalf("create questionnaire answer handler: %v", err)
 		}
 		questionnaireAnswerHandler.ConfigureChain(vacancyTestWorkflow)
+		questionnaireAnswerHandler.ConfigureRetry(store, applicationRetryWorkflow)
 		questionnaireAnswerWorker, err := newTaskWorker(
 			store, core.TaskQuestionnaireAnswer, profileMutationLane.Wrap(questionnaireAnswerHandler.Handle),
 		)
@@ -925,6 +928,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create application answer covered handler: %v", err)
 	}
+	answerCoveredHandler.ConfigureAnswerModels(vacancyAnswerModels)
 	answerCoveredWorker, err := newTaskWorker(store, core.TaskApplicationAnswerCovered, answerCoveredHandler.Handle)
 	if err != nil {
 		log.Fatalf("create application answer covered worker: %v", err)
@@ -1991,6 +1995,10 @@ func answerModel(configured *appconfig.AnswerModelPolicy, models map[string]appl
 	if configured == nil {
 		return nil, nil
 	}
+	return compileAnswerModel(configured, models, configured.Instruction)
+}
+
+func compileAnswerModel(configured *appconfig.AnswerModelPolicy, models map[string]applicationoperator.ApplicationMessageModel, instruction string) (*applicationoperator.AnswerModel, error) {
 	provider := strings.TrimSpace(configured.Provider)
 	generator, ok := models[provider].(applicationoperator.AnswerGenerator)
 	if !ok || generator == nil {
@@ -2002,8 +2010,24 @@ func answerModel(configured *appconfig.AnswerModelPolicy, models map[string]appl
 	}
 	return applicationoperator.CompileAnswerModel(&applicationoperator.AnswerModelConfig{
 		Tag: provider, PromptVersion: configured.PromptVersion,
-		Instruction: configured.Instruction, Timeout: timeout, Generator: generator,
+		Instruction: instruction, Timeout: timeout, Generator: generator,
 	})
+}
+
+func vacancyQuestionnaireInstruction(facts appconfig.ApplicationResumeFacts) string {
+	payload := make(map[string]any, len(facts.Facts))
+	for key, value := range facts.Facts {
+		payload[key] = value
+	}
+	delete(payload, "placeholders")
+	encoded, _ := json.Marshal(payload)
+	return "Ответь на вопрос анкеты вакансии по фактам кандидата ниже. " +
+		"Выбери ровно один из предложенных вариантов или дай короткий текст, если вариантов нет. " +
+		"Не выдумывай опыт, технологии, ссылки и личные условия. " +
+		"Если факты не подтверждают требуемый опыт или условие — выбирай отрицательный вариант (\"нет\") или текст \"Нет опыта\"; " +
+		"на вопрос о ссылке на репозиторий без ссылки в фактах отвечай \"Ссылки нет\". " +
+		"Переезд, офис, виза и график не подтверждены — отвечай отрицательно, если такой вариант есть. " +
+		"\n\nФАКТЫ:\n" + string(encoded)
 }
 
 var chatReplyVacancyPattern = regexp.MustCompile(`/vacancy/(\d+)`)

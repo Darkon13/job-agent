@@ -80,6 +80,7 @@ type profileRuntimeBinder struct {
 	qualificationAttempts     *taskworker.QualificationAttemptRegistry
 	qualificationPlatforms    map[core.ProfileID]core.Platform
 	qualificationAnswerModels map[core.ProfileID]taskworker.QualificationAnswerModel
+	vacancyAnswerModels       map[core.ProfileID]taskworker.QualificationAnswerModel
 	activityObservers         *taskworker.ProfileActivityObserverRegistry
 	applicationTailoringPlans map[core.ProfileID]taskworker.ApplicationTailoringPlan
 }
@@ -117,6 +118,20 @@ func (binder *profileRuntimeBinder) bind(profile appconfig.Profile, preparer app
 			} else {
 				binder.qualificationAnswerModels[profileID] = model
 				logf("profile %q answers unknown questions through model %q", profile.Tag, model.Tag())
+			}
+			if facts, exists := profile.ResolvedResumeFacts(); exists {
+				vacancyModel, err := compileAnswerModel(profile.Answers.Model, binder.applicationModels, vacancyQuestionnaireInstruction(facts))
+				if err != nil {
+					return fmt.Errorf("build vacancy questionnaire model for profile %q: %w", profile.Tag, err)
+				}
+				if vacancyModel != nil {
+					if reload {
+						logf("profile %q vacancy questionnaire model applies after the next restart", profile.Tag)
+					} else {
+						binder.vacancyAnswerModels[profileID] = vacancyModel
+						logf("profile %q answers vacancy questionnaires through model %q", profile.Tag, model.Tag())
+					}
+				}
 			}
 		}
 	}
