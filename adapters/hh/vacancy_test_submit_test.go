@@ -41,7 +41,7 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodGet:
-			if request.URL.Path != "/applicant/vacancy_response" {
+			if request.URL.Path != "/applicant/vacancy_response" && request.URL.Path != "/applicant/vacancy_response/popup" {
 				t.Errorf("get path = %q", request.URL.Path)
 			}
 			if submittedFlag.Load() {

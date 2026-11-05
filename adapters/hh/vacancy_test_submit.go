@@ -163,6 +163,16 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	if resumeHash == "" {
 		return vacancyTestError("HH vacancy test submission requires a configured resume")
 	}
+	// The popup form expects the per-vacancy resume hash, not the resume id.
+	// The preflight is the authoritative source, exactly as in the ordinary
+	// application submit path.
+	if preflight, preflightErr := client.preflight(ctx, key); preflightErr == nil {
+		if _, resume, ok := findBrowserResume(preflight.ResponseStatus.Resumes, client.options.ResumeID); ok {
+			if hash := strings.TrimSpace(resume.Hash); hash != "" {
+				resumeHash = hash
+			}
+		}
+	}
 	// The popup frontend submits the answers together with the ordinary
 	// response fields to the popup endpoint as multipart form data. Posting the
 	// bare form to the page URL is rejected by HH with a generic 400.
