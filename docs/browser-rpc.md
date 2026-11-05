@@ -142,6 +142,26 @@ POST /v1/profiles/{profile}/locator
 - `screenshot.selector` пустой означает viewport; элемент делается visible
   и не масштабируется.
 
+### Формы отклика
+
+```text
+POST /v1/profiles/{profile}/form
+     body {"url":"https://hh.ru/vacancy/123"}
+     -> {"url":"...","title":"...","fields":[{"tag":"textarea","name":"...",
+         "label":"...","context":"...","required":true,"options":[]}],
+         "radios":{"...":["..."]},"text":"..."}
+
+POST /v1/profiles/{profile}/answers
+     body {"answers":[{"selector":"[name=\"...\"]","value":"..."}],"submit":true}
+     -> {"url":"...","confirmed":true,"text":"..."}
+```
+
+`form` открывает страницу вакансии и возвращает нормализованные поля формы
+отклика: имя, тип, label, контекст вопроса, обязательность и варианты.
+`answers` заполняет указанные поля в текущем profile context и, если
+`submit=true`, нажимает кнопку отправки. `confirmed` — эвристика по тексту
+подтверждения HH; окончательное решение остаётся Go-адаптеру.
+
 ## Хранение и сеть
 
 - Каталог профилей: `BROWSER_WORKER_DATA_DIR` (по умолчанию `/data/browser-profiles`).

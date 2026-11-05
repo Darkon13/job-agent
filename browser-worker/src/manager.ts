@@ -308,6 +308,7 @@ export class BrowserManager {
               tag: input.tagName.toLowerCase(), type: input.type || "",
               name: input.name || "", dataQa: input.getAttribute("data-qa") || "",
               label: labelFor(input), placeholder: input.placeholder || "",
+              context: (input.closest('[data-qa*="task"], fieldset, form')?.textContent || input.parentElement?.parentElement?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 400),
               required: input.required, options,
             })
           })
@@ -319,8 +320,49 @@ export class BrowserManager {
             list.push(input.value)
             radios.set(input.name, list)
           })
-          return { url: location.href, title: document.title, fields, radios: Object.fromEntries(radios) }
+          return { url: location.href, title: document.title, fields, radios: Object.fromEntries(radios), text: (document.body.innerText || "").slice(0, 2000) }
         })
+      }),
+    )
+  }
+
+  async answer(profileID: string, request: { answers: { selector: string; value: string }[]; submit: boolean }): Promise<unknown> {
+    return this.withLock(profileID, () =>
+      this.withSlot(async () => {
+        const page = await this.page(profileID)
+        for (const answer of request.answers || []) {
+          const locator = page.locator(answer.selector).first()
+          if (!(await locator.isVisible().catch(() => false))) continue
+          const tag = await locator.evaluate((el) => el.tagName.toLowerCase()).catch(() => "")
+          if (tag === "select") {
+            await locator.selectOption({ label: answer.value }).catch(async () => {
+              await locator.selectOption(answer.value).catch(() => undefined)
+            })
+          } else if (tag === "input") {
+            const type = await locator.getAttribute("type").catch(() => "")
+            if (type === "radio" || type === "checkbox") {
+              await locator.check().catch(() => undefined)
+            } else {
+              await locator.fill(answer.value, { timeout: 5000 }).catch(() => undefined)
+            }
+          } else {
+            await locator.fill(answer.value, { timeout: 5000 }).catch(() => undefined)
+          }
+        }
+        if (request.submit) {
+          const submit = page
+            .locator('[data-qa="vacancy-response-submit-popup"], [data-qa="vacancy-response-submit"], button:has-text("Отправить"), button:has-text("Откликнуться")')
+            .first()
+          await submit.click({ timeout: 10000 }).catch(() => undefined)
+          await page.waitForTimeout(2500)
+        }
+        return {
+          url: page.url(),
+          confirmed: /Вы откликнулись|Отклик отправлен|Спасибо, ваш отклик/i.test(
+            await page.locator("body").innerText().catch(() => ""),
+          ),
+          text: (await page.locator("body").innerText().catch(() => "")).slice(0, 600),
+        }
       }),
     )
   }

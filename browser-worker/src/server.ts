@@ -116,6 +116,15 @@ async function handle(
         sendJSON(response, 200, await manager.form(profileID, requireString(body.url, "url")))
         return
       }
+      case "POST answers": {
+        const body = await readObject(request, config.maxBodyBytes)
+        const answers = Array.isArray(body.answers) ? body.answers : []
+        sendJSON(response, 200, await manager.answer(profileID, {
+          answers: answers.map((item: any) => ({ selector: String(item.selector || ""), value: String(item.value || "") })),
+          submit: body.submit !== false,
+        }))
+        return
+      }
       case "POST apply": {
         const body = await readObject(request, config.maxBodyBytes)
         sendJSON(
