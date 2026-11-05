@@ -313,8 +313,9 @@ func (preparer *RuleTemplatePreparer) PrepareApplication(ctx context.Context, ap
 		return ApplicationPreparation{}, err
 	}
 	searchable := vacancySearchableText(vacancy)
+	titleOnly := strings.ToLower(vacancy.Title + "\n" + vacancy.Employer)
 	for _, term := range preparer.excludeAny {
-		if containsTerm(searchable, term) {
+		if containsTerm(titleOnly, term) {
 			return ApplicationPreparation{
 				Outcome: ApplicationSkip, Code: "excluded_term",
 				Reason: fmt.Sprintf("vacancy contains excluded term %q", term),
