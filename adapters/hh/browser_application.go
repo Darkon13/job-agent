@@ -260,6 +260,12 @@ func (client *BrowserApplicationClient) answerSalaryQuestionnaire(ctx context.Co
 		if name == "" || (field.Tag != "textarea" && field.Type != "text") {
 			continue
 		}
+		if strings.EqualFold(name, "letter") || strings.EqualFold(name, "cover_letter") {
+			if message := strings.TrimSpace(command.Message); message != "" {
+				answers = append(answers, browser.FormAnswer{Selector: fmt.Sprintf(`[name="%s"]`, name), Value: message})
+			}
+			continue
+		}
 		question := strings.TrimSpace(field.Context + " " + field.Label)
 		text := strings.ToLower(question)
 		var value string

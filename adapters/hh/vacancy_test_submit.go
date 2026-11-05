@@ -96,7 +96,7 @@ func parseVacancyTestCapture(document []byte, actionURL string) (vacancyTestCapt
 // SubmitVacancyTest fills the vacancy response popup with open-text and choice
 // answers and verifies through read-back that HH accepted the submission. Code
 // tasks remain unsupported; every captured task requires exactly one answer.
-func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
+func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer, message string) error {
 	if err := client.validateIdentity(profileID, key); err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	document, finalURL, err := client.reader.getHTML(ctx, actionURL, vacancyTestSubmitOperation)
 	if err != nil {
 		if core.ErrorIsCategory(err, core.ErrorUnauthorized) && client.worker != nil {
-			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers); fallbackErr == nil {
+			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers, message); fallbackErr == nil {
 				return nil
 			}
 		}
@@ -183,7 +183,7 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 		"incomplete":       "false",
 		"mark_applicant_visible_in_vacancy_country": "false",
 		"country_ids":     "[]",
-		"letter":          "",
+		"letter":          message,
 		"lux":             "true",
 		"withoutTest":     "no",
 		"hhtmFromLabel":   "",
@@ -240,7 +240,7 @@ func (client *BrowserApplicationClient) SubmitVacancyTest(ctx context.Context, p
 	case response.StatusCode >= 200 && response.StatusCode < 300:
 	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
 		if client.worker != nil {
-			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers); fallbackErr == nil {
+			if fallbackErr := client.submitVacancyTestThroughWorker(ctx, profileID, key, answers, message); fallbackErr == nil {
 				return nil
 			}
 		}
@@ -316,7 +316,7 @@ func (client *BrowserApplicationClient) confirmVacancyTestSubmission(ctx context
 // state-file POST with 401/403. The live browser worker context is already
 // authenticated, so the popup is filled in that context instead of replaying
 // cookies from the exported state file.
-func (client *BrowserApplicationClient) submitVacancyTestThroughWorker(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
+func (client *BrowserApplicationClient) submitVacancyTestThroughWorker(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer, message string) error {
 	target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + key.ExternalID
 	form, err := client.worker.Form(ctx, profileID, target)
 	if err != nil {
@@ -349,6 +349,9 @@ func (client *BrowserApplicationClient) submitVacancyTestThroughWorker(ctx conte
 			}
 			formAnswers = append(formAnswers, browser.FormAnswer{Selector: selector, Value: optionID})
 		}
+	}
+	if strings.TrimSpace(message) != "" {
+		formAnswers = append(formAnswers, browser.FormAnswer{Selector: `[name="letter"]`, Value: message})
 	}
 	if len(formAnswers) == 0 {
 		return vacancyTestError("HH vacancy test fallback has no form answers")

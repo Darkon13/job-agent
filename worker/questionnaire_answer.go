@@ -112,9 +112,14 @@ func (handler *QuestionnaireAnswerHandler) Handle(ctx context.Context, task core
 	if err != nil {
 		return err
 	}
-	if err := submitter.SubmitVacancyTest(ctx, payload.ProfileID, core.VacancyKey{
-		Platform: payload.Platform, ExternalID: payload.VacancyExternalID,
-	}, payload.Answers); err != nil {
+	key := core.VacancyKey{Platform: payload.Platform, ExternalID: payload.VacancyExternalID}
+	message := ""
+	if handler.applications != nil {
+		if application, err := handler.applications.Application(ctx, core.ApplicationKey{ProfileID: payload.ProfileID, Vacancy: key}); err == nil {
+			message = application.PreparedMessage
+		}
+	}
+	if err := submitter.SubmitVacancyTest(ctx, payload.ProfileID, key, payload.Answers, message); err != nil {
 		return err
 	}
 	if handler.chain != nil {

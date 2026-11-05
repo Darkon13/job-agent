@@ -292,7 +292,7 @@ type VacancyTestCapturer interface {
 // bound write transport. It returns ValidationRequired while the platform has
 // no reusable answer for every required task.
 type VacancyTestSubmitter interface {
-	SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error
+	SubmitVacancyTest(ctx context.Context, profileID core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer, message string) error
 }
 
 type ResumeTouchCommand struct {

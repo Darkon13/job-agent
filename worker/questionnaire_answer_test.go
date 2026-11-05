@@ -11,14 +11,16 @@ import (
 )
 
 type stubVacancyTestSubmitter struct {
-	calls   []core.VacancyKey
-	answers [][]core.ResolvedAnswer
-	err     error
+	calls    []core.VacancyKey
+	answers  [][]core.ResolvedAnswer
+	messages []string
+	err      error
 }
 
-func (stub *stubVacancyTestSubmitter) SubmitVacancyTest(_ context.Context, _ core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer) error {
+func (stub *stubVacancyTestSubmitter) SubmitVacancyTest(_ context.Context, _ core.ProfileID, key core.VacancyKey, answers []core.ResolvedAnswer, message string) error {
 	stub.calls = append(stub.calls, key)
 	stub.answers = append(stub.answers, answers)
+	stub.messages = append(stub.messages, message)
 	return stub.err
 }
 
@@ -113,7 +115,7 @@ var _ adapter.VacancyTestSubmitter = (*stubVacancyTestSubmitter)(nil)
 type questionnaireApplicationLookup struct{}
 
 func (questionnaireApplicationLookup) Application(_ context.Context, _ core.ApplicationKey) (core.Application, error) {
-	return core.Application{ID: "application-1"}, nil
+	return core.Application{ID: "application-1", PreparedMessage: "Cover letter"}, nil
 }
 
 type questionnaireRetryRecorder struct{ ids []core.ApplicationID }
@@ -145,5 +147,8 @@ func TestQuestionnaireAnswerReleasesBlockedApplication(t *testing.T) {
 	}
 	if len(recorder.ids) != 1 || recorder.ids[0] != "application-1" {
 		t.Fatalf("retried applications = %#v", recorder.ids)
+	}
+	if len(submitter.messages) != 1 || submitter.messages[0] != "Cover letter" {
+		t.Fatalf("submitted messages = %#v", submitter.messages)
 	}
 }

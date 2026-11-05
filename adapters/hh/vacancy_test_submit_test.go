@@ -72,7 +72,7 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Five years of Go"},
 		{QuestionID: "2", Text: "A local job agent"},
-	})
+	}, "Cover letter")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -87,6 +87,7 @@ func TestBrowserSubmitVacancyTestFillsOpenTextForm(t *testing.T) {
 		"startTime": "1750000000", "testRequired": "true",
 		"vacancy_id": "42", "resume_hash": "resume-hash", "withoutTest": "no", "lux": "true",
 		"task_1_text": "Five years of Go", "task_2_text": "A local job agent",
+		"letter": "Cover letter",
 	}
 	for key, expected := range want {
 		if actual := submitted[key]; len(actual) == 0 || actual[0] != expected {
@@ -111,7 +112,7 @@ func TestBrowserSubmitVacancyTestRejectsUnsupportedTasks(t *testing.T) {
 	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "package main"},
-	})
+	}, "Cover letter")
 	requireOperationCategory(t, err, core.ErrorUnsupported)
 	if posts.Load() != 0 {
 		t.Fatalf("posts = %d", posts.Load())
@@ -151,7 +152,7 @@ func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
 		{QuestionID: "1", SelectedOptionIDs: []string{"10"}},
 		{QuestionID: "2", SelectedOptionIDs: []string{"20", "21"}},
 		{QuestionID: "3", Text: "Готов обсудить"},
-	})
+	}, "Cover letter")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -166,6 +167,9 @@ func TestBrowserSubmitVacancyTestFillsChoiceForm(t *testing.T) {
 	}
 	if values := submitted["task_3_text"]; len(values) != 1 || values[0] != "Готов обсудить" {
 		t.Errorf("task_3_text = %#v", values)
+	}
+	if values := submitted["letter"]; len(values) != 1 || values[0] != "Cover letter" {
+		t.Errorf("letter = %#v", values)
 	}
 	if values := submitted["_xsrf"]; len(values) != 1 || values[0] != "xsrf-choice" {
 		t.Errorf("xsrf = %#v", values)
@@ -188,7 +192,7 @@ func TestBrowserSubmitVacancyTestRejectsInvalidChoice(t *testing.T) {
 	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", SelectedOptionIDs: []string{"10", "99"}},
-	})
+	}, "Cover letter")
 	requireOperationCategory(t, err, core.ErrorValidationRequired)
 	if posts.Load() != 0 {
 		t.Fatalf("posts = %d", posts.Load())
@@ -208,7 +212,7 @@ func TestBrowserSubmitVacancyTestRequiresEveryAnswer(t *testing.T) {
 	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Only the first"},
-	})
+	}, "Cover letter")
 	requireOperationCategory(t, err, core.ErrorValidationRequired)
 	if posts.Load() != 0 {
 		t.Fatalf("posts = %d", posts.Load())
@@ -231,7 +235,7 @@ func TestBrowserSubmitVacancyTestStopsOnWhitelistVisibility(t *testing.T) {
 	client := newTestBrowserApplicationClient(t, server, adapter.BrowserApplicationOptions{ResumeID: "hash-1"})
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Five years of Go"},
-	})
+	}, "Cover letter")
 	requireOperationCategory(t, err, core.ErrorConfirmationRequired)
 	if posts.Load() != 0 {
 		t.Fatalf("posts = %d", posts.Load())
@@ -252,7 +256,7 @@ func TestBrowserSubmitVacancyTestRequiresConfirmation(t *testing.T) {
 	err := client.SubmitVacancyTest(context.Background(), "primary", core.VacancyKey{Platform: Name, ExternalID: "42"}, []core.ResolvedAnswer{
 		{QuestionID: "1", Text: "Five years of Go"},
 		{QuestionID: "2", Text: "A local job agent"},
-	})
+	}, "Cover letter")
 	requireOperationCategory(t, err, core.ErrorValidationRequired)
 	if posts.Load() != 1 {
 		t.Fatalf("posts = %d", posts.Load())
