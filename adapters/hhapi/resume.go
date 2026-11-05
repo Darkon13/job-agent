@@ -24,6 +24,10 @@ type Vacancy struct {
 	WorkFormat  []struct {
 		ID string `json:"id"`
 	} `json:"work_format"`
+	Salary            *Salary `json:"salary"`
+	ProfessionalRoles []struct {
+		ID string `json:"id"`
+	} `json:"professional_roles"`
 	Employer struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
