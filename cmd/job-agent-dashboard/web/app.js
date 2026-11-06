@@ -351,8 +351,9 @@ function showCaptchaDialog(captchaId, blob) {
       state.applicationActionMessage = "Капча принята, рассылка продолжается";
       close(); refreshSummary();
     } catch (error) {
-      submit.disabled = false; submit.textContent = "Отправить";
-      state.applicationActionMessage = `Капча не принята: ${error.message}`;
+      close();
+      state.applicationActionMessage = "Капча обновилась, попробуй ещё раз";
+      startCaptchaCheck();
     }
   };
 }
