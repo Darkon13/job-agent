@@ -3,13 +3,16 @@ package hh
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/Darkon13/job-agent/adapter"
 	"github.com/Darkon13/job-agent/adapters/hhapi"
+	"github.com/Darkon13/job-agent/browser"
 	"github.com/Darkon13/job-agent/core"
 )
 
@@ -18,14 +21,71 @@ import (
 // the mobile API directly: it does not read the web response popup, does not
 // call suitable_resumes, and does not rewrite the resume before every submit.
 type mobileApplicationClient struct {
-	api *hhapi.Client
+	api      *hhapi.Client
+	worker   *browser.HTTPClient
+	answerer func(context.Context, string, string) (string, error)
 }
 
-func newMobileApplicationClient(api *hhapi.Client) *mobileApplicationClient {
-	return &mobileApplicationClient{api: api}
+func newMobileApplicationClient(api *hhapi.Client, worker *browser.HTTPClient, answerer func(context.Context, string, string) (string, error)) *mobileApplicationClient {
+	return &mobileApplicationClient{api: api, worker: worker, answerer: answerer}
 }
 
 var _ adapter.ApplicationTransport = (*mobileApplicationClient)(nil)
+
+func (client *mobileApplicationClient) answerQuestionnaire(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, bool) {
+	if client.worker == nil {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	target := "https://hh.ru/vacancy/" + url.PathEscape(command.Vacancy.ExternalID)
+	form, err := client.worker.Form(ctx, command.ProfileID, target)
+	if err != nil {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	var answers []browser.FormAnswer
+	for _, field := range form.Fields {
+		if field.Name == "" || (field.Tag != "textarea" && field.Type != "text") {
+			continue
+		}
+		question := strings.TrimSpace(field.Context + " " + field.Label)
+		text := strings.ToLower(question)
+		value := ""
+		if strings.Contains(text, "ожидан") || strings.Contains(text, "зарплат") {
+			low, high, salaryErr := client.api.SalaryRange(ctx, command.Vacancy.ExternalID)
+			if salaryErr != nil {
+				return adapter.ApplicationSubmitResult{}, false
+			}
+			value = fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high)
+		} else if client.answerer != nil {
+			generated, genErr := client.answerer(ctx, command.Vacancy.ExternalID, question)
+			if genErr != nil {
+				return adapter.ApplicationSubmitResult{}, false
+			}
+			value = generated
+		}
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		answers = append(answers, browser.FormAnswer{Selector: fmt.Sprintf(`[name="%s"]`, field.Name), Value: value})
+	}
+	if len(answers) == 0 {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	result, err := client.worker.Answers(ctx, command.ProfileID, answers, true)
+	if err != nil {
+		return adapter.ApplicationSubmitResult{}, false
+	}
+	id := ""
+	if result.Confirmed {
+		id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID)
+	}
+	if id == "" {
+		id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID)
+	}
+	if id != "" {
+		return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, true
+	}
+	return adapter.ApplicationSubmitResult{}, false
+}
 
 func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	if client == nil || client.api == nil {
@@ -70,10 +130,10 @@ func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, co
 	if err == nil {
 		return adapter.ApplicationSubmitResult{ExternalNegotiationID: result.ID, Applied: true}, nil
 	}
-	return classifyMobileApplicationError(command, err)
+	return client.classifyMobileApplicationError(command, err)
 }
 
-func classifyMobileApplicationError(command adapter.ApplicationSubmitCommand, err error) (adapter.ApplicationSubmitResult, error) {
+func (client *mobileApplicationClient) classifyMobileApplicationError(command adapter.ApplicationSubmitCommand, err error) (adapter.ApplicationSubmitResult, error) {
 	var captcha *hhapi.CaptchaRequiredError
 	if errors.As(err, &captcha) {
 		if captcha.URL != "" {
@@ -103,6 +163,9 @@ func classifyMobileApplicationError(command adapter.ApplicationSubmitCommand, er
 				Message: "HH daily negotiations limit reached",
 			}
 		case strings.Contains(body, "test_required") || strings.Contains(body, "questionnaire") || strings.Contains(body, "must process test"):
+			if result, handled := client.answerQuestionnaire(context.Background(), command); handled {
+				return result, nil
+			}
 			return adapter.ApplicationSubmitResult{}, browserReviewErrorAt(
 				"applications.submit.hhapi", core.ErrorValidationRequired, "questionnaire_required",
 				"HH vacancy requires a test or questionnaire",

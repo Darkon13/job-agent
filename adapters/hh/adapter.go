@@ -99,6 +99,7 @@ type Adapter struct {
 	browserProfileStateClients map[core.ProfileID]*BrowserProfileStateClient
 	worker                     *browser.HTTPClient
 	api                        *hhapi.Client
+	mobileApplication          *mobileApplicationClient
 	questionAnswerer           func(context.Context, string, string) (string, error)
 }
 
@@ -141,6 +142,10 @@ func (a *Adapter) SetAPIClient(client *hhapi.Client) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.api = client
+	a.mobileApplication = newMobileApplicationClient(client, a.worker, a.questionAnswerer)
+	if client != nil && a.config.APIDelayMS > 0 {
+		client.SetDelay(time.Duration(a.config.APIDelayMS) * time.Millisecond)
+	}
 }
 
 // SetQuestionAnswerer задаёт генератор ответов на вопросы анкет.
@@ -554,9 +559,13 @@ func (a *Adapter) ReadVacancy(ctx context.Context, profileID core.ProfileID, key
 		return core.Vacancy{}, errors.New("HH vacancy reader received another platform")
 	}
 	a.mu.RLock()
+	apiClient := a.api
 	client := a.clients[profileID]
 	browserClient := a.browserClients[profileID]
 	a.mu.RUnlock()
+	if apiClient != nil && client != nil {
+		return readMobileVacancy(ctx, apiClient, profileID, key)
+	}
 	if client != nil {
 		return client.ReadVacancy(ctx, profileID, key)
 	}
@@ -633,11 +642,24 @@ func (a *Adapter) ListSuitableResumes(ctx context.Context, profileID core.Profil
 	return nil, operationError(core.ErrorUnauthorized, "vacancies.suitable_resumes", "HH profile has no bound application session", nil)
 }
 
+// SkipApplicationResumePreflight reports that the mobile API applies with the
+// configured resume directly, like hh-applicant-tool. The web suitable_resumes
+// call is not needed and would add another request before every application.
+func (a *Adapter) SkipApplicationResumePreflight(profileID core.ProfileID) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.mobileApplication != nil && a.clients[profileID] != nil
+}
+
 func (a *Adapter) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	a.mu.RLock()
+	mobile := a.mobileApplication
 	client := a.clients[command.ProfileID]
 	browserClient := a.browserApplicationClients[command.ProfileID]
 	a.mu.RUnlock()
+	if mobile != nil && client != nil {
+		return mobile.SubmitApplication(ctx, command)
+	}
 	if client != nil {
 		return client.SubmitApplication(ctx, command)
 	}

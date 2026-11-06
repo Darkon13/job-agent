@@ -337,7 +337,7 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, err
 	}
 	if client.api != nil {
-		return newMobileApplicationClient(client.api).SubmitApplication(ctx, command)
+		return newMobileApplicationClient(client.api, client.worker, client.questionAnswerer).SubmitApplication(ctx, command)
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
