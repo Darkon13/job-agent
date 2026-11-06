@@ -238,3 +238,8 @@ func (client *mobileApplicationClient) classifyMobileApplicationError(command ad
 		Cause:    err,
 	}
 }
+
+// classifyMobileApplicationError сохраняет пакетный API для тестов.
+func classifyMobileApplicationError(command adapter.ApplicationSubmitCommand, err error) (adapter.ApplicationSubmitResult, error) {
+	return (&mobileApplicationClient{}).classifyMobileApplicationError(command, err)
+}
