@@ -65,7 +65,7 @@ func (v Vacancy) BlockedRole() bool {
 // BlockedCompany исключает нежелательных работодателей.
 func (v Vacancy) BlockedCompany() bool {
 	name := strings.ToLower(v.Employer.Name)
-	for _, blocked := range []string{"сбер", "sber", "алабуга", "alabuga", "контур", "kontur"} {
+	for _, blocked := range []string{"сбер", "sber", "алабуга", "alabuga", "контур", "kontur", "aston"} {
 		if strings.Contains(name, blocked) {
 			return true
 		}
