@@ -195,6 +195,12 @@ func newBrowserApplicationClient(reader *BrowserReadClient, options adapter.Brow
 }
 
 func (client *BrowserApplicationClient) ReadVacancy(ctx context.Context, profileID core.ProfileID, key core.VacancyKey) (core.Vacancy, error) {
+	if client.api != nil {
+		if profileID != client.reader.profileID {
+			return core.Vacancy{}, errors.New("HH mobile vacancy reader profile does not match")
+		}
+		return readMobileVacancy(ctx, client.api, profileID, key)
+	}
 	return client.reader.ReadVacancy(ctx, profileID, key)
 }
 
@@ -320,9 +326,18 @@ func captchaPending() (time.Time, bool) {
 	return time.Now().Add(5 * time.Minute), true
 }
 
+// SkipApplicationResumePreflight reports that the mobile API applies with the
+// configured resume directly, without the web suitable_resumes request.
+func (client *BrowserApplicationClient) SkipApplicationResumePreflight(profileID core.ProfileID) bool {
+	return client != nil && client.api != nil && profileID == client.reader.profileID
+}
+
 func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	if err := validateApplicationCommand(client.reader.profileID, command); err != nil {
 		return adapter.ApplicationSubmitResult{}, err
+	}
+	if client.api != nil {
+		return newMobileApplicationClient(client.api).SubmitApplication(ctx, command)
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -379,80 +394,6 @@ func (client *BrowserApplicationClient) SubmitApplication(ctx context.Context, c
 		return adapter.ApplicationSubmitResult{}, fmt.Errorf("encode HH visibility countries: %w", err)
 	}
 
-	// Приоритетный путь: мобильный API HH (письмо уходит сразу, капча
-	// практически не появляется благодаря родному Android UA).
-	if client.api != nil {
-		if retryAt, pending := captchaPending(); pending {
-			return adapter.ApplicationSubmitResult{}, &core.OperationError{
-				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
-				Platform: command.Vacancy.Platform, RetryAfter: &retryAt,
-				Message: "HH captcha is pending; solve it before submitting more applications",
-			}
-		}
-		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && vacancy.BlockedRole() {
-			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
-				"HH vacancy is outside the target profile")
-		}
-		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && vacancy.BlockedCompany() {
-			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
-				"HH employer is in the blacklist")
-		}
-		if vacancy, err := client.api.Vacancy(ctx, command.Vacancy.ExternalID); err == nil && !vacancy.Remote() {
-			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
-				"HH vacancy does not allow remote work")
-		}
-		restoreResume, _ := client.api.Tailor(ctx, command.ResumeID, command.Vacancy.ExternalID)
-		negotiation, err := client.api.Apply(ctx, hhapi.ApplyRequest{
-			VacancyID: command.Vacancy.ExternalID,
-			ResumeID:  command.ResumeID,
-			Message:   command.Message,
-		})
-		restoreResume()
-		if err == nil {
-			id := negotiation.ID
-			if id == "" {
-				id = client.api.NegotiationID(ctx, command.Vacancy.ExternalID)
-			}
-			return adapter.ApplicationSubmitResult{ExternalNegotiationID: id, Applied: true}, nil
-		}
-		var captcha *hhapi.CaptchaRequiredError
-		if errors.As(err, &captcha) {
-			_ = os.WriteFile("/data/captcha-pending.txt", []byte(captcha.URL), 0o644)
-			retryAt := time.Now().Add(10 * time.Minute)
-			return adapter.ApplicationSubmitResult{}, &core.OperationError{
-				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
-				Platform: command.Vacancy.Platform, Message: "HH requires captcha: " + err.Error(), RetryAfter: &retryAt,
-			}
-		}
-		if strings.Contains(err.Error(), "already_applied") {
-			return adapter.ApplicationSubmitResult{AlreadyApplied: true, Applied: true}, nil
-		}
-		if strings.Contains(err.Error(), "Daily negotiations limit") {
-			retryAt := time.Now().Add(24 * time.Hour)
-			return adapter.ApplicationSubmitResult{}, &core.OperationError{
-				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
-				Platform: command.Vacancy.Platform, Message: "HH daily negotiations limit reached", RetryAfter: &retryAt,
-			}
-		}
-		if strings.Contains(err.Error(), "hh captcha:") {
-			retryAt := time.Now().Add(10 * time.Minute)
-			return adapter.ApplicationSubmitResult{}, &core.OperationError{
-				Category: core.ErrorRateLimited, Operation: "applications.submit.hhapi",
-				Platform: command.Vacancy.Platform, Message: "HH captcha was not accepted", RetryAfter: &retryAt,
-			}
-		}
-
-		if client.worker != nil && (strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") || strings.Contains(err.Error(), "questionnaire")) {
-			if result, handled := client.answerSalaryQuestionnaire(ctx, command); handled {
-				return result, nil
-			}
-		}
-		if strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "Must process test") {
-			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "test_required",
-				"HH vacancy requires a test before applying")
-		}
-		return adapter.ApplicationSubmitResult{}, err
-	}
 	if client.worker != nil {
 		target := strings.TrimRight(client.webBaseURL, "/") + "/vacancy/" + url.PathEscape(command.Vacancy.ExternalID)
 		applied, applyErr := client.worker.Apply(ctx, client.reader.profileID, browser.ApplyRequest{
