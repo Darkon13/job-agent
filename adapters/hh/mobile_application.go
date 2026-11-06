@@ -190,11 +190,16 @@ func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, co
 				"HH vacancy does not allow remote work")
 		}
 	}
+	restoreResume, tailorErr := client.api.Tailor(ctx, command.ResumeID, command.Vacancy.ExternalID)
+	if tailorErr != nil {
+		restoreResume = func() {}
+	}
 	result, err := client.api.Apply(ctx, hhapi.ApplyRequest{
 		VacancyID: command.Vacancy.ExternalID,
 		ResumeID:  command.ResumeID,
 		Message:   command.Message,
 	})
+	restoreResume()
 	if err == nil {
 		return adapter.ApplicationSubmitResult{ExternalNegotiationID: result.ID, Applied: true}, nil
 	}

@@ -103,9 +103,11 @@ func main() {
 			fmt.Printf("SKIP %s no_letter\n", c.id)
 			continue
 		}
+		restoreResume, _ := client.Tailor(context.Background(), *resume, c.id)
 		result, err := client.Apply(context.Background(), hhapi.ApplyRequest{
 			VacancyID: c.id, ResumeID: *resume, Message: c.message,
 		})
+		restoreResume()
 		now := time.Now().UnixNano()
 		if err == nil {
 			_, _ = db.Exec(`UPDATE applications SET status='submitted', submitted_at=?, updated_at=?, external_negotiation_id=?, failure_category='', failure_message='' WHERE profile_id='main' AND external_id=?`,
