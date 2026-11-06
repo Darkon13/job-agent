@@ -193,7 +193,7 @@ docker compose run --rm job-agent /usr/local/bin/job-agent \
 "applications": {
   "mode": "submit",
   "daily_limit": 30,
-  "submit_jitter": {"min": "15s", "max": "30s"}
+  "submit_jitter": {"min": "1s", "max": "3s"}
 }
 ```
 

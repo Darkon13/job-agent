@@ -498,11 +498,16 @@ func main() {
 		if err == nil {
 			hhAPIClient = apiClient
 			if apiKey := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")); apiKey != "" {
-				apiClient.SetCaptchaSolver(func(ctx context.Context, captchaURL string) error {
-					return apiClient.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
-						return hhapi.ModelOCR(ctx, image, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash")
+				// The configured text model is not a reliable captcha OCR
+				// provider; keep the manual dashboard solver authoritative unless
+				// an operator explicitly enables the experimental auto-solver.
+				if strings.TrimSpace(os.Getenv("HH_CAPTCHA_AUTO")) == "1" {
+					apiClient.SetCaptchaSolver(func(ctx context.Context, captchaURL string) error {
+						return apiClient.SolveCaptcha(ctx, captchaURL, func(image []byte) (string, error) {
+							return hhapi.ModelOCR(ctx, image, apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash")
+						})
 					})
-				})
+				}
 				facts, _ := os.ReadFile("/config/facts/main.json")
 				answerer := func(ctx context.Context, vacancyID, question string) (string, error) {
 					prompt := "Ответь на вопрос работодателя в анкете отклика, по-русски, кратко и по делу (1–3 предложения).\nИспользуй только факты кандидата, ничего не выдумывай. Если вопрос про зарплату — не отвечай здесь.\n\nФАКТЫ:\n" + string(facts) + "\n\nВОПРОС:\n" + question

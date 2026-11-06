@@ -100,7 +100,7 @@ func TestApplicationPolicyDefaultsToDryRunAndGuardsLiveMode(t *testing.T) {
 		t.Fatalf("default HH daily limit = %d", limit)
 	}
 	minimum, maximum, err := policy.SubmitJitterDurations("hh")
-	if err != nil || minimum != 15*time.Second || maximum != 25*time.Second {
+	if err != nil || minimum != 1*time.Second || maximum != 3*time.Second {
 		t.Fatalf("default HH submit jitter = %s..%s err=%v", minimum, maximum, err)
 	}
 	config.Profiles[0].Applications.DailyLimit = 7
