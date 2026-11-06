@@ -23,7 +23,8 @@ const captchaSuccessBackURL = "hh://applicant/captchaSuccessBackUrl"
 func SolveCaptcha(ctx context.Context, captchaURL string, answer func(image []byte) (string, error)) error {
 	jar := loadCookieJar(cookieFilePath())
 	client := &http.Client{Timeout: 60 * time.Second, Jar: jar}
-	if err := solveCaptchaWith(ctx, client, nativeUserAgent(), captchaURL, answer); err != nil {
+	userAgent := deviceUserAgent()
+	if err := solveCaptchaWith(ctx, client, userAgent, captchaURL, answer); err != nil {
 		return err
 	}
 	return saveCookieJar(cookieFilePath(), jar)

@@ -30,6 +30,7 @@ var (
 
 func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error) {
 	cookieFile := cookieFilePath()
+	userAgent := deviceUserAgent()
 	jar := loadCookieJar(cookieFile)
 	follow := &http.Client{Timeout: 60 * time.Second, Jar: jar}
 	u, err := url.Parse(captchaURL)
@@ -40,7 +41,7 @@ func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error
 	q.Set("backurl", captchaSuccessBackURL)
 	u.RawQuery = q.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	req.Header.Set("User-Agent", nativeUserAgent())
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
 	resp, err := follow.Do(req)
@@ -60,13 +61,13 @@ func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error
 		return "", nil, fmt.Errorf("hh captcha: state or xsrf missing")
 	}
 	noRedirect := &http.Client{Timeout: 60 * time.Second, Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	key, err := captchaKey(ctx, noRedirect, nativeUserAgent(), final, xsrf)
+	key, err := captchaKey(ctx, noRedirect, userAgent, final, xsrf)
 	if err != nil {
 		return "", nil, err
 	}
 	imageURL := "https://hh.ru/captcha/picture?key=" + url.QueryEscape(key)
 	imageReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
-	imageReq.Header.Set("User-Agent", nativeUserAgent())
+	imageReq.Header.Set("User-Agent", deviceUserAgent())
 	imageReq.Header.Set("Accept", "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5")
 	imageReq.Header.Set("Referer", final.String())
 	imageResp, err := follow.Do(imageReq)
@@ -84,7 +85,7 @@ func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error
 	_ = saveCookieJar(cookieFile, jar)
 	challengeMu.Lock()
 	challenges[id] = &captchaChallenge{
-		client: noRedirect, cookieFile: cookieFile, userAgent: nativeUserAgent(),
+		client: noRedirect, cookieFile: cookieFile, userAgent: userAgent,
 		page: final, xsrf: xsrf, key: key, state: state,
 	}
 	challengeMu.Unlock()

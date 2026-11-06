@@ -7,10 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"encoding/json"
-	"io"
 )
 
 type ApplyRequest struct {
@@ -54,19 +52,10 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (Negotiation, 
 }
 
 func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiation, error) {
-	c.mu.Lock()
-	if c.token.AccessToken == "" || (c.token.ExpiresAt > 0 && time.Now().Unix() >= c.token.ExpiresAt) {
-		if c.token.RefreshToken == "" {
-			c.mu.Unlock()
-			return Negotiation{}, fmt.Errorf("hh api: no token, authorize first")
-		}
-		if err := c.refresh(ctx); err != nil {
-			c.mu.Unlock()
-			return Negotiation{}, err
-		}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return Negotiation{}, err
 	}
-	token := c.token.AccessToken
-	c.mu.Unlock()
 
 	form := url.Values{
 		"vacancy_id": {request.VacancyID},
@@ -82,25 +71,27 @@ func (c *Client) applyOnce(ctx context.Context, request ApplyRequest) (Negotiati
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Force-App-Access", "true")
 	req.Header.Set("X-HH-App-Active", "true")
 	req.Header.Set("User-Agent", c.userAgent)
 
+	httpClient := *c.http
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	c.reloadCookies()
-	resp, err := c.http.Do(req)
+	status, header, body, err := c.doWithClient(ctx, &httpClient, req)
+	c.saveCookies(true)
 	if err != nil {
 		return Negotiation{}, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	c.saveCookies(true)
-	if resp.StatusCode == http.StatusForbidden {
+	if status == http.StatusForbidden {
 		if captcha := parseCaptcha(body); captcha != nil {
 			return Negotiation{}, captcha
 		}
 	}
-	if resp.StatusCode >= 300 {
-		return Negotiation{}, fmt.Errorf("hh api applications: %d: %s", resp.StatusCode, string(body))
+	if status >= 300 {
+		return Negotiation{}, &APIError{
+			Method: http.MethodPost, Path: "/negotiations", StatusCode: status,
+			Body: string(body), RetryAfter: retryAfterHeader(header),
+		}
 	}
 	var result Negotiation
 	_ = json.Unmarshal(body, &result)

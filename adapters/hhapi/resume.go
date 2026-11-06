@@ -18,10 +18,18 @@ type ResumePatch struct {
 }
 
 type Vacancy struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	WorkFormat  []struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Description         string   `json:"description"`
+	AlternateURL        string   `json:"alternate_url"`
+	PublishedAt         string   `json:"published_at"`
+	Archived            bool     `json:"archived"`
+	HasTest             bool     `json:"has_test"`
+	ResponseLetter      bool     `json:"response_letter_required"`
+	ClosedForApplicants bool     `json:"closed_for_applicants"`
+	AllowMessages       bool     `json:"allow_messages"`
+	Relations           []string `json:"relations"`
+	WorkFormat          []struct {
 		ID string `json:"id"`
 	} `json:"work_format"`
 	Salary            *Salary `json:"salary"`

@@ -3,8 +3,6 @@ package hhapi
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,16 +50,16 @@ func (c *Client) tokenRequest(ctx context.Context, form map[string]string, out *
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("X-HH-App-Active", "true")
 	c.reloadCookies()
-	resp, err := c.http.Do(req)
+	status, header, body, err := c.do(ctx, req)
+	c.saveCookies(false)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	c.saveCookies(false)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("hh oauth: %d: %s", resp.StatusCode, string(body))
+	if status >= 300 {
+		return &APIError{Method: http.MethodPost, Path: "/oauth/token", StatusCode: status, Body: string(body), RetryAfter: retryAfterHeader(header)}
 	}
 	var response struct {
 		AccessToken  string `json:"access_token"`
