@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,6 +22,7 @@ type captchaChallenge struct {
 	xsrf       string
 	key        string
 	state      string
+	startedAt  time.Time
 }
 
 var (
@@ -86,7 +88,7 @@ func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error
 	challengeMu.Lock()
 	challenges[id] = &captchaChallenge{
 		client: noRedirect, cookieFile: cookieFile, userAgent: userAgent,
-		page: final, xsrf: xsrf, key: key, state: state,
+		page: final, xsrf: xsrf, key: key, state: state, startedAt: time.Now(),
 	}
 	challengeMu.Unlock()
 	return id, image, nil
@@ -98,6 +100,10 @@ func AnswerCaptcha(ctx context.Context, id, text string) error {
 	challengeMu.Unlock()
 	if challenge == nil {
 		return fmt.Errorf("hh captcha: unknown challenge")
+	}
+	delay := time.Duration(10000+mrand.Intn(5001)) * time.Millisecond
+	if wait := delay - time.Since(challenge.startedAt); wait > 0 {
+		time.Sleep(wait)
 	}
 	quotedBack := strings.ReplaceAll(url.QueryEscape(captchaSuccessBackURL), "%2F", "/")
 	failURL := "/account/captcha?state=" + url.QueryEscape(challenge.state) + "&backurl=" + quotedBack
