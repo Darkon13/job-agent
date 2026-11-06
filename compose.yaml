@@ -12,6 +12,11 @@ networks:
 
 x-runtime: &runtime
   image: ${JOB_AGENT_IMAGE:-job-agent:1.0.0}
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
 
 x-runtime-volumes: &runtime-volumes
   - ${JOB_AGENT_CONFIG_DIR:-./deploy}:/config:ro
@@ -54,6 +59,11 @@ services:
   # backend-only.
   browser-worker:
     profiles: ["browser"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     build:
       context: ./browser-worker
     environment:
