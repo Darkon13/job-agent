@@ -186,6 +186,21 @@ func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, 
 		}
 		return campaign, campaign.Revision == payload.ExpectedRevision, nil
 	}
+	// One sender per job: a new run supersedes any still-running campaign.
+	if existing, listErr := handler.campaigns.ListApplicationCampaigns(ctx, 100); listErr == nil {
+		now := handler.clock.Now()
+		for i := range existing {
+			if existing[i].Status != core.ApplicationCampaignRunning || existing[i].JobTag != payload.JobTag {
+				continue
+			}
+			previous := existing[i]
+			existing[i].Status = core.ApplicationCampaignExhausted
+			existing[i].StopReason = "superseded by a new run"
+			existing[i].Revision++
+			existing[i].UpdatedAt = now
+			_ = handler.campaigns.SaveApplicationCampaign(ctx, existing[i], previous.Revision)
+		}
+	}
 	campaign, err := core.NewApplicationCampaign(core.NewApplicationCampaignParams{
 		ID: core.ApplicationCampaignID("campaign-" + string(task.ID)), JobTag: payload.JobTag,
 		Profiles: payload.Profiles, Routes: payload.Routes, TargetSuccessful: payload.TargetSuccessful,
