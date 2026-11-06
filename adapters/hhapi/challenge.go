@@ -67,7 +67,8 @@ func StartCaptcha(ctx context.Context, captchaURL string) (string, []byte, error
 	if err != nil {
 		return "", nil, err
 	}
-	imageURL := "https://hh.ru/captcha/picture?key=" + url.QueryEscape(key)
+	base := final.Scheme + "://" + final.Host
+	imageURL := base + "/captcha/picture?key=" + url.QueryEscape(key)
 	imageReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	imageReq.Header.Set("User-Agent", deviceUserAgent())
 	imageReq.Header.Set("Accept", "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5")
@@ -111,7 +112,8 @@ func AnswerCaptcha(ctx context.Context, id, text string) error {
 		"captchaText": {strings.TrimSpace(text)}, "captchaKey": {challenge.key},
 		"captchaState": {challenge.state}, "backurl": {captchaSuccessBackURL}, "failurl": {failURL},
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://hh.ru/account/captcha?"+payload.Encode(), nil)
+	base := challenge.page.Scheme + "://" + challenge.page.Host
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/account/captcha?"+payload.Encode(), nil)
 	setXHR(req, challenge.userAgent, challenge.page, challenge.xsrf)
 	resp, err := challenge.client.Do(req)
 	if err != nil {

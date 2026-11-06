@@ -81,7 +81,8 @@ func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captc
 	if err != nil {
 		return err
 	}
-	imageURL := "https://hh.ru/captcha/picture?key=" + url.QueryEscape(key)
+	base := finalURL.Scheme + "://" + finalURL.Host
+	imageURL := base + "/captcha/picture?key=" + url.QueryEscape(key)
 	imageReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	imageReq.Header.Set("User-Agent", userAgent)
 	imageReq.Header.Set("Accept", "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5")
@@ -116,7 +117,7 @@ func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captc
 		"backurl":      {captchaSuccessBackURL},
 		"failurl":      {failURL},
 	}
-	target := "https://hh.ru/account/captcha?" + payload.Encode()
+	target := base + "/account/captcha?" + payload.Encode()
 	submit, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	setXHR(submit, userAgent, finalURL, xsrf)
 	resp2, err := follow.Do(submit)
@@ -136,7 +137,7 @@ func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captc
 }
 
 func captchaKey(ctx context.Context, client *http.Client, userAgent string, reference *url.URL, xsrf string) (string, error) {
-	target := "https://hh.ru/captcha?lang=RU"
+	target := reference.Scheme + "://" + reference.Host + "/captcha?lang=RU"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	setXHR(req, userAgent, reference, xsrf)
 	resp, err := client.Do(req)
@@ -169,7 +170,7 @@ func setXHR(req *http.Request, userAgent string, reference *url.URL, xsrf string
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("X-XSRFToken", xsrf)
-	req.Header.Set("Origin", "https://hh.ru")
+	req.Header.Set("Origin", reference.Scheme+"://"+reference.Host)
 	req.Header.Set("Referer", reference.String())
 	req.Header.Set("X-Hhtmfrom", "")
 	req.Header.Set("X-Hhtmsource", "account_captcha")
