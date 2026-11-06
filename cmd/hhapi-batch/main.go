@@ -242,7 +242,30 @@ func postWorker(payload any, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func ensureWorkerSession() {
+	data, err := os.ReadFile("data/profiles/main.json")
+	if err != nil {
+		return
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(data, &root) != nil {
+		return
+	}
+	body, _ := json.Marshal(map[string]json.RawMessage{"cookies": root["cookies"], "origins": root["origins"]})
+	req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:8088/v1/profiles/main/storage-state", bytes.NewReader(body))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+workerToken())
+		if resp, doErr := http.DefaultClient.Do(req); doErr == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}
+	_ = postWorker(map[string]bool{"headless": true}, "ensure", &map[string]any{})
+}
+
 func answerQuestionnaire(client *hhapi.Client, apiKey, facts, root, vacancyID string) bool {
+	ensureWorkerSession()
 	var form workerForm
 	if err := postWorker(map[string]string{"url": "https://hh.ru/vacancy/" + vacancyID}, "form", &form); err != nil {
 		return false
