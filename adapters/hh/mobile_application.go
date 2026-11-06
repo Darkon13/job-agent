@@ -43,7 +43,28 @@ func (client *mobileApplicationClient) answerQuestionnaire(ctx context.Context, 
 	}
 	var answers []browser.FormAnswer
 	for _, field := range form.Fields {
-		if field.Name == "" || (field.Tag != "textarea" && field.Type != "text") {
+		if field.Name == "" {
+			continue
+		}
+		if field.Tag == "select" && len(field.Options) > 0 && client.answerer != nil {
+			question := strings.TrimSpace(field.Context + " " + field.Label + " Варианты: " + strings.Join(field.Options, "; "))
+			generated, genErr := client.answerer(ctx, command.Vacancy.ExternalID, question)
+			if genErr != nil {
+				continue
+			}
+			choice := ""
+			for _, option := range field.Options {
+				if strings.EqualFold(strings.TrimSpace(option), strings.TrimSpace(generated)) || strings.Contains(strings.ToLower(option), strings.ToLower(strings.TrimSpace(generated))) {
+					choice = option
+					break
+				}
+			}
+			if choice != "" {
+				answers = append(answers, browser.FormAnswer{Selector: fmt.Sprintf(`select[name="%s"]`, field.Name), Value: choice})
+			}
+			continue
+		}
+		if field.Tag != "textarea" && field.Type != "text" {
 			continue
 		}
 		question := strings.TrimSpace(field.Context + " " + field.Label)
