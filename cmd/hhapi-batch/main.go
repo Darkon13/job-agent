@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -36,8 +40,7 @@ func main() {
 	defer db.Close()
 
 	rows, err := db.Query(`SELECT external_id, prepared_message FROM applications
-		WHERE profile_id='main' AND status='ready' AND decision_code='qualified'
-		  AND prepared_message <> ''
+		WHERE profile_id='main' AND status IN ('ready','new')
 		ORDER BY updated_at DESC LIMIT ?`, *limit)
 	if err != nil {
 		log.Fatal(err)
@@ -117,6 +120,15 @@ func main() {
 				fmt.Println("Реши: go run ./cmd/hhapi-captcha -url '<URL>' и запусти батч снова")
 				return
 			}
+			if strings.Contains(err.Error(), "test_required") || strings.Contains(err.Error(), "questionnaire") || strings.Contains(err.Error(), "Must process test") {
+				if answered := answerQuestionnaire(client, apiKey, string(facts), workspaceRoot(), c.id); answered {
+					id := client.NegotiationID(context.Background(), c.id)
+					_, _ = db.Exec(`UPDATE applications SET status='submitted', submitted_at=?, updated_at=?, external_negotiation_id=?, failure_category='', failure_message='' WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), time.Now().UnixNano(), id, c.id)
+					sent++
+					fmt.Printf("OK %s questionnaire\n", c.id)
+					continue
+				}
+			}
 			state := classify(err)
 			if state != "" {
 				_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code=?, decision_reason=?, updated_at=? WHERE profile_id='main' AND external_id=?`,
@@ -170,4 +182,114 @@ func classify(err error) string {
 		return "already_applied"
 	}
 	return ""
+}
+
+func workspaceRoot() string { return "." }
+
+func workerToken() string {
+	if value := strings.TrimSpace(os.Getenv("BROWSER_WORKER_TOKEN")); value != "" {
+		return value
+	}
+	if env, err := os.ReadFile(".env"); err == nil {
+		for _, line := range strings.Split(string(env), "\n") {
+			if strings.HasPrefix(line, "BROWSER_WORKER_TOKEN=") {
+				return strings.TrimSpace(strings.TrimPrefix(line, "BROWSER_WORKER_TOKEN="))
+			}
+		}
+	}
+	return ""
+}
+
+type workerFormField struct {
+	Tag     string   `json:"tag"`
+	Type    string   `json:"type"`
+	Name    string   `json:"name"`
+	Label   string   `json:"label"`
+	Context string   `json:"context"`
+	Options []string `json:"options"`
+}
+type workerForm struct {
+	URL    string            `json:"url"`
+	Fields []workerFormField `json:"fields"`
+}
+type workerAnswer struct {
+	Selector string `json:"selector"`
+	Value    string `json:"value"`
+}
+type workerAnswerResult struct {
+	Confirmed bool `json:"confirmed"`
+}
+
+func postWorker(payload any, path string, out any) error {
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", "http://127.0.0.1:8088/v1/profiles/main/"+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+workerToken())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return fmt.Errorf("worker %s: %d %s", path, resp.StatusCode, string(raw))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func answerQuestionnaire(client *hhapi.Client, apiKey, facts, root, vacancyID string) bool {
+	var form workerForm
+	if err := postWorker(map[string]string{"url": "https://hh.ru/vacancy/" + vacancyID}, "form", &form); err != nil {
+		return false
+	}
+	var answers []workerAnswer
+	for _, field := range form.Fields {
+		if field.Name == "" {
+			continue
+		}
+		question := strings.TrimSpace(field.Context + " " + field.Label)
+		text := strings.ToLower(question)
+		value := ""
+		if field.Tag == "select" && len(field.Options) > 0 {
+			prompt := question + " Варианты: " + strings.Join(field.Options, "; ")
+			generated, err := hhapi.GenerateText(context.Background(), apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash", prompt+"\nОтветь только текстом одного варианта.")
+			if err != nil {
+				continue
+			}
+			for _, option := range field.Options {
+				if strings.Contains(strings.ToLower(option), strings.ToLower(strings.TrimSpace(generated))) {
+					value = option
+					break
+				}
+			}
+		} else if field.Tag == "textarea" || field.Type == "text" {
+			if strings.Contains(text, "ожидан") || strings.Contains(text, "зарплат") {
+				if low, high, err := client.SalaryRange(context.Background(), vacancyID); err == nil {
+					value = fmt.Sprintf("Ожидания: %d–%d ₽, торг уместен.", low, high)
+				}
+			} else if apiKey != "" {
+				prompt := "Ответь на вопрос анкеты по фактам кандидата, кратко.\nФАКТЫ:\n" + facts + "\nВОПРОС:\n" + question
+				if generated, err := hhapi.GenerateText(context.Background(), apiKey, "https://opencode.ai/inference/go/openai/v1", "deepseek-v4.1-flash", prompt); err == nil {
+					value = generated
+				}
+			}
+		}
+		if strings.TrimSpace(value) != "" {
+			answers = append(answers, workerAnswer{Selector: fmt.Sprintf(`[name="%s"]`, field.Name), Value: value})
+		}
+	}
+	if len(answers) == 0 {
+		return false
+	}
+	var result workerAnswerResult
+	if err := postWorker(map[string]any{"answers": answers, "submit": true}, "answers", &result); err != nil {
+		return false
+	}
+	if result.Confirmed {
+		return true
+	}
+	return client.NegotiationID(context.Background(), vacancyID) != ""
 }

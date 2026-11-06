@@ -59,6 +59,8 @@ services:
   # backend-only.
   browser-worker:
     profiles: ["browser"]
+    ports:
+      - "127.0.0.1:8088:8088"
     logging:
       driver: json-file
       options:
