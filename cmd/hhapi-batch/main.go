@@ -119,10 +119,12 @@ func main() {
 			_, _ = db.Exec(`UPDATE applications SET status='submitted', submitted_at=?, updated_at=?, external_negotiation_id=?, failure_category='', failure_message='' WHERE profile_id='main' AND external_id=?`,
 				now, now, result.ID, c.id)
 			sent++
+			decayBackoff()
 			fmt.Printf("OK %s\n", c.id)
 		} else {
 			var captcha *hhapi.CaptchaRequiredError
 			if errors.As(err, &captcha) {
+				raiseBackoff()
 				_ = os.WriteFile("data/captcha-pending.txt", []byte(captcha.URL), 0o600)
 				fmt.Printf("CAPTCHA:%s\n", captcha.URL)
 				fmt.Println("Реши: go run ./cmd/hhapi-captcha -url '<URL>' и запусти батч снова")
@@ -133,6 +135,7 @@ func main() {
 					id := client.NegotiationID(context.Background(), c.id)
 					_, _ = db.Exec(`UPDATE applications SET status='submitted', submitted_at=?, updated_at=?, external_negotiation_id=?, failure_category='', failure_message='' WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), time.Now().UnixNano(), id, c.id)
 					sent++
+					decayBackoff()
 					fmt.Printf("OK %s questionnaire\n", c.id)
 					continue
 				}
@@ -323,4 +326,36 @@ func answerQuestionnaire(client *hhapi.Client, apiKey, facts, root, vacancyID st
 		return true
 	}
 	return client.NegotiationID(context.Background(), vacancyID) != ""
+}
+
+func loadBackoff() float64 {
+	data, err := os.ReadFile("data/backoff.factor")
+	if err != nil {
+		return 1
+	}
+	var value float64
+	if _, err := fmt.Sscanf(string(data), "%f", &value); err != nil || value < 1 {
+		return 1
+	}
+	return value
+}
+
+func saveBackoff(value float64) {
+	_ = os.WriteFile("data/backoff.factor", []byte(fmt.Sprintf("%.2f", value)), 0o600)
+}
+
+func raiseBackoff() {
+	value := loadBackoff() * 2
+	if value > 16 {
+		value = 16
+	}
+	saveBackoff(value)
+}
+
+func decayBackoff() {
+	value := loadBackoff() * 0.9
+	if value < 1 {
+		value = 1
+	}
+	saveBackoff(value)
 }
