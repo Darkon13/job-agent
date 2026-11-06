@@ -109,7 +109,7 @@ func main() {
 			fmt.Printf("SKIP %s no_letter\n", c.id)
 			continue
 		}
-		restoreResume, _ := client.Tailor(context.Background(), *resume, c.id)
+		restoreResume := func() {}
 		var result hhapi.Negotiation
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
@@ -128,6 +128,10 @@ func main() {
 						}
 					}
 					err = &hhapi.CaptchaRequiredError{URL: captchaURL}
+				} else if strings.Contains(text, "application_denied") || strings.Contains(text, "Can't respond") {
+					err = nil
+					result = hhapi.Negotiation{}
+					_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='vacancy_closed', decision_reason='HH запретил отклик', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
 				} else if strings.Contains(text, "already_applied") {
 					err = nil
 					result = hhapi.Negotiation{}

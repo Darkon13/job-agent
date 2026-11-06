@@ -47,8 +47,36 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0)); req = json.loads(self.rfile.read(n) or b"{}")
         if self.path == "/apply":
             warm()
+            vacancy_id = req.get("vacancy_id"); resume_id = req.get("resume_id")
+            baseline = None
+            try:
+                rv = S.get(f"https://api.hh.ru/resumes/{resume_id}", headers=headers(), timeout=20)
+                if rv.ok:
+                    baseline = rv.json()
+                    vv = S.get(f"https://api.hh.ru/vacancies/{vacancy_id}", headers=headers(), timeout=20)
+                    vacancy = vv.json() if vv.ok else {}
+                    seen = set(); tags = []
+                    for skill in vacancy.get("key_skills", []) or []:
+                        name = (skill.get("name") or "").strip()
+                        if name and name.lower() not in seen:
+                            seen.add(name.lower()); tags.append(name)
+                    for name in baseline.get("skill_set", []) or []:
+                        if name.lower() not in seen:
+                            seen.add(name.lower()); tags.append(name)
+                    tags = tags[:30]
+                    text = baseline.get("skills", "") or ""
+                    if vacancy.get("key_skills"):
+                        names = [x.get("name", "") for x in vacancy["key_skills"]]
+                        text = text.rstrip() + "\n\nПод вакансию «" + vacancy.get("name", "") + "»: " + ", ".join(names)
+                    S.put(f"https://api.hh.ru/resumes/{resume_id}", headers=headers(), json={"skills": text, "skill_set": tags}, timeout=20)
+            except Exception:
+                baseline = None
             r = S.post("https://api.hh.ru/negotiations", headers=headers(),
-                       data={"vacancy_id": req.get("vacancy_id"), "resume_id": req.get("resume_id"), "message": req.get("message", "")}, timeout=30)
+                       data={"vacancy_id": vacancy_id, "resume_id": resume_id, "message": req.get("message", "")}, timeout=30)
+            if baseline is not None:
+                try:
+                    S.put(f"https://api.hh.ru/resumes/{resume_id}", headers=headers(), json={"skills": baseline.get("skills", ""), "skill_set": baseline.get("skill_set", [])}, timeout=20)
+                except Exception: pass
             remember()
             try: data = r.json()
             except Exception: data = {}

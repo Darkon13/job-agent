@@ -6,6 +6,8 @@ ROUNDS="${2:-1000}"
 go build -o /tmp/hhapi-batch ./cmd/hhapi-batch
 for _ in $(seq 1 "$ROUNDS"); do
   ./scripts/refresh-cookies.sh || true
+  systemctl --user restart hh-sidecar >/dev/null 2>&1 || true
+  sleep 1
   out="$(/tmp/hhapi-batch -token "$HOME/.config/job-agent/hh-token.json" -db data/job-agent.db -limit "$CHUNK" 2>&1 | tee /dev/stderr)"
   if grep -q '^CAPTCHA:' <<<"$out"; then
     echo "Капча ждёт решения: go run ./cmd/hhapi-captcha -solve"
