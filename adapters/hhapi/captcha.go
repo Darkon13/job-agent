@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -102,6 +103,9 @@ func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captc
 	if text == "" {
 		return fmt.Errorf("hh captcha: empty answer")
 	}
+	// HH expects a human-like delay between showing the image and submitting.
+	sleep := time.Duration(10000+rand.Intn(5001)) * time.Millisecond
+	time.Sleep(sleep)
 
 	quotedBack := strings.ReplaceAll(url.QueryEscape(captchaSuccessBackURL), "%2F", "/")
 	failURL := "/account/captcha?state=" + url.QueryEscape(state) + "&backurl=" + quotedBack
