@@ -17,6 +17,7 @@ func main() {
 	user := flag.String("user", "", "email или телефон")
 	password := flag.String("password", "", "пароль (пусто — вход по OTP)")
 	tokenFile := flag.String("token", "hh-token.json", "файл токена")
+	cookieFile := flag.String("cookies", "", "файл cookies (по умолчанию рядом с токеном)")
 	flag.Parse()
 	if *user == "" {
 		log.Fatal("usage: hhapi-auth -user EMAIL [-password PASS] [-token FILE]")
@@ -50,6 +51,12 @@ func main() {
 	}
 	if err := session.FinishOAuth(ctx, client, hhapi.AndroidClientID, hhapi.AndroidClientSecret); err != nil {
 		log.Fatal(err)
+	}
+	if *cookieFile == "" {
+		*cookieFile = filepath.Join(filepath.Dir(*tokenFile), "hh-cookies.txt")
+	}
+	if err := session.SaveCookies(*cookieFile); err != nil {
+		log.Fatalf("сохранить cookies: %v", err)
 	}
 	var me struct {
 		FirstName string `json:"first_name"`

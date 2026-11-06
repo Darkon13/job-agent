@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -271,4 +272,40 @@ func (s *LoginSession) FinishOAuth(ctx context.Context, c *Client, clientID, cli
 		return errors.New("hh login: no code in redirect")
 	}
 	return c.ExchangeCode(ctx, clientID, clientSecret, code)
+}
+
+// SaveCookies сохраняет cookies сессии логина в Netscape-формате, чтобы
+// API-клиент использовал набор, выданный вместе с токеном.
+func (s *LoginSession) SaveCookies(path string) error {
+	domains := []string{"https://hh.ru/", "https://api.hh.ru/"}
+	var lines []string
+	lines = append(lines, "# Netscape HTTP Cookie File")
+	seen := map[string]bool{}
+	for _, raw := range domains {
+		target, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		for _, cookie := range s.client.Jar.Cookies(target) {
+			key := cookie.Name + "|" + cookie.Domain
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			expires := int64(0)
+			if !cookie.Expires.IsZero() {
+				expires = cookie.Expires.Unix()
+			}
+			secure := "FALSE"
+			if cookie.Secure {
+				secure = "TRUE"
+			}
+			domain := cookie.Domain
+			if domain == "" {
+				domain = ".hh.ru"
+			}
+			lines = append(lines, fmt.Sprintf("%s\tTRUE\t%s\t%s\t%d\t%s\t%s", domain, cookie.Path, secure, expires, cookie.Name, cookie.Value))
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 }
