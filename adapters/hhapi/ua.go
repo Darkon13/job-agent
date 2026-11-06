@@ -1,83 +1,46 @@
 package hhapi
 
 import (
-	crand "crypto/rand"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	mrand "math/rand"
-	"os"
-	"path/filepath"
-	"strings"
+	"math/big"
 )
 
-// mobileModels mirrors the Android devices used by hh-applicant-tool. A fresh
-// installation gets one generated identity; the file keeps the backend,
-// dashboard captcha presenter and batch on the same device identity.
-var mobileModels = []string{
-	"23053RN02A", "23053RN02Y", "23053RN02I", "23053RN02L", "23077RABDC",
-	"2411DRN47C", "2409BRN2CA", "2409BRN2CG", "2409BRN2CY",
-	"2508CRN2BE", "2508CRN2BC", "2508CRN2BG",
-	"SM-A165F", "SM-A165F/DS", "SM-A165M", "SM-A165M/DS", "SM-A165F/DSB",
-	"24108PCE2I", "MZB0KE1IN",
+var androidDevices = []string{"ETAIY1TDQC", "C5PKOM6TX3", "HWYQGOTTZ8", "GNTQ4N4HKC", "XK7Q1YQ2ZP"}
+var androidVersions = []string{"11", "12", "13", "14", "15"}
+
+func randInt(max int64) int64 {
+	n, err := rand.Int(rand.Reader, big.NewInt(max))
+	if err != nil {
+		return 0
+	}
+	return n.Int64()
 }
 
-func generateAndroidUserAgent() string {
-	model := mobileModels[mrand.Intn(len(mobileModels))]
-	minor := 100 + mrand.Intn(51)
-	patch := 10000 + mrand.Intn(5001)
-	android := 11 + mrand.Intn(5)
-	id := make([]byte, 16)
-	_, _ = crand.Read(id)
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
+// nativeUserAgent имитирует новый запуск приложения: утилита генерирует
+// личность на каждый запуск, мы — каждые N откликов.
+func nativeUserAgent() string {
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	buf[6] = (buf[6] & 0x0f) | 0x40
+	buf[8] = (buf[8] & 0x3f) | 0x80
 	uuid := fmt.Sprintf("%s-%s-%s-%s-%s",
-		hex.EncodeToString(id[0:4]), hex.EncodeToString(id[4:6]),
-		hex.EncodeToString(id[6:8]), hex.EncodeToString(id[8:10]),
-		hex.EncodeToString(id[10:16]))
-	return fmt.Sprintf("ru.hh.android/7.%d.%d, Device: %s, Android OS: %d (UUID: %s)", minor, patch, model, android, uuid)
+		hex.EncodeToString(buf[0:4]), hex.EncodeToString(buf[4:6]),
+		hex.EncodeToString(buf[6:8]), hex.EncodeToString(buf[8:10]),
+		hex.EncodeToString(buf[10:16]))
+	return fmt.Sprintf("ru.hh.android/7.%d.%d, Device: %s, Android OS: %s (UUID: %s)",
+		randInt(200), randInt(20000), androidDevices[randInt(int64(len(androidDevices)))],
+		androidVersions[randInt(int64(len(androidVersions)))], uuid)
 }
 
-func userAgentFilePath() string {
-	if path := strings.TrimSpace(os.Getenv("HH_USER_AGENT_FILE")); path != "" {
-		return path
-	}
-	cookies := cookieFilePath()
-	if cookies == "" {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(cookies), "hh-user-agent.txt")
-}
+var currentDeviceUserAgent = nativeUserAgent()
 
-// deviceUserAgent returns the shared mobile identity. The backend rotates it on
-// startup, while the dashboard and batch read the same file for captcha.
-func deviceUserAgent() string {
-	if value := strings.TrimSpace(os.Getenv("HH_USER_AGENT")); value != "" {
-		return value
-	}
-	path := userAgentFilePath()
-	if path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			if value := strings.TrimSpace(string(data)); value != "" {
-				return value
-			}
-		}
-	}
-	value := generateAndroidUserAgent()
-	if path != "" {
-		_ = os.MkdirAll(filepath.Dir(path), 0o700)
-		_ = os.WriteFile(path, []byte(value), 0o600)
-	}
-	return value
-}
+// deviceUserAgent — текущая личность процесса для страниц капчи.
+func deviceUserAgent() string { return currentDeviceUserAgent }
 
+// rotateDeviceUserAgent — новая личность, как новый запуск приложения.
 func rotateDeviceUserAgent() string {
-	if value := strings.TrimSpace(os.Getenv("HH_USER_AGENT")); value != "" {
-		return value
-	}
-	value := generateAndroidUserAgent()
-	if path := userAgentFilePath(); path != "" {
-		_ = os.MkdirAll(filepath.Dir(path), 0o700)
-		_ = os.WriteFile(path, []byte(value), 0o600)
-	}
-	return value
+	currentDeviceUserAgent = nativeUserAgent()
+	return currentDeviceUserAgent
 }
