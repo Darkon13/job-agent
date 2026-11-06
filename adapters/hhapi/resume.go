@@ -46,6 +46,14 @@ type Vacancy struct {
 }
 
 // BlockedRole отсекает роли вне профиля (фронтенд, PHP, ML/Data и т.п.).
+func BlockedRoleName(name string) bool { return Vacancy{Name: name}.BlockedRole() }
+
+func BlockedCompanyName(name string) bool {
+	v := Vacancy{}
+	v.Employer.Name = name
+	return v.BlockedCompany()
+}
+
 func (v Vacancy) BlockedRole() bool {
 	name := " " + strings.ToLower(v.Name) + " "
 	for _, term := range []string{

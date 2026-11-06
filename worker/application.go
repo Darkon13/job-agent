@@ -598,8 +598,14 @@ func (handler *ApplicationHandler) Handle(ctx context.Context, task core.Task) e
 	if err != nil {
 		return handler.finishFailure(ctx, application, plan, err)
 	}
+	var vacancyData core.Vacancy
+	if handler.vacancies != nil {
+		if loaded, loadErr := handler.vacancies.Vacancy(ctx, application.Key.Vacancy); loadErr == nil {
+			vacancyData = loaded
+		}
+	}
 	result, err := transport.SubmitApplication(ctx, adapter.ApplicationSubmitCommand{
-		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy,
+		ProfileID: application.Key.ProfileID, Vacancy: application.Key.Vacancy, VacancyData: vacancyData,
 		ResumeID: preparedResumeID(application, plan), Message: application.PreparedMessage, IdempotencyKey: task.IdempotencyKey,
 	})
 	if err != nil {

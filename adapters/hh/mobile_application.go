@@ -87,6 +87,33 @@ func (client *mobileApplicationClient) answerQuestionnaire(ctx context.Context, 
 	return adapter.ApplicationSubmitResult{}, false
 }
 
+func cachedRemote(attrs map[string]any) (bool, bool) {
+	if attrs == nil {
+		return false, false
+	}
+	raw, ok := attrs["work_format"]
+	if !ok || raw == nil {
+		return false, false
+	}
+	switch formats := raw.(type) {
+	case []string:
+		for _, format := range formats {
+			if format == "REMOTE" {
+				return true, true
+			}
+		}
+		return true, false
+	case []any:
+		for _, item := range formats {
+			if text, ok := item.(string); ok && text == "REMOTE" {
+				return true, true
+			}
+		}
+		return true, false
+	}
+	return false, false
+}
+
 func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, command adapter.ApplicationSubmitCommand) (adapter.ApplicationSubmitResult, error) {
 	if client == nil || client.api == nil {
 		return adapter.ApplicationSubmitResult{}, operationError(core.ErrorUnsupported, "applications.submit.hhapi", "HH mobile API is not configured", nil)
@@ -101,26 +128,46 @@ func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, co
 			Message: "HH captcha is pending; solve it before submitting more applications",
 		}
 	}
-	vacancy, vacErr := client.api.Vacancy(ctx, command.Vacancy.ExternalID)
-	if vacErr != nil {
-		retryAt := time.Now().Add(10 * time.Minute)
-		return adapter.ApplicationSubmitResult{}, &core.OperationError{
-			Category: core.ErrorTemporaryFailure, Operation: "applications.submit.hhapi",
-			Platform: command.Vacancy.Platform, RetryAfter: &retryAt,
-			Message: "cannot load vacancy before applying: " + vacErr.Error(),
+	needVacancy := true
+	if data := command.VacancyData; data.Title != "" {
+		if hhapi.BlockedRoleName(data.Title) {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
+				"HH vacancy is outside the target profile")
+		}
+		if hhapi.BlockedCompanyName(data.Employer) {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
+				"HH employer is in the blacklist")
+		}
+		if known, remote := cachedRemote(data.Attributes); known {
+			if !remote {
+				return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
+					"HH vacancy does not allow remote work")
+			}
+			needVacancy = false
 		}
 	}
-	if vacancy.BlockedRole() {
-		return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
-			"HH vacancy is outside the target profile")
-	}
-	if vacancy.BlockedCompany() {
-		return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
-			"HH employer is in the blacklist")
-	}
-	if !vacancy.Remote() {
-		return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
-			"HH vacancy does not allow remote work")
+	if needVacancy {
+		vacancy, vacErr := client.api.Vacancy(ctx, command.Vacancy.ExternalID)
+		if vacErr != nil {
+			retryAt := time.Now().Add(10 * time.Minute)
+			return adapter.ApplicationSubmitResult{}, &core.OperationError{
+				Category: core.ErrorTemporaryFailure, Operation: "applications.submit.hhapi",
+				Platform: command.Vacancy.Platform, RetryAfter: &retryAt,
+				Message: "cannot load vacancy before applying: " + vacErr.Error(),
+			}
+		}
+		if vacancy.BlockedRole() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
+				"HH vacancy is outside the target profile")
+		}
+		if vacancy.BlockedCompany() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "company_blocked",
+				"HH employer is in the blacklist")
+		}
+		if !vacancy.Remote() {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "not_remote",
+				"HH vacancy does not allow remote work")
+		}
 	}
 	result, err := client.api.Apply(ctx, hhapi.ApplyRequest{
 		VacancyID: command.Vacancy.ExternalID,

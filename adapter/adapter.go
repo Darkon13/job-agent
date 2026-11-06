@@ -202,6 +202,7 @@ type ConversationTransport interface {
 type ApplicationSubmitCommand struct {
 	ProfileID      core.ProfileID
 	Vacancy        core.VacancyKey
+	VacancyData    core.Vacancy
 	ResumeID       string
 	Message        string
 	IdempotencyKey string
