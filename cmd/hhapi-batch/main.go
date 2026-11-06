@@ -110,9 +110,27 @@ func main() {
 			continue
 		}
 		restoreResume, _ := client.Tailor(context.Background(), *resume, c.id)
-		result, err := client.Apply(context.Background(), hhapi.ApplyRequest{
-			VacancyID: c.id, ResumeID: *resume, Message: c.message,
-		})
+		var result hhapi.Negotiation
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			result, err = client.Apply(context.Background(), hhapi.ApplyRequest{
+				VacancyID: c.id, ResumeID: *resume, Message: c.message,
+			})
+			var captcha *hhapi.CaptchaRequiredError
+			if err == nil || !errors.As(err, &captcha) {
+				break
+			}
+			raiseBackoff()
+			_ = os.WriteFile("data/captcha-pending.txt", []byte(captcha.URL), 0o600)
+			fmt.Printf("CAPTCHA:%s\n", captcha.URL)
+			deadline := time.Now().Add(10 * time.Minute)
+			for time.Now().Before(deadline) {
+				if info, statErr := os.Stat("data/captcha-pending.txt"); statErr != nil || info.Size() == 0 {
+					break
+				}
+				time.Sleep(3 * time.Second)
+			}
+		}
 		restoreResume()
 		now := time.Now().UnixNano()
 		if err == nil {
