@@ -93,6 +93,12 @@ func main() {
 				fmt.Printf("LETTER_FAIL %s %v\n", c.id, genErr)
 			}
 		}
+		if vacErr == nil && !hhapi.AllowedRoleName(vacancy.Name) {
+			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='role_blocked', decision_reason='роль вне профиля', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
+			skipped++
+			fmt.Printf("SKIP %s role_blocked\n", c.id)
+			continue
+		}
 		if vacErr == nil && !vacancy.Remote() {
 			_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='not_remote', decision_reason='вакансия без удалёнки', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
 			skipped++

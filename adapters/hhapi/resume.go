@@ -62,6 +62,9 @@ func (v Vacancy) BlockedRole() bool {
 		"аналитик", "analyst", "data scientist", "data engineer", "data инженер", "data-инженер",
 		"machine learning", " ml ", "ml-", "mlops", "нейросет", "нейронн", "computer vision", "nlp", "llm",
 		"c++", "с++", "embedded", "микроконтроллер", "firmware", "прошивк", "электронн", "fpga", "verilog",
+		"продаж", "sales", "call center", "колл-центр", "рекрутер", "recruiter", "менеджер по продажам",
+		"руководитель", "директор", "лидер", "менеджер", "ассистент", "секретарь", "врач",
+		"видеомонтаж", "маркетолог", "юрист", "бухгалтер", "лицензи", "офис-менеджер",
 	} {
 		if strings.Contains(name, term) {
 			return true
@@ -158,4 +161,22 @@ func (c *Client) Tailor(ctx context.Context, resumeID, vacancyID string) (func()
 		_ = c.UpdateResume(ctx, resumeID, ResumePatch{Skills: &baseline.Skills, SkillSet: &baseline.SkillSet})
 	}
 	return restore, nil
+}
+
+var allowedRoleTerms = []string{
+	"поддерж", "support", "helpdesk", "service desk", "devops", "sre", "backend", "бэкенд",
+	"разработчик", "developer", "программист", "администратор", "sysadmin", "системный",
+	"инфраструктур", "infrastructure", "network engineer", "сетевой инженер", "тестировщ", "qa", "sdet",
+	"1с", "1c", "инженер", ".net", "c#", "python", "golang", "go разработчик",
+}
+
+// AllowedRoleName отсекает роли вне целевого профиля.
+func AllowedRoleName(name string) bool {
+	text := strings.ToLower(name)
+	for _, term := range allowedRoleTerms {
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+	return false
 }

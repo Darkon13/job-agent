@@ -151,6 +151,10 @@ func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, co
 	}
 	needVacancy := true
 	if data := command.VacancyData; data.Title != "" {
+		if !hhapi.AllowedRoleName(data.Title) {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
+				"HH vacancy is outside the target profile")
+		}
 		if hhapi.BlockedRoleName(data.Title) {
 			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
 				"HH vacancy is outside the target profile")
@@ -176,6 +180,10 @@ func (client *mobileApplicationClient) SubmitApplication(ctx context.Context, co
 				Platform: command.Vacancy.Platform, RetryAfter: &retryAt,
 				Message: "cannot load vacancy before applying: " + vacErr.Error(),
 			}
+		}
+		if !hhapi.AllowedRoleName(vacancy.Name) {
+			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
+				"HH vacancy is outside the target profile")
 		}
 		if vacancy.BlockedRole() {
 			return adapter.ApplicationSubmitResult{}, browserReviewError(core.ErrorValidationRequired, "role_blocked",
