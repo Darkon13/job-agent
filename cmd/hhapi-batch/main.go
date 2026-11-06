@@ -113,9 +113,36 @@ func main() {
 		var result hhapi.Negotiation
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
-			result, err = client.Apply(context.Background(), hhapi.ApplyRequest{
-				VacancyID: c.id, ResumeID: *resume, Message: c.message,
-			})
+			status, data := sidecarApply(c.id, *resume, c.message)
+			switch status {
+			case 200, 201:
+				result, err = hhapi.Negotiation{}, nil
+			case 403:
+				raw, _ := json.Marshal(data)
+				text := string(raw)
+				if strings.Contains(text, "captcha_required") {
+					captchaURL := ""
+					if errs, ok := data["errors"].([]any); ok && len(errs) > 0 {
+						if first, ok := errs[0].(map[string]any); ok {
+							captchaURL, _ = first["captcha_url"].(string)
+						}
+					}
+					err = &hhapi.CaptchaRequiredError{URL: captchaURL}
+				} else if strings.Contains(text, "already_applied") {
+					err = nil
+					result = hhapi.Negotiation{}
+					_, _ = db.Exec(`UPDATE applications SET status='skipped', decision_code='already_applied', decision_reason='уже откликались', updated_at=? WHERE profile_id='main' AND external_id=?`, time.Now().UnixNano(), c.id)
+				} else {
+					err = fmt.Errorf("sidecar: %s", text)
+				}
+			default:
+				if status == 0 {
+					result, err = client.Apply(context.Background(), hhapi.ApplyRequest{VacancyID: c.id, ResumeID: *resume, Message: c.message})
+				} else {
+					raw, _ := json.Marshal(data)
+					err = fmt.Errorf("sidecar: %s", string(raw))
+				}
+			}
 			var captcha *hhapi.CaptchaRequiredError
 			if err == nil || !errors.As(err, &captcha) {
 				break
@@ -267,6 +294,27 @@ func postWorker(payload any, path string, out any) error {
 		return fmt.Errorf("worker %s: %d %s", path, resp.StatusCode, string(raw))
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func sidecarApply(vacancyID, resumeID, message string) (int, map[string]any) {
+	url := strings.TrimSpace(os.Getenv("HH_SIDECAR_URL"))
+	if url == "" {
+		url = "http://127.0.0.1:8099"
+	}
+	body, _ := json.Marshal(map[string]string{"vacancy_id": vacancyID, "resume_id": resumeID, "message": message})
+	req, err := http.NewRequest(http.MethodPost, url+"/apply", bytes.NewReader(body))
+	if err != nil {
+		return 0, nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil
+	}
+	defer resp.Body.Close()
+	var data map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&data)
+	return resp.StatusCode, data
 }
 
 func ensureWorkerSession() {
