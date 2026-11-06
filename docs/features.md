@@ -299,9 +299,15 @@ browser GET и обновляет её в repository: краткой поиск�
 Закрытая вакансия
 или уже существующий `got_response` пропускаются без `POST`; обязательный тест
 либо отсутствующее обязательное сопроводительное переводят отклик в
-`waiting_validation`. Для выбранного `resume` worker также читает все страницы
+`waiting_validation`. Для browser/web транспорта worker также читает все страницы
 `GET /vacancies/{id}/suitable_resumes`; если резюме отсутствует в ответе,
-отклик остаётся на ручную проверку. Подтверждённый `resume_id`, результат
+отклик остаётся на ручную проверку. Если задан `HH_API_TOKEN_FILE`, мобильный
+API становится основным application transport: worker отправляет настроенный
+`resume_id` напрямую в `POST /negotiations`, без response popup и
+`suitable_resumes` preflight и читает полную карточку вакансии тем же
+мобильным API, как reference `hh-applicant-tool`. Ошибки `test_required`,
+лимита и captcha классифицируются после ответа платформы и попадают в
+существующий validation/captcha pipeline. Подтверждённый `resume_id`, результат
 решения и готовое письмо сохраняются вместе до внешнего действия, поэтому
 изменение конфига не меняет уже подготовленный retry. Перед
 `POST /negotiations` SQLite атомарно
@@ -312,7 +318,7 @@ browser GET и обновляет её в repository: краткой поиск�
 Политика выполнения задаётся в `profile.applications`. Без явной настройки
 используется безопасный `dry_run`; `approval` останавливает отклик в
 `waiting_approval`. Для HH режим `submit` по умолчанию получает дневной budget
-`200` откликов на профиль и равномерный `submit_jitter` от `15s` до `25s`.
+`200` откликов на профиль и равномерный `submit_jitter` от `1s` до `3s`.
 Явный `daily_limit` может только уменьшить этот ceiling; значения выше `200`
 отклоняются конфигом. Граница суток считается в заданной `timezone`.
 
@@ -323,7 +329,7 @@ Pacing применяется только непосредственно пер
 При необходимости диапазон можно сузить явно:
 
 ```json
-"submit_jitter": {"min": "18s", "max": "22s"}
+"submit_jitter": {"min": "1s", "max": "3s"}
 ```
 
 Детерминированный application operator проверяет `include_any`/`exclude_any`

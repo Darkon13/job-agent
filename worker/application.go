@@ -718,7 +718,25 @@ func (handler *ApplicationHandler) acquirePacing(ctx context.Context, applicatio
 	}
 }
 
+// ApplicationResumePreflightSkipper is implemented by a transport that sends
+// the configured resume directly to the platform. The mobile HH API does this,
+// while the web/browser flow still needs the vacancy-specific resume list.
+type ApplicationResumePreflightSkipper interface {
+	SkipApplicationResumePreflight(profileID core.ProfileID) bool
+}
+
 func (handler *ApplicationHandler) applicationResumePreflight(ctx context.Context, application core.Application, resumeID string) (applicationoperator.ApplicationPreparation, string, bool, error) {
+	if transport, err := handler.transports.Resolve(application.Key.ProfileID); err == nil {
+		if skipper, ok := transport.(ApplicationResumePreflightSkipper); ok && skipper.SkipApplicationResumePreflight(application.Key.ProfileID) {
+			if strings.TrimSpace(resumeID) == "" {
+				return applicationoperator.ApplicationPreparation{
+					Outcome: applicationoperator.ApplicationReview, Code: "resume_not_suitable",
+					Reason: "profile application has no resume configured",
+				}, "", true, nil
+			}
+			return applicationoperator.ApplicationPreparation{}, resumeID, false, nil
+		}
+	}
 	reader, err := handler.transports.ResolveSuitableResumeReader(application.Key.ProfileID)
 	if err != nil {
 		return applicationoperator.ApplicationPreparation{}, "", false, err

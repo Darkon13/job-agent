@@ -252,7 +252,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
       "applications": {
         "mode": "submit",
         "daily_limit": 30,
-        "submit_jitter": {"min": "15s", "max": "30s"},
+        "submit_jitter": {"min": "1s", "max": "3s"},
         "message_template_file": "messages/backend.json",
         "timezone": "Europe/Moscow"
       }
@@ -319,7 +319,7 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
 "applications": {
   "mode": "submit",
   "daily_limit": 30,
-  "submit_jitter": {"min": "15s", "max": "30s"}
+  "submit_jitter": {"min": "1s", "max": "3s"}
 }
 ```
 
@@ -426,8 +426,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             },
             "timezone": "Europe/Moscow",
             "submit_jitter": {
-              "min": "15s",
-              "max": "30s"
+              "min": "1s",
+              "max": "3s"
             },
             "daily_limit": 200,
             "validation_action": "skip"
@@ -482,8 +482,8 @@ Dashboard (опционально) — `./dist/job-agent-dashboard`. Для brow
             },
             "timezone": "Europe/Moscow",
             "submit_jitter": {
-              "min": "15s",
-              "max": "30s"
+              "min": "1s",
+              "max": "3s"
             },
             "tailoring": {
               "about": {

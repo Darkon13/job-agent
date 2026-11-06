@@ -15,7 +15,7 @@
     "exclude_any": ["руководитель", "team lead", "дизайн", "менеджер"]
   },
   "daily_limit": 200,
-  "submit_jitter": {"min": "15s", "max": "30s"},
+  "submit_jitter": {"min": "1s", "max": "3s"},
   "timezone": "Europe/Moscow",
   "allow_visibility_change": false,
   "tailoring": {"about": {"enabled": true}}
@@ -32,7 +32,7 @@
 | `employer_rules` | array | нет | — | Правила по работодателям (см. ниже). Первое совпадение выигрывает. |
 | `qualification` | object | нет | — | Текстовые фильтры вакансии (см. ниже). |
 | `daily_limit` | number | нет | дефолт платформы (HH 200) | Дневной потолок успешных откликов на профиль/платформу. |
-| `submit_jitter` | object | нет | HH: `15s`..`25s` | Пауза между отправками: `min`, `max` (Go duration). Разброс применяется до claim, worker не держит lease. |
+| `submit_jitter` | object | нет | HH: `1s`..`3s` | Пауза между отправками: `min`, `max` (Go duration). Разброс применяется до claim, worker не держит lease. |
 | `timezone` | string | нет | — | IANA-таймзона для расписаний и дневных лимитов, например `Europe/Moscow`. |
 | `allow_visibility_change` | bool | нет | `false` | Разрешить сервису менять видимость резюме на платформе при отклике. |
 | `validation_action` | string | нет | `review` | Что делать с вакансией, требующей анкету или тест: `review` — ждать ответа оператора (`waiting_validation`), `skip` — пометить отклик `skipped`, освободить очередь и дать «Повторить» после заполнения анкеты. |

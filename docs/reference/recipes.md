@@ -22,7 +22,7 @@
     "applications": {
       "mode": "submit",                     // dry_run | approval | submit
       "daily_limit": 30,                    // откликов в день на профиль
-      "submit_jitter": {"min": "15s", "max": "30s"},
+      "submit_jitter": {"min": "1s", "max": "3s"},
       "message_template_file": "messages/backend.json",
       "timezone": "Europe/Moscow"
     }

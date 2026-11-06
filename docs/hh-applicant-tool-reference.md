@@ -79,6 +79,29 @@ Install/uninstall, log и migrate-db являются обслуживающим
 - `GET /negotiations/{id}/messages` — история сообщений;
 - `POST /negotiations/{id}/messages` — отправка сообщения.
 
+### Мобильный application transport
+
+Reference implementation отправляет обычные отклики через мобильный API, а не
+через web-форму:
+
+- `ApiClient` генерирует Android User-Agent приложения HH (`ru.hh.android/...`)
+  и передаёт `X-HH-App-Active: true` на всех запросах;
+- между API-запросами выдерживается `DEFAULT_DELAY = 0.345` секунды;
+- обычный отклик — `POST /negotiations` с `resume_id`, `vacancy_id` и
+  `message`, дополнительная задержка `random.uniform(1, 3)` секунды, обработка
+  последовательная;
+- перед откликом reference не читает response popup и не запрашивает
+  `suitable_resumes`; он доверяет настроенному `resume_id`, а тесты/анкеты
+  разбирает отдельной browser-операцией;
+- при `CaptchaRequired` reference открывает `captcha_url` в headless
+  Playwright, распознаёт картинку, вводит ответ, переносит cookies обратно в
+  API session и повторяет тот же `POST /negotiations`;
+- `negotiations-limit-exceeded` останавливает текущий проход, а не создаёт
+  шторм retry.
+
+Job Agent переносит эту модель: mobile transport является основным при наличии
+`HH_API_TOKEN_FILE`, а browser остаётся для анкет, тестов и чатов.
+
 ### Web-only/hybrid операции в reference implementation
 
 - получение vacancy test из страницы

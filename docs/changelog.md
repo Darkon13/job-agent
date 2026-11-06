@@ -4,6 +4,17 @@
 
 ## Не выпущено
 
+- Отклики HH переведены на мобильный клиент как в reference
+  `hh-applicant-tool`: при наличии `HH_API_TOKEN_FILE` `POST /negotiations`
+  отправляется напрямую, без response popup, `suitable_resumes` preflight и
+  переписывания резюме перед каждым откликом. `X-HH-App-Active: true`
+  добавляется ко всем мобильным запросам, между запросами выдерживается
+  `345ms`, а `submit_jitter` по умолчанию составляет `1s..3s`; кампания
+  работает последовательно (`max_in_flight: 1`). Redirect на форму,
+  `test_required`, captcha, quota и validation ответы классифицируются без
+  ложного `submitted`. Мобильная карточка вакансии читается тем же API, без
+  браузерного GET; Android User-Agent выбирается заново при старте backend и
+  сохраняется в общем `hh-user-agent.txt` для dashboard/batch.
 - Анкеты вакансий: `application.answer_covered` теперь дополняет reviewed-банк
   моделью по фактам профиля. Модель отвечает на choice/text вопросы, локальный
   validator принимает только показанные варианты, а после успешной отправки
