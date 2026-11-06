@@ -2686,9 +2686,11 @@ func campaignPlan(cfg appconfig.Config, instances map[string]adapter.Adapter, pr
 			if capped, exists := targets[profileID]; exists {
 				target = capped
 			}
-			payload, err := json.Marshal(core.NewApplicationCampaignStartPayload(
+			startPayload := core.NewApplicationCampaignStartPayload(
 				job.Tag, []core.ProfileID{profileID}, routeIDs, target, job.Action.MaxInFlight,
-			))
+			)
+			startPayload.DiscoverOnly = job.Action.DiscoverOnly
+			payload, err := json.Marshal(startPayload)
 			if err != nil {
 				return nil, nil, nil, configuredJobs, fmt.Errorf("encode application campaign %q for profile %q: %w", job.Tag, profileID, err)
 			}

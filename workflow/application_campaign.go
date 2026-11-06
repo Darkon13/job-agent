@@ -208,7 +208,7 @@ func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, 
 	campaign, err := core.NewApplicationCampaign(core.NewApplicationCampaignParams{
 		ID: core.ApplicationCampaignID("campaign-" + string(task.ID)), JobTag: payload.JobTag,
 		Profiles: payload.Profiles, Routes: payload.Routes, TargetSuccessful: payload.TargetSuccessful,
-		MaxInFlight: payload.MaxInFlight, CorrelationID: task.CorrelationID,
+		MaxInFlight: payload.MaxInFlight, DiscoverOnly: payload.DiscoverOnly, CorrelationID: task.CorrelationID,
 	}, handler.clock.Now())
 	if err != nil {
 		return core.ApplicationCampaign{}, false, err
@@ -440,6 +440,9 @@ func (handler *ApplicationCampaignHandler) progress(ctx context.Context, campaig
 }
 
 func (handler *ApplicationCampaignHandler) scheduleApplications(ctx context.Context, campaign core.ApplicationCampaign, states []core.CampaignApplicationState, slots int, priority core.TaskPriority) (int, error) {
+	if campaign.DiscoverOnly {
+		return 0, nil
+	}
 	if slots <= 0 {
 		return 0, nil
 	}

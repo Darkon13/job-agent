@@ -11,6 +11,7 @@ import (
 )
 
 type ApplicationCampaignPayload struct {
+	DiscoverOnly     bool
 	CampaignID       ApplicationCampaignID `json:"campaign_id,omitempty"`
 	ExpectedRevision uint64                `json:"expected_revision,omitempty"`
 	JobTag           string                `json:"job_tag,omitempty"`

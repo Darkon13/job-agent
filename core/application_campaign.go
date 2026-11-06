@@ -30,6 +30,7 @@ type ApplicationCampaign struct {
 	Profiles         []ProfileID               `json:"profiles"`
 	Routes           []SearchID                `json:"routes"`
 	TargetSuccessful int                       `json:"target_successful"`
+	DiscoverOnly     bool                      `json:"discover_only,omitempty"`
 	MaxInFlight      int                       `json:"max_in_flight"`
 	RouteIndex       int                       `json:"route_index"`
 	Cursor           string                    `json:"cursor,omitempty"`
@@ -48,6 +49,7 @@ type NewApplicationCampaignParams struct {
 	Profiles         []ProfileID
 	Routes           []SearchID
 	TargetSuccessful int
+	DiscoverOnly     bool
 	MaxInFlight      int
 	CorrelationID    CorrelationID
 }
@@ -56,7 +58,7 @@ func NewApplicationCampaign(params NewApplicationCampaignParams, now time.Time) 
 	campaign := ApplicationCampaign{
 		ID: params.ID, JobTag: strings.TrimSpace(params.JobTag),
 		Profiles: slices.Clone(params.Profiles), Routes: slices.Clone(params.Routes),
-		TargetSuccessful: params.TargetSuccessful, MaxInFlight: params.MaxInFlight,
+		TargetSuccessful: params.TargetSuccessful, DiscoverOnly: params.DiscoverOnly, MaxInFlight: params.MaxInFlight,
 		Status: ApplicationCampaignRunning, CorrelationID: params.CorrelationID,
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}

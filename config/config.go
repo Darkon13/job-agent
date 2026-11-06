@@ -213,6 +213,7 @@ type JobAction struct {
 	Profiles         []string                             `json:"profiles,omitempty"`
 	Routes           []string                             `json:"routes,omitempty"`
 	TargetSuccessful int                                  `json:"target_successful,omitempty"`
+	DiscoverOnly     bool                                 `json:"discover_only,omitempty"`
 	MaxInFlight      int                                  `json:"max_in_flight,omitempty"`
 	FollowUp         *ConversationFollowUpSelectionConfig `json:"follow_up,omitempty"`
 	// RecentPages narrows the conversation discovery window for the frequent
