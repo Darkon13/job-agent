@@ -122,7 +122,14 @@ func solveCaptchaWith(ctx context.Context, client *http.Client, userAgent, captc
 	body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 1<<20))
 	_ = os.WriteFile("/tmp/hh-captcha-submit.html", body2, 0o600)
 	resp2.Body.Close()
-	if resp2.StatusCode == http.StatusFound || resp2.StatusCode == http.StatusOK || resp2.StatusCode == http.StatusNoContent {
+	if resp2.StatusCode == http.StatusFound {
+		location := resp2.Header.Get("Location")
+		if strings.HasPrefix(location, "hhandroid://") || strings.HasPrefix(location, "hh://") {
+			return nil
+		}
+		return fmt.Errorf("hh captcha answer rejected (redirect %s)", location)
+	}
+	if resp2.StatusCode == http.StatusOK || resp2.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	if len(body2) > 160 {

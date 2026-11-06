@@ -113,7 +113,11 @@ func AnswerCaptcha(ctx context.Context, id, text string) error {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode == http.StatusFound {
+		if location := resp.Header.Get("Location"); !strings.HasPrefix(location, "hhandroid://") && !strings.HasPrefix(location, "hh://") {
+			return fmt.Errorf("hh captcha answer rejected (redirect %s)", location)
+		}
+	} else if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("hh captcha: submit status %d: %s", resp.StatusCode, string(body))
 	}
 	_ = saveCookieJar(challenge.cookieFile, challenge.client.Jar)
