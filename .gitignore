@@ -21,3 +21,4 @@ browser-worker/dist/
 # Local deployment config and resume facts (personal)
 /deploy/config.json
 /deploy/facts/
+backups/
