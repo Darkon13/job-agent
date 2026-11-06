@@ -143,8 +143,8 @@ const (
 )
 
 const (
-	defaultHHApplicationJitterMin = 15 * time.Second
-	defaultHHApplicationJitterMax = 25 * time.Second
+	defaultHHApplicationJitterMin = 1 * time.Second
+	defaultHHApplicationJitterMax = 3 * time.Second
 )
 
 type Job struct {
@@ -625,12 +625,30 @@ func (policy AnswerModelPolicy) TimeoutDuration() (time.Duration, error) {
 	return time.ParseDuration(strings.TrimSpace(policy.Timeout))
 }
 
+type ChatReplyPolicy struct {
+	Enabled         bool     `json:"enabled,omitempty"`
+	DelayMin        string   `json:"delay_min,omitempty"`
+	DelayMax        string   `json:"delay_max,omitempty"`
+	MaxPerDay       int      `json:"max_per_day,omitempty"`
+	Instruction     string   `json:"instruction,omitempty"`
+	Disqualifying   []string `json:"disqualifying,omitempty"`
+	QuestionMarkers []string `json:"question_markers,omitempty"`
+}
+
+type SalaryPolicy struct {
+	PreferVacancy bool   `json:"prefer_vacancy,omitempty"`
+	SpreadPercent int    `json:"spread_percent,omitempty"`
+	Fallback      string `json:"fallback,omitempty"`
+}
+
 type ApplicationPolicy struct {
 	Mode                  string                    `json:"mode,omitempty"`
 	Message               string                    `json:"message,omitempty"`
 	MessageTemplate       string                    `json:"message_template,omitempty"`
 	MessageTemplateFile   string                    `json:"message_template_file,omitempty"`
 	Model                 *ApplicationModelPolicy   `json:"model,omitempty"`
+	ChatReply             *ChatReplyPolicy          `json:"chat_reply,omitempty"`
+	SalaryPolicy          *SalaryPolicy             `json:"salary_policy,omitempty"`
 	EmployerRules         []ApplicationEmployerRule `json:"employer_rules,omitempty"`
 	Qualification         ApplicationQualification  `json:"qualification,omitempty"`
 	DailyLimit            int                       `json:"daily_limit,omitempty"`
