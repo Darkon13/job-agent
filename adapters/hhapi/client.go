@@ -3,6 +3,7 @@ package hhapi
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,8 +77,12 @@ type Client struct {
 func New(tokenFile string) (*Client, error) {
 	cookieFile := cookieFilePath()
 	jar := loadCookieJar(cookieFile)
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: false,
+		TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
+	}
 	c := &Client{
-		http: &http.Client{Timeout: 30 * time.Second, Jar: jar}, tokenFile: tokenFile,
+		http: &http.Client{Timeout: 30 * time.Second, Jar: jar, Transport: transport}, tokenFile: tokenFile,
 		cookieFile: cookieFile, userAgent: rotateDeviceUserAgent(), cookies: jar,
 		delay: defaultRequestDelay,
 	}
