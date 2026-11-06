@@ -189,7 +189,11 @@ func (handler *ApplicationCampaignHandler) resolveCampaign(ctx context.Context, 
 	// One sender per job: a new run supersedes any still-running campaign.
 	if existing, listErr := handler.campaigns.ListApplicationCampaigns(ctx, 100); listErr == nil {
 		now := handler.clock.Now()
+		desiredID := core.ApplicationCampaignID("campaign-" + string(task.ID))
 		for i := range existing {
+			if existing[i].ID == desiredID {
+				continue
+			}
 			if existing[i].Status != core.ApplicationCampaignRunning || existing[i].JobTag != payload.JobTag {
 				continue
 			}
